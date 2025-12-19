@@ -8,19 +8,93 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans:
+    -apple-system, "system-ui", "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family:
+    -apple-system, "system-ui", "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  margin: 0;
+  padding: 0;
+}
+
+/* TipTap Editor Styles */
+.ProseMirror {
+  outline: none;
+  min-height: 200px;
+}
+
+.ProseMirror p {
+  margin: 0.5em 0;
+}
+
+/* Placeholder styling */
+.ProseMirror p.is-editor-empty:first-child::before {
+  color: #adb5bd;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* Hide empty paragraphs that show as bars when not focused */
+.ProseMirror:not(:focus) p.is-editor-empty {
+  min-height: 0;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  line-height: 0;
+}
+
+/* Show placeholder when focused */
+.ProseMirror:focus p.is-editor-empty:first-child {
+  min-height: 1.5em;
+  margin-top: 0;
+}
+
+.ProseMirror:focus p.is-editor-empty:first-child::before {
+  display: block;
+  height: auto;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+
+.ProseMirror h1,
+.ProseMirror h2,
+.ProseMirror h3 {
+  font-weight: bold;
+  margin: 0.5em 0;
+}
+
+.ProseMirror h1 {
+  font-size: 1.5em;
+}
+
+.ProseMirror h2 {
+  font-size: 1.3em;
+}
+
+.ProseMirror h3 {
+  font-size: 1.1em;
+}
+
+.ProseMirror a {
+  color: #9333ea;
+  text-decoration: underline;
 }

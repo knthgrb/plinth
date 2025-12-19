@@ -1,0 +1,43 @@
+---
+alwaysApply: true
+---
+
+# Database Operations Architecture
+
+## General Rule
+
+**Never directly add database queries in client components.** Always create a service layer for database operations.
+
+## Write Operations (POST, PATCH, PUT, DELETE)
+
+For all write operations (POST, PATCH, PUT, DELETE):
+
+1. Create a **server action** for the operation
+2. The server action calls the **service** layer for database operations
+3. Use the server action in the **client component**
+
+**Flow:** Client Component → Server Action → Service → Database
+
+## Read Operations (GET)
+
+For read operations:
+
+1. Create a **service** (can be client-side or server-side instance)
+2. Use the service in the **client component**
+
+**Flow:** Client Component → Service → Database
+
+**Exception for Sensitive Data:**
+If the data is sensitive, use a **server action** instead of direct service access:
+
+1. Create a **server action** for the read operation
+2. The server action calls the **service** layer
+3. Use the server action in the **client component**
+
+**Flow for Sensitive Reads:** Client Component → Server Action → Service → Database
+
+## Summary
+
+- **Write Operations:** Always use Server Action → Service → Database
+- **Read Operations:** Use Service → Database (or Server Action → Service → Database for sensitive data)
+- **Never:** Direct database queries in client components
