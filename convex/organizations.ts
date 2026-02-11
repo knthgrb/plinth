@@ -46,6 +46,29 @@ async function getUserRecord(ctx: any) {
   return userRecord;
 }
 
+// Helper for mutations only: get existing user record or create one (e.g. after signup before ensureUserRecord ran)
+async function getOrCreateUserRecord(ctx: any) {
+  const user = await authComponent.getAuthUser(ctx);
+  if (!user) throw new Error("Not authenticated");
+
+  let userRecord = await (ctx.db.query("users") as any)
+    .withIndex("by_email", (q: any) => q.eq("email", user.email))
+    .first();
+
+  if (!userRecord) {
+    const now = Date.now();
+    const userId = await ctx.db.insert("users", {
+      email: user.email,
+      name: user.name || undefined,
+      createdAt: now,
+      updatedAt: now,
+    });
+    userRecord = await ctx.db.get(userId);
+  }
+
+  return userRecord!;
+}
+
 // Helper to check authorization with organization context
 async function checkAuth(
   ctx: any,
@@ -333,7 +356,8 @@ export const createOrganization = mutation({
     taxId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userRecord = await getUserRecord(ctx);
+    // Use getOrCreate so signup step 2 works even if ensureUserRecord didn't run (e.g. prod timing)
+    const userRecord = await getOrCreateUserRecord(ctx);
 
     const now = Date.now();
     const organizationId = await ctx.db.insert("organizations", {

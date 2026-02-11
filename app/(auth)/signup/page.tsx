@@ -68,6 +68,12 @@ export default function SignupPage() {
                 router.push(`/${firstOrg._id}/dashboard`);
                 return;
               } else {
+                // Ensure Convex user record exists before showing step 2
+                try {
+                  await ensureUserRecord({});
+                } catch {
+                  // Ignore - createOrganization will create the record on step 2 submit
+                }
                 // User has no organizations, show step 2
                 setStep(2);
                 toast({
@@ -86,6 +92,12 @@ export default function SignupPage() {
           // No step param - check organizations to decide
           if (userOrganizations !== undefined) {
             if (!userOrganizations || userOrganizations.length === 0) {
+              // Ensure Convex user record exists (e.g. returning user or prod where step 1 ensureUserRecord didn't run)
+              try {
+                await ensureUserRecord({});
+              } catch {
+                // Ignore - createOrganization will create the record on step 2 submit
+              }
               // User has no organizations, show step 2
               setStep(2);
               toast({
