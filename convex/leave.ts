@@ -55,9 +55,11 @@ async function checkAuth(
     userRole = userRecord.role;
   }
 
-  if (requiredRole && userRole !== requiredRole && userRole !== "admin") {
+  // Write operations (requiredRole set): admin, owner, or that role only
+  if (requiredRole && userRole !== requiredRole && userRole !== "admin" && userRole !== "owner") {
     throw new Error("Not authorized");
   }
+  // Read operations (no requiredRole): all org members including accounting (for payroll/payslips)
 
   return { ...userRecord, role: userRole, organizationId };
 }

@@ -10,7 +10,6 @@ function getDefaultRouteForRole(role: string | null | undefined): string {
   if (!role) return "/dashboard";
   const r = role.toLowerCase();
   if (r === "employee") return "/announcements";
-  if (r === "accounting") return "/accounting";
   return "/dashboard";
 }
 

@@ -20,6 +20,8 @@ import {
   Clock,
   ArrowRight,
   Bell,
+  Receipt,
+  Calculator,
 } from "lucide-react";
 import { useOrganization } from "@/hooks/organization-context";
 import { useRouter } from "next/navigation";
@@ -27,6 +29,175 @@ import { useEffect, useMemo } from "react";
 import { getOrganizationPath } from "@/utils/organization-routing";
 import { format } from "date-fns";
 import Link from "next/link";
+
+/** Dashboard view for accounting role: payroll, expense management, announcements */
+function AccountingDashboard({
+  currentOrganizationId,
+  recentAnnouncements,
+  recentPayrollRuns,
+}: {
+  currentOrganizationId: string;
+  recentAnnouncements: any[];
+  recentPayrollRuns: any[];
+}) {
+  const costItems = useQuery(
+    (api as any).accounting.getCostItems,
+    currentOrganizationId ? { organizationId: currentOrganizationId as any } : "skip"
+  );
+  const items = costItems ?? [];
+  const totalPending = items
+    .filter((i: any) => i.status !== "paid")
+    .reduce((sum: number, i: any) => sum + (i.amount ?? 0) - (i.amountPaid ?? 0), 0);
+
+  return (
+    <div className="p-4 sm:p-6 lg:p-8">
+      <div className="mb-6 sm:mb-8">
+        <h1 className="text-2xl sm:text-3xl font-bold text-[rgb(64,64,64)]">
+          Accounting Dashboard
+        </h1>
+        <p className="text-sm text-[rgb(133,133,133)] mt-1">
+          Payroll, expenses, and announcements
+        </p>
+      </div>
+
+      <div className="grid gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 mb-6 sm:mb-8">
+        <Link href={getOrganizationPath(currentOrganizationId, "/payroll")}>
+          <Card className="hover:shadow-md transition-shadow cursor-pointer h-full">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-[rgb(133,133,133)]">
+                Payroll
+              </CardTitle>
+              <Receipt className="h-4 w-4 text-green-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-[rgb(64,64,64)]">
+                {recentPayrollRuns.length} recent run{recentPayrollRuns.length !== 1 ? "s" : ""}
+              </div>
+              <p className="text-xs text-[rgb(133,133,133)] mt-1">View and manage payroll</p>
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href={getOrganizationPath(currentOrganizationId, "/accounting")}>
+          <Card className="hover:shadow-md transition-shadow cursor-pointer h-full">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-[rgb(133,133,133)]">
+                Expense Management
+              </CardTitle>
+              <Calculator className="h-4 w-4 text-purple-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-[rgb(64,64,64)]">
+                {items.length} cost item{items.length !== 1 ? "s" : ""}
+              </div>
+              <p className="text-xs text-[rgb(133,133,133)] mt-1">
+                {totalPending > 0 ? `₱${totalPending.toLocaleString()} pending` : "Manage expenses"}
+              </p>
+            </CardContent>
+          </Card>
+        </Link>
+      </div>
+
+      <div className="grid gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <Card className="md:col-span-2">
+          <CardHeader className="flex flex-row items-center justify-between p-4 sm:p-6">
+            <div>
+              <CardTitle className="text-base sm:text-lg">Recent Payroll Runs</CardTitle>
+              <CardDescription className="text-xs sm:text-sm">Latest processed</CardDescription>
+            </div>
+            <DollarSign className="h-5 w-5 text-green-400" />
+          </CardHeader>
+          <CardContent className="p-4 sm:p-6">
+            {recentPayrollRuns.length > 0 ? (
+              <div className="space-y-3">
+                {recentPayrollRuns.map((run: any) => (
+                  <Link
+                    key={run._id}
+                    href={getOrganizationPath(currentOrganizationId, "/payroll")}
+                    className="block p-3 rounded-lg hover:bg-gray-50 transition-colors border border-gray-100"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900">
+                          {format(new Date(run.cutoffStart), "MMM d")} -{" "}
+                          {format(new Date(run.cutoffEnd), "MMM d, yyyy")}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {format(new Date(run.createdAt), "MMM d, yyyy")}
+                        </p>
+                      </div>
+                      <Badge
+                        className={
+                          run.status === "completed"
+                            ? "bg-green-100 text-green-800 hover:bg-green-100"
+                            : run.status === "processing"
+                              ? "bg-blue-100 text-blue-800 hover:bg-blue-100"
+                              : "bg-gray-100 text-gray-800 hover:bg-gray-100"
+                        }
+                        variant="outline"
+                      >
+                        {run.status}
+                      </Badge>
+                    </div>
+                  </Link>
+                ))}
+                <Link
+                  href={getOrganizationPath(currentOrganizationId, "/payroll")}
+                  className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 mt-2"
+                >
+                  View all <ArrowRight className="h-3 w-3" />
+                </Link>
+              </div>
+            ) : (
+              <div className="text-sm text-[rgb(133,133,133)] text-center py-4">
+                No payroll runs yet
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between p-4 sm:p-6">
+            <div>
+              <CardTitle className="text-base sm:text-lg">Recent Announcements</CardTitle>
+              <CardDescription className="text-xs sm:text-sm">Latest updates</CardDescription>
+            </div>
+            <Bell className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400" />
+          </CardHeader>
+          <CardContent className="p-4 sm:p-6">
+            {recentAnnouncements.length > 0 ? (
+              <div className="space-y-3">
+                {recentAnnouncements.slice(0, 3).map((announcement: any) => (
+                  <Link
+                    key={announcement._id}
+                    href={getOrganizationPath(currentOrganizationId, "/announcements")}
+                    className="block p-3 rounded-lg hover:bg-gray-50 transition-colors border border-gray-100"
+                  >
+                    <p className="text-sm font-medium text-gray-900 truncate">
+                      {announcement.title}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {format(new Date(announcement.publishedDate), "MMM d, yyyy")}
+                    </p>
+                  </Link>
+                ))}
+                <Link
+                  href={getOrganizationPath(currentOrganizationId, "/announcements")}
+                  className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 mt-2"
+                >
+                  View all <ArrowRight className="h-3 w-3" />
+                </Link>
+              </div>
+            ) : (
+              <div className="text-sm text-[rgb(133,133,133)] text-center py-4">
+                No announcements yet
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -75,21 +246,12 @@ export default function DashboardPage() {
       : "skip"
   );
 
-  // Redirect based on role - but only if user data is loaded
-  // The proxy.ts already handles this redirect, but we keep this as a fallback
+  // Redirect employees to announcements (accounting stays on dashboard with own view)
   useEffect(() => {
-    if (user && currentOrganizationId && user.role) {
-      if (user.role === "employee") {
-        router.replace(
-          getOrganizationPath(currentOrganizationId, "/announcements")
-        );
-        return;
-      } else if (user.role === "accounting") {
-        router.replace(
-          getOrganizationPath(currentOrganizationId, "/accounting")
-        );
-        return;
-      }
+    if (user && currentOrganizationId && user.role === "employee") {
+      router.replace(
+        getOrganizationPath(currentOrganizationId, "/announcements")
+      );
     }
   }, [user, currentOrganizationId, router]);
 
@@ -111,13 +273,26 @@ export default function DashboardPage() {
 
   if (!currentOrganizationId) return null;
 
-  // Don't render dashboard content if user should be redirected
-  if (user && (user.role === "employee" || user.role === "accounting")) {
+  // Employee: redirecting (handled in useEffect)
+  if (user && user.role === "employee") {
     return (
       <MainLayout>
         <div className="flex h-screen items-center justify-center">
           <div className="text-[rgb(133,133,133)]">Redirecting...</div>
         </div>
+      </MainLayout>
+    );
+  }
+
+  // Accounting: separate dashboard (payroll, expense management, announcements)
+  if (user && user.role === "accounting") {
+    return (
+      <MainLayout>
+        <AccountingDashboard
+          currentOrganizationId={currentOrganizationId}
+          recentAnnouncements={recentAnnouncements}
+          recentPayrollRuns={recentPayrollRuns}
+        />
       </MainLayout>
     );
   }

@@ -78,7 +78,9 @@ function isStaticOrPublicPath(pathname: string): boolean {
     pathname === "/favicon.ico" ||
     pathname.startsWith("/favicon") ||
     pathname.startsWith("/.well-known") ||
-    /\.(?:ico|svg|png|jpg|jpeg|gif|webp|woff2?|css|js|json|lottie)$/i.test(pathname)
+    /\.(?:ico|svg|png|jpg|jpeg|gif|webp|woff2?|css|js|json|lottie)$/i.test(
+      pathname,
+    )
   );
 }
 
@@ -173,7 +175,6 @@ function getDefaultRouteForRole(role: string | null): string {
     case "employee":
       return "/announcements";
     case "accounting":
-      return "/accounting";
     case "admin":
     case "owner":
     case "hr":
@@ -254,21 +255,16 @@ function hasAccessToRoute(
     return { hasAccess: true };
   }
 
-  // Check HR routes (accessible to hr, accounting, admin, and owner)
+  // Check HR routes (hr, admin, owner only - accounting has no access)
   const isHrRoute = ROUTE_ACCESS.hr.some((route) =>
     matchesRoute(cleanPathname, route),
   );
   if (isHrRoute) {
-    const allowedRoles: readonly Role[] = [
-      "hr",
-      "accounting",
-      "admin",
-      "owner",
-    ] as const;
+    const allowedRoles: readonly Role[] = ["hr", "admin", "owner"] as const;
     if (!(allowedRoles as readonly string[]).includes(userRole)) {
       return {
         hasAccess: false,
-        reason: "This route requires HR, accounting, admin, or owner role",
+        reason: "This route requires HR, admin, or owner role",
       };
     }
     return { hasAccess: true };
@@ -367,24 +363,24 @@ export async function proxy(request: NextRequest) {
     return response;
   };
 
-  // Step 5: Handle authenticated users on auth routes - redirect to proper page
+  // Step 5: Auth routes (login/signup) – if user already has session, redirect to default page by role
   if (isAuthRoute(pathname)) {
     const userRole = await getUserRoleCached();
     const orgId = cachedOrganizationId;
 
-    // If no role yet, allow the request (prevents loops during initial load)
-    if (!userRole && cachedUserRole === null) {
-      return applyRoleCookie(NextResponse.next());
+    if (userRole && orgId) {
+      const defaultRoute = getDefaultRouteForRole(userRole);
+      const redirectPath = buildPathWithOrg(orgId, defaultRoute);
+      return applyRoleCookie(
+        NextResponse.redirect(new URL(redirectPath, request.url)),
+      );
     }
-
-    const defaultRoute = getDefaultRouteForRole(userRole);
-    const redirectPath = orgId
-      ? buildPathWithOrg(orgId, defaultRoute)
-      : defaultRoute;
-
-    return applyRoleCookie(
-      NextResponse.redirect(new URL(redirectPath, request.url)),
-    );
+    if (userRole && !orgId) {
+      return applyRoleCookie(
+        NextResponse.redirect(new URL("/", request.url)),
+      );
+    }
+    return applyRoleCookie(NextResponse.next());
   }
 
   // Step 6: Handle root path - redirect based on role
@@ -438,26 +434,21 @@ export async function proxy(request: NextRequest) {
       return applyRoleCookie(NextResponse.next());
     }
 
-    // Redirect employees and accounting to their default routes
-    if (normalizedRole === "employee" || normalizedRole === "accounting") {
-      const defaultRoute = getDefaultRouteForRole(normalizedRole);
+    // Redirect only employees to announcements (accounting stays on dashboard with own view)
+    if (normalizedRole === "employee") {
       const orgId = urlOrganizationId || cachedOrganizationId || null;
-      const redirectPath = buildPathWithOrg(orgId, defaultRoute);
-      if (process.env.NODE_ENV === "development") {
-        console.log(
-          `[PROXY] Dashboard: Redirecting ${normalizedRole} to ${redirectPath}`,
-        );
-      }
+      const redirectPath = buildPathWithOrg(orgId, "/announcements");
       return applyRoleCookie(
         NextResponse.redirect(new URL(redirectPath, request.url)),
       );
     }
 
-    // Allow dashboard for admin, owner, and hr roles
+    // Allow dashboard for admin, owner, hr, and accounting (accounting has separate dashboard content)
     if (
       normalizedRole === "admin" ||
       normalizedRole === "owner" ||
-      normalizedRole === "hr"
+      normalizedRole === "hr" ||
+      normalizedRole === "accounting"
     ) {
       if (process.env.NODE_ENV === "development") {
         console.log(`[PROXY] Dashboard: Allowing access for ${normalizedRole}`);

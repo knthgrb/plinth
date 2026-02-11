@@ -24,19 +24,15 @@ export class ConvexErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     const errorMessage = error.message || String(error);
 
-    // Ignore unauthenticated errors during logout (user is on login page or being redirected)
+    // Unauthenticated during logout: redirect to login immediately so we never show an error flash
     if (
       (errorMessage.includes("Not authenticated") ||
         errorMessage.includes("Unauthenticated")) &&
       typeof window !== "undefined"
     ) {
       const pathname = window.location.pathname;
-      // If we're on login page or being redirected to login, ignore the error
-      if (pathname === "/login" || pathname === "/signup") {
-        console.log(
-          "Ignoring unauthenticated error during logout:",
-          errorMessage
-        );
+      if (pathname !== "/login" && pathname !== "/signup") {
+        window.location.href = "/login";
         return;
       }
     }
@@ -63,18 +59,17 @@ export class ConvexErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       const errorMessage = this.state.error?.message || "";
 
-      // Ignore unauthenticated errors during logout
+      // Unauthenticated (e.g. logout): show minimal UI, redirect already triggered in componentDidCatch
       if (
         (errorMessage.includes("Not authenticated") ||
           errorMessage.includes("Unauthenticated")) &&
         typeof window !== "undefined"
       ) {
-        const pathname = window.location.pathname;
-        if (pathname === "/login" || pathname === "/signup") {
-          // Reset error state and continue rendering (user is logging out)
-          this.setState({ hasError: false, error: null });
-          return this.props.children;
-        }
+        return (
+          <div className="flex h-screen items-center justify-center bg-white">
+            <div className="text-gray-500">Signing out...</div>
+          </div>
+        );
       }
 
       // If it's an authorization error, redirect (handled in componentDidCatch)
@@ -115,21 +110,18 @@ export function GlobalErrorHandler({ children }: { children: ReactNode }) {
       const error = event.reason;
       const errorMessage = error?.message || String(error);
 
-      // Ignore unauthenticated errors during logout
+      // Unauthenticated during logout: redirect to login, no error flash
       if (
         (errorMessage.includes("Not authenticated") ||
           errorMessage.includes("Unauthenticated")) &&
         typeof window !== "undefined"
       ) {
         const pathname = window.location.pathname;
-        if (pathname === "/login" || pathname === "/signup") {
+        if (pathname !== "/login" && pathname !== "/signup") {
           event.preventDefault();
-          console.log(
-            "Ignoring unauthenticated error during logout:",
-            errorMessage
-          );
-          return;
+          window.location.href = "/login";
         }
+        return;
       }
 
       if (
@@ -156,21 +148,18 @@ export function GlobalErrorHandler({ children }: { children: ReactNode }) {
     const handleError = (event: ErrorEvent) => {
       const errorMessage = event.message || String(event.error);
 
-      // Ignore unauthenticated errors during logout
+      // Unauthenticated during logout: redirect to login, no error flash
       if (
         (errorMessage.includes("Not authenticated") ||
           errorMessage.includes("Unauthenticated")) &&
         typeof window !== "undefined"
       ) {
         const pathname = window.location.pathname;
-        if (pathname === "/login" || pathname === "/signup") {
+        if (pathname !== "/login" && pathname !== "/signup") {
           event.preventDefault();
-          console.log(
-            "Ignoring unauthenticated error during logout:",
-            errorMessage
-          );
-          return;
+          window.location.href = "/login";
         }
+        return;
       }
 
       if (

@@ -54,7 +54,7 @@ function calculateUndertime(
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "owner" | "admin" | "hr" | "accounting",
+  requiredRole?: "owner" | "admin" | "hr",
 ) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -95,20 +95,18 @@ async function checkAuth(
   // Owner has all admin privileges - treat owner the same as admin
   const isOwnerOrAdmin = userRole === "owner" || userRole === "admin";
 
-  // Allow admin/owner to access everything
-  // For read operations, allow accounting role
-  // For write operations (requiredRole specified), only allow specified role or admin/owner
   if (requiredRole) {
+    // Write operations (create/update/delete): hr, admin, owner only - no accounting
     if (userRole !== requiredRole && !isOwnerOrAdmin) {
       throw new Error("Not authorized");
     }
   } else {
-    // No required role means read access - allow accounting, hr, admin, and owner
+    // Read access: hr, admin, owner, employee, and accounting (for payroll/payslips)
     if (
       !isOwnerOrAdmin &&
       userRole !== "hr" &&
-      userRole !== "accounting" &&
-      userRole !== "owner"
+      userRole !== "employee" &&
+      userRole !== "accounting"
     ) {
       throw new Error("Not authorized");
     }

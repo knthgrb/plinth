@@ -10,7 +10,7 @@ import {
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "owner" | "admin" | "hr" | "accounting"
+  requiredRole?: "owner" | "admin" | "hr"
 ) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -55,23 +55,23 @@ async function checkAuth(
     userRole = userRecord.role;
   }
 
+  // HR routes: no access for accounting role (employees list is HR-only)
+  if (userRole === "accounting") {
+    throw new Error("Not authorized - HR routes are not available for accounting role");
+  }
+
   // Owner has all admin privileges - treat owner the same as admin
   const isOwnerOrAdmin = userRole === "admin" || userRole === "owner";
 
-  // Allow admin/owner to access everything
-  // For read operations, allow accounting and employee roles
-  // For write operations (requiredRole specified), only allow specified role or admin/owner
   if (requiredRole) {
     if (userRole !== requiredRole && !isOwnerOrAdmin) {
       throw new Error("Not authorized");
     }
   } else {
-    // No required role means read access - allow accounting and employees
-    // Employees need read access to see employee names in leave requests, etc.
+    // Read access: hr, admin, owner, employee (not accounting)
     if (
       !isOwnerOrAdmin &&
       userRole !== "hr" &&
-      userRole !== "accounting" &&
       userRole !== "employee"
     ) {
       throw new Error("Not authorized");
