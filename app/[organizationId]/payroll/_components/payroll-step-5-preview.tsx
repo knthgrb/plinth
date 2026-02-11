@@ -189,32 +189,32 @@ function EditDeductionsForm({
   return (
     <div className="space-y-3">
       <p className="text-sm text-gray-600">{name}</p>
+      <p className="text-xs text-gray-500">
+        Override the amount (value) for each deduction. Click &quot;Done&quot; to recompute the preview.
+      </p>
       <div className="space-y-3">
         {empDeductions.deductions.map((deduction, idx) => (
           <div key={idx} className="flex gap-2 items-end">
             <div className="flex-1">
-              <Label>Deduction name</Label>
-              <Input
-                value={deduction.name}
-                onChange={(e) =>
-                  onUpdateDeduction(employeeId, idx, "name", e.target.value)
-                }
-                placeholder="e.g., Loan, Advance"
-              />
+              <Label>Name</Label>
+              <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
+                {deduction.name || "—"}
+              </div>
             </div>
             <div className="w-28">
               <Label>Amount</Label>
               <Input
                 type="number"
+                min={0}
                 step="0.01"
-                value={deduction.amount === 0 ? "" : deduction.amount}
+                value={deduction.amount ?? ""}
                 onChange={(e) => {
                   const val = e.target.value;
                   if (val === "" || val === "-") {
                     onUpdateDeduction(employeeId, idx, "amount", 0);
                   } else {
                     const numVal = parseFloat(val);
-                    if (!isNaN(numVal)) {
+                    if (!isNaN(numVal) && numVal >= 0) {
                       onUpdateDeduction(employeeId, idx, "amount", numVal);
                     }
                   }
@@ -224,13 +224,9 @@ function EditDeductionsForm({
             </div>
             <div className="w-24">
               <Label>Type</Label>
-              <Input
-                value={deduction.type}
-                onChange={(e) =>
-                  onUpdateDeduction(employeeId, idx, "type", e.target.value)
-                }
-                placeholder="loan"
-              />
+              <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
+                {deduction.type || "—"}
+              </div>
             </div>
             <Button
               type="button"
