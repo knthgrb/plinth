@@ -26,7 +26,7 @@ interface EmployeeDeduction {
   deductions: Deduction[];
 }
 
-interface PayrollStep5PreviewProps {
+export interface PayrollStep5PreviewProps {
   previewData: any[];
   cutoffStart: string;
   cutoffEnd: string;
@@ -34,6 +34,8 @@ interface PayrollStep5PreviewProps {
   /** When true (admin/hr/owner), show "Edit deductions" in preview */
   canEditDeductions?: boolean;
   employeeDeductions?: EmployeeDeduction[];
+  /** Per-employee overrides for deduction amounts (SSS, PhilHealth, etc.) */
+  previewDeductionOverrides?: Record<string, Record<string, number>>;
   onAddDeduction?: (employeeId: string) => void;
   onRemoveDeduction?: (employeeId: string, index: number) => void;
   onUpdateDeduction?: (
@@ -41,6 +43,11 @@ interface PayrollStep5PreviewProps {
     index: number,
     field: "name" | "amount" | "type",
     value: string | number
+  ) => void;
+  onOverrideDeductionAmount?: (
+    employeeId: string,
+    deductionName: string,
+    amount: number
   ) => void;
   onRecomputePreview?: () => void;
 }
@@ -52,9 +59,11 @@ export function PayrollStep5Preview({
   currentOrganization,
   canEditDeductions = false,
   employeeDeductions = [],
+  previewDeductionOverrides = {},
   onAddDeduction,
   onRemoveDeduction,
   onUpdateDeduction,
+  onOverrideDeductionAmount,
   onRecomputePreview,
 }: PayrollStep5PreviewProps) {
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
@@ -139,10 +148,15 @@ export function PayrollStep5Preview({
             <EditDeductionsForm
               employeeId={editingEmployeeId}
               employee={previewData.find((p) => p.employee?._id === editingEmployeeId)?.employee}
+              previewDeductions={
+                previewData.find((p) => p.employee?._id === editingEmployeeId)?.deductions ?? []
+              }
               employeeDeductions={employeeDeductions}
+              previewDeductionOverrides={previewDeductionOverrides}
               onAddDeduction={onAddDeduction!}
               onRemoveDeduction={onRemoveDeduction!}
               onUpdateDeduction={onUpdateDeduction!}
+              onOverrideDeductionAmount={onOverrideDeductionAmount!}
             />
           )}
           <DialogFooter>
@@ -156,17 +170,34 @@ export function PayrollStep5Preview({
   );
 }
 
+const GOV_OR_OTHER_NAMES = new Set([
+  "SSS",
+  "PhilHealth",
+  "Pag-IBIG",
+  "Withholding Tax",
+  "Other Deductions",
+]);
+
+function isGovOrOtherDeduction(d: Deduction): boolean {
+  return d.type === "government" || GOV_OR_OTHER_NAMES.has(d.name);
+}
+
 function EditDeductionsForm({
   employeeId,
   employee,
+  previewDeductions,
   employeeDeductions,
+  previewDeductionOverrides,
   onAddDeduction,
   onRemoveDeduction,
   onUpdateDeduction,
+  onOverrideDeductionAmount,
 }: {
   employeeId: string;
   employee: any;
+  previewDeductions: Deduction[];
   employeeDeductions: EmployeeDeduction[];
+  previewDeductionOverrides: Record<string, Record<string, number>>;
   onAddDeduction: (employeeId: string) => void;
   onRemoveDeduction: (employeeId: string, index: number) => void;
   onUpdateDeduction: (
@@ -175,17 +206,24 @@ function EditDeductionsForm({
     field: "name" | "amount" | "type",
     value: string | number
   ) => void;
+  onOverrideDeductionAmount: (
+    employeeId: string,
+    deductionName: string,
+    amount: number
+  ) => void;
 }) {
   const empDeductions =
     employeeDeductions.find((ed) => ed.employeeId === employeeId) || {
       employeeId,
       deductions: [],
     };
+  const overrides = previewDeductionOverrides[employeeId] ?? {};
   const name =
     employee?.personalInfo?.firstName && employee?.personalInfo?.lastName
       ? `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`
       : "Employee";
 
+  let manualIndex = 0;
   return (
     <div className="space-y-3">
       <p className="text-sm text-gray-600">{name}</p>
@@ -193,51 +231,75 @@ function EditDeductionsForm({
         Override the amount (value) for each deduction. Click &quot;Done&quot; to recompute the preview.
       </p>
       <div className="space-y-3">
-        {empDeductions.deductions.map((deduction, idx) => (
-          <div key={idx} className="flex gap-2 items-end">
-            <div className="flex-1">
-              <Label>Name</Label>
-              <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
-                {deduction.name || "—"}
+        {previewDeductions.map((deduction, idx) => {
+          const isGovOrOther = isGovOrOtherDeduction(deduction);
+          const displayAmount = isGovOrOther
+            ? (overrides[deduction.name] ?? deduction.amount)
+            : (empDeductions.deductions[manualIndex]?.amount ?? deduction.amount);
+          const currentManualIndex = manualIndex;
+          if (!isGovOrOther) manualIndex += 1;
+
+          return (
+            <div key={idx} className="flex gap-2 items-end">
+              <div className="flex-1">
+                <Label>Name</Label>
+                <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
+                  {deduction.name || "—"}
+                </div>
               </div>
-            </div>
-            <div className="w-28">
-              <Label>Amount</Label>
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={deduction.amount ?? ""}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val === "" || val === "-") {
-                    onUpdateDeduction(employeeId, idx, "amount", 0);
-                  } else {
-                    const numVal = parseFloat(val);
-                    if (!isNaN(numVal) && numVal >= 0) {
-                      onUpdateDeduction(employeeId, idx, "amount", numVal);
+              <div className="w-28">
+                <Label>Amount</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={displayAmount ?? ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const numVal =
+                      val === "" || val === "-"
+                        ? 0
+                        : parseFloat(val);
+                    if (numVal >= 0 && !isNaN(numVal)) {
+                      if (isGovOrOther) {
+                        onOverrideDeductionAmount(
+                          employeeId,
+                          deduction.name,
+                          numVal
+                        );
+                      } else {
+                        onUpdateDeduction(
+                          employeeId,
+                          currentManualIndex,
+                          "amount",
+                          numVal
+                        );
+                      }
                     }
-                  }
-                }}
-                placeholder="0.00"
-              />
-            </div>
-            <div className="w-24">
-              <Label>Type</Label>
-              <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
-                {deduction.type || "—"}
+                  }}
+                  placeholder="0.00"
+                />
               </div>
+              <div className="w-24">
+                <Label>Type</Label>
+                <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
+                  {deduction.type || "—"}
+                </div>
+              </div>
+              {!isGovOrOther && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onRemoveDeduction(employeeId, currentManualIndex)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
+              {isGovOrOther && <div className="w-9" />}
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => onRemoveDeduction(employeeId, idx)}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        ))}
+          );
+        })}
         <Button
           type="button"
           variant="outline"

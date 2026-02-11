@@ -315,6 +315,10 @@ export default function PayrollPageClient({
     EmployeeIncentive[]
   >([]);
   const [previewData, setPreviewData] = useState<any[]>([]);
+  /** Per-employee overrides for deduction amounts (e.g. SSS, PhilHealth) in pay preview */
+  const [previewDeductionOverrides, setPreviewDeductionOverrides] = useState<
+    Record<string, Record<string, number>>
+  >({});
   const [isProcessing, setIsProcessing] = useState(false);
   const [submitStatus, setSubmitStatus] = useState<
     "idle" | "draft" | "finalized"
@@ -860,6 +864,20 @@ export default function PayrollPageClient({
     setEmployeeDeductions(updated);
   };
 
+  const setPreviewDeductionOverride = (
+    employeeId: string,
+    deductionName: string,
+    amount: number
+  ) => {
+    setPreviewDeductionOverrides((prev) => ({
+      ...prev,
+      [employeeId]: {
+        ...(prev[employeeId] ?? {}),
+        [deductionName]: amount,
+      },
+    }));
+  };
+
   const addIncentive = (employeeId: string) => {
     const updated = employeeIncentives.map((ei) => {
       if (ei.employeeId === employeeId) {
@@ -1013,6 +1031,16 @@ export default function PayrollPageClient({
         );
         if (empDeductions) {
           deductions.push(...empDeductions.deductions);
+        }
+
+        // Apply amount overrides from Edit deductions (e.g. SSS, PhilHealth, Pag-IBIG)
+        const overrides = previewDeductionOverrides[employeeId];
+        if (overrides) {
+          for (const d of deductions) {
+            if (overrides[d.name] !== undefined) {
+              d.amount = overrides[d.name];
+            }
+          }
         }
 
         // Represent incentives as a single line item based on backend total
@@ -1193,6 +1221,7 @@ export default function PayrollPageClient({
       setEmployeeDeductions([]);
       setEmployeeIncentives([]);
       setPreviewData([]);
+      setPreviewDeductionOverrides({});
 
       // Reload payroll runs
       await loadPayrollRuns();
@@ -1227,6 +1256,7 @@ export default function PayrollPageClient({
     setEmployeeDeductions([]);
     setEmployeeIncentives([]);
     setPreviewData([]);
+    setPreviewDeductionOverrides({});
   };
 
   const handleEditPayrollRun = async (payrollRun: any) => {
@@ -1471,9 +1501,11 @@ export default function PayrollPageClient({
                     currentOrganization={currentOrganization}
                     canEditDeductions={canEditPreviewDeductions}
                     employeeDeductions={employeeDeductions}
+                    previewDeductionOverrides={previewDeductionOverrides}
                     onAddDeduction={addDeduction}
                     onRemoveDeduction={removeDeduction}
                     onUpdateDeduction={updateDeduction}
+                    onOverrideDeductionAmount={setPreviewDeductionOverride}
                     onRecomputePreview={computePreview}
                   />
                 </Suspense>
