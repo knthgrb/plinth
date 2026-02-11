@@ -80,7 +80,9 @@ export default function OrganizationLayout({
     if (user === undefined) return;
     // Don't redirect to forbidden when user is null (e.g. brief unauthenticated state after login); let query refetch
     if (user === null) return;
-    const cleanPath = removeOrganizationId(pathname || "") || "/dashboard";
+    let cleanPath = removeOrganizationId(pathname || "") || "/dashboard";
+    // When path is exactly /orgId (no subpath), treat as dashboard for access check
+    if (cleanPath === `/${organizationId}`) cleanPath = "/dashboard";
     if (cleanPath === "/forbidden") return;
     if (!canAccessRoute(cleanPath, user.role ?? null)) {
       router.replace(`/${organizationId}/forbidden`);

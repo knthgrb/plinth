@@ -55,7 +55,12 @@ export function pathToBaseRoute(pathname: string): string {
  * Use pathname without org prefix or with (will be stripped).
  */
 export function canAccessRoute(pathname: string, role: string | undefined | null): boolean {
-  const base = pathToBaseRoute(pathname);
+  let base = pathToBaseRoute(pathname);
+  const segments = pathname.replace(/^\//, "").split("/").filter(Boolean);
+  // If first segment is not a known route (e.g. it's organizationId), use second segment as base
+  if (ROUTE_ACCESS[base] === undefined && segments.length >= 2) {
+    base = "/" + segments[1];
+  }
   const roleNorm = effectiveRole(role);
   if (!roleNorm) return false;
   const allowed = ROUTE_ACCESS[base];
