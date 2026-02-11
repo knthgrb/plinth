@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Mail, MessageSquare, Pencil } from "lucide-react";
+import { Pencil } from "lucide-react";
 import { format } from "date-fns";
 import { PayslipDetail } from "@/components/payslip-detail";
 
@@ -24,7 +24,6 @@ interface ViewPayslipsDialogProps {
   currentOrganization: any;
   isAdminOrAccounting: boolean;
   onEditPayslip: (payslip: any) => void;
-  onSendPayslip: (payslipId: string, method: "email" | "chat") => void;
 }
 
 export function ViewPayslipsDialog({
@@ -37,7 +36,6 @@ export function ViewPayslipsDialog({
   currentOrganization,
   isAdminOrAccounting,
   onEditPayslip,
-  onSendPayslip,
 }: ViewPayslipsDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -45,7 +43,7 @@ export function ViewPayslipsDialog({
         <DialogHeader>
           <DialogTitle>Payslips - {selectedPayrollRun?.period}</DialogTitle>
           <DialogDescription>
-            View and send payslips to employees
+            View payslips for this payroll run
           </DialogDescription>
         </DialogHeader>
         {isLoadingPayslips ? (
@@ -107,35 +105,19 @@ export function ViewPayslipsDialog({
                           </CardContent>
                         </Card>
                       )}
-                    <div className="flex gap-2 justify-end">
-                      {isAdminOrAccounting &&
-                        selectedPayrollRun?.status === "draft" && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => onEditPayslip(payslip)}
-                          >
-                            <Pencil className="h-4 w-4 mr-2" />
-                            Edit Payslip
-                          </Button>
-                        )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onSendPayslip(payslip._id, "email")}
-                      >
-                        <Mail className="h-4 w-4 mr-2" />
-                        Send Email
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onSendPayslip(payslip._id, "chat")}
-                      >
-                        <MessageSquare className="h-4 w-4 mr-2" />
-                        Send via Chat
-                      </Button>
-                    </div>
+                    {(isAdminOrAccounting &&
+                      selectedPayrollRun?.status === "draft") && (
+                      <div className="flex gap-2 justify-end">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onEditPayslip(payslip)}
+                        >
+                          <Pencil className="h-4 w-4 mr-2" />
+                          Edit Payslip
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))

@@ -156,7 +156,6 @@ import {
   createPayrollRun,
   getPayrollRuns,
   getPayslipsByPayrollRun,
-  sendPayslipNotification,
   updatePayslip,
   updatePayrollRunStatus,
   updatePayrollRun,
@@ -628,26 +627,6 @@ export default function PayrollPageClient({
       toast({
         title: "Error",
         description: error.message || "Failed to update payroll status",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleSendPayslip = async (
-    payslipId: string,
-    method: "email" | "chat"
-  ) => {
-    try {
-      await sendPayslipNotification(payslipId, method);
-      toast({
-        title: "Success",
-        description: `Payslip sent via ${method === "email" ? "email" : "chat"} successfully!`,
-      });
-    } catch (error: any) {
-      console.error("Error sending payslip:", error);
-      toast({
-        title: "Error",
-        description: error.message || "Failed to send payslip",
         variant: "destructive",
       });
     }
@@ -1276,13 +1255,20 @@ export default function PayrollPageClient({
     setIsEditPayrollRunOpen(true);
     setEditPayrollStep(1);
 
-    // Load existing payslips to get employee data
+    // Load existing payslips and populate deductions/incentives so user can edit them
     try {
       const payslipsData = await getPayslipsByPayrollRun(payrollRun._id);
       const employeeIds = payslipsData.map((p: any) => p.employeeId);
       setEditSelectedEmployees(employeeIds);
 
-      // Initialize settings (simplified - would need to extract from payslips)
+      const GOV_DEDUCTION_NAMES = new Set([
+        "SSS",
+        "PhilHealth",
+        "Pag-IBIG",
+        "Withholding Tax",
+        "Other Deductions",
+      ]);
+
       const allGovSettings: GovernmentDeductionSettings[] = employeeIds.map(
         (employeeId: string) => ({
           employeeId,
@@ -1294,19 +1280,25 @@ export default function PayrollPageClient({
       );
       setEditGovernmentDeductionSettings(allGovSettings);
 
+      // Load manual/custom deductions from each payslip (exclude government lines)
       const allDeductions: EmployeeDeduction[] = employeeIds.map(
-        (employeeId: string) => ({
-          employeeId,
-          deductions: [],
-        })
+        (employeeId: string) => {
+          const slip = payslipsData.find((p: any) => p.employeeId === employeeId);
+          const deductions = (slip?.deductions ?? []).filter(
+            (d: any) => !GOV_DEDUCTION_NAMES.has(d.name)
+          );
+          return { employeeId, deductions };
+        }
       );
       setEditEmployeeDeductions(allDeductions);
 
+      // Load incentives from each payslip
       const allIncentives: EmployeeIncentive[] = employeeIds.map(
-        (employeeId: string) => ({
-          employeeId,
-          incentives: [],
-        })
+        (employeeId: string) => {
+          const slip = payslipsData.find((p: any) => p.employeeId === employeeId);
+          const incentives = slip?.incentives ?? [];
+          return { employeeId, incentives };
+        }
       );
       setEditEmployeeIncentives(allIncentives);
     } catch (error) {
@@ -1631,7 +1623,6 @@ export default function PayrollPageClient({
               currentOrganization={currentOrganization}
               isAdminOrAccounting={isAdminOrAccounting}
               onEditPayslip={handleEditPayslip}
-              onSendPayslip={handleSendPayslip}
             />
           </Suspense>
         )}
