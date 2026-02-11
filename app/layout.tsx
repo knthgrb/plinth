@@ -13,8 +13,8 @@ const openSans = Open_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Zen",
-  description: "Zen is an HRIS system for businesses in the Philippines.",
+  title: "Plinth",
+  description: "Plinth is an HRIS system for businesses in the Philippines.",
 };
 
 export default function RootLayout({

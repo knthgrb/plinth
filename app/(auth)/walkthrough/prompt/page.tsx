@@ -38,7 +38,7 @@ export default function WalkthroughPromptPage() {
         <div className="w-full max-w-md space-y-8">
           <div className="space-y-2">
             <h1 className="text-3xl font-light tracking-tight text-gray-900">
-              Do you want a walkthrough of Zen?
+              Do you want a walkthrough of Plinth?
             </h1>
           </div>
 
@@ -69,7 +69,7 @@ export default function WalkthroughPromptPage() {
           <div className="absolute inset-0 bg-white rounded-lg shadow-2xl flex items-center justify-center">
             <div className="text-center space-y-4 p-12">
               <div className="text-6xl font-bold text-brand-purple mb-4">
-                Zen
+                Plinth
               </div>
               <p className="text-gray-600 text-lg">
                 Your complete HRIS solution

@@ -415,7 +415,7 @@ export default function SignupPage() {
           <div className="absolute inset-0 bg-white rounded-lg shadow-2xl flex items-center justify-center">
             <div className="text-center space-y-4 p-12">
               <div className="text-6xl font-bold text-brand-purple mb-4">
-                Zen
+                Plinth
               </div>
               <p className="text-gray-600 text-lg">
                 Your complete HRIS solution
