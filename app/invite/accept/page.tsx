@@ -20,15 +20,6 @@ import {
 } from "@/components/ui/dialog";
 import { Building2, User, Mail, LogOut } from "lucide-react";
 
-/** Convert organization name to URL slug (e.g. "Test Org" -> "test-org") */
-function nameToSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9-]/g, "");
-}
-
 export default function AcceptInvitationPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -240,10 +231,10 @@ export default function AcceptInvitationPage() {
         name: name || undefined,
       });
 
-      // Wait for organization context to update
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Wait for organization context and replication so getCurrentUser/getUserOrganizations see the new org
+      await new Promise((resolve) => setTimeout(resolve, 800));
 
-      // Redirect to the org they were added to (use slug from org name, not id), based on role
+      // Redirect using organization Id so layout/getCurrentUser receive a valid Convex id
       const role = invitation.role;
       let path = "/dashboard";
       if (role === "accounting") {
@@ -251,14 +242,10 @@ export default function AcceptInvitationPage() {
       } else if (role === "employee") {
         path = "/announcements";
       }
-      const orgName = invitation.organization?.name;
-      const slug = orgName ? nameToSlug(orgName) : null;
       const organizationId = result?.organizationId;
-      const redirectUrl = slug
-        ? `/${slug}${path}`
-        : organizationId
-          ? `/${organizationId}${path}`
-          : path;
+      const redirectUrl = organizationId
+        ? `/${organizationId}${path}`
+        : path;
 
       window.location.href = redirectUrl;
     } catch (err: any) {
