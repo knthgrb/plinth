@@ -8,36 +8,35 @@
 
 export type OrgRole = "admin" | "owner" | "hr" | "employee" | "accounting";
 
-/** Normalize owner to admin for access checks. Case-insensitive so "Employee" and "employee" both work. */
+/** Normalize role for access checks. Case-insensitive; owner and admin both get full access. */
 export function effectiveRole(role: string | undefined | null): OrgRole | null {
   if (!role || typeof role !== "string") return null;
   const r = (role as string).toLowerCase();
-  if (r === "owner") return "admin";
-  if (["admin", "hr", "employee", "accounting"].includes(r)) return r as OrgRole;
+  if (["admin", "owner", "hr", "employee", "accounting"].includes(r)) return r as OrgRole;
   return null;
 }
 
 /** Paths that require no role (e.g. dashboard is allowed for all in org) */
 const PATHS_ALL: string[] = ["/dashboard", "/announcements", "/chat", "/documents"];
 
-/** Path -> roles that can access (admin always implied where applicable) */
+/** Path -> roles that can access (admin and owner have full access everywhere) */
 const ROUTE_ACCESS: Record<string, OrgRole[]> = {
-  "/dashboard": ["admin", "hr", "employee", "accounting"],
-  "/calendar": ["admin", "hr", "employee", "accounting"],
-  "/employee": ["admin", "hr", "accounting", "employee"],
-  "/employees": ["admin", "hr"],
-  "/attendance": ["admin", "hr", "employee"],
-  "/evaluations": ["admin", "hr"],
-  "/leave": ["admin", "hr", "employee"],
-  "/requirements": ["admin", "hr", "employee"],
-  "/recruitment": ["admin", "hr"],
-  "/payroll": ["admin", "hr", "accounting"],
-  "/payslips": ["admin", "hr", "accounting", "employee"],
-  "/accounting": ["admin", "accounting"],
-  "/announcements": ["admin", "hr", "accounting", "employee"],
-  "/chat": ["admin", "hr", "accounting", "employee"],
-  "/documents": ["admin", "hr", "accounting", "employee"],
-  "/assets": ["admin", "hr", "accounting"],
+  "/dashboard": ["admin", "owner", "hr", "employee", "accounting"],
+  "/calendar": ["admin", "owner", "hr", "employee", "accounting"],
+  "/employee": ["admin", "owner", "hr", "accounting", "employee"],
+  "/employees": ["admin", "owner", "hr"],
+  "/attendance": ["admin", "owner", "hr", "employee"],
+  "/evaluations": ["admin", "owner", "hr"],
+  "/leave": ["admin", "owner", "hr", "employee"],
+  "/requirements": ["admin", "owner", "hr", "employee"],
+  "/recruitment": ["admin", "owner", "hr"],
+  "/payroll": ["admin", "owner", "hr", "accounting"],
+  "/payslips": ["admin", "owner", "hr", "accounting", "employee"],
+  "/accounting": ["admin", "owner", "accounting"],
+  "/announcements": ["admin", "owner", "hr", "accounting", "employee"],
+  "/chat": ["admin", "owner", "hr", "accounting", "employee"],
+  "/documents": ["admin", "owner", "hr", "accounting", "employee"],
+  "/assets": ["admin", "owner", "hr", "accounting"],
 };
 
 /**
@@ -55,14 +54,16 @@ export function pathToBaseRoute(pathname: string): string {
  * Use pathname without org prefix or with (will be stripped).
  */
 export function canAccessRoute(pathname: string, role: string | undefined | null): boolean {
+  const roleNorm = effectiveRole(role);
+  if (!roleNorm) return false;
+  // Admin and owner have full access to all routes
+  if (roleNorm === "admin" || roleNorm === "owner") return true;
   let base = pathToBaseRoute(pathname);
   const segments = pathname.replace(/^\//, "").split("/").filter(Boolean);
   // If first segment is not a known route (e.g. it's organizationId), use second segment as base
   if (ROUTE_ACCESS[base] === undefined && segments.length >= 2) {
     base = "/" + segments[1];
   }
-  const roleNorm = effectiveRole(role);
-  if (!roleNorm) return false;
   const allowed = ROUTE_ACCESS[base];
   if (!allowed) return false;
   return allowed.includes(roleNorm);
