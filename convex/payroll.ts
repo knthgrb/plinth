@@ -1692,7 +1692,7 @@ export const updatePayrollRun = mutation({
     }
 
     const userRecord = await checkAuth(ctx, payrollRun.organizationId);
-    const allowedRoles = ["admin", "hr", "accounting"];
+    const allowedRoles = ["owner", "admin", "hr", "accounting"];
     if (!allowedRoles.includes(userRecord.role)) {
       throw new Error("Not authorized to update payroll run");
     }
@@ -2392,7 +2392,7 @@ export const updatePayrollRunStatus = mutation({
     if (!payrollRun) throw new Error("Payroll run not found");
 
     const userRecord = await checkAuth(ctx, payrollRun.organizationId);
-    const allowedRoles = ["admin", "hr", "accounting"];
+    const allowedRoles = ["owner", "admin", "hr", "accounting"];
     if (!allowedRoles.includes(userRecord.role)) {
       throw new Error("Not authorized to update payroll run status");
     }
@@ -3199,9 +3199,9 @@ export const updatePayslip = mutation({
     const payslip = await ctx.db.get(args.payslipId);
     if (!payslip) throw new Error("Payslip not found");
 
-    // Check auth - only admin, hr, or accounting can edit
+    // Check auth - owner, admin, hr, or accounting can edit
     const userRecord = await checkAuth(ctx, payslip.organizationId);
-    const allowedRoles = ["admin", "hr", "accounting"];
+    const allowedRoles = ["owner", "admin", "hr", "accounting"];
     if (!allowedRoles.includes(userRecord.role)) {
       throw new Error("Not authorized to edit payslips");
     }
