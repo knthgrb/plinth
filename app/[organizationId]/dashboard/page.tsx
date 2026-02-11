@@ -93,10 +93,25 @@ export default function DashboardPage() {
     }
   }, [user, currentOrganizationId, router]);
 
+  // All hooks must run before any conditional return (React rules of hooks)
+  const recentAnnouncements = useMemo(() => {
+    if (!announcements) return [];
+    return announcements.slice(0, 5);
+  }, [announcements]);
+
+  const recentPayrollRuns = useMemo(() => {
+    if (!payrollRuns) return [];
+    return payrollRuns.slice(0, 3);
+  }, [payrollRuns]);
+
+  const recentLeaveRequests = useMemo(() => {
+    if (!leaveRequests) return [];
+    return leaveRequests.slice(0, 5);
+  }, [leaveRequests]);
+
   if (!currentOrganizationId) return null;
 
   // Don't render dashboard content if user should be redirected
-  // Only redirect if we have confirmed user data (not just loading state)
   if (user && (user.role === "employee" || user.role === "accounting")) {
     return (
       <MainLayout>
@@ -106,24 +121,6 @@ export default function DashboardPage() {
       </MainLayout>
     );
   }
-
-  // Get recent announcements (last 5)
-  const recentAnnouncements = useMemo(() => {
-    if (!announcements) return [];
-    return announcements.slice(0, 5);
-  }, [announcements]);
-
-  // Get recent payroll runs (last 3)
-  const recentPayrollRuns = useMemo(() => {
-    if (!payrollRuns) return [];
-    return payrollRuns.slice(0, 3);
-  }, [payrollRuns]);
-
-  // Get recent leave requests (last 5)
-  const recentLeaveRequests = useMemo(() => {
-    if (!leaveRequests) return [];
-    return leaveRequests.slice(0, 5);
-  }, [leaveRequests]);
 
   const stats = [
     {

@@ -51,6 +51,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { useOrganization } from "@/hooks/organization-context";
+import { getOrganizationPath } from "@/utils/organization-routing";
 import {
   createCostItem,
   updateCostItem,
@@ -120,9 +121,11 @@ export default function AccountingPage() {
   // Redirect if no access
   useEffect(() => {
     if (user !== undefined && !hasAccess) {
-      router.push("/forbidden");
+      router.replace(
+        getOrganizationPath(currentOrganizationId ?? "", "/forbidden")
+      );
     }
-  }, [user, hasAccess, router]);
+  }, [user, hasAccess, router, currentOrganizationId]);
 
   const itemsByCategoryName = useMemo(() => {
     const map = new Map<string, any[]>();

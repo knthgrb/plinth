@@ -513,7 +513,6 @@ export async function proxy(request: NextRequest) {
       );
     }
 
-    // Redirect to forbidden page, preserving organizationId if present
     const orgId = urlOrganizationId || cachedOrganizationId;
     const forbiddenPath = orgId
       ? buildPathWithOrg(orgId, "/forbidden")

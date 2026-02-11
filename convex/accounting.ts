@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 
-// Helper to check authorization - only accounting role or admin
+// Helper to check authorization - accounting, admin, and owner can access
 async function checkAuth(
   ctx: any,
   organizationId: any,
@@ -44,13 +44,11 @@ async function checkAuth(
     userRole = userRecord.role;
   }
 
-  // Only allow accounting role or admin
+  // Allow accounting, admin, and owner
   const allowedRoles = ["owner", "admin", "accounting"];
   if (requiredRole && !allowedRoles.includes(userRole || "")) {
     throw new Error("Not authorized - accounting role required");
   }
-
-  // For read operations, also allow accounting role
   if (!requiredRole && !allowedRoles.includes(userRole || "")) {
     throw new Error("Not authorized - accounting role required");
   }
@@ -65,7 +63,12 @@ export const getCostItems = query({
     categoryName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await checkAuth(ctx, args.organizationId);
+    // Avoid server error when user/org not yet replicated after login or invite
+    try {
+      await checkAuth(ctx, args.organizationId);
+    } catch {
+      return [];
+    }
     const items = await ctx.db
       .query("accountingCostItems")
       .withIndex("by_organization", (q: any) =>
