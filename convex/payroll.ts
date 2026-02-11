@@ -3399,6 +3399,18 @@ export const updatePayslip = mutation({
         updatedEditHistory.length > 0 ? updatedEditHistory : undefined,
     });
 
+    // Re-sync accounting cost items when deductions/incentives/allowance change
+    // so that Payroll, SSS, PhilHealth, Pag-IBIG, Tax expense items reflect updated totals
+    const payrollRun = payslip.payrollRunId
+      ? await ctx.db.get(payslip.payrollRunId)
+      : null;
+    if (
+      payrollRun &&
+      (payrollRun.status === "finalized" || payrollRun.status === "paid")
+    ) {
+      await createExpenseItemsFromPayroll(ctx, payrollRun);
+    }
+
     return { success: true };
   },
 });

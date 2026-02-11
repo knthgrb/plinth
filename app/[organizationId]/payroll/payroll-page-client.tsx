@@ -284,6 +284,11 @@ export default function PayrollPageClient({
     user?.role === "admin" ||
     user?.role === "hr" ||
     user?.role === "accounting";
+  /** Admin, HR, owner can edit deductions in pay preview (Step 5) */
+  const canEditPreviewDeductions =
+    user?.role === "admin" ||
+    user?.role === "hr" ||
+    user?.role === "owner";
   const [payrollRuns, setPayrollRuns] = useState<any[]>(
     initialPayrollRuns ?? []
   );
@@ -799,19 +804,30 @@ export default function PayrollPageClient({
   };
 
   const addDeduction = (employeeId: string) => {
-    const updated = employeeDeductions.map((ed) => {
-      if (ed.employeeId === employeeId) {
-        return {
-          ...ed,
-          deductions: [
-            ...ed.deductions,
-            { name: "", amount: 0, type: "custom" },
-          ],
-        };
-      }
-      return ed;
-    });
-    setEmployeeDeductions(updated);
+    const existing = employeeDeductions.find((ed) => ed.employeeId === employeeId);
+    if (existing) {
+      const updated = employeeDeductions.map((ed) => {
+        if (ed.employeeId === employeeId) {
+          return {
+            ...ed,
+            deductions: [
+              ...ed.deductions,
+              { name: "", amount: 0, type: "custom" },
+            ],
+          };
+        }
+        return ed;
+      });
+      setEmployeeDeductions(updated);
+    } else {
+      setEmployeeDeductions([
+        ...employeeDeductions,
+        {
+          employeeId,
+          deductions: [{ name: "", amount: 0, type: "custom" }],
+        },
+      ]);
+    }
   };
 
   const removeDeduction = (employeeId: string, index: number) => {
@@ -1453,6 +1469,12 @@ export default function PayrollPageClient({
                     cutoffStart={cutoffStart}
                     cutoffEnd={cutoffEnd}
                     currentOrganization={currentOrganization}
+                    canEditDeductions={canEditPreviewDeductions}
+                    employeeDeductions={employeeDeductions}
+                    onAddDeduction={addDeduction}
+                    onRemoveDeduction={removeDeduction}
+                    onUpdateDeduction={updateDeduction}
+                    onRecomputePreview={computePreview}
                   />
                 </Suspense>
               )}
