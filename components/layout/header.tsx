@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   LogOut,
   ChevronDown,
@@ -35,6 +36,7 @@ type HeaderProps = {
 };
 
 export function Header({ onMobileMenuOpen }: HeaderProps) {
+  const router = useRouter();
   const { currentOrganizationId, clearOrganization } = useOrganization();
   const user = useQuery(
     (api as any).organizations.getCurrentUser,
@@ -52,8 +54,8 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
   const handleLogout = async () => {
     clearOrganization();
     await authClient.signOut();
-    // Full page navigation avoids React "fewer hooks" error (#300) when auth state flips to unauthenticated
-    window.location.href = "/login";
+    // Client-side navigation avoids browser "Leave site?" dialog on logout
+    router.replace("/login");
   };
 
   const userInitials =

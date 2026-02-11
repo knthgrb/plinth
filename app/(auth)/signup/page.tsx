@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
+import { MainLoader } from "@/components/main-loader";
 
 type SignupStep = 1 | 2;
 
@@ -129,16 +130,7 @@ export default function SignupPage() {
     checkSessionAndSetup();
   }, [userOrganizations, searchParams, router, toast, hasCheckedSession]);
 
-  // If checking session, show loading state
-  if (checkingSession) {
-    return (
-      <div className="flex min-h-screen bg-white items-center justify-center">
-        <div className="text-center">
-          <div className="text-gray-500">Loading...</div>
-        </div>
-      </div>
-    );
-  }
+  if (checkingSession) return <MainLoader />;
 
   const handleStep1Submit = async (e: React.FormEvent) => {
     e.preventDefault();

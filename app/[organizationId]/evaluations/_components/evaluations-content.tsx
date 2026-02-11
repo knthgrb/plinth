@@ -46,6 +46,7 @@ import { createEvaluation, updateEvaluation } from "@/actions/evaluations";
 import { updateEvaluationColumns } from "@/actions/settings";
 import { cn } from "@/utils/utils";
 import { EvaluationColumnManagementModal } from "./evaluation-column-management-modal";
+import { MainLoader } from "@/components/main-loader";
 
 type EvaluationColumn = {
   id: string;
@@ -66,7 +67,7 @@ export function EvaluationsContent() {
 
   const employees = useQuery(
     (api as any).employees.getEmployees,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   const evaluations = useQuery(
@@ -75,12 +76,12 @@ export function EvaluationsContent() {
       ? {
           organizationId: currentOrganizationId,
         }
-      : "skip"
+      : "skip",
   );
 
   const settings = useQuery(
     (api as any).settings.getSettings,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   // Load columns from settings
@@ -93,7 +94,7 @@ export function EvaluationsContent() {
       // Filter out any rating column entries (those with -rating suffix)
       // Rating columns are now rendered dynamically based on hasRatingColumn flag
       const filteredColumns = settings.evaluationColumns.filter(
-        (col: EvaluationColumn) => !col.id.endsWith("-rating")
+        (col: EvaluationColumn) => !col.id.endsWith("-rating"),
       );
       setEvaluationColumns(filteredColumns);
     }
@@ -171,12 +172,13 @@ export function EvaluationsContent() {
           (emp: any) =>
             `${emp.personalInfo?.firstName ?? ""} ${emp.personalInfo?.lastName ?? ""}`
               .toLowerCase()
-              .includes(q) || emp.personalInfo?.email?.toLowerCase().includes(q)
+              .includes(q) ||
+            emp.personalInfo?.email?.toLowerCase().includes(q),
         )
       : list;
     if (departmentFilter === "all") return bySearch;
     return bySearch.filter(
-      (emp: any) => emp.employment?.department === departmentFilter
+      (emp: any) => emp.employment?.department === departmentFilter,
     );
   }, [employees, employeeSearch, departmentFilter]);
 
@@ -195,11 +197,7 @@ export function EvaluationsContent() {
   }
 
   if (user === undefined || settings === undefined) {
-    return (
-      <MainLayout>
-        <div className="p-8">Loading...</div>
-      </MainLayout>
-    );
+    return <MainLoader />;
   }
 
   if (!isOwnerOrAdminOrHr) {
@@ -216,7 +214,7 @@ export function EvaluationsContent() {
       // Filter out any rating column entries before saving
       // Rating columns are rendered dynamically, not stored as separate entries
       const columnsToSave = columns.filter(
-        (col) => !col.id.endsWith("-rating")
+        (col) => !col.id.endsWith("-rating"),
       );
       await updateEvaluationColumns({
         organizationId: currentOrganizationId,
@@ -240,7 +238,7 @@ export function EvaluationsContent() {
   const handleCellClick = (
     employeeId: string,
     column: EvaluationColumn,
-    existingEvaluation?: any
+    existingEvaluation?: any,
   ) => {
     setEditingCell({
       employeeId,
@@ -254,13 +252,13 @@ export function EvaluationsContent() {
     setSelectedEmployeeId(employeeId);
     if (existingEvaluation) {
       setEvaluationDate(
-        format(new Date(existingEvaluation.evaluationDate), "yyyy-MM-dd")
+        format(new Date(existingEvaluation.evaluationDate), "yyyy-MM-dd"),
       );
       setLabel(existingEvaluation.label);
       setRating(
         existingEvaluation.rating != null
           ? String(existingEvaluation.rating)
-          : ""
+          : "",
       );
       setTextValue(existingEvaluation.notes || "");
       setAttachmentUrl(existingEvaluation.attachmentUrl || "");
@@ -392,10 +390,10 @@ export function EvaluationsContent() {
   const getCellValue = (
     employeeId: string,
     column: EvaluationColumn,
-    isRatingColumn: boolean = false
+    isRatingColumn: boolean = false,
   ) => {
     const ev = evaluations?.find(
-      (e: any) => e.employeeId === employeeId && e.label === column.label
+      (e: any) => e.employeeId === employeeId && e.label === column.label,
     );
     if (!ev) return null;
 
@@ -429,10 +427,10 @@ export function EvaluationsContent() {
   /** Combined display for one evaluation type (one cell = date + rating + note indicator) */
   const getCellDisplay = (
     employeeId: string,
-    column: EvaluationColumn
+    column: EvaluationColumn,
   ): { primary: string; rating?: number | null; hasNotes: boolean } | null => {
     const ev = evaluations?.find(
-      (e: any) => e.employeeId === employeeId && e.label === column.label
+      (e: any) => e.employeeId === employeeId && e.label === column.label,
     );
     if (!ev) return null;
     const hasNotes = !!(ev.notes?.trim() || ev.attachmentUrl);
@@ -517,14 +515,14 @@ export function EvaluationsContent() {
                   ? upcomingEvaluations
                       .map(
                         (u: UpcomingItem) =>
-                          `${u.employeeName} (${format(new Date(u.date), "MMM d")})`
+                          `${u.employeeName} (${format(new Date(u.date), "MMM d")})`,
                       )
                       .join(", ")
                   : `${upcomingEvaluations.length} evaluations due this month: ${upcomingEvaluations
                       .slice(0, 2)
                       .map(
                         (u: UpcomingItem) =>
-                          `${u.employeeName} (${format(new Date(u.date), "MMM d")})`
+                          `${u.employeeName} (${format(new Date(u.date), "MMM d")})`,
                       )
                       .join(", ")} and ${upcomingEvaluations.length - 2} more`}
             </p>
@@ -533,7 +531,7 @@ export function EvaluationsContent() {
                 type="button"
                 onClick={() => {
                   const el = document.querySelector(
-                    '[class*="overflow-x-auto"]'
+                    '[class*="overflow-x-auto"]',
                   );
                   el?.scrollIntoView({ behavior: "smooth" });
                 }}
@@ -576,7 +574,7 @@ export function EvaluationsContent() {
                     "inline-flex items-center gap-1.5 h-8 px-2.5 rounded-2xl text-xs font-semibold text-[rgb(64,64,64)] bg-white transition-colors hover:bg-[rgb(250,250,250)]",
                     departmentFilter !== "all"
                       ? "border border-[#DDDDDD] border-solid"
-                      : "border border-dashed border-[#DDDDDD]"
+                      : "border border-dashed border-[#DDDDDD]",
                   )}
                 >
                   {departmentFilter !== "all" ? (
@@ -605,7 +603,7 @@ export function EvaluationsContent() {
                       </span>
                       <span className="font-semibold">
                         {evaluationDepartments.find(
-                          (d) => d.name === departmentFilter
+                          (d) => d.name === departmentFilter,
                         )?.name ?? "All"}
                       </span>
                       <div
@@ -613,7 +611,7 @@ export function EvaluationsContent() {
                         style={{
                           backgroundColor:
                             evaluationDepartments.find(
-                              (d) => d.name === departmentFilter
+                              (d) => d.name === departmentFilter,
                             )?.color ?? "#9CA3AF",
                         }}
                       />
@@ -645,7 +643,7 @@ export function EvaluationsContent() {
                       "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold",
                       departmentFilter === "all"
                         ? "bg-[rgb(245,245,245)]"
-                        : "hover:bg-[rgb(250,250,250)]"
+                        : "hover:bg-[rgb(250,250,250)]",
                     )}
                   >
                     <div className="h-2.5 w-2.5 rounded-full shrink-0 bg-[#9CA3AF]" />
@@ -663,7 +661,7 @@ export function EvaluationsContent() {
                         "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold",
                         departmentFilter === dept.name
                           ? "bg-[rgb(245,245,245)]"
-                          : "hover:bg-[rgb(250,250,250)]"
+                          : "hover:bg-[rgb(250,250,250)]",
                       )}
                     >
                       <div
@@ -711,7 +709,7 @@ export function EvaluationsContent() {
                             "employeeId",
                             "position",
                             "hiredDate",
-                          ].includes(col.id)
+                          ].includes(col.id),
                       )
                       .map((col) => (
                         <th
@@ -762,7 +760,7 @@ export function EvaluationsContent() {
                                 {emp.employment.hireDate
                                   ? format(
                                       new Date(emp.employment.hireDate),
-                                      "MMM dd, yyyy"
+                                      "MMM dd, yyyy",
                                     )
                                   : "—"}
                               </td>
@@ -779,13 +777,13 @@ export function EvaluationsContent() {
                                 "employeeId",
                                 "position",
                                 "hiredDate",
-                              ].includes(col.id)
+                              ].includes(col.id),
                           )
                           .map((col) => {
                             const ev = evaluations?.find(
                               (e: any) =>
                                 e.employeeId === emp._id &&
-                                e.label === col.label
+                                e.label === col.label,
                             );
                             const display = getCellDisplay(emp._id, col);
                             const showRating =
@@ -835,7 +833,7 @@ export function EvaluationsContent() {
                                 "employeeId",
                                 "position",
                                 "hiredDate",
-                              ].includes(col.id)
+                              ].includes(col.id),
                           ).length
                         }
                         className="py-8 text-center text-gray-500"
@@ -877,14 +875,14 @@ export function EvaluationsContent() {
                 selectedEmployeeId &&
                 (() => {
                   const emp = employees?.find(
-                    (e: any) => e._id === selectedEmployeeId
+                    (e: any) => e._id === selectedEmployeeId,
                   );
                   const empName = emp
                     ? `${emp.personalInfo.firstName} ${emp.personalInfo.lastName}`
                     : "—";
                   const ev = editingCell.existingEvaluation;
                   const col = evaluationColumns.find(
-                    (c) => c.id === editingCell.columnId
+                    (c) => c.id === editingCell.columnId,
                   );
                   return (
                     <>
@@ -907,7 +905,7 @@ export function EvaluationsContent() {
                                 <p className="mt-1 text-sm text-[rgb(64,64,64)]">
                                   {format(
                                     new Date(ev.evaluationDate),
-                                    "MMMM d, yyyy"
+                                    "MMMM d, yyyy",
                                   )}
                                 </p>
                               </div>

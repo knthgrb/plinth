@@ -51,6 +51,7 @@ import {
 } from "@/actions/assets";
 import { useToast } from "@/components/ui/use-toast";
 import { format } from "date-fns";
+import { MainLoader } from "@/components/main-loader";
 
 export default function AssetsPage() {
   const { toast } = useToast();
@@ -319,13 +320,7 @@ export default function AssetsPage() {
   }, 0);
 
   if (loading) {
-    return (
-      <MainLayout>
-        <div className="flex h-screen items-center justify-center">
-          <div className="text-gray-500">Loading...</div>
-        </div>
-      </MainLayout>
-    );
+    return <MainLoader />;
   }
 
   return (

@@ -41,11 +41,11 @@ const ROUTE_ACCESS: Record<string, OrgRole[]> = {
 };
 
 /**
- * Normalize path to a base route (e.g. /dashboard/foo -> /dashboard, /documents/123/edit -> /documents)
+ * Normalize path to a base route (e.g. /dashboard/foo -> /dashboard, /documents/123/edit -> /documents).
+ * Expects pathname without org prefix (e.g. /accounting not /orgId/accounting).
  */
 export function pathToBaseRoute(pathname: string): string {
-  const withoutOrg = pathname.replace(/^\/[^/]+/, "") || "/dashboard";
-  const segments = withoutOrg.split("/").filter(Boolean);
+  const segments = pathname.replace(/^\//, "").split("/").filter(Boolean);
   if (segments.length === 0) return "/dashboard";
   return "/" + segments[0];
 }

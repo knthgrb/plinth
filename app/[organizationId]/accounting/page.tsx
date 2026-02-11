@@ -60,10 +60,18 @@ import {
 import { generateUploadUrl, getFileUrl } from "@/actions/files";
 import { useToast } from "@/components/ui/use-toast";
 import { getStatusBadgeClass, getStatusBadgeStyle } from "@/utils/colors";
+import { MainLoader } from "@/components/main-loader";
 
 const REQUIRED_CATEGORIES = [
-  { name: "Employee Related Cost", description: "Costs related to employees including payroll, benefits, and leave" },
-  { name: "Operational Cost", description: "Operational expenses for running the business" },
+  {
+    name: "Employee Related Cost",
+    description:
+      "Costs related to employees including payroll, benefits, and leave",
+  },
+  {
+    name: "Operational Cost",
+    description: "Operational expenses for running the business",
+  },
 ] as const;
 
 const PAGE_SIZE_OPTIONS = [30, 50, 100] as const;
@@ -77,21 +85,25 @@ export default function AccountingPage() {
 
   const user = useQuery(
     api.organizations.getCurrentUser,
-    orgId ? { organizationId: orgId } : "skip"
+    orgId ? { organizationId: orgId } : "skip",
   );
   const costItemsFromQuery = useQuery(
     api.accounting.getCostItems,
-    orgId ? { organizationId: orgId } : "skip"
+    orgId ? { organizationId: orgId } : "skip",
   );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [isItemDialogOpen, setIsItemDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
-  const [selectedCategoryName, setSelectedCategoryName] = useState<string | null>(null);
+  const [selectedCategoryName, setSelectedCategoryName] = useState<
+    string | null
+  >(null);
   const [uploadingReceipts, setUploadingReceipts] = useState(false);
   const [receiptFiles, setReceiptFiles] = useState<File[]>([]);
-  const [receiptUrls, setReceiptUrls] = useState<{ url: string; id: string }[]>([]);
+  const [receiptUrls, setReceiptUrls] = useState<{ url: string; id: string }[]>(
+    [],
+  );
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteItemId, setDeleteItemId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -103,7 +115,12 @@ export default function AccountingPage() {
     description: "",
     amount: "",
     amountPaid: "",
-    frequency: "one-time" as "one-time" | "daily" | "weekly" | "monthly" | "yearly",
+    frequency: "one-time" as
+      | "one-time"
+      | "daily"
+      | "weekly"
+      | "monthly"
+      | "yearly",
     status: "pending" as "pending" | "partial" | "paid" | "overdue",
     dueDate: "",
     notes: "",
@@ -112,7 +129,9 @@ export default function AccountingPage() {
   const hasAccess =
     user !== undefined &&
     user != null &&
-    (user.role === "accounting" || user.role === "admin" || user.role === "owner");
+    (user.role === "accounting" ||
+      user.role === "admin" ||
+      user.role === "owner");
 
   const categories = REQUIRED_CATEGORIES;
   const costItems = costItemsFromQuery ?? [];
@@ -122,7 +141,7 @@ export default function AccountingPage() {
   useEffect(() => {
     if (user !== undefined && !hasAccess) {
       router.replace(
-        getOrganizationPath(currentOrganizationId ?? "", "/forbidden")
+        getOrganizationPath(currentOrganizationId ?? "", "/forbidden"),
       );
     }
   }, [user, hasAccess, router, currentOrganizationId]);
@@ -139,7 +158,7 @@ export default function AccountingPage() {
 
   const getItemsForCategory = useCallback(
     (categoryName: string) => itemsByCategoryName.get(categoryName) ?? [],
-    [itemsByCategoryName]
+    [itemsByCategoryName],
   );
 
   const getPaginatedItems = useCallback(
@@ -149,23 +168,29 @@ export default function AccountingPage() {
       const start = (page - 1) * pageSize;
       return items.slice(start, start + pageSize);
     },
-    [getItemsForCategory, categoryPage, pageSize]
+    [getItemsForCategory, categoryPage, pageSize],
   );
 
-  const setPageForCategory = useCallback((categoryName: string, page: number) => {
-    setCategoryPage((prev) => ({ ...prev, [categoryName]: page }));
-  }, []);
+  const setPageForCategory = useCallback(
+    (categoryName: string, page: number) => {
+      setCategoryPage((prev) => ({ ...prev, [categoryName]: page }));
+    },
+    [],
+  );
 
   const totalPagesForCategory = useCallback(
     (categoryName: string) => {
       const total = getItemsForCategory(categoryName).length;
       return Math.max(1, Math.ceil(total / pageSize));
     },
-    [getItemsForCategory, pageSize]
+    [getItemsForCategory, pageSize],
   );
 
   const categoryTotals = useMemo(() => {
-    const out: Record<string, { total: number; paid: number; remaining: number }> = {};
+    const out: Record<
+      string,
+      { total: number; paid: number; remaining: number }
+    > = {};
     for (const cat of categories) {
       const items = itemsByCategoryName.get(cat.name) ?? [];
       const total = items.reduce((s, i) => s + (i.amount ?? 0), 0);
@@ -175,52 +200,55 @@ export default function AccountingPage() {
     return out;
   }, [categories, itemsByCategoryName]);
 
-  const handleOpenItemDialog = useCallback((categoryName?: string, item?: any) => {
-    if (item) {
-      setEditingItem(item);
-      setItemFormData({
-        name: item.name,
-        description: item.description || "",
-        amount: item.amount.toString(),
-        amountPaid: (item.amountPaid || 0).toString(),
-        frequency: item.frequency || "one-time",
-        status: item.status || "pending",
-        dueDate: item.dueDate
-          ? new Date(item.dueDate).toISOString().split("T")[0]
-          : "",
-        notes: item.notes || "",
-      });
-      setSelectedCategoryName(item.categoryName ?? "Employee Related Cost");
-      // Load existing receipt URLs
-      if (item.receipts && item.receipts.length > 0) {
-        Promise.all(
-          item.receipts.map(async (id: string) => {
-            const url = await getFileUrl(id);
-            return { url, id };
-          })
-        ).then((receipts) => setReceiptUrls(receipts));
+  const handleOpenItemDialog = useCallback(
+    (categoryName?: string, item?: any) => {
+      if (item) {
+        setEditingItem(item);
+        setItemFormData({
+          name: item.name,
+          description: item.description || "",
+          amount: item.amount.toString(),
+          amountPaid: (item.amountPaid || 0).toString(),
+          frequency: item.frequency || "one-time",
+          status: item.status || "pending",
+          dueDate: item.dueDate
+            ? new Date(item.dueDate).toISOString().split("T")[0]
+            : "",
+          notes: item.notes || "",
+        });
+        setSelectedCategoryName(item.categoryName ?? "Employee Related Cost");
+        // Load existing receipt URLs
+        if (item.receipts && item.receipts.length > 0) {
+          Promise.all(
+            item.receipts.map(async (id: string) => {
+              const url = await getFileUrl(id);
+              return { url, id };
+            }),
+          ).then((receipts) => setReceiptUrls(receipts));
+        } else {
+          setReceiptUrls([]);
+        }
+        setReceiptFiles([]);
       } else {
+        setEditingItem(null);
+        setItemFormData({
+          name: "",
+          description: "",
+          amount: "",
+          amountPaid: "",
+          frequency: "one-time",
+          status: "pending",
+          dueDate: "",
+          notes: "",
+        });
+        setSelectedCategoryName(categoryName ?? null);
         setReceiptUrls([]);
+        setReceiptFiles([]);
       }
-      setReceiptFiles([]);
-    } else {
-      setEditingItem(null);
-      setItemFormData({
-        name: "",
-        description: "",
-        amount: "",
-        amountPaid: "",
-        frequency: "one-time",
-        status: "pending",
-        dueDate: "",
-        notes: "",
-      });
-      setSelectedCategoryName(categoryName ?? null);
-      setReceiptUrls([]);
-      setReceiptFiles([]);
-    }
-    setIsItemDialogOpen(true);
-  }, []);
+      setIsItemDialogOpen(true);
+    },
+    [],
+  );
 
   const handleCloseItemDialog = () => {
     setIsItemDialogOpen(false);
@@ -402,13 +430,7 @@ export default function AccountingPage() {
 
   // Show loading or forbidden
   if (user === undefined || loading) {
-    return (
-      <MainLayout>
-        <div className="flex h-screen items-center justify-center">
-          <div className="text-gray-500">Loading...</div>
-        </div>
-      </MainLayout>
-    );
+    return <MainLoader />;
   }
 
   if (
@@ -454,7 +476,9 @@ export default function AccountingPage() {
           {/* Summary Cards */}
           <div className="grid gap-4 md:grid-cols-2 mb-6">
             {categories.map((category) => {
-              const { total, paid, remaining } = categoryTotals[category.name] ?? {
+              const { total, paid, remaining } = categoryTotals[
+                category.name
+              ] ?? {
                 total: 0,
                 paid: 0,
                 remaining: 0,
@@ -475,20 +499,32 @@ export default function AccountingPage() {
                     <div className="space-y-2">
                       <div>
                         <div className="text-2xl font-bold">
-                          ₱{total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ₱
+                          {total.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
                         </div>
                         <p className="text-xs text-gray-500">Total Amount</p>
                       </div>
                       <div className="flex justify-between text-sm">
                         <div>
                           <span className="text-green-600 font-medium">
-                            ₱{paid.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            ₱
+                            {paid.toLocaleString("en-US", {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
                           </span>
                           <p className="text-xs text-gray-500">Paid</p>
                         </div>
                         <div>
                           <span className="text-orange-600 font-medium">
-                            ₱{remaining.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            ₱
+                            {remaining.toLocaleString("en-US", {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
                           </span>
                           <p className="text-xs text-gray-500">Remaining</p>
                         </div>
@@ -561,104 +597,120 @@ export default function AccountingPage() {
                             </TableHeader>
                             <TableBody>
                               {categoryItems.map((item) => {
-                              const remaining =
-                                (item.amount || 0) - (item.amountPaid || 0);
-                              return (
-                                <TableRow key={item._id}>
-                                  <TableCell className="font-medium">
-                                    <div>
-                                      {item.name}
-                                      {item.description && (
-                                        <p className="text-xs text-gray-500 mt-1">
-                                          {item.description}
-                                        </p>
-                                      )}
-                                    </div>
-                                  </TableCell>
-                                  <TableCell>
-                                    <span className="font-medium">
-                                      ₱{item.amount?.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}
-                                    </span>
-                                  </TableCell>
-                                  <TableCell>
-                                    <span className="text-green-600">
-                                      ₱{(item.amountPaid || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                    </span>
-                                  </TableCell>
-                                  <TableCell>
-                                    <span className="text-orange-600">
-                                      ₱{remaining.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                    </span>
-                                  </TableCell>
-                                  <TableCell>
-                                    {item.frequency ? (
-                                      <Badge variant="outline">
-                                        {item.frequency
-                                          .charAt(0)
-                                          .toUpperCase() +
-                                          item.frequency.slice(1)}
-                                      </Badge>
-                                    ) : (
-                                      <span className="text-gray-400">-</span>
-                                    )}
-                                  </TableCell>
-                                  <TableCell>
-                                    <div className="flex items-center gap-1">
-                                      <Calendar className="h-3 w-3 text-gray-400" />
-                                      <span className="text-sm">
-                                        {formatDate(item.dueDate)}
+                                const remaining =
+                                  (item.amount || 0) - (item.amountPaid || 0);
+                                return (
+                                  <TableRow key={item._id}>
+                                    <TableCell className="font-medium">
+                                      <div>
+                                        {item.name}
+                                        {item.description && (
+                                          <p className="text-xs text-gray-500 mt-1">
+                                            {item.description}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </TableCell>
+                                    <TableCell>
+                                      <span className="font-medium">
+                                        ₱
+                                        {item.amount?.toLocaleString("en-US", {
+                                          minimumFractionDigits: 2,
+                                          maximumFractionDigits: 2,
+                                        }) || "0.00"}
                                       </span>
-                                    </div>
-                                  </TableCell>
-                                  <TableCell>
-                                    <Badge
-                                      className={getStatusBadgeClass(
-                                        item.status || "pending"
+                                    </TableCell>
+                                    <TableCell>
+                                      <span className="text-green-600">
+                                        ₱
+                                        {(item.amountPaid || 0).toLocaleString(
+                                          "en-US",
+                                          {
+                                            minimumFractionDigits: 2,
+                                            maximumFractionDigits: 2,
+                                          },
+                                        )}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell>
+                                      <span className="text-orange-600">
+                                        ₱
+                                        {remaining.toLocaleString("en-US", {
+                                          minimumFractionDigits: 2,
+                                          maximumFractionDigits: 2,
+                                        })}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell>
+                                      {item.frequency ? (
+                                        <Badge variant="outline">
+                                          {item.frequency
+                                            .charAt(0)
+                                            .toUpperCase() +
+                                            item.frequency.slice(1)}
+                                        </Badge>
+                                      ) : (
+                                        <span className="text-gray-400">-</span>
                                       )}
-                                      style={getStatusBadgeStyle(
-                                        item.status || "pending"
-                                      )}
-                                    >
-                                      {item.status?.charAt(0).toUpperCase() +
-                                        item.status?.slice(1) || "Pending"}
-                                    </Badge>
-                                  </TableCell>
-                                  <TableCell className="text-right">
-                                    <div className="flex justify-end gap-2">
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() =>
-                                          handleOpenItemDialog(
-                                            category.name,
-                                            item
-                                          )
-                                        }
+                                    </TableCell>
+                                    <TableCell>
+                                      <div className="flex items-center gap-1">
+                                        <Calendar className="h-3 w-3 text-gray-400" />
+                                        <span className="text-sm">
+                                          {formatDate(item.dueDate)}
+                                        </span>
+                                      </div>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Badge
+                                        className={getStatusBadgeClass(
+                                          item.status || "pending",
+                                        )}
+                                        style={getStatusBadgeStyle(
+                                          item.status || "pending",
+                                        )}
                                       >
-                                        <Edit className="h-4 w-4" />
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => {
-                                          setDeleteItemId(item._id);
-                                          setDeleteDialogOpen(true);
-                                        }}
-                                      >
-                                        <Trash2 className="h-4 w-4 text-red-600" />
-                                      </Button>
-                                    </div>
-                                  </TableCell>
-                                </TableRow>
-                              );
-                            })}
+                                        {item.status?.charAt(0).toUpperCase() +
+                                          item.status?.slice(1) || "Pending"}
+                                      </Badge>
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                      <div className="flex justify-end gap-2">
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() =>
+                                            handleOpenItemDialog(
+                                              category.name,
+                                              item,
+                                            )
+                                          }
+                                        >
+                                          <Edit className="h-4 w-4" />
+                                        </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => {
+                                            setDeleteItemId(item._id);
+                                            setDeleteDialogOpen(true);
+                                          }}
+                                        >
+                                          <Trash2 className="h-4 w-4 text-red-600" />
+                                        </Button>
+                                      </div>
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
                             </TableBody>
                           </Table>
                         </div>
                         {allCategoryItems.length > pageSize && (
                           <div className="flex items-center justify-between border-t pt-4 mt-4">
                             <p className="text-sm text-gray-600">
-                              Showing {start + 1}–{end} of {allCategoryItems.length}
+                              Showing {start + 1}–{end} of{" "}
+                              {allCategoryItems.length}
                             </p>
                             <div className="flex items-center gap-2">
                               <Button
@@ -667,7 +719,7 @@ export default function AccountingPage() {
                                 onClick={() =>
                                   setPageForCategory(
                                     category.name,
-                                    Math.max(1, currentPage - 1)
+                                    Math.max(1, currentPage - 1),
                                   )
                                 }
                                 disabled={currentPage <= 1}
@@ -683,7 +735,7 @@ export default function AccountingPage() {
                                 onClick={() =>
                                   setPageForCategory(
                                     category.name,
-                                    Math.min(totalPages, currentPage + 1)
+                                    Math.min(totalPages, currentPage + 1),
                                   )
                                 }
                                 disabled={currentPage >= totalPages}

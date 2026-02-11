@@ -24,12 +24,12 @@ export class ConvexErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     const errorMessage = error.message || String(error);
 
-    // Unauthenticated during logout: redirect to login immediately so we never show an error flash
-    if (
-      (errorMessage.includes("Not authenticated") ||
-        errorMessage.includes("Unauthenticated")) &&
-      typeof window !== "undefined"
-    ) {
+    // Unauthenticated or logout transition (hydration / fewer hooks): redirect to login, no error flash
+    const isLogoutTransition =
+      /Not authenticated|Unauthenticated|Hydration|hydration|fewer hooks|Rendered fewer/i.test(
+        errorMessage
+      );
+    if (isLogoutTransition && typeof window !== "undefined") {
       const pathname = window.location.pathname;
       if (pathname !== "/login" && pathname !== "/signup") {
         window.location.href = "/login";
@@ -37,7 +37,9 @@ export class ConvexErrorBoundary extends Component<Props, State> {
       }
     }
 
-    console.error("Convex query error:", error, errorInfo);
+    if (!isLogoutTransition) {
+      console.error("Convex query error:", error, errorInfo);
+    }
 
     // Check for authorization-related errors
     // But don't redirect if we're already on forbidden page (prevents loops)
@@ -59,12 +61,12 @@ export class ConvexErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       const errorMessage = this.state.error?.message || "";
 
-      // Unauthenticated (e.g. logout): show minimal UI, redirect already triggered in componentDidCatch
-      if (
-        (errorMessage.includes("Not authenticated") ||
-          errorMessage.includes("Unauthenticated")) &&
-        typeof window !== "undefined"
-      ) {
+      // Unauthenticated or logout transition (hydration / fewer hooks): minimal UI, redirect already in componentDidCatch
+      const isLogoutTransition =
+        /Not authenticated|Unauthenticated|Hydration|hydration|fewer hooks|Rendered fewer/i.test(
+          errorMessage
+        );
+      if (isLogoutTransition) {
         return (
           <div className="flex h-screen items-center justify-center bg-white">
             <div className="text-gray-500">Signing out...</div>
@@ -110,12 +112,12 @@ export function GlobalErrorHandler({ children }: { children: ReactNode }) {
       const error = event.reason;
       const errorMessage = error?.message || String(error);
 
-      // Unauthenticated during logout: redirect to login, no error flash
-      if (
-        (errorMessage.includes("Not authenticated") ||
-          errorMessage.includes("Unauthenticated")) &&
-        typeof window !== "undefined"
-      ) {
+      // Unauthenticated or logout transition: redirect to login, no error flash or console noise
+      const isLogoutTransition =
+        /Not authenticated|Unauthenticated|Hydration|hydration|fewer hooks|Rendered fewer/i.test(
+          errorMessage
+        );
+      if (isLogoutTransition && typeof window !== "undefined") {
         const pathname = window.location.pathname;
         if (pathname !== "/login" && pathname !== "/signup") {
           event.preventDefault();
@@ -148,12 +150,12 @@ export function GlobalErrorHandler({ children }: { children: ReactNode }) {
     const handleError = (event: ErrorEvent) => {
       const errorMessage = event.message || String(event.error);
 
-      // Unauthenticated during logout: redirect to login, no error flash
-      if (
-        (errorMessage.includes("Not authenticated") ||
-          errorMessage.includes("Unauthenticated")) &&
-        typeof window !== "undefined"
-      ) {
+      // Unauthenticated or logout transition: redirect to login, no error flash or console noise
+      const isLogoutTransition =
+        /Not authenticated|Unauthenticated|Hydration|hydration|fewer hooks|Rendered fewer/i.test(
+          errorMessage
+        );
+      if (isLogoutTransition && typeof window !== "undefined") {
         const pathname = window.location.pathname;
         if (pathname !== "/login" && pathname !== "/signup") {
           event.preventDefault();

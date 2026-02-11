@@ -10,6 +10,7 @@ import { removeOrganizationId } from "@/utils/organization-routing";
 import { canAccessRoute } from "@/utils/role-access";
 import { Building2, Loader2 } from "lucide-react";
 import { cn } from "@/utils/utils";
+import { MainLoader } from "@/components/main-loader";
 
 export default function OrganizationLayout({
   children,
@@ -28,11 +29,11 @@ export default function OrganizationLayout({
     switchingToOrganizationId,
   } = useOrganization();
   const updateLastActive = useMutation(
-    (api as any).organizations.updateLastActiveOrganization
+    (api as any).organizations.updateLastActiveOrganization,
   );
   const user = useQuery(
     (api as any).organizations.getCurrentUser,
-    organizationId ? { organizationId } : "skip"
+    organizationId ? { organizationId } : "skip",
   );
 
   // Validate organizationId from URL and sync with context (do not override when user just switched)
@@ -53,10 +54,7 @@ export default function OrganizationLayout({
     }
 
     // Sync URL -> context only when we're not in the middle of a user-initiated switch (avoids infinite loop)
-    if (
-      currentOrganizationId !== orgId &&
-      !switchingToOrganizationId
-    ) {
+    if (currentOrganizationId !== orgId && !switchingToOrganizationId) {
       switchOrganization(orgId);
     }
 
@@ -91,11 +89,7 @@ export default function OrganizationLayout({
 
   // Show loading state while validating
   if (isLoading) {
-    return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="text-gray-500">Loading...</div>
-      </div>
-    );
+    return <MainLoader />;
   }
 
   const isSwitching = !!switchingToOrganizationId;
@@ -112,22 +106,20 @@ export default function OrganizationLayout({
           "fixed inset-0 z-[100] flex items-center justify-center transition-opacity duration-200",
           isSwitching
             ? "opacity-100 pointer-events-auto"
-            : "opacity-0 pointer-events-none"
+            : "opacity-0 pointer-events-none",
         )}
         aria-hidden={!isSwitching}
       >
         <div
           className={cn(
             "absolute inset-0 bg-white/80 backdrop-blur-sm transition-opacity duration-200",
-            isSwitching ? "opacity-100" : "opacity-0"
+            isSwitching ? "opacity-100" : "opacity-0",
           )}
         />
         <div
           className={cn(
             "relative flex flex-col items-center gap-4 rounded-2xl bg-white px-8 py-6 shadow-lg ring-1 ring-black/5 transition-all duration-200",
-            isSwitching
-              ? "scale-100 opacity-100"
-              : "scale-95 opacity-0"
+            isSwitching ? "scale-100 opacity-100" : "scale-95 opacity-0",
           )}
         >
           <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-[rgb(245,245,245)]">
@@ -141,9 +133,7 @@ export default function OrganizationLayout({
               </span>
             </div>
             {switchingOrg?.name && (
-              <p className="text-xs text-gray-500">
-                {switchingOrg.name}
-              </p>
+              <p className="text-xs text-gray-500">{switchingOrg.name}</p>
             )}
           </div>
         </div>
