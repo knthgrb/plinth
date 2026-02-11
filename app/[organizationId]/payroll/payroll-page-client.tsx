@@ -279,10 +279,12 @@ export default function PayrollPageClient({
     (api as any).employees.getEmployees,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
   );
+  /** Admin, HR, accounting, owner: can edit payslips and see payroll edit actions */
   const isAdminOrAccounting =
     user?.role === "admin" ||
     user?.role === "hr" ||
-    user?.role === "accounting";
+    user?.role === "accounting" ||
+    user?.role === "owner";
   /** Admin, HR, owner can edit deductions in pay preview (Step 5) */
   const canEditPreviewDeductions =
     user?.role === "admin" ||
@@ -1301,6 +1303,8 @@ export default function PayrollPageClient({
         }
       );
       setEditEmployeeIncentives(allIncentives);
+      // Open at Step 4 (Deductions & Incentives) so user can edit deductions right away
+      setEditPayrollStep(4);
     } catch (error) {
       console.error("Error loading payroll run data:", error);
     }
