@@ -69,6 +69,23 @@ async function getOrCreateUserRecord(ctx: any) {
   return userRecord!;
 }
 
+// Helper for queries: get user record or null (never throws for "no record" / "not authenticated" — avoids race after signup)
+async function getUserRecordOrNull(ctx: any) {
+  let user;
+  try {
+    user = await authComponent.getAuthUser(ctx);
+  } catch {
+    return null;
+  }
+  if (!user) return null;
+
+  const userRecord = await (ctx.db.query("users") as any)
+    .withIndex("by_email", (q: any) => q.eq("email", user.email))
+    .first();
+
+  return userRecord ?? null;
+}
+
 // Helper to check authorization with organization context
 async function checkAuth(
   ctx: any,
@@ -116,18 +133,10 @@ async function checkAuth(
 export const getUserOrganizations = query({
   args: {},
   handler: async (ctx) => {
-    try {
-      let userRecord;
-      try {
-        userRecord = await getUserRecord(ctx);
-      } catch (error: any) {
-        // If user record doesn't exist yet (e.g., during signup), return empty array
-        if (error.message?.includes("User record not found")) {
-          return [];
-        }
-        throw error;
-      }
+    const userRecord = await getUserRecordOrNull(ctx);
+    if (!userRecord) return [];
 
+    try {
       // Get all user-organization relationships
       const userOrgs = await (ctx.db.query("userOrganizations") as any)
         .withIndex("by_user", (q: any) => q.eq("userId", userRecord._id))
@@ -187,16 +196,16 @@ export const getUserOrganizations = query({
 
       return validOrgs;
     } catch (error: any) {
-      // If user is not authenticated (e.g., during logout), return empty array
-      // This prevents errors from bubbling up during the logout process
+      // Defensive: treat any auth/setup-related error as empty orgs (avoids race after signup)
+      const msg = error?.message ?? error?.data?.message ?? String(error);
       if (
-        error?.message?.includes("Not authenticated") ||
-        error?.message?.includes("Unauthenticated") ||
-        error?.message?.includes("User record not found")
+        msg.includes("Not authenticated") ||
+        msg.includes("Unauthenticated") ||
+        msg.includes("User record not found") ||
+        msg.includes("account setup")
       ) {
         return [];
       }
-      // Re-throw other errors
       throw error;
     }
   },
@@ -208,23 +217,8 @@ export const getCurrentUser = query({
     organizationId: v.optional(v.id("organizations")),
   },
   handler: async (ctx, args) => {
-    let userRecord;
-    try {
-      userRecord = await getUserRecord(ctx);
-    } catch (error: any) {
-      // If user record doesn't exist yet (e.g., during signup), return null
-      if (error.message?.includes("User record not found")) {
-        return null;
-      }
-      // If user is not authenticated (e.g., after sign out), return null
-      if (
-        error.message?.includes("Not authenticated") ||
-        error.message?.includes("Unauthenticated")
-      ) {
-        return null;
-      }
-      throw error;
-    }
+    const userRecord = await getUserRecordOrNull(ctx);
+    if (!userRecord) return null;
 
     let currentOrg = null;
     let userOrg = null;
@@ -864,19 +858,8 @@ export const getEmployeeIdForPayslips = query({
     organizationId: v.id("organizations"),
   },
   handler: async (ctx, args) => {
-    let userRecord;
-    try {
-      userRecord = await getUserRecord(ctx);
-    } catch (error: any) {
-      if (
-        error?.message?.includes("Not authenticated") ||
-        error?.message?.includes("Unauthenticated") ||
-        error?.message?.includes("User record not found")
-      ) {
-        return { employeeId: null, requiresPin: false };
-      }
-      throw error;
-    }
+    const userRecord = await getUserRecordOrNull(ctx);
+    if (!userRecord) return { employeeId: null, requiresPin: false };
 
     const userOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
@@ -916,7 +899,8 @@ export const getEmployeeIdForPayslips = query({
 export const getCurrentUserOrganization = query({
   args: {},
   handler: async (ctx) => {
-    const userRecord = await getUserRecord(ctx);
+    const userRecord = await getUserRecordOrNull(ctx);
+    if (!userRecord) return null;
 
     if (userRecord.organizationId) {
       return await ctx.db.get(userRecord.organizationId);

@@ -202,7 +202,8 @@ export default function SignupPage() {
       }
 
       if (userRecordCreated) {
-        // Successfully created user record, proceed to step 2
+        // Brief delay so Convex replication sees the new user before we re-render and run org queries
+        await new Promise((resolve) => setTimeout(resolve, 400));
         setStep(2);
         toast({
           title: "Account created",
