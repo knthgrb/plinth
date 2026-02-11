@@ -50,7 +50,7 @@ async function getUserRecord(ctx: any) {
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "admin" | "hr"
+  requiredRole?: "owner" | "admin" | "hr"
 ) {
   const userRecord = await getUserRecord(ctx);
 
@@ -80,7 +80,9 @@ async function checkAuth(
     userRole = userRecord.role;
   }
 
-  if (requiredRole && userRole !== requiredRole && userRole !== "admin") {
+  // Owner has all admin privileges
+  const isOwnerOrAdmin = userRole === "owner" || userRole === "admin";
+  if (requiredRole && userRole !== requiredRole && !isOwnerOrAdmin) {
     throw new Error("Not authorized");
   }
 
@@ -92,7 +94,16 @@ export const getUserOrganizations = query({
   args: {},
   handler: async (ctx) => {
     try {
-      const userRecord = await getUserRecord(ctx);
+      let userRecord;
+      try {
+        userRecord = await getUserRecord(ctx);
+      } catch (error: any) {
+        // If user record doesn't exist yet (e.g., during signup), return empty array
+        if (error.message?.includes("User record not found")) {
+          return [];
+        }
+        throw error;
+      }
 
       // Get all user-organization relationships
       const userOrgs = await (ctx.db.query("userOrganizations") as any)
@@ -129,10 +140,25 @@ export const getUserOrganizations = query({
                   | "admin"
                   | "hr"
                   | "employee"
-                  | "accounting") || "admin",
+                  | "accounting") ||
+                "owner" ||
+                "admin",
               joinedAt: userRecord.createdAt || Date.now(),
             },
           ];
+        }
+      }
+
+      // Sort organizations: last active organization first, then by joinedAt
+      if (userRecord.lastActiveOrganizationId && validOrgs.length > 0) {
+        const lastActiveIndex = validOrgs.findIndex(
+          (org) => org._id === userRecord.lastActiveOrganizationId
+        );
+        if (lastActiveIndex > 0) {
+          // Move last active org to the front
+          const lastActiveOrg = validOrgs[lastActiveIndex];
+          validOrgs.splice(lastActiveIndex, 1);
+          validOrgs.unshift(lastActiveOrg);
         }
       }
 
@@ -142,7 +168,8 @@ export const getUserOrganizations = query({
       // This prevents errors from bubbling up during the logout process
       if (
         error?.message?.includes("Not authenticated") ||
-        error?.message?.includes("Unauthenticated")
+        error?.message?.includes("Unauthenticated") ||
+        error?.message?.includes("User record not found")
       ) {
         return [];
       }
@@ -158,67 +185,109 @@ export const getCurrentUser = query({
     organizationId: v.optional(v.id("organizations")),
   },
   handler: async (ctx, args) => {
+    let userRecord;
     try {
-      const userRecord = await getUserRecord(ctx);
+      userRecord = await getUserRecord(ctx);
+    } catch (error: any) {
+      // If user record doesn't exist yet (e.g., during signup), return null
+      if (error.message?.includes("User record not found")) {
+        return null;
+      }
+      // If user is not authenticated (e.g., after sign out), return null
+      if (
+        error.message?.includes("Not authenticated") ||
+        error.message?.includes("Unauthenticated")
+      ) {
+        return null;
+      }
+      throw error;
+    }
 
-      let currentOrg = null;
-      let userOrg = null;
+    let currentOrg = null;
+    let userOrg = null;
 
-      if (args.organizationId) {
-        // Get user's relationship with specified organization
-        userOrg = await (ctx.db.query("userOrganizations") as any)
-          .withIndex("by_user_organization", (q: any) =>
-            q
-              .eq("userId", userRecord._id)
-              .eq("organizationId", args.organizationId)
-          )
-          .first();
+    if (args.organizationId) {
+      // Get user's relationship with specified organization
+      userOrg = await (ctx.db.query("userOrganizations") as any)
+        .withIndex("by_user_organization", (q: any) =>
+          q
+            .eq("userId", userRecord._id)
+            .eq("organizationId", args.organizationId)
+        )
+        .first();
 
-        if (userOrg) {
-          currentOrg = await ctx.db.get(args.organizationId);
-        } else {
-          // Fallback: if userOrg not found, check if userRecord has legacy organizationId
-          // and it matches the requested organizationId
-          if (
-            userRecord.organizationId &&
-            userRecord.organizationId === args.organizationId
-          ) {
-            currentOrg = await ctx.db.get(args.organizationId);
-            userOrg = {
-              role: userRecord.role || "admin", // Default to admin for legacy users
-              employeeId: userRecord.employeeId,
-            };
-          }
-        }
+      if (userOrg) {
+        currentOrg = await ctx.db.get(args.organizationId);
       } else {
-        // Fallback to legacy organizationId field for backward compatibility
-        if (userRecord.organizationId) {
-          currentOrg = await ctx.db.get(userRecord.organizationId);
+        // Fallback: if userOrg not found, check if userRecord has legacy organizationId
+        // and it matches the requested organizationId
+        if (
+          userRecord.organizationId &&
+          userRecord.organizationId === args.organizationId
+        ) {
+          currentOrg = await ctx.db.get(args.organizationId);
           userOrg = {
             role: userRecord.role || "admin", // Default to admin for legacy users
             employeeId: userRecord.employeeId,
           };
         }
       }
-
-      return {
-        ...userRecord,
-        organization: currentOrg,
-        role: userOrg?.role || userRecord.role || "admin", // Fallback chain
-        employeeId: userOrg?.employeeId || userRecord.employeeId,
-      };
-    } catch (error: any) {
-      // If user is not authenticated (e.g., during logout), return null
-      // This prevents errors from bubbling up during the logout process
-      if (
-        error?.message?.includes("Not authenticated") ||
-        error?.message?.includes("Unauthenticated")
-      ) {
-        return null;
+    } else {
+      // Fallback to legacy organizationId field for backward compatibility
+      if (userRecord.organizationId) {
+        currentOrg = await ctx.db.get(userRecord.organizationId);
+        userOrg = {
+          role: userRecord.role || "admin", // Default to admin for legacy users
+          employeeId: userRecord.employeeId,
+        };
       }
-      // Re-throw other errors
-      throw error;
     }
+
+    return {
+      ...userRecord,
+      organization: currentOrg,
+      role: userOrg?.role || userRecord.role || "admin", // Fallback chain
+      employeeId: userOrg?.employeeId || userRecord.employeeId,
+    };
+  },
+});
+
+// Update last active organization for user (no-op when unauthenticated, e.g. during logout)
+export const updateLastActiveOrganization = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+  },
+  handler: async (ctx, args) => {
+    let user;
+    try {
+      user = await authComponent.getAuthUser(ctx);
+    } catch {
+      // getAuthUser throws when unauthenticated (e.g. during logout); no-op instead of surfacing error
+      return { success: false };
+    }
+    if (!user) return { success: false };
+
+    const userRecord = await (ctx.db.query("users") as any)
+      .withIndex("by_email", (q: any) => q.eq("email", user.email))
+      .first();
+    if (!userRecord) return { success: false };
+
+    const userOrg = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_user_organization", (q: any) =>
+        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
+      )
+      .first();
+
+    const hasAccess =
+      userOrg ||
+      (userRecord.organizationId === args.organizationId && userRecord.role);
+    if (!hasAccess) return { success: false };
+
+    await ctx.db.patch(userRecord._id, {
+      lastActiveOrganizationId: args.organizationId,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
   },
 });
 
@@ -279,11 +348,11 @@ export const createOrganization = mutation({
       updatedAt: now,
     });
 
-    // Create user-organization relationship with admin role
+    // Create user-organization relationship with owner role
     await ctx.db.insert("userOrganizations", {
       userId: userRecord._id,
       organizationId,
-      role: "admin",
+      role: "owner",
       joinedAt: now,
       updatedAt: now,
     });
@@ -292,7 +361,7 @@ export const createOrganization = mutation({
     if (!userRecord.organizationId) {
       await ctx.db.patch(userRecord._id, {
         organizationId,
-        role: "admin",
+        role: "owner",
         updatedAt: now,
       });
     }
@@ -323,8 +392,8 @@ export const updateOrganization = mutation({
       )
       .first();
 
-    // Fallback to legacy check
-    const allowedRoles = ["admin", "accounting"];
+    // Fallback to legacy check - owner has admin privileges
+    const allowedRoles = ["admin", "owner", "accounting"];
     const isAuthorized =
       allowedRoles.includes(userOrg?.role || "") ||
       (userRecord.organizationId === args.organizationId &&
@@ -346,6 +415,58 @@ export const updateOrganization = mutation({
       updates.secondPayDate = args.secondPayDate;
 
     await ctx.db.patch(args.organizationId, updates);
+    return { success: true };
+  },
+});
+
+// Delete organization (only owner can delete)
+export const deleteOrganization = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+  },
+  handler: async (ctx, args) => {
+    const userRecord = await getUserRecord(ctx);
+
+    // Check if user is owner of this organization
+    const userOrg = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_user_organization", (q: any) =>
+        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
+      )
+      .first();
+
+    const isOwner =
+      userOrg?.role === "owner" ||
+      (userRecord.organizationId === args.organizationId &&
+        userRecord.role === "owner");
+
+    if (!isOwner) {
+      throw new Error("Only organization owners can delete organizations");
+    }
+
+    // Get all related data to delete
+    const organization = await ctx.db.get(args.organizationId);
+    if (!organization) {
+      throw new Error("Organization not found");
+    }
+
+    // Delete all user-organization relationships
+    const userOrgs = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId)
+      )
+      .collect();
+
+    for (const userOrg of userOrgs) {
+      await ctx.db.delete(userOrg._id);
+    }
+
+    // Note: We don't delete employees, payroll, etc. as they might be needed for records
+    // The organization record itself will be deleted, but related data remains
+    // This is a soft delete approach - you may want to add a "deleted" flag instead
+
+    // Delete the organization
+    await ctx.db.delete(args.organizationId);
+
     return { success: true };
   },
 });
@@ -434,6 +555,7 @@ export const addUserToOrganization = mutation({
     email: v.string(),
     role: v.union(
       v.literal("admin"),
+      v.literal("owner"),
       v.literal("hr"),
       v.literal("employee"),
       v.literal("accounting")
@@ -450,11 +572,15 @@ export const addUserToOrganization = mutation({
       )
       .first();
 
+    // Owner has all admin privileges
     const isAuthorized =
       userOrg?.role === "admin" ||
+      userOrg?.role === "owner" ||
       userOrg?.role === "hr" ||
       (userRecord.organizationId === args.organizationId &&
-        (userRecord.role === "admin" || userRecord.role === "hr"));
+        (userRecord.role === "admin" ||
+          userRecord.role === "owner" ||
+          userRecord.role === "hr"));
 
     if (!isAuthorized) {
       throw new Error("Not authorized to add users to organization");
@@ -523,13 +649,17 @@ export const removeUserFromOrganization = mutation({
       )
       .first();
 
-    const isAdmin =
+    // Owner has all admin privileges
+    const isOwnerOrAdmin =
       userOrg?.role === "admin" ||
+      userOrg?.role === "owner" ||
       (userRecord.organizationId === args.organizationId &&
-        userRecord.role === "admin");
+        (userRecord.role === "admin" || userRecord.role === "owner"));
 
-    if (!isAdmin) {
-      throw new Error("Only admins can remove users from organization");
+    if (!isOwnerOrAdmin) {
+      throw new Error(
+        "Only organization owners or admins can remove users from organization"
+      );
     }
 
     // Prevent removing yourself
@@ -559,6 +689,7 @@ export const updateUserRoleInOrganization = mutation({
     userId: v.id("users"),
     role: v.union(
       v.literal("admin"),
+      v.literal("owner"),
       v.literal("hr"),
       v.literal("employee"),
       v.literal("accounting")
@@ -574,13 +705,24 @@ export const updateUserRoleInOrganization = mutation({
       )
       .first();
 
-    const isAdmin =
+    // Owner, admin, and HR can update member roles
+    const canUpdateRoles =
       userOrg?.role === "admin" ||
+      userOrg?.role === "owner" ||
+      userOrg?.role === "hr" ||
       (userRecord.organizationId === args.organizationId &&
-        userRecord.role === "admin");
+        (userRecord.role === "admin" ||
+          userRecord.role === "owner" ||
+          userRecord.role === "hr"));
 
-    if (!isAdmin) {
-      throw new Error("Only admins can update user roles");
+    if (!canUpdateRoles) {
+      throw new Error(
+        "Only organization owners, admins, or HR can update user roles"
+      );
+    }
+
+    if (userRecord._id === args.userId) {
+      throw new Error("You cannot change your own role");
     }
 
     // Update user-organization relationship
@@ -691,6 +833,61 @@ export const updateDefaultRequirements = mutation({
   },
 });
 
+// Get employee ID and whether payslip PIN is required (for employee payslips page).
+// Resolves employeeId from userOrg, user record, or by matching employee email in org.
+export const getEmployeeIdForPayslips = query({
+  args: {
+    organizationId: v.id("organizations"),
+  },
+  handler: async (ctx, args) => {
+    let userRecord;
+    try {
+      userRecord = await getUserRecord(ctx);
+    } catch (error: any) {
+      if (
+        error?.message?.includes("Not authenticated") ||
+        error?.message?.includes("Unauthenticated") ||
+        error?.message?.includes("User record not found")
+      ) {
+        return { employeeId: null, requiresPin: false };
+      }
+      throw error;
+    }
+
+    const userOrg = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_user_organization", (q: any) =>
+        q
+          .eq("userId", userRecord._id)
+          .eq("organizationId", args.organizationId)
+      )
+      .first();
+
+    let employeeId = userOrg?.employeeId ?? userRecord.employeeId ?? null;
+
+    if (!employeeId && (userOrg?.role === "employee" || userRecord.role === "employee")) {
+      const employees = await (ctx.db.query("employees") as any)
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", args.organizationId)
+        )
+        .collect();
+      const match = employees.find(
+        (e: any) =>
+          e.personalInfo?.email?.toLowerCase() === userRecord.email?.toLowerCase()
+      );
+      if (match) employeeId = match._id;
+    }
+
+    if (!employeeId) {
+      return { employeeId: null, requiresPin: false };
+    }
+
+    const employee = await ctx.db.get(employeeId);
+    const requiresPin = !!((employee as any)?.payslipPinHash);
+
+    return { employeeId, requiresPin };
+  },
+});
+
 // Legacy: Get current user's organization (for backward compatibility)
 export const getCurrentUserOrganization = query({
   args: {},
@@ -718,7 +915,12 @@ export const getCurrentUserOrganization = query({
 export const inviteUser = mutation({
   args: {
     email: v.string(),
-    role: v.union(v.literal("admin"), v.literal("hr"), v.literal("employee")),
+    role: v.union(
+      v.literal("admin"),
+      v.literal("owner"),
+      v.literal("hr"),
+      v.literal("employee")
+    ),
     employeeId: v.optional(v.id("employees")),
   },
   handler: async (ctx, args) => {
@@ -741,18 +943,21 @@ export const inviteUser = mutation({
     }
 
     // Use the addUserToOrganization logic directly
-    // Check if current user is admin or hr
-    const userOrg = await (ctx.db.query("userOrganizations") as any)
+    // Check if current user is admin, owner, or hr
+    const currentUserOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
         q.eq("userId", userRecord._id).eq("organizationId", organizationId)
       )
       .first();
 
     const isAuthorized =
-      userOrg?.role === "admin" ||
-      userOrg?.role === "hr" ||
+      currentUserOrg?.role === "admin" ||
+      currentUserOrg?.role === "owner" ||
+      currentUserOrg?.role === "hr" ||
       (userRecord.organizationId === organizationId &&
-        (userRecord.role === "admin" || userRecord.role === "hr"));
+        (userRecord.role === "admin" ||
+          userRecord.role === "owner" ||
+          userRecord.role === "hr"));
 
     if (!isAuthorized) {
       throw new Error("Not authorized to add users to organization");

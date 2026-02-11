@@ -11,6 +11,7 @@ export class PayrollService {
     cutoffStart: number;
     cutoffEnd: number;
     employeeIds: string[];
+    deductionsEnabled?: boolean;
     nightDiffPercent?: number;
     manualDeductions?: Array<{
       employeeId: string;
@@ -44,6 +45,7 @@ export class PayrollService {
         ...restData,
         organizationId: data.organizationId as Id<"organizations">,
         employeeIds: data.employeeIds as Id<"employees">[],
+        deductionsEnabled: data.deductionsEnabled,
         manualDeductions: data.manualDeductions?.map((md) => ({
           employeeId: md.employeeId as Id<"employees">,
           deductions: md.deductions,
@@ -165,11 +167,11 @@ export class PayrollService {
               <h2>Your Payslip is Ready</h2>
               <p>Hello ${employee.personalInfo.firstName},</p>
               <p>Your payslip for the period ${payslip.period} is now available.</p>
-              <p><strong>Gross Pay:</strong> ₱${payslip.grossPay?.toLocaleString() || "0.00"}</p>
-              <p><strong>Net Pay:</strong> ₱${payslip.netPay?.toLocaleString() || "0.00"}</p>
+              <p><strong>Gross Pay:</strong> ₱${payslip.grossPay?.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}</p>
+              <p><strong>Net Pay:</strong> ₱${payslip.netPay?.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}</p>
               <p><a href="${payslipUrl}">View Full Payslip</a></p>
             `,
-            text: `Your payslip for ${payslip.period} is ready. Gross Pay: ₱${payslip.grossPay?.toLocaleString() || "0.00"}, Net Pay: ₱${payslip.netPay?.toLocaleString() || "0.00"}. View it at: ${payslipUrl}`,
+            text: `Your payslip for ${payslip.period} is ready. Gross Pay: ₱${payslip.grossPay?.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}, Net Pay: ₱${payslip.netPay?.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}. View it at: ${payslipUrl}`,
           });
         } catch (emailError: any) {
           console.error("Failed to send email:", emailError);
@@ -235,6 +237,7 @@ export class PayrollService {
     cutoffStart?: number;
     cutoffEnd?: number;
     employeeIds?: string[];
+    deductionsEnabled?: boolean;
     manualDeductions?: Array<{
       employeeId: string;
       deductions: Array<{
@@ -267,6 +270,7 @@ export class PayrollService {
         cutoffStart: data.cutoffStart,
         cutoffEnd: data.cutoffEnd,
         employeeIds: data.employeeIds?.map((id) => id as Id<"employees">),
+        deductionsEnabled: data.deductionsEnabled,
         manualDeductions: data.manualDeductions?.map((md) => ({
           employeeId: md.employeeId as Id<"employees">,
           deductions: md.deductions,

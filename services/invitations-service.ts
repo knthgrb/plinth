@@ -61,4 +61,43 @@ export class InvitationsService {
 
     return invitationId;
   }
+
+  static async resendInvitation(invitationId: string) {
+    const convex = await getAuthedConvexClient();
+
+    const invitation = await (convex.query as any)(
+      (api as any).invitations.getInvitationById,
+      { invitationId: invitationId as Id<"invitations"> }
+    );
+
+    if (!invitation) {
+      throw new Error("Invitation not found");
+    }
+
+    if (invitation.status !== "pending") {
+      throw new Error("Can only resend pending invitations");
+    }
+
+    const baseUrl =
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      process.env.SITE_URL ||
+      "http://localhost:3000";
+    const invitationLink = `${baseUrl}/invite/accept?token=${invitation.token}`;
+
+    const emailContent = generateInvitationEmail(
+      invitation.organization.name,
+      invitation.inviter.name || invitation.inviter.email,
+      invitation.role,
+      invitationLink
+    );
+
+    await sendEmail({
+      to: invitation.email,
+      subject: emailContent.subject,
+      html: emailContent.html,
+      text: emailContent.text,
+    });
+
+    return { success: true };
+  }
 }

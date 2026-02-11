@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useOrganization } from "@/hooks/organization-context";
 import {
   Select,
@@ -14,7 +14,11 @@ import { Button } from "@/components/ui/button";
 import { CreateOrganizationDialog } from "@/components/create-organization-dialog";
 import { cn } from "@/utils/utils";
 
-export function OrganizationSwitcher() {
+export type OrganizationSwitcherProps = {
+  disabled?: boolean;
+};
+
+export function OrganizationSwitcher({ disabled = false }: OrganizationSwitcherProps = {}) {
   const {
     currentOrganizationId,
     organizations,
@@ -24,6 +28,13 @@ export function OrganizationSwitcher() {
   } = useOrganization();
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isSelectOpen, setIsSelectOpen] = useState(false);
+
+  // Close select when dialog opens
+  useEffect(() => {
+    if (isCreateDialogOpen) {
+      setIsSelectOpen(false);
+    }
+  }, [isCreateDialogOpen]);
 
   const orgInitials =
     currentOrganization?.name
@@ -66,21 +77,32 @@ export function OrganizationSwitcher() {
 
   return (
     <>
-      <div className="w-full">
+      <div className="w-full flex items-center">
         <Select
           value={currentOrganizationId || undefined}
+          open={isSelectOpen}
           onValueChange={(value) => {
-            switchOrganization(value as any);
+            if (!disabled) {
+              switchOrganization(value as any);
+            }
           }}
-          onOpenChange={setIsSelectOpen}
+          onOpenChange={(open) => {
+            if (!disabled) {
+              setIsSelectOpen(open);
+            }
+          }}
+          disabled={disabled}
         >
-          <SelectTrigger className="w-full h-10 bg-white hover:bg-gray-50 border-0 shadow-none px-4 py-2 [&>svg:last-child]:hidden">
+          <SelectTrigger className={cn(
+            "w-full h-10 bg-white border-0 shadow-none px-3 py-0 [&>svg:last-child]:hidden",
+            disabled ? "cursor-default opacity-50" : "hover:bg-gray-50 cursor-pointer"
+          )}>
             <div className="flex items-center gap-2.5 flex-1 min-w-0">
-              <div className="flex h-6 w-6 items-center justify-center rounded bg-gray-100 text-xs font-medium text-gray-600 shrink-0">
+              <div className="flex h-4 w-4 items-center justify-center rounded bg-[rgb(245,245,245)] text-xs font-medium text-[rgb(64,64,64)] shrink-0">
                 {orgInitials}
               </div>
               <span
-                className="truncate text-sm font-semibold"
+                className="truncate text-xs font-semibold"
                 style={{ color: "rgb(53, 58, 68)" }}
               >
                 <SelectValue placeholder="Select organization">
@@ -126,6 +148,7 @@ export function OrganizationSwitcher() {
                 className="w-full justify-start h-8 text-xs"
                 onClick={(e) => {
                   e.preventDefault();
+                  setIsSelectOpen(false);
                   setIsCreateDialogOpen(true);
                 }}
               >

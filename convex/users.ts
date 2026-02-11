@@ -11,6 +11,7 @@ export const syncUser = mutation({
     role: v.optional(
       v.union(
         v.literal("admin"),
+        v.literal("owner"),
         v.literal("hr"),
         v.literal("employee"),
         v.literal("accounting")
@@ -50,7 +51,7 @@ export const syncUser = mutation({
             createdAt: now,
             updatedAt: now,
           })),
-        role: args.role || "employee",
+        role: args.role || "owner",
         createdAt: now,
         updatedAt: now,
       });

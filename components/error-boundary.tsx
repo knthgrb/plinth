@@ -44,13 +44,16 @@ export class ConvexErrorBoundary extends Component<Props, State> {
     console.error("Convex query error:", error, errorInfo);
 
     // Check for authorization-related errors
+    // But don't redirect if we're already on forbidden page (prevents loops)
     if (
-      errorMessage.includes("Not authorized") ||
-      errorMessage.includes("User is not a member of this organization") ||
-      errorMessage.includes("User record not found")
+      (errorMessage.includes("Not authorized") ||
+        errorMessage.includes("User is not a member of this organization") ||
+        errorMessage.includes("User record not found")) &&
+      typeof window !== "undefined"
     ) {
-      // Redirect to forbidden page
-      if (typeof window !== "undefined") {
+      const pathname = window.location.pathname;
+      // Don't redirect if already on forbidden page
+      if (!pathname.includes("/forbidden")) {
         window.location.href = "/forbidden";
       }
     }
@@ -130,12 +133,22 @@ export function GlobalErrorHandler({ children }: { children: ReactNode }) {
       }
 
       if (
-        errorMessage.includes("Not authorized") ||
-        errorMessage.includes("User is not a member of this organization") ||
-        errorMessage.includes("User record not found")
+        (errorMessage.includes("Not authorized") ||
+          errorMessage.includes("User is not a member of this organization") ||
+          errorMessage.includes("User record not found")) &&
+        typeof window !== "undefined"
       ) {
-        event.preventDefault();
-        window.location.href = "/forbidden";
+        const pathname = window.location.pathname;
+        // Don't redirect if already on forbidden page
+        if (!pathname.includes("/forbidden")) {
+          event.preventDefault();
+          const orgIdMatch = pathname.match(/^\/([^/]+)/);
+          const orgId = orgIdMatch && !["login", "signup", "api", "_next"].includes(orgIdMatch[1]) 
+            ? orgIdMatch[1] 
+            : null;
+          const forbiddenPath = orgId ? `/${orgId}/forbidden` : "/forbidden";
+          window.location.href = forbiddenPath;
+        }
       }
     };
 
@@ -161,12 +174,22 @@ export function GlobalErrorHandler({ children }: { children: ReactNode }) {
       }
 
       if (
-        errorMessage.includes("Not authorized") ||
-        errorMessage.includes("User is not a member of this organization") ||
-        errorMessage.includes("User record not found")
+        (errorMessage.includes("Not authorized") ||
+          errorMessage.includes("User is not a member of this organization") ||
+          errorMessage.includes("User record not found")) &&
+        typeof window !== "undefined"
       ) {
-        event.preventDefault();
-        window.location.href = "/forbidden";
+        const pathname = window.location.pathname;
+        // Don't redirect if already on forbidden page
+        if (!pathname.includes("/forbidden")) {
+          event.preventDefault();
+          const orgIdMatch = pathname.match(/^\/([^/]+)/);
+          const orgId = orgIdMatch && !["login", "signup", "api", "_next"].includes(orgIdMatch[1]) 
+            ? orgIdMatch[1] 
+            : null;
+          const forbiddenPath = orgId ? `/${orgId}/forbidden` : "/forbidden";
+          window.location.href = forbiddenPath;
+        }
       }
     };
 

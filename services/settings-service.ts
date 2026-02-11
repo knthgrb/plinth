@@ -41,28 +41,39 @@ export class SettingsService {
       maxConsecutiveDays?: number;
       carryOver?: boolean;
       maxCarryOver?: number;
+      isAnniversary?: boolean;
     }>;
+    proratedLeave?: boolean;
   }) {
     const convex = await getAuthedConvexClient();
+    const args: any = {
+      organizationId: data.organizationId as Id<"organizations">,
+      leaveTypes: data.leaveTypes,
+    };
+    if (data.proratedLeave !== undefined)
+      args.proratedLeave = data.proratedLeave;
     return await (convex.mutation as any)(
       (api as any).settings.updateLeaveTypes,
-      {
-        organizationId: data.organizationId as Id<"organizations">,
-        leaveTypes: data.leaveTypes,
-      }
+      args
     );
   }
 
   static async updateDepartments(data: {
     organizationId: string;
-    departments: string[];
+    departments: Array<string | { name: string; color?: string }>;
   }) {
+    const DEFAULT_COLOR = "#9CA3AF";
+    const normalized = data.departments.map((d) =>
+      typeof d === "string"
+        ? { name: d, color: DEFAULT_COLOR }
+        : { name: d.name, color: d.color ?? DEFAULT_COLOR }
+    );
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(
       (api as any).settings.updateDepartments,
       {
         organizationId: data.organizationId as Id<"organizations">,
-        departments: data.departments,
+        departments: normalized,
       }
     );
   }

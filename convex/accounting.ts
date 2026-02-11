@@ -6,7 +6,7 @@ import { authComponent } from "./auth";
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "accounting"
+  requiredRole?: "owner" | "admin" | "accounting"
 ) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -45,7 +45,7 @@ async function checkAuth(
   }
 
   // Only allow accounting role or admin
-  const allowedRoles = ["admin", "accounting"];
+  const allowedRoles = ["owner", "admin", "accounting"];
   if (requiredRole && !allowedRoles.includes(userRole || "")) {
     throw new Error("Not authorized - accounting role required");
   }
@@ -58,108 +58,26 @@ async function checkAuth(
   return { ...userRecord, role: userRole, organizationId };
 }
 
-// Get all cost categories for an organization
-export const getCostCategories = query({
-  args: {
-    organizationId: v.id("organizations"),
-  },
-  handler: async (ctx, args) => {
-    await checkAuth(ctx, args.organizationId);
-    return await ctx.db
-      .query("accountingCategories")
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
-      )
-      .collect();
-  },
-});
-
-// Get cost items for a category
+// Get cost items for an organization (optional filter by categoryName)
 export const getCostItems = query({
   args: {
     organizationId: v.id("organizations"),
-    categoryId: v.optional(v.id("accountingCategories")),
+    categoryName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await checkAuth(ctx, args.organizationId);
-    if (args.categoryId) {
-      return await ctx.db
-        .query("accountingCostItems")
-        .withIndex("by_category", (q: any) =>
-          q.eq("categoryId", args.categoryId)
-        )
-        .collect();
-    }
-    return await ctx.db
+    const items = await ctx.db
       .query("accountingCostItems")
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId)
       )
       .collect();
-  },
-});
-
-// Create cost category
-export const createCostCategory = mutation({
-  args: {
-    organizationId: v.id("organizations"),
-    name: v.string(),
-    description: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    await checkAuth(ctx, args.organizationId, "accounting");
-    const now = Date.now();
-    return await ctx.db.insert("accountingCategories", {
-      organizationId: args.organizationId,
-      name: args.name,
-      description: args.description,
-      createdAt: now,
-      updatedAt: now,
-    });
-  },
-});
-
-// Update cost category
-export const updateCostCategory = mutation({
-  args: {
-    categoryId: v.id("accountingCategories"),
-    name: v.optional(v.string()),
-    description: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const category = await ctx.db.get(args.categoryId);
-    if (!category) throw new Error("Category not found");
-    await checkAuth(ctx, category.organizationId, "accounting");
-
-    const updates: any = { updatedAt: Date.now() };
-    if (args.name !== undefined) updates.name = args.name;
-    if (args.description !== undefined) updates.description = args.description;
-
-    await ctx.db.patch(args.categoryId, updates);
-  },
-});
-
-// Delete cost category
-export const deleteCostCategory = mutation({
-  args: {
-    categoryId: v.id("accountingCategories"),
-  },
-  handler: async (ctx, args) => {
-    const category = await ctx.db.get(args.categoryId);
-    if (!category) throw new Error("Category not found");
-    await checkAuth(ctx, category.organizationId, "accounting");
-
-    // Check if there are any cost items in this category
-    const items = await ctx.db
-      .query("accountingCostItems")
-      .withIndex("by_category", (q: any) => q.eq("categoryId", args.categoryId))
-      .collect();
-
-    if (items.length > 0) {
-      throw new Error("Cannot delete category with existing cost items");
+    if (args.categoryName) {
+      return items.filter(
+        (item: any) => (item.categoryName ?? "Employee Related Cost") === args.categoryName
+      );
     }
-
-    await ctx.db.delete(args.categoryId);
+    return items;
   },
 });
 
@@ -167,7 +85,7 @@ export const deleteCostCategory = mutation({
 export const createCostItem = mutation({
   args: {
     organizationId: v.id("organizations"),
-    categoryId: v.id("accountingCategories"),
+    categoryName: v.string(),
     name: v.string(),
     description: v.optional(v.string()),
     amount: v.number(),
@@ -215,7 +133,7 @@ export const createCostItem = mutation({
 
     return await ctx.db.insert("accountingCostItems", {
       organizationId: args.organizationId,
-      categoryId: args.categoryId,
+      categoryName: args.categoryName,
       name: args.name,
       description: args.description,
       amount: args.amount,
@@ -259,7 +177,7 @@ export const updateCostItem = mutation({
     dueDate: v.optional(v.number()),
     notes: v.optional(v.string()),
     receipts: v.optional(v.array(v.id("_storage"))),
-    categoryId: v.optional(v.id("accountingCategories")),
+    categoryName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const item = await ctx.db.get(args.itemId);
@@ -275,7 +193,7 @@ export const updateCostItem = mutation({
     if (args.dueDate !== undefined) updates.dueDate = args.dueDate;
     if (args.notes !== undefined) updates.notes = args.notes;
     if (args.receipts !== undefined) updates.receipts = args.receipts;
-    if (args.categoryId !== undefined) updates.categoryId = args.categoryId;
+    if (args.categoryName !== undefined) updates.categoryName = args.categoryName;
 
     // Auto-update status based on amountPaid if status not explicitly set
     if (args.status !== undefined) {

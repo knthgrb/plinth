@@ -23,6 +23,7 @@ export const createInvitation = mutation({
     email: v.string(),
     role: v.union(
       v.literal("admin"),
+      v.literal("owner"),
       v.literal("hr"),
       v.literal("employee"),
       v.literal("accounting")
@@ -40,10 +41,13 @@ export const createInvitation = mutation({
       .first();
 
     const isAuthorized =
+      userOrg?.role === "owner" ||
       userOrg?.role === "admin" ||
       userOrg?.role === "hr" ||
       (userRecord.organizationId === args.organizationId &&
-        (userRecord.role === "admin" || userRecord.role === "hr"));
+        (userRecord.role === "admin" ||
+          userRecord.role === "hr" ||
+          userRecord.role === "owner"));
 
     if (!isAuthorized) {
       throw new Error("Not authorized to invite users to organization");
@@ -118,17 +122,18 @@ export const getInvitationById = query({
     if (!invitation) return null;
 
     const organization = await ctx.db.get(invitation.organizationId);
-    const inviter = await ctx.db.get(invitation.invitedBy);
+    const inviter = (await ctx.db.get(invitation.invitedBy)) as any;
 
     return {
       ...invitation,
       organization,
-      inviter: inviter
-        ? {
-            name: inviter.name || inviter.email,
-            email: inviter.email,
-          }
-        : null,
+      inviter:
+        inviter && "email" in inviter
+          ? {
+              name: inviter.name || inviter.email,
+              email: inviter.email,
+            }
+          : null,
     };
   },
 });
@@ -149,23 +154,25 @@ export const getInvitationByToken = query({
 
     // Check if expired
     if (invitation.expiresAt < Date.now() && invitation.status === "pending") {
-      await ctx.db.patch(invitation._id, { status: "expired" });
+      // Note: Cannot patch in query - this should be handled by a mutation or scheduled function
+      // For now, just return null without updating status
       return null;
     }
 
     // Get organization and inviter details
     const organization = await ctx.db.get(invitation.organizationId);
-    const inviter = await ctx.db.get(invitation.invitedBy);
+    const inviter = (await ctx.db.get(invitation.invitedBy)) as any;
 
     return {
       ...invitation,
       organization,
-      inviter: inviter
-        ? {
-            name: inviter.name || inviter.email,
-            email: inviter.email,
-          }
-        : null,
+      inviter:
+        inviter && "email" in inviter
+          ? {
+              name: inviter.name || inviter.email,
+              email: inviter.email,
+            }
+          : null,
     };
   },
 });
@@ -268,6 +275,18 @@ export const acceptInvitation = mutation({
       });
     }
 
+    // Keep users.organizationId and users.role in sync for backward compatibility / display
+    const userPatch: Record<string, unknown> = {
+      organizationId: invitation.organizationId,
+      role: invitation.role,
+      lastActiveOrganizationId: invitation.organizationId,
+      updatedAt: now,
+    };
+    if (invitation.employeeId !== undefined) {
+      userPatch.employeeId = invitation.employeeId;
+    }
+    await ctx.db.patch(userId, userPatch);
+
     // Mark invitation as accepted
     await ctx.db.patch(invitation._id, {
       status: "accepted",
@@ -299,10 +318,13 @@ export const getInvitations = query({
       .first();
 
     const isAuthorized =
+      userOrg?.role === "owner" ||
       userOrg?.role === "admin" ||
       userOrg?.role === "hr" ||
       (userRecord.organizationId === args.organizationId &&
-        (userRecord.role === "admin" || userRecord.role === "hr"));
+        (userRecord.role === "owner" ||
+          userRecord.role === "admin" ||
+          userRecord.role === "hr"));
 
     if (!isAuthorized) {
       throw new Error("Not authorized");
@@ -315,6 +337,108 @@ export const getInvitations = query({
       .collect();
 
     return invitations.sort((a: any, b: any) => b.createdAt - a.createdAt);
+  },
+});
+
+// Create user account for employee and send invitation
+export const createUserForEmployee = mutation({
+  args: {
+    employeeId: v.id("employees"),
+    organizationId: v.id("organizations"),
+    role: v.union(
+      v.literal("admin"),
+      v.literal("owner"),
+      v.literal("hr"),
+      v.literal("employee"),
+      v.literal("accounting")
+    ),
+  },
+  handler: async (ctx, args) => {
+    const userRecord = await getUserRecord(ctx);
+
+    // Check authorization - admin, hr, or owner can create user accounts
+    const userOrg = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_user_organization", (q: any) =>
+        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
+      )
+      .first();
+
+    const userRole =
+      userOrg?.role ||
+      (userRecord.organizationId === args.organizationId
+        ? userRecord.role
+        : null);
+
+    // Owner has all admin privileges - treat owner the same as admin
+    const isOwnerOrAdmin = userRole === "admin" || userRole === "owner";
+    const isAuthorized = isOwnerOrAdmin || userRole === "hr";
+
+    if (!isAuthorized) {
+      throw new Error("Not authorized to create user accounts");
+    }
+
+    // Get employee
+    const employee = await ctx.db.get(args.employeeId);
+    if (!employee || employee.organizationId !== args.organizationId) {
+      throw new Error("Employee not found");
+    }
+
+    // Check if employee already has a user account
+    const existingUserOrg = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId)
+      )
+      .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
+      .first();
+
+    if (existingUserOrg) {
+      throw new Error("Employee already has a user account");
+    }
+
+    // Check if user with this email already exists
+    const existingUser = await (ctx.db.query("users") as any)
+      .withIndex("by_email", (q: any) =>
+        q.eq("email", employee.personalInfo.email)
+      )
+      .first();
+
+    if (existingUser) {
+      // Check if this user is already in the organization
+      const existingUserOrgCheck = await (
+        ctx.db.query("userOrganizations") as any
+      )
+        .withIndex("by_user_organization", (q: any) =>
+          q
+            .eq("userId", existingUser._id)
+            .eq("organizationId", args.organizationId)
+        )
+        .first();
+
+      if (existingUserOrgCheck) {
+        throw new Error(
+          "A user with this email is already in the organization"
+        );
+      }
+    }
+
+    // Create invitation for the employee
+    const token = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+    const now = Date.now();
+    const expiresAt = now + 7 * 24 * 60 * 60 * 1000; // 7 days
+
+    const invitationId = await ctx.db.insert("invitations", {
+      organizationId: args.organizationId,
+      email: employee.personalInfo.email,
+      role: args.role,
+      invitedBy: userRecord._id,
+      token,
+      status: "pending",
+      expiresAt,
+      employeeId: args.employeeId,
+      createdAt: now,
+    });
+
+    return { invitationId, email: employee.personalInfo.email };
   },
 });
 
@@ -338,11 +462,15 @@ export const cancelInvitation = mutation({
       )
       .first();
 
-    const isAuthorized =
-      userOrg?.role === "admin" ||
-      userOrg?.role === "hr" ||
-      (userRecord.organizationId === invitation.organizationId &&
-        (userRecord.role === "admin" || userRecord.role === "hr"));
+    const userRole =
+      userOrg?.role ||
+      (userRecord.organizationId === invitation.organizationId
+        ? userRecord.role
+        : null);
+
+    // Owner has all admin privileges - treat owner the same as admin
+    const isOwnerOrAdmin = userRole === "admin" || userRole === "owner";
+    const isAuthorized = isOwnerOrAdmin || userRole === "hr";
 
     if (!isAuthorized) {
       throw new Error("Not authorized");

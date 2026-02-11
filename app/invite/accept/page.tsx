@@ -20,6 +20,15 @@ import {
 } from "@/components/ui/dialog";
 import { Building2, User, Mail, LogOut } from "lucide-react";
 
+/** Convert organization name to URL slug (e.g. "Test Org" -> "test-org") */
+function nameToSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
+}
+
 export default function AcceptInvitationPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -226,7 +235,7 @@ export default function AcceptInvitationPage() {
       }
 
       // Accept invitation (this will add user to organization with the role from invitation)
-      await acceptInvitationMutation({
+      const result = await acceptInvitationMutation({
         token,
         name: name || undefined,
       });
@@ -234,17 +243,24 @@ export default function AcceptInvitationPage() {
       // Wait for organization context to update
       await new Promise((resolve) => setTimeout(resolve, 500));
 
-      // Redirect based on role with full page reload to ensure session is established
+      // Redirect to the org they were added to (use slug from org name, not id), based on role
       const role = invitation.role;
-      let redirectPath = "/dashboard";
+      let path = "/dashboard";
       if (role === "accounting") {
-        redirectPath = "/accounting";
+        path = "/accounting";
       } else if (role === "employee") {
-        redirectPath = "/announcements";
+        path = "/announcements";
       }
+      const orgName = invitation.organization?.name;
+      const slug = orgName ? nameToSlug(orgName) : null;
+      const organizationId = result?.organizationId;
+      const redirectUrl = slug
+        ? `/${slug}${path}`
+        : organizationId
+          ? `/${organizationId}${path}`
+          : path;
 
-      // Use window.location for a full page reload to ensure session is established
-      window.location.href = redirectPath;
+      window.location.href = redirectUrl;
     } catch (err: any) {
       setError(err.message || "Failed to accept invitation");
       setIsProcessing(false);

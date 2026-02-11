@@ -13,23 +13,21 @@ export class AttendanceService {
     actualIn?: string;
     actualOut?: string;
     overtime?: number;
+    late?: number; // Manual override for late (minutes)
+    undertime?: number; // Manual override for undertime (hours)
     isHoliday?: boolean;
     holidayType?: "regular" | "special";
     remarks?: string;
     status: "present" | "absent" | "half-day" | "leave";
   }) {
-    const token = await getToken();
-    if (!token) throw new Error("Not authenticated");
-
     const convex = await getAuthedConvexClient();
-    return await (convex.action as any)(
+    return await (convex.mutation as any)(
       (api as any).attendance.createAttendance,
       {
         ...data,
         organizationId: data.organizationId as Id<"organizations">,
         employeeId: data.employeeId as Id<"employees">,
       },
-      { token }
     );
   }
 
@@ -41,11 +39,13 @@ export class AttendanceService {
       actualIn?: string;
       actualOut?: string;
       overtime?: number;
+      late?: number | null; // Manual override for late (minutes), or null to recalculate
+      undertime?: number | null; // Manual override for undertime (hours), or null to recalculate
       isHoliday?: boolean;
       holidayType?: "regular" | "special";
       remarks?: string;
       status?: "present" | "absent" | "half-day" | "leave";
-    }
+    },
   ) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(
@@ -53,7 +53,7 @@ export class AttendanceService {
       {
         attendanceId: attendanceId as Id<"attendance">,
         ...data,
-      }
+      },
     );
   }
 
@@ -73,11 +73,13 @@ export class AttendanceService {
       actualIn?: string;
       actualOut?: string;
       overtime?: number;
+      late?: number; // Manual override for late (minutes)
+      undertime?: number; // Manual override for undertime (hours)
       isHoliday?: boolean;
       holidayType?: "regular" | "special";
       remarks?: string;
       status: "present" | "absent" | "half-day" | "leave";
-    }>
+    }>,
   ) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(
@@ -88,7 +90,7 @@ export class AttendanceService {
           organizationId: e.organizationId as Id<"organizations">,
           employeeId: e.employeeId as Id<"employees">,
         })),
-      }
+      },
     );
   }
 }

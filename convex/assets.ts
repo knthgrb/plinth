@@ -6,7 +6,7 @@ import { authComponent } from "./auth";
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "admin" | "hr" | "accounting"
+  requiredRole?: "owner" | "admin" | "hr" | "accounting"
 ) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -44,16 +44,21 @@ async function checkAuth(
     userRole = userRecord.role;
   }
 
-  // Allow admin to access everything
-  // For read operations, allow accounting role
-  // For write operations (requiredRole specified), only allow specified role or admin
+  // Owner and admin have access to everything
+  // For read operations, allow accounting and hr roles
+  // For write operations (requiredRole specified), only allow specified role, admin, or owner
   if (requiredRole) {
-    if (userRole !== requiredRole && userRole !== "admin") {
+    if (
+      userRole !== requiredRole &&
+      userRole !== "admin" &&
+      userRole !== "owner"
+    ) {
       throw new Error("Not authorized");
     }
   } else {
-    // No required role means read access - allow accounting
+    // No required role means read access - allow owner, admin, hr, and accounting
     if (
+      userRole !== "owner" &&
       userRole !== "admin" &&
       userRole !== "hr" &&
       userRole !== "accounting"

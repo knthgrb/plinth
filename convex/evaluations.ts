@@ -27,7 +27,12 @@ async function checkOrgHrAdmin(ctx: any, organizationId: any) {
   ) {
     throw new Error("User is not a member of this organization");
   }
-  if (role !== "admin" && role !== "hr" && role !== "accounting") {
+  if (
+    role !== "owner" &&
+    role !== "admin" &&
+    role !== "hr" &&
+    role !== "accounting"
+  ) {
     throw new Error("Not authorized");
   }
 

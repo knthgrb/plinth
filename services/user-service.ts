@@ -2,7 +2,7 @@ import { api } from "@/convex/_generated/api";
 import { getAuthedConvexClient } from "@/lib/convex-client";
 
 export class UserService {
-  static async getUserRoleAndOrg() {
+  static async getUserRoleAndOrg(organizationId?: string) {
     const convex = await getAuthedConvexClient();
 
     // Ensure user record exists (best-effort)
@@ -18,6 +18,28 @@ export class UserService {
       console.log("User record sync attempt:", error);
     }
 
+    // If organizationId is provided, validate it looks like a Convex ID before calling (avoids ArgumentValidationError for asset paths like "loader.lottie")
+    if (organizationId && /^[a-z0-9]{20,}$/.test(organizationId)) {
+      try {
+        const user = await (convex.query as any)(
+          (api as any).organizations.getCurrentUser,
+          {
+            organizationId: organizationId as any,
+          }
+        );
+
+        if (!user) {
+          return { role: null, organizationId: organizationId };
+        }
+
+        return { role: user.role || null, organizationId: organizationId };
+      } catch (error) {
+        // If query fails, fall back to first organization
+        console.log("Error getting user role for specific org, falling back:", error);
+      }
+    }
+
+    // Fallback: get first organization
     const organizations = await (convex.query as any)(
       (api as any).organizations.getUserOrganizations,
       {}

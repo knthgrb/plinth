@@ -14,9 +14,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { createOrganization } from "@/app/actions/organizations";
+import { createOrganization } from "@/actions/organizations";
 import { useOrganization } from "@/hooks/organization-context";
-import { useRouter } from "next/navigation";
 
 interface CreateOrganizationDialogProps {
   open: boolean;
@@ -37,7 +36,6 @@ export function CreateOrganizationDialog({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const { refreshOrganizations, switchOrganization } = useOrganization();
-  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,11 +60,10 @@ export function CreateOrganizationDialog({
         taxId: "",
       });
 
-      // Refresh organizations and switch to the new one
+      // Refresh organizations and switch to the new one (switchOrganization also navigates to /orgId/dashboard)
       refreshOrganizations();
       switchOrganization(organizationId as any);
       onOpenChange(false);
-      router.refresh();
     } catch (err: any) {
       setError(err.message || "Failed to create organization");
     } finally {

@@ -6,7 +6,7 @@ import { authComponent } from "./auth";
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "admin" | "hr" | "accounting"
+  requiredRole?: "owner" | "admin" | "hr" | "accounting" | "employee"
 ) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -44,10 +44,18 @@ async function checkAuth(
     userRole = userRecord.role;
   }
 
-  // Allow all roles to access chat (admin, hr, accounting, employee)
-  if (requiredRole && userRole !== requiredRole && userRole !== "admin") {
-    throw new Error("Not authorized");
+  // Owner and admin have access to everything
+  // For chat, all authenticated roles can access (owner, admin, hr, accounting, employee)
+  if (requiredRole) {
+    if (
+      userRole !== requiredRole &&
+      userRole !== "admin" &&
+      userRole !== "owner"
+    ) {
+      throw new Error("Not authorized");
+    }
   }
+  // If no requiredRole specified, allow all authenticated users (read access)
 
   return { ...userRecord, role: userRole, organizationId };
 }
@@ -243,27 +251,31 @@ export const getMessages = query({
       .order("desc");
 
     // If beforeTimestamp is provided, filter messages before that time
-    if (args.beforeTimestamp) {
+    if (args.beforeTimestamp !== undefined) {
       // We need to get all and filter, as Convex doesn't support range queries directly
       const allMessages = await query.collect();
       const filtered = allMessages.filter(
-        (msg: any) => msg.createdAt < args.beforeTimestamp
+        (msg: any) => msg.createdAt < args.beforeTimestamp!
       );
       const messages = filtered.slice(0, limit);
 
       // Enrich with sender details
       const enriched = await Promise.all(
         messages.map(async (msg: any) => {
-          const sender = await ctx.db.get(msg.senderId);
+          const sender = (await ctx.db.get(msg.senderId)) as any;
+          if (sender && "email" in sender) {
+            return {
+              ...msg,
+              sender: {
+                _id: sender._id,
+                name: sender.name || sender.email,
+                email: sender.email,
+              },
+            };
+          }
           return {
             ...msg,
-            sender: sender
-              ? {
-                  _id: sender._id,
-                  name: sender.name || sender.email,
-                  email: sender.email,
-                }
-              : null,
+            sender: null,
           };
         })
       );
@@ -280,16 +292,20 @@ export const getMessages = query({
       // Enrich with sender details
       const enriched = await Promise.all(
         messages.map(async (msg: any) => {
-          const sender = await ctx.db.get(msg.senderId);
+          const sender = (await ctx.db.get(msg.senderId)) as any;
+          if (sender && "email" in sender) {
+            return {
+              ...msg,
+              sender: {
+                _id: sender._id,
+                name: sender.name || sender.email,
+                email: sender.email,
+              },
+            };
+          }
           return {
             ...msg,
-            sender: sender
-              ? {
-                  _id: sender._id,
-                  name: sender.name || sender.email,
-                  email: sender.email,
-                }
-              : null,
+            sender: null,
           };
         })
       );
@@ -438,8 +454,8 @@ export const getOrganizationUsers = query({
     // Get user records
     const users = await Promise.all(
       userOrgs.map(async (userOrg: any) => {
-        const user = await ctx.db.get(userOrg.userId);
-        if (!user) return null;
+        const user = (await ctx.db.get(userOrg.userId)) as any;
+        if (!user || !("email" in user)) return null;
         return {
           _id: user._id,
           name: user.name || user.email,
@@ -549,11 +565,17 @@ export const removeMemberFromGroup = mutation({
       throw new Error("Can only remove members from group chats");
     }
 
-    // Check authorization (creator or admin)
+    // Check authorization (creator, admin, or owner)
     const isCreator = conversation.createdBy === userRecord._id;
     const isAdmin = userRecord.role === "admin";
+    const isOwner = userRecord.role === "owner";
 
-    if (!isCreator && !isAdmin && userRecord._id !== args.participantId) {
+    if (
+      !isCreator &&
+      !isAdmin &&
+      !isOwner &&
+      userRecord._id !== args.participantId
+    ) {
       throw new Error("Not authorized to remove members");
     }
 

@@ -1,13 +1,16 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
-import { calculateTotalLeaveEntitlement } from "./leaveCalculations";
+import {
+  calculateTotalLeaveEntitlement,
+  calculateProratedLeave,
+} from "./leaveCalculations";
 
 // Helper to check authorization with organization context
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "admin" | "hr"
+  requiredRole?: "owner" | "admin" | "hr"
 ) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -45,9 +48,19 @@ async function checkAuth(
     userRole = userRecord.role;
   }
 
-  if (requiredRole && userRole !== requiredRole && userRole !== "admin") {
-    throw new Error("Not authorized");
+  // Owner and admin have access to everything
+  // If requiredRole is specified, allow owner, admin, hr, or the requiredRole itself
+  if (requiredRole) {
+    if (
+      userRole !== requiredRole &&
+      userRole !== "owner" &&
+      userRole !== "admin" &&
+      userRole !== "hr"
+    ) {
+      throw new Error("Not authorized");
+    }
   }
+  // If no requiredRole specified, allow all authenticated users (read access)
 
   return { ...userRecord, role: userRole, organizationId };
 }
@@ -337,8 +350,8 @@ export const createApplicantByHR = mutation({
       jobId: args.jobId,
       firstName: args.firstName,
       lastName: args.lastName,
-      email: args.email,
-      phone: args.phone,
+      email: args.email || "",
+      phone: args.phone || "",
       resume: args.resume,
       coverLetter: args.coverLetter,
       googleMeetLink: args.googleMeetLink,
@@ -582,10 +595,37 @@ export const convertApplicantToEmployee = mutation({
 
     const vacationConfig = leaveTypes.find((t: any) => t.type === "vacation");
     const sickConfig = leaveTypes.find((t: any) => t.type === "sick");
+    const hasAnniversaryType = leaveTypes.some(
+      (t: any) => t.isAnniversary === true || t.type === "anniversary"
+    );
+    const proratedLeave = settings?.proratedLeave === true;
+    const hireDate = args.employeeData.hireDate;
 
-    // Use defaultCredits from organization settings (or defaults if not set)
-    const vacationTotal = vacationConfig?.defaultCredits ?? 15;
-    const sickTotal = sickConfig?.defaultCredits ?? 15;
+    const vacationAnnual = vacationConfig?.defaultCredits ?? 15;
+    const sickAnnual = sickConfig?.defaultCredits ?? 15;
+    const vacationTotal = proratedLeave
+      ? Math.round(
+          calculateProratedLeave(vacationAnnual, hireDate, now) * 100
+        ) / 100
+      : vacationAnnual;
+    const sickTotal = proratedLeave
+      ? Math.round(calculateProratedLeave(sickAnnual, hireDate, now) * 100) /
+        100
+      : sickAnnual;
+
+    const leaveCredits: any = {
+      vacation: {
+        total: vacationTotal,
+        used: 0,
+        balance: vacationTotal,
+      },
+      sick: { total: sickTotal, used: 0, balance: sickTotal },
+    };
+    if (hasAnniversaryType) {
+      leaveCredits.custom = [
+        { type: "anniversary", total: 0, used: 0, balance: 0 },
+      ];
+    }
 
     const employeeId = await ctx.db.insert("employees", {
       organizationId: applicant.organizationId,
@@ -618,14 +658,7 @@ export const convertApplicantToEmployee = mutation({
           sunday: { in: "09:00", out: "18:00", isWorkday: false },
         },
       },
-      leaveCredits: {
-        vacation: {
-          total: vacationTotal,
-          used: 0,
-          balance: vacationTotal,
-        },
-        sick: { total: sickTotal, used: 0, balance: sickTotal },
-      },
+      leaveCredits,
       requirements: [],
       deductions: [],
       incentives: [],

@@ -6,6 +6,7 @@ import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -32,7 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, UserPlus, Mail, X } from "lucide-react";
+import { Plus, Pencil, Trash2, UserPlus, Mail, X, Send } from "lucide-react";
 import { useMutation } from "convex/react";
 import { format } from "date-fns";
 import {
@@ -40,8 +41,12 @@ import {
   addUserToOrganization,
   removeUserFromOrganization,
   updateUserRoleInOrganization,
-} from "@/app/actions/organizations";
+  deleteOrganization,
+} from "@/actions/organizations";
+import { resendInvitation } from "@/actions/invitations";
 import { CreateOrganizationDialog } from "@/components/create-organization-dialog";
+import { useToast } from "@/components/ui/use-toast";
+import { Spinner } from "@/components/ui/spinner";
 
 export function OrganizationManagement(): React.ReactElement {
   const {
@@ -52,6 +57,8 @@ export function OrganizationManagement(): React.ReactElement {
   } = useOrganization();
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [editFormData, setEditFormData] = useState({
     name: "",
     address: "",
@@ -63,28 +70,53 @@ export function OrganizationManagement(): React.ReactElement {
     email: "",
     role: "employee" as "admin" | "hr" | "accounting" | "employee",
   });
+  const [resendingId, setResendingId] = useState<string | null>(null);
 
   const members = useQuery(
     (api as any).organizations.getOrganizationMembers,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   const invitations = useQuery(
     (api as any).invitations.getInvitations,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   const cancelInvitationMutation = useMutation(
-    (api as any).invitations.cancelInvitation
+    (api as any).invitations.cancelInvitation,
   );
 
-  const role = currentOrganization?.role;
+  const currentUser = useQuery(
+    (api as any).organizations.getCurrentUser,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
+  const currentUserId = (currentUser as any)?._id ?? null;
+
+  const { toast } = useToast();
+  // API can return "owner"; context type may omit it
+  const role = currentOrganization?.role as
+    | "admin"
+    | "owner"
+    | "hr"
+    | "employee"
+    | "accounting"
+    | undefined;
   const isAdmin = role === "admin";
-  const isAdminOrAccounting = role === "admin" || role === "accounting";
+  const isOwner = role === "owner";
+  const isOwnerOrAdmin = role === "admin" || role === "owner";
+  /** Only owner, admin, and HR can edit org info/settings */
+  const canEditOrgInfo =
+    role === "owner" || role === "admin" || role === "hr";
+  /** Only owner, admin, and HR can edit other members' roles (never own role) */
+  const canEditMemberRoles =
+    role === "owner" || role === "admin" || role === "hr";
+  /** Owner, admin, HR, accounting can see members list */
+  const canViewMembers =
+    role === "admin" || role === "accounting" || role === "owner" || role === "hr";
 
   const handleEditOrganization = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentOrganizationId || !isAdminOrAccounting) return;
+    if (!currentOrganizationId || !canEditOrgInfo) return;
 
     try {
       await updateOrganization(currentOrganizationId, {
@@ -110,7 +142,7 @@ export function OrganizationManagement(): React.ReactElement {
 
   const handleInviteUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentOrganizationId || !isAdmin) return;
+    if (!currentOrganizationId || !isOwnerOrAdmin) return;
 
     try {
       await addUserToOrganization({
@@ -127,7 +159,7 @@ export function OrganizationManagement(): React.ReactElement {
   };
 
   const handleRemoveUser = async (userId: string) => {
-    if (!currentOrganizationId || !isAdmin) return;
+    if (!currentOrganizationId || !isOwnerOrAdmin) return;
     if (!confirm("Are you sure you want to remove this user?")) return;
 
     try {
@@ -139,9 +171,10 @@ export function OrganizationManagement(): React.ReactElement {
 
   const handleUpdateRole = async (
     userId: string,
-    newRole: "admin" | "hr" | "employee"
+    newRole: "admin" | "hr" | "accounting" | "employee",
   ) => {
-    if (!currentOrganizationId || !isAdmin) return;
+    if (!currentOrganizationId || !canEditMemberRoles) return;
+    if (userId === currentUserId) return; // User cannot edit their own role
 
     try {
       await updateUserRoleInOrganization({
@@ -154,8 +187,34 @@ export function OrganizationManagement(): React.ReactElement {
     }
   };
 
+  const handleDeleteOrganization = async () => {
+    if (!currentOrganizationId || !isOwner) return;
+    setIsDeleting(true);
+
+    try {
+      await deleteOrganization(currentOrganizationId);
+      setIsDeleteDialogOpen(false);
+      // Redirect to first available organization or dashboard
+      if (organizations.length > 1) {
+        const remainingOrg = organizations.find(
+          (org) => org._id !== currentOrganizationId,
+        );
+        if (remainingOrg) {
+          window.location.href = `/${remainingOrg._id}/dashboard`;
+        } else {
+          window.location.href = "/dashboard";
+        }
+      } else {
+        window.location.href = "/dashboard";
+      }
+    } catch (error: any) {
+      alert(error.message || "Failed to delete organization");
+      setIsDeleting(false);
+    }
+  };
+
   const currentOrgDetails = organizations.find(
-    (o) => o._id === currentOrganizationId
+    (o) => o._id === currentOrganizationId,
   );
 
   const openEditDialog = () => {
@@ -191,12 +250,25 @@ export function OrganizationManagement(): React.ReactElement {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Organization Details</CardTitle>
-            {isAdminOrAccounting && (
-              <Button variant="outline" size="sm" onClick={openEditDialog}>
-                <Pencil className="h-4 w-4 mr-2" />
-                Edit
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {canEditOrgInfo && (
+                <Button variant="outline" size="sm" onClick={openEditDialog}>
+                  <Pencil className="h-4 w-4 mr-2" />
+                  Edit
+                </Button>
+              )}
+              {isOwner && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsDeleteDialogOpen(true)}
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
@@ -226,18 +298,20 @@ export function OrganizationManagement(): React.ReactElement {
           </CardContent>
         </Card>
 
-        {isAdminOrAccounting && (
+        {canViewMembers && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Organization Members</CardTitle>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsInviteDialogOpen(true)}
-              >
-                <UserPlus className="h-4 w-4 mr-2" />
-                Add User
-              </Button>
+              {isOwnerOrAdmin && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsInviteDialogOpen(true)}
+                >
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Add User
+                </Button>
+              )}
             </CardHeader>
             <CardContent>
               <Table>
@@ -250,47 +324,67 @@ export function OrganizationManagement(): React.ReactElement {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {members?.map((member: any) => (
-                    <TableRow key={member._id}>
-                      <TableCell>{member.name || "-"}</TableCell>
-                      <TableCell>{member.email}</TableCell>
-                      <TableCell>
-                        <Select
-                          value={member.role}
-                          onValueChange={(value: any) =>
-                            handleUpdateRole(member._id, value)
-                          }
-                          disabled={false}
-                        >
-                          <SelectTrigger className="w-32">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="admin">Admin</SelectItem>
-                            <SelectItem value="hr">HR</SelectItem>
-                            <SelectItem value="employee">Employee</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleRemoveUser(member._id)}
-                          disabled={false}
-                        >
-                          <Trash2 className="h-4 w-4 text-red-600" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {members?.map((member: any) => {
+                    const isCurrentUser = member._id === currentUserId;
+                    const canEditThisRole =
+                      canEditMemberRoles && !isCurrentUser;
+                    return (
+                      <TableRow key={member._id}>
+                        <TableCell>{member.name || "-"}</TableCell>
+                        <TableCell>{member.email}</TableCell>
+                        <TableCell>
+                          {isCurrentUser ? (
+                            <span className="capitalize">
+                              {member.role === "owner"
+                                ? "Owner"
+                                : (member.role ?? "").charAt(0).toUpperCase() +
+                                  (member.role ?? "").slice(1)}
+                            </span>
+                          ) : (
+                            <Select
+                              value={member.role}
+                              onValueChange={(value: any) =>
+                                handleUpdateRole(member._id, value)
+                              }
+                              disabled={!canEditThisRole}
+                            >
+                              <SelectTrigger className="w-32">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="admin">Admin</SelectItem>
+                                <SelectItem value="hr">HR</SelectItem>
+                                <SelectItem value="accounting">
+                                  Accounting
+                                </SelectItem>
+                                <SelectItem value="employee">
+                                  Employee
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {isOwnerOrAdmin && !isCurrentUser && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleRemoveUser(member._id)}
+                            >
+                              <Trash2 className="h-4 w-4 text-red-600" />
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </CardContent>
           </Card>
         )}
 
-        {isAdminOrAccounting && invitations && invitations.length > 0 && (
+        {canViewMembers && invitations && invitations.length > 0 && (
           <Card>
             <CardHeader>
               <CardTitle>Pending Invitations</CardTitle>
@@ -312,13 +406,43 @@ export function OrganizationManagement(): React.ReactElement {
                             Invited as {invitation.role} •{" "}
                             {format(
                               new Date(invitation.createdAt),
-                              "MMM dd, yyyy"
+                              "MMM dd, yyyy",
                             )}
                           </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge variant="secondary">Pending</Badge>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={resendingId === invitation._id}
+                          onClick={async () => {
+                            setResendingId(invitation._id);
+                            try {
+                              await resendInvitation(invitation._id);
+                              toast({
+                                title: "Invitation resent",
+                                description: `Email sent again to ${invitation.email}.`,
+                              });
+                            } catch (error: any) {
+                              toast({
+                                title: "Failed to resend",
+                                description: error.message || "Failed to resend invitation.",
+                                variant: "destructive",
+                              });
+                            } finally {
+                              setResendingId(null);
+                            }
+                          }}
+                          title="Resend invitation email"
+                        >
+                          {resendingId === invitation._id ? (
+                            <Spinner size="sm" className="border-gray-600 border-t-transparent" />
+                          ) : (
+                            <Send className="h-4 w-4" />
+                          )}
+                        </Button>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -329,10 +453,11 @@ export function OrganizationManagement(): React.ReactElement {
                               });
                             } catch (error: any) {
                               alert(
-                                error.message || "Failed to cancel invitation"
+                                error.message || "Failed to cancel invitation",
                               );
                             }
                           }}
+                          title="Cancel invitation"
                         >
                           <X className="h-4 w-4" />
                         </Button>
@@ -343,7 +468,6 @@ export function OrganizationManagement(): React.ReactElement {
             </CardContent>
           </Card>
         )}
-
       </div>
 
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
@@ -484,6 +608,38 @@ export function OrganizationManagement(): React.ReactElement {
               <Button type="submit">Send Invitation</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Organization</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete "{currentOrganization?.name}"?
+              This action cannot be undone. All members will be removed from
+              this organization, but employee and payroll records will be
+              preserved.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsDeleteDialogOpen(false)}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleDeleteOrganization}
+              disabled={isDeleting}
+            >
+              {isDeleting ? "Deleting..." : "Delete Organization"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

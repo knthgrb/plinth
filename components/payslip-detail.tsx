@@ -1,5 +1,7 @@
 "use client";
 
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { format } from "date-fns";
 
@@ -73,23 +75,30 @@ export function PayslipDetail({
   const incentives = payslip.incentives || [];
   const totalIncentives = incentives.reduce(
     (sum: number, inc: any) => sum + inc.amount,
-    0
+    0,
   );
 
   // Use backend / caller-calculated values as the source of truth.
-  // Caller may already cap deductions and net pay (e.g. preview).
   const storedGrossPay = payslip.grossPay || 0;
-  const hasStoredNetPay = typeof payslip.netPay === "number";
-  const storedNetPay = hasStoredNetPay ? (payslip.netPay as number) : 0;
 
   const holidayPay = payslip.holidayPay || 0;
   const restDayPay = payslip.restDayPay || 0;
 
+  // Payroll settings for daily rate formula: (basic + allowance?) × 12/workingDaysPerYear
+  const settings = useQuery(
+    (api as any).settings.getSettings,
+    organization?._id ? { organizationId: organization._id } : "skip"
+  );
+  const dailyRateIncludesAllowance =
+    settings?.payrollSettings?.dailyRateIncludesAllowance ?? false;
+  const dailyRateWorkingDaysPerYear =
+    settings?.payrollSettings?.dailyRateWorkingDaysPerYear ?? 261;
+
   // Calculate basic pay based on actual attendance
-  // For monthly employees: calculate per-day rate based on working days in cutoff,
-  // then multiply by actual days worked
+  // For monthly employees: daily rate = (basic + allowance?) × 12/261
   const salaryType = employee?.compensation?.salaryType || "monthly";
   const monthlySalary = employee?.compensation?.basicSalary || 0;
+  const allowance = employee?.compensation?.allowance ?? 0;
   const daysWorked = payslip.daysWorked || 0;
   const absences = payslip.absences || 0;
   const lateHours = payslip.lateHours || 0;
@@ -120,7 +129,7 @@ export function PayslipDetail({
     if (employeeSchedule?.scheduleOverrides) {
       const override = employeeSchedule.scheduleOverrides.find(
         (o: any) =>
-          new Date(o.date).toDateString() === new Date(date).toDateString()
+          new Date(o.date).toDateString() === new Date(date).toDateString(),
       );
       if (override) return false;
     }
@@ -132,7 +141,7 @@ export function PayslipDetail({
   const calculateWorkingDaysInRange = (
     startDate: number,
     endDate: number,
-    employeeSchedule: any
+    employeeSchedule: any,
   ): number => {
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -169,15 +178,15 @@ export function PayslipDetail({
   if (salaryType === "monthly" && cutoffStart && cutoffEnd) {
     // For bi-monthly cutoff, show the full bi-monthly amount
     fullBasicPay = monthlySalary / 2;
-    // Calculate working days in cutoff period
     workingDaysInCutoff = calculateWorkingDaysInRange(
       cutoffStart,
       cutoffEnd,
-      employee?.schedule
+      employee?.schedule,
     );
-    // Calculate per-day rate: base / working days in cutoff (for deduction calculations)
-    dailyRate =
-      workingDaysInCutoff > 0 ? fullBasicPay / workingDaysInCutoff : 0;
+    // Daily rate = (basic + allowance?) × 12/workingDaysPerYear (matches backend)
+    const monthlyBase =
+      monthlySalary + (dailyRateIncludesAllowance ? allowance : 0);
+    dailyRate = monthlyBase * (12 / dailyRateWorkingDaysPerYear);
     hourlyRate = dailyRate / 8;
   } else if (salaryType === "daily") {
     // For daily employees, daily rate is the basicSalary
@@ -189,7 +198,7 @@ export function PayslipDetail({
         ? calculateWorkingDaysInRange(
             cutoffStart,
             cutoffEnd,
-            employee?.schedule
+            employee?.schedule,
           )
         : 22; // Default fallback
     fullBasicPay = dailyRate * workingDaysInCutoff;
@@ -203,14 +212,16 @@ export function PayslipDetail({
         ? calculateWorkingDaysInRange(
             cutoffStart,
             cutoffEnd,
-            employee?.schedule
+            employee?.schedule,
           )
         : 22; // Default fallback
     fullBasicPay = dailyRate * workingDaysInCutoff;
   } else if (salaryType === "monthly") {
     // Fallback if cutoff dates not provided
     fullBasicPay = monthlySalary / 2;
-    dailyRate = fullBasicPay / 22; // Default to 22 working days
+    const monthlyBase =
+      monthlySalary + (dailyRateIncludesAllowance ? allowance : 0);
+    dailyRate = monthlyBase * (12 / dailyRateWorkingDaysPerYear);
     hourlyRate = dailyRate / 8;
   }
 
@@ -231,11 +242,8 @@ export function PayslipDetail({
   // Deductions are shown separately in the "Less" section
   const basicPay = fullBasicPay;
 
-  // Calculate overtime (overtime is already included in backend calculation)
-  // For display purposes, we'll show it separately
-  const overtimeRegular = payslip.overtimeHours
-    ? payslip.overtimeHours * hourlyRate * 1.25
-    : 0;
+  // Use actual overtime values from payslip
+  const overtimeRegular = payslip.overtimeRegular || 0;
 
   // Taxable gross earnings = Basic Pay - Absent Deduction - Late Deduction - Undertime Deduction + Overtime + Incentives
   // This is the final amount after all attendance-based deductions
@@ -246,7 +254,7 @@ export function PayslipDetail({
       lateDeduction -
       undertimeDeduction +
       overtimeRegular +
-      totalIncentives
+      totalIncentives,
   );
 
   // Non-taxable items (allowances, transportation)
@@ -258,45 +266,77 @@ export function PayslipDetail({
   const totalEarnings =
     taxableGrossEarnings + nonTaxableAllowance + transportation;
 
+  // Only show sections when they have at least one line with value > 0
+  const hasOtherEarnings =
+    (payslip.nightDiffPay ?? 0) > 0 ||
+    (payslip.holidayPay ?? 0) > 0 ||
+    (payslip.restDayPay ?? 0) > 0 ||
+    (payslip.overtimeRegular ?? 0) > 0 ||
+    (payslip.overtimeRestDay ?? 0) > 0 ||
+    (payslip.overtimeRestDayExcess ?? 0) > 0 ||
+    (payslip.overtimeSpecialHoliday ?? 0) > 0 ||
+    (payslip.overtimeSpecialHolidayExcess ?? 0) > 0 ||
+    (payslip.overtimeLegalHoliday ?? 0) > 0 ||
+    (payslip.overtimeLegalHolidayExcess ?? 0) > 0;
+  const hasAddEarnings =
+    (payslip.adjustments ?? 0) > 0 ||
+    (payslip.commission ?? 0) > 0 ||
+    (payslip.thirteenthMonth ?? 0) > 0;
+  const hasLess =
+    (payslip.adjustmentsNegative ?? 0) > 0 ||
+    absentDeduction > 0 ||
+    lateDeduction > 0 ||
+    undertimeDeduction > 0;
+  const hasAddNonTaxable =
+    nonTaxableAllowance > 0 ||
+    transportation > 0 ||
+    (incentives?.filter((inc: any) => inc.amount > 0).length ?? 0) > 0;
+
   // Separate deductions by type
   const governmentDeductions =
     payslip.deductions?.filter((d: any) => d.type === "government") || [];
 
   // Non-government, non-attendance deductions (e.g. loans, advances, other).
-  // Attendance-based deductions like Absent/Late/Undertime are already shown
-  // on the left side under "Less", so we exclude type === "attendance" here.
+  // Attendance (absent, late, undertime) is only shown on the left under "Less", not here.
   const loanDeductions =
     payslip.deductions?.filter(
-      (d: any) => d.type !== "government" && d.type !== "attendance"
+      (d: any) => d.type !== "government" && d.type !== "attendance",
     ) || [];
+  const loanDeductionsWithAmount = loanDeductions.filter(
+    (d: any) => d.amount > 0,
+  );
 
-  // Calculate totals
+  // Calculate totals (full total includes gov + loans + attendance; used for net pay)
   const computedTotalDeductions =
     payslip.deductions?.reduce((sum: number, d: any) => sum + d.amount, 0) || 0;
-
-  // If caller/backend provided a capped totalDeductions, prefer that;
-  // otherwise fall back to the sum of individual deduction items.
   const totalDeductions =
     typeof payslip.totalDeductions === "number"
       ? (payslip.totalDeductions as number)
       : computedTotalDeductions;
 
-  // For the final Net Pay, always trust the stored value (even when 0).
-  // Only if it's missing do we fall back to a calculated value, and we never go below 0.
-  const fallbackNetPay = Math.max(0, totalEarnings - totalDeductions);
-  const netPay = hasStoredNetPay ? storedNetPay : fallbackNetPay;
+  // Right column shows only gov + loans; total there must match those line items only
+  const totalDeductionsRightColumn =
+    (governmentDeductions.reduce(
+      (s: number, d: any) => s + (d.amount || 0),
+      0,
+    ) || 0) +
+    (loanDeductionsWithAmount.reduce((s: number, d: any) => s + d.amount, 0) ||
+      0);
+
+  // Net pay = total earnings minus only gov + loans (absent/late/undertime already deducted in earnings)
+  const netPay = Math.max(0, totalEarnings - totalDeductionsRightColumn);
 
   // Get specific deduction amounts
   const getDeductionAmount = (name: string) => {
     const deduction = payslip.deductions?.find((d: any) =>
-      d.name.toLowerCase().includes(name.toLowerCase())
+      d.name.toLowerCase().includes(name.toLowerCase()),
     );
     return deduction?.amount || 0;
   };
 
   const hasDeduction = (name: string) => {
     return payslip.deductions?.some((d: any) =>
-      d.name.toLowerCase().includes(name.toLowerCase())
+      d.name.toLowerCase().includes(name.toLowerCase()),
     );
   };
 
@@ -371,128 +411,263 @@ export function PayslipDetail({
                 </span>
               </div>
 
-              <div className="mt-4">
-                <p className="font-semibold mb-2">Other Earnings</p>
-                <div className="space-y-1 text-sm">
-                  <div className="flex justify-between">
-                    <span>Night Differential</span>
-                    <span>
-                      ₱
-                      {(0).toLocaleString("en-US", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </span>
-                  </div>
-                  {payslip.holidayPay && payslip.holidayPay > 0 && (
-                    <div className="flex justify-between">
-                      <span>Holiday Pay</span>
-                      <span>
-                        ₱
-                        {payslip.holidayPay.toLocaleString("en-US", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </span>
-                    </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span>Overtime - Regular</span>
-                    <span>
-                      ₱
-                      {overtimeRegular.toLocaleString("en-US", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Overtime - Rest Day</span>
-                    <span>₱0.00</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Overtime - RD excess of 8 hrs.</span>
-                    <span>₱0.00</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Overtime - Special Holiday</span>
-                    <span>₱0.00</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Overtime - SH excess of 8 hrs.</span>
-                    <span>₱0.00</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Overtime - Legal Holiday</span>
-                    <span>₱0.00</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Overtime - LH excess of 8 hrs.</span>
-                    <span>₱0.00</span>
+              {hasOtherEarnings && (
+                <div className="mt-4">
+                  <p className="font-semibold mb-2">Other Earnings</p>
+                  <div className="space-y-1 text-sm">
+                    {payslip.nightDiffPay && payslip.nightDiffPay > 0 && (
+                      <div className="flex justify-between">
+                        <span>Night Differential</span>
+                        <span>
+                          ₱
+                          {payslip.nightDiffPay.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {payslip.holidayPay && payslip.holidayPay > 0 && (
+                      <div className="flex justify-between">
+                        <span>Holiday Pay</span>
+                        <span>
+                          ₱
+                          {payslip.holidayPay.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {payslip.restDayPay && payslip.restDayPay > 0 && (
+                      <div className="flex justify-between">
+                        <span>Rest Day Pay</span>
+                        <span>
+                          ₱
+                          {payslip.restDayPay.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {payslip.overtimeRegular && payslip.overtimeRegular > 0 && (
+                      <div className="flex justify-between">
+                        <span>Overtime - Regular</span>
+                        <span>
+                          ₱
+                          {payslip.overtimeRegular.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {payslip.overtimeRestDay && payslip.overtimeRestDay > 0 && (
+                      <div className="flex justify-between">
+                        <span>Overtime - Rest Day</span>
+                        <span>
+                          ₱
+                          {payslip.overtimeRestDay.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {payslip.overtimeRestDayExcess &&
+                      payslip.overtimeRestDayExcess > 0 && (
+                        <div className="flex justify-between">
+                          <span>Overtime - RD excess of 8 hrs.</span>
+                          <span>
+                            ₱
+                            {payslip.overtimeRestDayExcess.toLocaleString(
+                              "en-US",
+                              {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              },
+                            )}
+                          </span>
+                        </div>
+                      )}
+                    {payslip.overtimeSpecialHoliday &&
+                      payslip.overtimeSpecialHoliday > 0 && (
+                        <div className="flex justify-between">
+                          <span>Overtime - Special Holiday</span>
+                          <span>
+                            ₱
+                            {payslip.overtimeSpecialHoliday.toLocaleString(
+                              "en-US",
+                              {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              },
+                            )}
+                          </span>
+                        </div>
+                      )}
+                    {payslip.overtimeSpecialHolidayExcess &&
+                      payslip.overtimeSpecialHolidayExcess > 0 && (
+                        <div className="flex justify-between">
+                          <span>Overtime - SH excess of 8 hrs.</span>
+                          <span>
+                            ₱
+                            {payslip.overtimeSpecialHolidayExcess.toLocaleString(
+                              "en-US",
+                              {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              },
+                            )}
+                          </span>
+                        </div>
+                      )}
+                    {payslip.overtimeLegalHoliday &&
+                      payslip.overtimeLegalHoliday > 0 && (
+                        <div className="flex justify-between">
+                          <span>Overtime - Legal Holiday</span>
+                          <span>
+                            ₱
+                            {payslip.overtimeLegalHoliday.toLocaleString(
+                              "en-US",
+                              {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              },
+                            )}
+                          </span>
+                        </div>
+                      )}
+                    {payslip.overtimeLegalHolidayExcess &&
+                      payslip.overtimeLegalHolidayExcess > 0 && (
+                        <div className="flex justify-between">
+                          <span>Overtime - LH excess of 8 hrs.</span>
+                          <span>
+                            ₱
+                            {payslip.overtimeLegalHolidayExcess.toLocaleString(
+                              "en-US",
+                              {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              },
+                            )}
+                          </span>
+                        </div>
+                      )}
                   </div>
                 </div>
-              </div>
+              )}
 
-              <div className="mt-4">
-                <p className="font-semibold mb-2">Add</p>
-                <div className="space-y-1 text-sm">
-                  <div className="flex justify-between">
-                    <span>Adjustments (+)</span>
-                    <span>₱0.00</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Commission</span>
-                    <span>₱0.00</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>13th month pay</span>
-                    <span>₱0.00</span>
+              {hasAddEarnings && (
+                <div className="mt-4">
+                  <p className="font-semibold mb-2">Add</p>
+                  <div className="space-y-1 text-sm">
+                    {/* Only show items with value > 0 */}
+                    {payslip.adjustments && payslip.adjustments > 0 && (
+                      <div className="flex justify-between">
+                        <span>Adjustments (+)</span>
+                        <span>
+                          ₱
+                          {payslip.adjustments.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {payslip.commission && payslip.commission > 0 && (
+                      <div className="flex justify-between">
+                        <span>Commission</span>
+                        <span>
+                          ₱
+                          {payslip.commission.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {payslip.thirteenthMonth && payslip.thirteenthMonth > 0 && (
+                      <div className="flex justify-between">
+                        <span>13th month pay</span>
+                        <span>
+                          ₱
+                          {payslip.thirteenthMonth.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
+              )}
 
-              <div className="mt-4">
-                <p className="font-semibold mb-2">Less</p>
-                <div className="space-y-1 text-sm">
-                  <div className="flex justify-between">
-                    <span>Adjustments (-)</span>
-                    <span>₱0.00</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>
-                      Absent{" "}
-                      {calculatedAbsences > 0 && `(${calculatedAbsences} days)`}
-                    </span>
-                    <span>
-                      ₱
-                      {absentDeduction.toLocaleString("en-US", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Late</span>
-                    <span>
-                      ₱
-                      {lateDeduction.toLocaleString("en-US", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Undertime</span>
-                    <span>
-                      ₱
-                      {undertimeDeduction.toLocaleString("en-US", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </span>
+              {hasLess && (
+                <div className="mt-4">
+                  <p className="font-semibold mb-2">Less</p>
+                  <div className="space-y-1 text-sm">
+                    {/* Only show items with value > 0 */}
+                    {payslip.adjustmentsNegative &&
+                      payslip.adjustmentsNegative > 0 && (
+                        <div className="flex justify-between">
+                          <span>Adjustments (-)</span>
+                          <span>
+                            ₱
+                            {payslip.adjustmentsNegative.toLocaleString(
+                              "en-US",
+                              {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              },
+                            )}
+                          </span>
+                        </div>
+                      )}
+                    {absentDeduction > 0 && (
+                      <div className="flex justify-between">
+                        <span>
+                          Absent{" "}
+                          {calculatedAbsences > 0 &&
+                            `(${calculatedAbsences} days)`}
+                        </span>
+                        <span>
+                          ₱
+                          {absentDeduction.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {lateDeduction > 0 && (
+                      <div className="flex justify-between">
+                        <span>Late</span>
+                        <span>
+                          ₱
+                          {lateDeduction.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {undertimeDeduction > 0 && (
+                      <div className="flex justify-between">
+                        <span>Undertime</span>
+                        <span>
+                          ₱
+                          {undertimeDeduction.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
+              )}
 
               <div className="border-t pt-2 mt-4">
                 <div className="flex justify-between font-semibold">
@@ -507,47 +682,55 @@ export function PayslipDetail({
                 </div>
               </div>
 
-              <div className="mt-4">
-                <p className="font-semibold mb-2">Add</p>
-                <div className="space-y-1 text-sm">
-                  <div className="flex justify-between">
-                    <span>Non-taxable Allowance</span>
-                    <span>
-                      ₱
-                      {nonTaxableAllowance.toLocaleString("en-US", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </span>
+              {hasAddNonTaxable && (
+                <div className="mt-4">
+                  <p className="font-semibold mb-2">Add</p>
+                  <div className="space-y-1 text-sm">
+                    {nonTaxableAllowance > 0 && (
+                      <div className="flex justify-between">
+                        <span>Non-taxable Allowance</span>
+                        <span>
+                          ₱
+                          {nonTaxableAllowance.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {transportation > 0 && (
+                      <div className="flex justify-between">
+                        <span>Transportation</span>
+                        <span>
+                          ₱
+                          {transportation.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {incentives.length > 0 && (
+                      <>
+                        {incentives
+                          .filter((inc: any) => inc.amount > 0)
+                          .map((inc: any, i: number) => (
+                            <div key={i} className="flex justify-between">
+                              <span>{inc.name}</span>
+                              <span>
+                                ₱
+                                {inc.amount.toLocaleString("en-US", {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </span>
+                            </div>
+                          ))}
+                      </>
+                    )}
                   </div>
-                  <div className="flex justify-between">
-                    <span>Transportation</span>
-                    <span>
-                      ₱
-                      {transportation.toLocaleString("en-US", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </span>
-                  </div>
-                  {incentives.length > 0 && (
-                    <>
-                      {incentives.map((inc: any, i: number) => (
-                        <div key={i} className="flex justify-between">
-                          <span>{inc.name}</span>
-                          <span>
-                            ₱
-                            {inc.amount.toLocaleString("en-US", {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </span>
-                        </div>
-                      ))}
-                    </>
-                  )}
                 </div>
-              </div>
+              )}
 
               <div className="border-t-2 pt-2 mt-4">
                 <div className="flex justify-between font-bold text-lg">
@@ -593,7 +776,7 @@ export function PayslipDetail({
                           {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
-                          }
+                          },
                         )}
                       </span>
                     </div>
@@ -608,7 +791,7 @@ export function PayslipDetail({
                           {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
-                          }
+                          },
                         )}
                       </span>
                     </div>
@@ -623,7 +806,7 @@ export function PayslipDetail({
                           {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
-                          }
+                          },
                         )}
                       </span>
                     </div>
@@ -637,36 +820,32 @@ export function PayslipDetail({
                 </div>
               </div>
 
-              <div className="mt-4">
-                <p className="font-semibold mb-2">Loans and Advances</p>
-                <div className="space-y-1 text-sm">
-                  {loanDeductions.length === 0 && (
-                    <div className="flex justify-between text-gray-500">
-                      <span>None</span>
-                      <span>₱0.00</span>
-                    </div>
-                  )}
-                  {loanDeductions.map((ded: any, idx: number) => (
-                    <div key={idx} className="flex justify-between">
-                      <span>{ded.name}</span>
-                      <span>
-                        ₱
-                        {ded.amount.toLocaleString("en-US", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </span>
-                    </div>
-                  ))}
+              {loanDeductionsWithAmount.length > 0 && (
+                <div className="mt-4">
+                  <p className="font-semibold mb-2">Loans and Advances</p>
+                  <div className="space-y-1 text-sm">
+                    {loanDeductionsWithAmount.map((ded: any, idx: number) => (
+                      <div key={idx} className="flex justify-between">
+                        <span>{ded.name}</span>
+                        <span>
+                          ₱
+                          {ded.amount.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="border-t-2 pt-2 mt-4">
                 <div className="flex justify-between font-bold text-lg">
                   <span>Total</span>
                   <span>
                     ₱
-                    {totalDeductions.toLocaleString("en-US", {
+                    {totalDeductionsRightColumn.toLocaleString("en-US", {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })}
@@ -706,7 +885,7 @@ export function PayslipDetail({
                       {edit.editedByEmail || "Unknown User"} -{" "}
                       {format(
                         new Date(edit.editedAt),
-                        "MMM dd, yyyy 'at' h:mm a"
+                        "MMM dd, yyyy 'at' h:mm a",
                       )}
                     </CardTitle>
                   </CardHeader>
@@ -727,7 +906,7 @@ export function PayslipDetail({
                                   <div key={idx} className="text-sm">
                                     • {detail}
                                   </div>
-                                )
+                                ),
                               )}
                             </div>
                           ) : change.field === "deductions" ||
@@ -757,7 +936,7 @@ export function PayslipDetail({
                                   {
                                     minimumFractionDigits: 2,
                                     maximumFractionDigits: 2,
-                                  }
+                                  },
                                 )}
                               </div>
                               <div>
@@ -767,7 +946,7 @@ export function PayslipDetail({
                                   {
                                     minimumFractionDigits: 2,
                                     maximumFractionDigits: 2,
-                                  }
+                                  },
                                 )}
                               </div>
                             </div>

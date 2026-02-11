@@ -6,7 +6,7 @@ import { authComponent } from "./auth";
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "admin" | "hr" | "accounting"
+  requiredRole?: "owner" | "admin" | "hr" | "accounting"
 ) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -48,12 +48,17 @@ async function checkAuth(
   // For read operations, allow accounting role
   // For write operations (requiredRole specified), only allow specified role or admin
   if (requiredRole) {
-    if (userRole !== requiredRole && userRole !== "admin") {
+    if (
+      userRole !== requiredRole &&
+      userRole !== "owner" &&
+      userRole !== "admin"
+    ) {
       throw new Error("Not authorized");
     }
   } else {
     // No required role means read access - allow accounting
     if (
+      userRole !== "owner" &&
       userRole !== "admin" &&
       userRole !== "hr" &&
       userRole !== "accounting" &&

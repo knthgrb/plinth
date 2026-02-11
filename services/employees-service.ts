@@ -210,6 +210,20 @@ export class EmployeesService {
     );
   }
 
+  static async setEmployeeRequirementsComplete(data: {
+    employeeId: string;
+    complete: boolean;
+  }) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.mutation as any)(
+      (api as any).employees.setEmployeeRequirementsComplete,
+      {
+        employeeId: data.employeeId as Id<"employees">,
+        complete: data.complete,
+      }
+    );
+  }
+
   static async updateRequirementFile(data: {
     employeeId: string;
     requirementIndex: number;

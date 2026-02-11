@@ -88,7 +88,7 @@ export class OrganizationsService {
   static async updateUserRoleInOrganization(data: {
     organizationId: string;
     userId: string;
-    role: "admin" | "hr" | "employee";
+    role: "admin" | "hr" | "accounting" | "employee";
   }) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(
@@ -97,6 +97,16 @@ export class OrganizationsService {
         ...data,
         organizationId: data.organizationId as Id<"organizations">,
         userId: data.userId as Id<"users">,
+      }
+    );
+  }
+
+  static async deleteOrganization(organizationId: string) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.mutation as any)(
+      (api as any).organizations.deleteOrganization,
+      {
+        organizationId: organizationId as Id<"organizations">,
       }
     );
   }

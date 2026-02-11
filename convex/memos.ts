@@ -6,7 +6,7 @@ import { authComponent } from "./auth";
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "admin" | "hr"
+  requiredRole?: "owner" | "admin" | "hr"
 ) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -44,7 +44,12 @@ async function checkAuth(
     userRole = userRecord.role;
   }
 
-  if (requiredRole && userRole !== requiredRole && userRole !== "admin") {
+  if (
+    requiredRole &&
+    userRole !== requiredRole &&
+    userRole !== "admin" &&
+    userRole !== "owner"
+  ) {
     throw new Error("Not authorized");
   }
 

@@ -1,13 +1,16 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
-import { calculateTotalLeaveEntitlement } from "./leaveCalculations";
+import {
+  calculateTotalLeaveEntitlement,
+  calculateProratedLeave,
+} from "./leaveCalculations";
 
 // Helper to check authorization with organization context
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "admin" | "hr" | "accounting"
+  requiredRole?: "owner" | "admin" | "hr" | "accounting"
 ) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -52,18 +55,21 @@ async function checkAuth(
     userRole = userRecord.role;
   }
 
-  // Allow admin to access everything
+  // Owner has all admin privileges - treat owner the same as admin
+  const isOwnerOrAdmin = userRole === "admin" || userRole === "owner";
+
+  // Allow admin/owner to access everything
   // For read operations, allow accounting and employee roles
-  // For write operations (requiredRole specified), only allow specified role or admin
+  // For write operations (requiredRole specified), only allow specified role or admin/owner
   if (requiredRole) {
-    if (userRole !== requiredRole && userRole !== "admin") {
+    if (userRole !== requiredRole && !isOwnerOrAdmin) {
       throw new Error("Not authorized");
     }
   } else {
     // No required role means read access - allow accounting and employees
     // Employees need read access to see employee names in leave requests, etc.
     if (
-      userRole !== "admin" &&
+      !isOwnerOrAdmin &&
       userRole !== "hr" &&
       userRole !== "accounting" &&
       userRole !== "employee"
@@ -84,7 +90,25 @@ export const getEmployees = query({
     search: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    let userRecord;
+    try {
+      userRecord = await checkAuth(ctx, args.organizationId);
+    } catch (error: any) {
+      // Handle auth errors gracefully by returning empty array instead of throwing
+      // This prevents errors during initial page load when there's a race condition:
+      // - Next.js middleware checks cookies (server-side) → sees authenticated → allows access
+      // - Convex queries use JWT tokens (client-side) → token might not be ready yet → throws "Not authenticated"
+      // By returning empty array, the query succeeds and will retry once auth token is ready
+      if (
+        error.message?.includes("Not authenticated") ||
+        error.message?.includes("Unauthenticated") ||
+        error.message?.includes("Not authorized") ||
+        error.message?.includes("User is not a member")
+      ) {
+        return [];
+      }
+      throw error;
+    }
 
     let employees = await (ctx.db.query("employees") as any)
       .withIndex("by_organization", (q: any) =>
@@ -142,6 +166,173 @@ export const getEmployee = query({
     }
 
     return employee;
+  },
+});
+
+// Get stored payslip PIN hash (for verification in action only; auth required)
+export const getPayslipPinHash = query({
+  args: { employeeId: v.id("employees") },
+  handler: async (ctx, args) => {
+    const employee = await ctx.db.get(args.employeeId);
+    if (!employee) throw new Error("Employee not found");
+    const userRecord = await checkAuth(ctx, employee.organizationId);
+    const userOrg = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_user_organization", (q: any) =>
+        q
+          .eq("userId", userRecord._id)
+          .eq("organizationId", employee.organizationId)
+      )
+      .first();
+    const currentEmployeeId = userOrg?.employeeId ?? userRecord.employeeId;
+    if (
+      userRecord.role === "employee" &&
+      currentEmployeeId !== args.employeeId
+    ) {
+      throw new Error("Not authorized");
+    }
+    const hash = (employee as any).payslipPinHash ?? null;
+    return { hash };
+  },
+});
+
+// Set payslip PIN hash (called from action after hashing; auth required)
+export const setPayslipPinHash = mutation({
+  args: {
+    employeeId: v.id("employees"),
+    hashedPin: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const employee = await ctx.db.get(args.employeeId);
+    if (!employee) throw new Error("Employee not found");
+    const userRecord = await checkAuth(ctx, employee.organizationId);
+    const userOrg = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_user_organization", (q: any) =>
+        q
+          .eq("userId", userRecord._id)
+          .eq("organizationId", employee.organizationId)
+      )
+      .first();
+    const isSameEmployee =
+      userOrg?.employeeId === args.employeeId ||
+      userRecord.employeeId === args.employeeId;
+    const isHrOrAdmin =
+      userOrg?.role === "hr" ||
+      userOrg?.role === "admin" ||
+      userOrg?.role === "owner";
+    if (!isSameEmployee && !isHrOrAdmin) {
+      throw new Error("Not authorized to set PIN for this employee");
+    }
+    await ctx.db.patch(args.employeeId, {
+      payslipPinHash: args.hashedPin,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  },
+});
+
+// Check if employee has a user account
+export const employeeHasUserAccount = query({
+  args: {
+    employeeId: v.id("employees"),
+    organizationId: v.id("organizations"),
+  },
+  handler: async (ctx, args) => {
+    await checkAuth(ctx, args.organizationId);
+
+    // Check if there's a user linked to this employee via userOrganizations
+    const userOrg = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId)
+      )
+      .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
+      .first();
+
+    if (userOrg) {
+      return { hasAccount: true, userId: userOrg.userId };
+    }
+
+    // Also check if there's a user with this employee's email (regardless of organization)
+    const employee = await ctx.db.get(args.employeeId);
+    if (employee) {
+      const user = await (ctx.db.query("users") as any)
+        .withIndex("by_email", (q: any) =>
+          q.eq("email", employee.personalInfo.email)
+        )
+        .first();
+
+      if (user) {
+        // If a user exists with this email, they have an account (regardless of organization)
+        return { hasAccount: true, userId: user._id };
+      }
+    }
+
+    return { hasAccount: false, userId: null };
+  },
+});
+
+// Batch check which employees have user accounts
+export const checkEmployeesUserAccounts = query({
+  args: {
+    employeeIds: v.array(v.id("employees")),
+    organizationId: v.id("organizations"),
+  },
+  handler: async (ctx, args) => {
+    await checkAuth(ctx, args.organizationId);
+
+    // Get all userOrganizations for these employees in this organization
+    const userOrgs = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId)
+      )
+      .collect();
+
+    // Filter to only those with matching employeeIds
+    const employeeUserMap = new Map<string, string>();
+    userOrgs.forEach((userOrg: any) => {
+      if (userOrg.employeeId && args.employeeIds.includes(userOrg.employeeId)) {
+        employeeUserMap.set(userOrg.employeeId, userOrg.userId);
+      }
+    });
+
+    // Also check by email for employees that don't have userOrg entries
+    const employeesWithoutUserOrg = args.employeeIds.filter(
+      (id) => !employeeUserMap.has(id)
+    );
+
+    const employees = await Promise.all(
+      employeesWithoutUserOrg.map((id) => ctx.db.get(id))
+    );
+
+    const emailToEmployeeMap = new Map<string, string>();
+    employees.forEach((emp: any) => {
+      if (emp) {
+        emailToEmployeeMap.set(emp.personalInfo.email, emp._id);
+      }
+    });
+
+    // Check for users with matching emails
+    if (emailToEmployeeMap.size > 0) {
+      const emails = Array.from(emailToEmployeeMap.keys());
+      for (const email of emails) {
+        const user = await (ctx.db.query("users") as any)
+          .withIndex("by_email", (q: any) => q.eq("email", email))
+          .first();
+        if (user) {
+          const employeeId = emailToEmployeeMap.get(email);
+          if (employeeId && !employeeUserMap.has(employeeId)) {
+            employeeUserMap.set(employeeId, user._id);
+          }
+        }
+      }
+    }
+
+    // Build result map
+    const result: Record<string, boolean> = {};
+    args.employeeIds.forEach((id) => {
+      result[id] = employeeUserMap.has(id);
+    });
+
+    return result;
   },
 });
 
@@ -310,25 +501,46 @@ export const createEmployee = mutation({
 
     const vacationConfig = leaveTypes.find((t: any) => t.type === "vacation");
     const sickConfig = leaveTypes.find((t: any) => t.type === "sick");
+    const hasAnniversaryType = leaveTypes.some(
+      (t: any) => t.isAnniversary === true || t.type === "anniversary"
+    );
+    const proratedLeave = settings?.proratedLeave === true;
+    const hireDate = args.employment.hireDate;
 
-    // Use defaultCredits from organization settings (or defaults if not set)
-    const vacationTotal = vacationConfig?.defaultCredits ?? 15;
-    const sickTotal = sickConfig?.defaultCredits ?? 15;
+    // Use defaultCredits from organization settings; apply proration if enabled
+    const vacationAnnual = vacationConfig?.defaultCredits ?? 15;
+    const sickAnnual = sickConfig?.defaultCredits ?? 15;
+    const vacationTotal = proratedLeave
+      ? Math.round(
+          calculateProratedLeave(vacationAnnual, hireDate, now) * 100
+        ) / 100
+      : vacationAnnual;
+    const sickTotal = proratedLeave
+      ? Math.round(calculateProratedLeave(sickAnnual, hireDate, now) * 100) /
+        100
+      : sickAnnual;
 
-    const employeeId = await ctx.db.insert("employees", {
+    const leaveCredits: any = {
+      vacation: {
+        total: vacationTotal,
+        used: 0,
+        balance: vacationTotal,
+      },
+      sick: { total: sickTotal, used: 0, balance: sickTotal },
+    };
+    if (hasAnniversaryType) {
+      leaveCredits.custom = [
+        { type: "anniversary", total: 0, used: 0, balance: 0 },
+      ];
+    }
+
+    const insertedId = await ctx.db.insert("employees", {
       organizationId: args.organizationId,
       personalInfo: args.personalInfo,
       employment: args.employment,
       compensation: args.compensation,
       schedule: args.schedule,
-      leaveCredits: {
-        vacation: {
-          total: vacationTotal,
-          used: 0,
-          balance: vacationTotal,
-        },
-        sick: { total: sickTotal, used: 0, balance: sickTotal },
-      },
+      leaveCredits,
       requirements: defaultRequirements,
       deductions: [],
       incentives: [],
@@ -336,7 +548,16 @@ export const createEmployee = mutation({
       updatedAt: now,
     });
 
-    return employeeId;
+    // Auto-generate company employee ID from document id (last 6 chars)
+    const companyEmployeeId = insertedId.slice(-6);
+    await ctx.db.patch(insertedId, {
+      employment: {
+        ...args.employment,
+        employeeId: companyEmployeeId,
+      },
+    });
+
+    return insertedId;
   },
 });
 
@@ -470,8 +691,9 @@ export const updateEmployee = mutation({
     if (args.schedule) updates.schedule = args.schedule;
     if (args.customFields !== undefined) {
       // Merge with existing customFields
+      const existingCustomFields = (employee as any).customFields;
       updates.customFields = {
-        ...(employee.customFields || {}),
+        ...(existingCustomFields || {}),
         ...args.customFields,
       };
     }
@@ -621,6 +843,33 @@ export const updateRequirementStatus = mutation({
 
     await ctx.db.patch(args.employeeId, {
       requirements,
+      updatedAt: Date.now(),
+    });
+
+    return { success: true };
+  },
+});
+
+// Set all requirements for an employee to complete (verified) or incomplete (pending)
+export const setEmployeeRequirementsComplete = mutation({
+  args: {
+    employeeId: v.id("employees"),
+    complete: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const employee = await ctx.db.get(args.employeeId);
+    if (!employee) throw new Error("Employee not found");
+
+    await checkAuth(ctx, employee.organizationId, "hr");
+
+    const requirements = employee.requirements || [];
+    const newStatus: "pending" | "verified" = args.complete
+      ? "verified"
+      : "pending";
+    const updated = requirements.map((r) => ({ ...r, status: newStatus }));
+
+    await ctx.db.patch(args.employeeId, {
+      requirements: updated,
       updatedAt: Date.now(),
     });
 

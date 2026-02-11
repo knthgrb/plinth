@@ -2,22 +2,28 @@
 
 import { Sidebar } from "./sidebar";
 import { EmployeeSidebar } from "./employee-sidebar";
+import { Header } from "./header";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useOrganization } from "@/hooks/organization-context";
+import { SettingsModalProvider } from "@/hooks/settings-modal-context";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { MainLoader } from "@/components/main-loader";
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { currentOrganizationId } = useOrganization();
-  const user = useQuery((api as any).organizations.getCurrentUser, {
-    organizationId: currentOrganizationId || undefined,
-  });
+  const user = useQuery(
+    (api as any).organizations.getCurrentUser,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+  );
   const hasLoadedUser = useRef(false);
   const mainContentRef = useRef<HTMLElement>(null);
   const [isScrolling, setIsScrolling] = useState(false);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Track if we've successfully loaded the user at least once
   useEffect(() => {
@@ -74,11 +80,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
 
   // Only show full-screen loading on initial load, not during refetches
   if (user === undefined && !hasLoadedUser.current) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-gray-50">
-        <div className="text-gray-500">Loading...</div>
-      </div>
-    );
+    return <MainLoader />;
   }
 
   if (user === null || !currentOrganizationId) {
@@ -90,7 +92,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   const isEmployee = user?.role === "employee";
 
   return (
-    <>
+    <SettingsModalProvider>
       <style
         dangerouslySetInnerHTML={{
           __html: `
@@ -128,16 +130,48 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
         }}
       />
       <div className="flex h-screen overflow-hidden bg-white">
-        {isEmployee ? <EmployeeSidebar /> : <Sidebar />}
+        {/* Desktop Sidebar - hidden on mobile/tablet */}
+        {isEmployee ? (
+          <div className="hidden lg:block">
+            <EmployeeSidebar />
+          </div>
+        ) : (
+          <div className="hidden lg:block">
+            <Sidebar />
+          </div>
+        )}
+
+        {/* Mobile Menu Drawer */}
+        <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
+          <SheetContent
+            side="left"
+            className="w-[280px] sm:w-[320px] p-0 overflow-hidden"
+          >
+            <SheetTitle className="sr-only">Navigation Menu</SheetTitle>
+            <div className="h-full overflow-hidden">
+              {isEmployee ? (
+                <EmployeeSidebar
+                  onNavigate={() => setIsMobileMenuOpen(false)}
+                />
+              ) : (
+                <Sidebar onNavigate={() => setIsMobileMenuOpen(false)} />
+              )}
+            </div>
+          </SheetContent>
+        </Sheet>
+
         <main
           ref={mainContentRef}
-          className={`main-content flex-1 overflow-y-auto bg-white ${
+          className={`main-content flex-1 flex flex-col overflow-hidden bg-white ${
             isScrolling ? "scrolling" : ""
           }`}
         >
-          <div className="max-w-[1400px] mx-auto w-full">{children}</div>
+          <Header onMobileMenuOpen={() => setIsMobileMenuOpen(true)} />
+          <div className="flex-1 overflow-y-auto">
+            <div className="max-w-[1400px] mx-auto w-full">{children}</div>
+          </div>
         </main>
       </div>
-    </>
+    </SettingsModalProvider>
   );
 }

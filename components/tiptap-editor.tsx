@@ -4,6 +4,7 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
+import { TextSelection } from "@tiptap/pm/state";
 import { Button } from "@/components/ui/button";
 import {
   Bold,
@@ -17,8 +18,14 @@ import {
 } from "lucide-react";
 import { useEffect } from "react";
 
+type TiptapDoc = {
+  type: string;
+  content?: unknown[];
+  [key: string]: unknown;
+};
+
 interface TiptapEditorProps {
-  content: string;
+  content: string | TiptapDoc | null | undefined;
   onChange: (content: string) => void;
   placeholder?: string;
 }
@@ -41,7 +48,7 @@ export function TiptapEditor({
       try {
         const parsed = JSON.parse(content);
         // Check if content is actually empty
-        if (parsed.content && parsed.content.length === 0) {
+        if (parsed?.content && parsed.content.length === 0) {
           return "";
         }
         return parsed;
@@ -49,9 +56,16 @@ export function TiptapEditor({
         return "";
       }
     }
+
     // If it's an object, check if it has content
-    if (content && content.content && content.content.length > 0) {
-      return content;
+    if (
+      content &&
+      typeof content === "object" &&
+      "content" in content &&
+      Array.isArray((content as any).content) &&
+      (content as any).content.length > 0
+    ) {
+      return content as TiptapDoc;
     }
     return "";
   };
@@ -101,15 +115,14 @@ export function TiptapEditor({
           // When editor is focused and empty, ensure cursor is at position 0
           if (view.state.doc.content.size === 0) {
             setTimeout(() => {
-              view.dispatch(
-                view.state.tr.setSelection(
-                  view.state.selection.constructor.near(
-                    view.state.doc.resolve(0)
-                  )
-                )
+              const pos = Math.min(1, view.state.doc.content.size);
+              const tr = view.state.tr.setSelection(
+                TextSelection.create(view.state.doc, pos)
               );
+              view.dispatch(tr);
             }, 0);
           }
+          return false;
         },
       },
     },

@@ -130,30 +130,62 @@ async function writeRoleCookie(
   });
 }
 
-export async function getRoleWithCache(request: NextRequest): Promise<{
+export async function getRoleWithCache(
+  request: NextRequest,
+  organizationId?: string | null
+): Promise<{
   role: string | null;
   organizationId: string | null;
   fromCache: boolean;
 }> {
-  // Prefer fresh role from backend; fall back to cookie if fetch fails
+  // Try cookie first (avoids getToken() in proxy/middleware where it often has no request context)
+  const cached = await readRoleCookie(request);
+  if (cached) {
+    const matchesOrg =
+      !organizationId ||
+      cached.organizationId === organizationId;
+    if (matchesOrg) {
+      return {
+        role: cached.role,
+        organizationId: cached.organizationId,
+        fromCache: true,
+      };
+    }
+  }
+
+  // No valid cookie or org mismatch: fetch fresh role from Convex
   try {
-    const result = await UserService.getUserRoleAndOrg();
+    const result = await UserService.getUserRoleAndOrg(organizationId || undefined);
     return {
       role: result.role,
       organizationId: result.organizationId,
       fromCache: false,
     };
   } catch (error) {
-    console.error(
-      "Error getting user role; falling back to cookie cache:",
-      error
-    );
-    try {
-      const cached = await readRoleCookie(request);
+    const isNoToken =
+      error instanceof Error &&
+      error.message?.includes("Not authenticated - no token available");
+    if (isNoToken) {
+      // Expected in proxy/middleware; use cookie if we have it (even stale)
       if (cached) {
         return {
           role: cached.role,
           organizationId: cached.organizationId,
+          fromCache: true,
+        };
+      }
+    } else {
+      console.error(
+        "Error getting user role; falling back to cookie cache:",
+        error
+      );
+    }
+    try {
+      const fallbackCached = await readRoleCookie(request);
+      if (fallbackCached) {
+        return {
+          role: fallbackCached.role,
+          organizationId: fallbackCached.organizationId,
           fromCache: true,
         };
       }

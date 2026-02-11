@@ -1,4 +1,4 @@
-# Purple Pay - HR Management System
+# Zen - HR Management System
 
 A comprehensive HR management application for Philippine businesses with payroll processing, employee management, leave tracking, recruitment, and memo management.
 
