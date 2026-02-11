@@ -1303,8 +1303,6 @@ export default function PayrollPageClient({
         }
       );
       setEditEmployeeIncentives(allIncentives);
-      // Open at Step 4 (Deductions & Incentives) so user can edit deductions right away
-      setEditPayrollStep(4);
     } catch (error) {
       console.error("Error loading payroll run data:", error);
     }
