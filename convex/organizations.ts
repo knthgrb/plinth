@@ -69,21 +69,20 @@ async function getOrCreateUserRecord(ctx: any) {
   return userRecord!;
 }
 
-// Helper for queries: get user record or null (never throws for "no record" / "not authenticated" — avoids race after signup)
+// Helper for queries: get user record or null (never throws — avoids race after signup and prod auth differences)
 async function getUserRecordOrNull(ctx: any) {
-  let user;
   try {
-    user = await authComponent.getAuthUser(ctx);
+    const user = await authComponent.getAuthUser(ctx);
+    if (!user?.email) return null;
+
+    const userRecord = await (ctx.db.query("users") as any)
+      .withIndex("by_email", (q: any) => q.eq("email", user.email))
+      .first();
+
+    return userRecord ?? null;
   } catch {
     return null;
   }
-  if (!user) return null;
-
-  const userRecord = await (ctx.db.query("users") as any)
-    .withIndex("by_email", (q: any) => q.eq("email", user.email))
-    .first();
-
-  return userRecord ?? null;
 }
 
 // Helper to check authorization with organization context
@@ -129,14 +128,14 @@ async function checkAuth(
   return { ...userRecord, role: userRole, organizationId };
 }
 
-// Get all organizations for current user
+// Get all organizations for current user (never throws in prod — returns [] on any error so signup never shows "Server Error")
 export const getUserOrganizations = query({
   args: {},
   handler: async (ctx) => {
-    const userRecord = await getUserRecordOrNull(ctx);
-    if (!userRecord) return [];
-
     try {
+      const userRecord = await getUserRecordOrNull(ctx);
+      if (!userRecord) return [];
+
       // Get all user-organization relationships
       const userOrgs = await (ctx.db.query("userOrganizations") as any)
         .withIndex("by_user", (q: any) => q.eq("userId", userRecord._id))
@@ -160,7 +159,6 @@ export const getUserOrganizations = query({
       const validOrgs = organizations.filter((org) => org !== null);
 
       // If no organizations found in junction table, check legacy organizationId
-      // Note: We can't migrate in a query (read-only), so we just return the legacy org
       if (validOrgs.length === 0 && userRecord.organizationId) {
         const legacyOrg = await ctx.db.get(userRecord.organizationId);
         if (legacyOrg) {
@@ -187,7 +185,6 @@ export const getUserOrganizations = query({
           (org) => org._id === userRecord.lastActiveOrganizationId
         );
         if (lastActiveIndex > 0) {
-          // Move last active org to the front
           const lastActiveOrg = validOrgs[lastActiveIndex];
           validOrgs.splice(lastActiveIndex, 1);
           validOrgs.unshift(lastActiveOrg);
@@ -195,18 +192,9 @@ export const getUserOrganizations = query({
       }
 
       return validOrgs;
-    } catch (error: any) {
-      // Defensive: treat any auth/setup-related error as empty orgs (avoids race after signup)
-      const msg = error?.message ?? error?.data?.message ?? String(error);
-      if (
-        msg.includes("Not authenticated") ||
-        msg.includes("Unauthenticated") ||
-        msg.includes("User record not found") ||
-        msg.includes("account setup")
-      ) {
-        return [];
-      }
-      throw error;
+    } catch {
+      // In prod, auth/replication can differ; never surface server error on signup — return [] so user sees step 2
+      return [];
     }
   },
 });

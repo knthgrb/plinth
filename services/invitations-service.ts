@@ -21,13 +21,13 @@ export class InvitationsService {
         email: data.email,
         role: data.role,
         employeeId: data.employeeId as Id<"employees"> | undefined,
-      }
+      },
     );
 
     // Get invitation details to send email
     const invitation = await (convex.query as any)(
       (api as any).invitations.getInvitationById,
-      { invitationId: invitationId as Id<"invitations"> }
+      { invitationId: invitationId as Id<"invitations"> },
     );
 
     if (invitation) {
@@ -43,7 +43,7 @@ export class InvitationsService {
         invitation.organization.name,
         invitation.inviter.name || invitation.inviter.email,
         invitation.role,
-        invitationLink
+        invitationLink,
       );
 
       try {
@@ -67,7 +67,7 @@ export class InvitationsService {
 
     const invitation = await (convex.query as any)(
       (api as any).invitations.getInvitationById,
-      { invitationId: invitationId as Id<"invitations"> }
+      { invitationId: invitationId as Id<"invitations"> },
     );
 
     if (!invitation) {
@@ -88,7 +88,7 @@ export class InvitationsService {
       invitation.organization.name,
       invitation.inviter.name || invitation.inviter.email,
       invitation.role,
-      invitationLink
+      invitationLink,
     );
 
     await sendEmail({

@@ -27,7 +27,11 @@ export const createAuth = (ctx: GenericCtx<DataModel>) => {
     baseURL: siteUrl,
     database: authComponent.adapter(ctx),
     // Allow tokens to be issued/read from the configured site origin as well
-    trustedOrigins: [siteUrl, "http://localhost:3000"],
+    trustedOrigins: [
+      siteUrl,
+      "http://localhost:3000",
+      "https://plinth-mu.vercel.app",
+    ],
     // Configure simple, non-verified email/password to get started
     emailAndPassword: {
       enabled: true,
