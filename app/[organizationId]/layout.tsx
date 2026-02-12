@@ -89,7 +89,7 @@ export default function OrganizationLayout({
     }
   }, [isLoading, organizationId, pathname, user, router]);
 
-  // Show loading state while validating
+  // Show loading state while validating (MainLoader handles tail so Lottie can finish)
   if (isLoading) {
     return <MainLoader />;
   }

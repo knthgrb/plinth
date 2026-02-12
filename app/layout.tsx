@@ -3,6 +3,7 @@ import { Open_Sans } from "next/font/google";
 import "./globals.css";
 import { ConvexClientProvider } from "./ConvexClientProvider";
 import { OrganizationProvider } from "@/hooks/organization-context";
+import { LoaderOverlayProvider } from "@/hooks/loader-overlay-context";
 import { Toaster } from "@/components/ui/toaster";
 
 const openSans = Open_Sans({
@@ -38,8 +39,12 @@ export default function RootLayout({
       </head>
       <body className="antialiased font-sans" suppressHydrationWarning>
         <ConvexClientProvider>
-          <OrganizationProvider>{children}</OrganizationProvider>
-          <Toaster />
+          <OrganizationProvider>
+            <LoaderOverlayProvider>
+              {children}
+              <Toaster />
+            </LoaderOverlayProvider>
+          </OrganizationProvider>
         </ConvexClientProvider>
       </body>
     </html>

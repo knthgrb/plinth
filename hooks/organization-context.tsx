@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { api } from "@/convex/_generated/api";
@@ -58,6 +58,7 @@ export function OrganizationProvider({
   /** When set, layout must not sync URL -> context (avoids loop when switching org) */
   const [switchingToOrganizationId, setSwitchingToOrganizationId] =
     useState<Id<"organizations"> | null>(null);
+  const clearSwitchingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [refreshKey, setRefreshKey] = useState(0);
   const updateLastActive = useMutation(
@@ -153,12 +154,19 @@ export function OrganizationProvider({
       pathname?.startsWith("/reset-password") ||
       pathname?.startsWith("/invite");
 
-    // When URL has caught up with our switch, clear switching flag
+    // When URL has caught up with our switch, clear switching flag after a short delay
+    // so the loader overlay always shows on every switch (not just the first)
     if (
       urlOrganizationId === currentOrganizationId &&
       switchingToOrganizationId
     ) {
-      setSwitchingToOrganizationId(null);
+      if (clearSwitchingTimeoutRef.current) {
+        clearTimeout(clearSwitchingTimeoutRef.current);
+      }
+      clearSwitchingTimeoutRef.current = setTimeout(() => {
+        setSwitchingToOrganizationId(null);
+        clearSwitchingTimeoutRef.current = null;
+      }, 400);
     }
 
     // Only replace URL when it truly doesn't match and pathname doesn't already show current org (avoids loop)
@@ -183,6 +191,13 @@ export function OrganizationProvider({
         },
       );
     }
+
+    return () => {
+      if (clearSwitchingTimeoutRef.current) {
+        clearTimeout(clearSwitchingTimeoutRef.current);
+        clearSwitchingTimeoutRef.current = null;
+      }
+    };
   }, [
     currentOrganizationId,
     urlOrganizationId,
