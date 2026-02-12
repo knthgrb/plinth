@@ -61,6 +61,11 @@ import { generateUploadUrl, getFileUrl } from "@/actions/files";
 import { useToast } from "@/components/ui/use-toast";
 import { getStatusBadgeClass, getStatusBadgeStyle } from "@/utils/colors";
 import { MainLoader } from "@/components/main-loader";
+import {
+  DashboardOverviewHeader,
+  DashboardMetricCard,
+  type DateRangeOption,
+} from "@/components/dashboard";
 
 const REQUIRED_CATEGORIES = [
   {
@@ -109,6 +114,7 @@ export default function AccountingPage() {
   const [deleting, setDeleting] = useState(false);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [categoryPage, setCategoryPage] = useState<Record<string, number>>({});
+  const [dateRange, setDateRange] = useState<DateRangeOption>("7");
 
   const [itemFormData, setItemFormData] = useState({
     name: "",
@@ -445,36 +451,39 @@ export default function AccountingPage() {
   return (
     <>
       <MainLayout>
-        <div className="p-8">
-          <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <h1 className="text-3xl font-bold text-gray-900">
-              Expense Management
-            </h1>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-600">Rows per page</span>
-              <Select
-                value={String(pageSize)}
-                onValueChange={(v) => {
-                  setPageSize(Number(v));
-                  setCategoryPage({});
-                }}
-              >
-                <SelectTrigger className="w-[72px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PAGE_SIZE_OPTIONS.map((n) => (
-                    <SelectItem key={n} value={String(n)}>
-                      {n}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+        <div className="p-4 sm:p-6 lg:p-8">
+          <DashboardOverviewHeader
+            title="Your overview"
+            dateRange={dateRange}
+            onDateRangeChange={setDateRange}
+            compareLabel="Previous period"
+            actions={
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-[rgb(133,133,133)]">Rows per page</span>
+                <Select
+                  value={String(pageSize)}
+                  onValueChange={(v) => {
+                    setPageSize(Number(v));
+                    setCategoryPage({});
+                  }}
+                >
+                  <SelectTrigger className="h-9 w-[72px] border-[rgb(230,230,230)] bg-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PAGE_SIZE_OPTIONS.map((n) => (
+                      <SelectItem key={n} value={String(n)}>
+                        {n}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            }
+          />
 
-          {/* Summary Cards */}
-          <div className="grid gap-4 md:grid-cols-2 mb-6">
+          {/* Summary metric cards */}
+          <div className="mt-6 grid gap-4 md:grid-cols-2">
             {categories.map((category) => {
               const { total, paid, remaining } = categoryTotals[
                 category.name
@@ -484,63 +493,28 @@ export default function AccountingPage() {
                 remaining: 0,
               };
               return (
-                <Card key={category.name}>
-                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">
-                      {category.name}
-                    </CardTitle>
-                    {category.name === "Employee Related Cost" ? (
-                      <Users className="h-4 w-4 text-gray-600" />
-                    ) : (
-                      <Building2 className="h-4 w-4 text-gray-600" />
-                    )}
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      <div>
-                        <div className="text-2xl font-bold">
-                          ₱
-                          {total.toLocaleString("en-US", {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
-                        </div>
-                        <p className="text-xs text-gray-500">Total Amount</p>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <div>
-                          <span className="text-green-600 font-medium">
-                            ₱
-                            {paid.toLocaleString("en-US", {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </span>
-                          <p className="text-xs text-gray-500">Paid</p>
-                        </div>
-                        <div>
-                          <span className="text-orange-600 font-medium">
-                            ₱
-                            {remaining.toLocaleString("en-US", {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </span>
-                          <p className="text-xs text-gray-500">Remaining</p>
-                        </div>
-                      </div>
-                      <p className="text-xs text-gray-500">
-                        {getItemsForCategory(category.name).length} expenses
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
+                <DashboardMetricCard
+                  key={category.name}
+                  title={category.name}
+                  value={
+                    <>
+                      ₱
+                      {total.toLocaleString("en-US", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </>
+                  }
+                  secondary={`₱${paid.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} paid · ₱${remaining.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} remaining · ${getItemsForCategory(category.name).length} expenses`}
+                  moreDetailsHref="#expenses"
+                  moreDetailsLabel="View expenses"
+                />
               );
             })}
           </div>
 
           {/* Expense Categories */}
-          <div className="space-y-6">
+          <div id="expenses" className="mt-6 space-y-6">
             {categories.map((category) => {
               const allCategoryItems = getItemsForCategory(category.name);
               const categoryItems = getPaginatedItems(category.name);
@@ -549,7 +523,7 @@ export default function AccountingPage() {
               const start = (currentPage - 1) * pageSize;
               const end = Math.min(start + pageSize, allCategoryItems.length);
               return (
-                <Card key={category.name}>
+                <Card key={category.name} className="border-[rgb(230,230,230)]">
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <div>
