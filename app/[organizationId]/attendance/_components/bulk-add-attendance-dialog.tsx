@@ -139,7 +139,6 @@ function parseBiometricTimesheetCSV(text: string): BiometricCsvRow[] {
   const lines = text.split(/\r?\n/).filter((line) => line.trim());
   const result: BiometricCsvRow[] = [];
   let currentEmployee = "";
-  let skipNextRow = false;
 
   for (let r = 0; r < lines.length; r++) {
     const cells = parseCSVLine(lines[r]);
@@ -147,15 +146,28 @@ function parseBiometricTimesheetCSV(text: string): BiometricCsvRow[] {
     const col6 = (cells[6] ?? "").trim();
     const col7 = (cells[7] ?? "").trim();
 
-    if (skipNextRow) {
-      skipNextRow = false;
-      continue;
-    }
-
     if (col5.startsWith("Employee:")) {
-      const namePart = col5.replace(/^Employee:\s*/i, "").replace(/\s*\(\d+\)\s*$/, "").trim();
+      const namePart = col5
+        .replace(/^Employee:\s*/i, "")
+        .replace(/\s*\(\d+\)\s*$/, "")
+        .trim()
+        .replace(/\s+/g, " ");
       currentEmployee = namePart;
-      skipNextRow = col7 !== "Date";
+      // Same row may contain first date in a later column (e.g. col 24/26) — scan for MM/DD/YYYY
+      for (let i = 6; i < cells.length - 1; i++) {
+        const cell = (cells[i] ?? "").trim();
+        if (DATE_ROW_REGEX.test(cell)) {
+          const timeInStr = (cells[i + 1] ?? "").trim();
+          const timeOutStr = (cells[i + 2] ?? "").trim();
+          result.push({
+            employeeKey: currentEmployee,
+            dateStr: cell,
+            timeInStr,
+            timeOutStr,
+          });
+          break;
+        }
+      }
       continue;
     }
 
@@ -179,7 +191,7 @@ function parseBiometricTimesheetCSV(text: string): BiometricCsvRow[] {
   return result;
 }
 
-// Mustard Seed / biometric timesheet: no header row; "Employee: Name (id)" in col5, "Date"/"In 1"/"Out 1" in col7/8/9; data rows have date in col5, times in col6/7 (or col8/9)
+// Mustard Seed / biometric timesheet: "Employee: Name (id)" in col5; same row may have first date in a later column (e.g. 26); data rows have date in col5, times in col6/7 or col8/9
 function isBiometricTimesheetFormat(text: string): boolean {
   const lines = text.split(/\r?\n/).filter((line) => line.trim());
   for (let r = 0; r < Math.min(20, lines.length); r++) {
@@ -382,30 +394,34 @@ export function BulkAddAttendanceDialog({
   ] as const;
 
   const normalize = (s: string) =>
-    s
+    (s ?? "")
       .trim()
       .replace(/\s+/g, " ")
       .toLowerCase();
 
   const findEmployeeByKey = (employeeKey: string): any => {
-    const keyNorm = normalize(employeeKey);
+    const raw = (employeeKey ?? "").trim().replace(/\s+/g, " ");
+    const keyNorm = normalize(raw);
     const swap = (name: string) => {
-      const parts = name.split(",").map((p) => p.trim());
+      const parts = name.split(",").map((p) => p.trim().replace(/\s+/g, " ")).filter(Boolean);
       if (parts.length >= 2) return `${parts[1]} ${parts[0]}`.trim();
-      return name;
+      return name.trim().replace(/\s+/g, " ");
     };
-    const swappedNorm = normalize(swap(employeeKey));
+    const swappedNorm = normalize(swap(raw));
     return employees?.find((e: any) => {
-      const first = (e.personalInfo?.firstName ?? "").trim();
-      const last = (e.personalInfo?.lastName ?? "").trim();
+      const first = (e.personalInfo?.firstName ?? "").trim().replace(/\s+/g, " ");
+      const last = (e.personalInfo?.lastName ?? "").trim().replace(/\s+/g, " ");
       const fullName = `${first} ${last}`.trim();
       const lastFirst = `${last}, ${first}`.trim();
       const empId = (e.employment?.employeeId ?? "").trim();
+      const fullNorm = normalize(fullName);
+      const lastFirstDbNorm = normalize(lastFirst);
       return (
-        normalize(fullName) === keyNorm ||
-        normalize(lastFirst) === keyNorm ||
-        normalize(fullName) === swappedNorm ||
-        (empId && empId.toLowerCase() === keyNorm)
+        fullNorm === keyNorm ||
+        lastFirstDbNorm === keyNorm ||
+        fullNorm === swappedNorm ||
+        lastFirstDbNorm === swappedNorm ||
+        (empId && normalize(empId) === keyNorm)
       );
     }) ?? null;
   };
@@ -415,7 +431,7 @@ export function BulkAddAttendanceDialog({
     e.target.value = "";
     setCsvParseError(null);
     setCsvPreviewRows([]);
-    if (!file || !employees?.length || !currentOrganizationId) return;
+    if (!file || !currentOrganizationId) return;
     try {
       const text = await file.text();
 
@@ -465,7 +481,10 @@ export function BulkAddAttendanceDialog({
             error,
             includeInImport: !isWeekendExcluded,
           };
-          const dedupeKey = `${row.employeeId ?? ""}-${dateTs}`;
+          // When employee not found, include name in key so we don't collapse all "not found" rows for same date into one
+          const dedupeKey = row.employeeId
+            ? `${row.employeeId}-${dateTs}`
+            : `name:${row.employeeName}-${dateTs}`;
           const existingIndex = seen.get(dedupeKey);
           if (existingIndex !== undefined) {
             preview[existingIndex] = row;
@@ -573,17 +592,7 @@ export function BulkAddAttendanceDialog({
         };
         const status = statusMap[statusStr] ?? "present";
 
-        const keyNorm = normalize(employeeKey);
-        const emp = employees.find((e: any) => {
-          const first = (e.personalInfo?.firstName ?? "").trim();
-          const last = (e.personalInfo?.lastName ?? "").trim();
-          const fullName = `${first} ${last}`.trim();
-          const empId = (e.employment?.employeeId ?? "").trim();
-          return (
-            normalize(fullName) === keyNorm ||
-            (empId && empId.toLowerCase() === keyNorm)
-          );
-        });
+        const emp = findEmployeeByKey(employeeKey);
 
         const { ts: dateTs, label: dateLabel } = parseDateToLocalTimestamp(dateStr);
         const invalidDate = dateTs === 0 && dateStr.length > 0;
