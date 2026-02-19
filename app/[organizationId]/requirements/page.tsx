@@ -58,25 +58,25 @@ interface Column {
 const DefaultRequirementsDialog = dynamic(
   () =>
     import("./_components/default-requirements-dialog").then(
-      (mod) => mod.DefaultRequirementsDialog
+      (mod) => mod.DefaultRequirementsDialog,
     ),
-  { ssr: false }
+  { ssr: false },
 );
 
 const EmployeeRequirementsModal = dynamic(
   () =>
     import("./_components/employee-requirements-modal").then(
-      (mod) => mod.EmployeeRequirementsModal
+      (mod) => mod.EmployeeRequirementsModal,
     ),
-  { ssr: false }
+  { ssr: false },
 );
 
 const FilePreviewDialog = dynamic(
   () =>
     import("./_components/file-preview-dialog").then(
-      (mod) => mod.FilePreviewDialog
+      (mod) => mod.FilePreviewDialog,
     ),
-  { ssr: false }
+  { ssr: false },
 );
 
 // Checkbox component - simple implementation
@@ -106,19 +106,19 @@ export default function RequirementsPage() {
   });
   const employees = useQuery(
     (api as any).employees.getEmployees,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
   const defaultRequirements = useQuery(
     (api as any).organizations.getDefaultRequirements,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
   const settings = useQuery(
     (api as any).settings.getSettings,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   const generateUploadUrl = useMutation(
-    (api as any).files.generateUploadUrl
+    (api as any).files.generateUploadUrl,
   ) as () => Promise<string>;
 
   const isOwnerOrAdminOrHr =
@@ -160,12 +160,12 @@ export default function RequirementsPage() {
       ? list.filter((emp: any) =>
           `${emp.personalInfo?.firstName ?? ""} ${emp.personalInfo?.lastName ?? ""} ${emp.personalInfo?.email ?? ""}`
             .toLowerCase()
-            .includes(q)
+            .includes(q),
         )
       : list;
     if (departmentFilter === "all") return bySearch;
     return bySearch.filter(
-      (emp: any) => emp.employment?.department === departmentFilter
+      (emp: any) => emp.employment?.department === departmentFilter,
     );
   }, [employees, employeeSearch, departmentFilter]);
 
@@ -216,10 +216,10 @@ export default function RequirementsPage() {
     if (settings?.requirementsTableColumns) {
       // Merge saved columns with defaults - ensure all defaults are present
       const savedColumns = settings.requirementsTableColumns.filter(
-        (c: Column) => !c.isDefault
+        (c: Column) => !c.isDefault,
       );
       const savedDefaultColumns = settings.requirementsTableColumns.filter(
-        (c: Column) => c.isDefault
+        (c: Column) => c.isDefault,
       );
 
       // Merge defaults with saved defaults (preserve hidden state)
@@ -239,7 +239,7 @@ export default function RequirementsPage() {
   useEffect(() => {
     if (selectedEmployee && employees && isEmployeeModalOpen) {
       const updatedEmployee = employees.find(
-        (e: any) => e._id === selectedEmployee._id
+        (e: any) => e._id === selectedEmployee._id,
       );
       if (updatedEmployee) {
         const updatedReqs = JSON.stringify(updatedEmployee.requirements || []);
@@ -256,7 +256,7 @@ export default function RequirementsPage() {
   // Employee view: Handle file upload
   const handleEmployeeFileUpload = async (
     requirementType: string,
-    file: File
+    file: File,
   ) => {
     if (!currentEmployee || !currentOrganizationId) return;
 
@@ -288,7 +288,7 @@ export default function RequirementsPage() {
       // Find the requirement index, or create it if it doesn't exist
       const requirements = currentEmployee.requirements || [];
       let requirementIndex = requirements.findIndex(
-        (r: any) => r.type === requirementType
+        (r: any) => r.type === requirementType,
       );
 
       if (requirementIndex < 0) {
@@ -367,7 +367,7 @@ export default function RequirementsPage() {
   };
 
   const handleSaveDefaultRequirements = async (
-    requirements: Array<{ type: string; isRequired?: boolean }>
+    requirements: Array<{ type: string; isRequired?: boolean }>,
   ) => {
     if (!currentOrganizationId) return;
     await updateDefaultRequirements(currentOrganizationId, requirements);
@@ -380,7 +380,7 @@ export default function RequirementsPage() {
   const openEmployeeModal = (employee: any) => {
     setSelectedEmployee(employee);
     lastSyncedRequirements.current = JSON.stringify(
-      employee.requirements || []
+      employee.requirements || [],
     );
     setIsEmployeeModalOpen(true);
   };
@@ -388,7 +388,7 @@ export default function RequirementsPage() {
   const handleEmployeeUpdate = (updatedEmployee: any) => {
     setSelectedEmployee(updatedEmployee);
     lastSyncedRequirements.current = JSON.stringify(
-      updatedEmployee.requirements || []
+      updatedEmployee.requirements || [],
     );
   };
 
@@ -425,7 +425,7 @@ export default function RequirementsPage() {
 
   const getFileMetadata = async (
     storageId: string,
-    requirementType: string
+    requirementType: string,
   ): Promise<{
     url: string;
     type: "image" | "pdf" | "other";
@@ -453,7 +453,7 @@ export default function RequirementsPage() {
 
       // Extract filename from Content-Disposition header if available
       const filenameMatch = contentDisposition.match(
-        /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/
+        /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/,
       );
       if (filenameMatch && filenameMatch[1]) {
         filename = filenameMatch[1].replace(/['"]/g, "");
@@ -602,7 +602,7 @@ export default function RequirementsPage() {
       // Combine: existing requirements take precedence, then add missing defaults
       const existingTypes = new Set(existing.map((r: any) => r.type));
       const missingDefaults = defaults.filter(
-        (d: any) => !existingTypes.has(d.type)
+        (d: any) => !existingTypes.has(d.type),
       );
 
       return [...existing, ...missingDefaults];
@@ -611,138 +611,133 @@ export default function RequirementsPage() {
     return (
       <MainLayout>
         <div className="p-8">
-          <div className="max-w-6xl mx-auto">
-            <div className="mb-6">
-              <h1 className="text-3xl font-bold text-gray-900">
-                My Requirements
-              </h1>
-            </div>
+          <div className="mb-6">
+            <h1 className="text-3xl font-bold text-gray-900">
+              My Requirements
+            </h1>
+          </div>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Requirements Checklist</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {mergedRequirements.length === 0 ? (
-                    <p className="text-gray-500 text-center py-8">
-                      No requirements assigned
-                    </p>
-                  ) : (
-                    mergedRequirements.map((req: any, idx: number) => {
-                      const actualIndex = requirements.findIndex(
-                        (r: any) => r.type === req.type
-                      );
-                      const isPassed = req.status === "verified";
-                      const hasFile = !!req.file;
+          <Card>
+            <CardHeader>
+              <CardTitle>Requirements Checklist</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {mergedRequirements.length === 0 ? (
+                  <p className="text-gray-500 text-center py-8">
+                    No requirements assigned
+                  </p>
+                ) : (
+                  mergedRequirements.map((req: any, idx: number) => {
+                    const actualIndex = requirements.findIndex(
+                      (r: any) => r.type === req.type,
+                    );
+                    const isPassed = req.status === "verified";
+                    const hasFile = !!req.file;
 
-                      return (
-                        <div
-                          key={idx}
-                          className="flex items-start gap-4 p-4 border rounded-lg"
-                        >
-                          <Checkbox
-                            checked={isPassed}
-                            disabled
-                            className="mt-1"
-                          />
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-2">
-                              <span className="font-medium">{req.type}</span>
-                              {req.isDefault && (
-                                <Badge variant="outline" className="text-xs">
-                                  Default
-                                </Badge>
-                              )}
-                              {req.isCustom && (
-                                <Badge variant="outline" className="text-xs">
-                                  Custom
-                                </Badge>
-                              )}
-                              <Badge
-                                className={
-                                  isPassed
-                                    ? "bg-[#DCF7DC] border-[#A1E6A1] text-[#2E892E] font-normal rounded-md hover:bg-[#DCF7DC] focus:ring-0 focus:ring-offset-0 transition-none"
-                                    : "bg-red-100 text-red-800 border-red-300 font-normal rounded-md hover:bg-red-100 focus:ring-0 focus:ring-offset-0 transition-none"
-                                }
-                              >
-                                {isPassed ? "✓ Passed" : "Not Passed"}
+                    return (
+                      <div
+                        key={idx}
+                        className="flex items-start gap-4 p-4 border rounded-lg"
+                      >
+                        <Checkbox
+                          checked={isPassed}
+                          disabled
+                          className="mt-1"
+                        />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="font-medium">{req.type}</span>
+                            {req.isDefault && (
+                              <Badge variant="outline" className="text-xs">
+                                Default
                               </Badge>
-                            </div>
-                            {hasFile && (
-                              <FileDisplay
-                                storageId={req.file}
-                                requirementType={req.type}
-                                onPreview={async () => {
-                                  setPreviewLoading(true);
-                                  setPreviewFile(null);
-                                  try {
-                                    const metadata = await getFileMetadata(
-                                      req.file,
-                                      req.type
-                                    );
-                                    setPreviewFile({
-                                      url: metadata.url,
-                                      name: metadata.filename,
-                                      type: metadata.type,
-                                    });
-                                  } finally {
-                                    setPreviewLoading(false);
-                                  }
-                                }}
-                              />
                             )}
-                            <div className="space-y-2">
-                              <Label
-                                htmlFor={`file-${idx}`}
-                                className="text-sm"
-                              >
-                                {hasFile ? "Replace File" : "Upload File"}
-                              </Label>
-                              <div className="flex gap-2">
-                                <Input
-                                  id={`file-${idx}`}
-                                  type="file"
-                                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
-                                  onChange={(e) => {
-                                    handleFileSelect(e);
-                                    setSelectedReqIndexForUpload(idx);
-                                  }}
-                                  className="flex-1"
-                                />
-                                {selectedFile &&
-                                  selectedReqIndexForUpload === idx && (
-                                    <Button
-                                      onClick={() =>
-                                        handleEmployeeFileUpload(
-                                          req.type,
-                                          selectedFile
-                                        )
-                                      }
-                                      disabled={uploadingFile}
-                                      size="sm"
-                                    >
-                                      {uploadingFile ? (
-                                        "Uploading..."
-                                      ) : (
-                                        <>
-                                          <Upload className="h-3 w-3 mr-1" />
-                                          Upload
-                                        </>
-                                      )}
-                                    </Button>
-                                  )}
-                              </div>
+                            {req.isCustom && (
+                              <Badge variant="outline" className="text-xs">
+                                Custom
+                              </Badge>
+                            )}
+                            <Badge
+                              className={
+                                isPassed
+                                  ? "bg-[#DCF7DC] border-[#A1E6A1] text-[#2E892E] font-normal rounded-md hover:bg-[#DCF7DC] focus:ring-0 focus:ring-offset-0 transition-none"
+                                  : "bg-red-100 text-red-800 border-red-300 font-normal rounded-md hover:bg-red-100 focus:ring-0 focus:ring-offset-0 transition-none"
+                              }
+                            >
+                              {isPassed ? "✓ Passed" : "Not Passed"}
+                            </Badge>
+                          </div>
+                          {hasFile && (
+                            <FileDisplay
+                              storageId={req.file}
+                              requirementType={req.type}
+                              onPreview={async () => {
+                                setPreviewLoading(true);
+                                setPreviewFile(null);
+                                try {
+                                  const metadata = await getFileMetadata(
+                                    req.file,
+                                    req.type,
+                                  );
+                                  setPreviewFile({
+                                    url: metadata.url,
+                                    name: metadata.filename,
+                                    type: metadata.type,
+                                  });
+                                } finally {
+                                  setPreviewLoading(false);
+                                }
+                              }}
+                            />
+                          )}
+                          <div className="space-y-2">
+                            <Label htmlFor={`file-${idx}`} className="text-sm">
+                              {hasFile ? "Replace File" : "Upload File"}
+                            </Label>
+                            <div className="flex gap-2">
+                              <Input
+                                id={`file-${idx}`}
+                                type="file"
+                                accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                                onChange={(e) => {
+                                  handleFileSelect(e);
+                                  setSelectedReqIndexForUpload(idx);
+                                }}
+                                className="flex-1"
+                              />
+                              {selectedFile &&
+                                selectedReqIndexForUpload === idx && (
+                                  <Button
+                                    onClick={() =>
+                                      handleEmployeeFileUpload(
+                                        req.type,
+                                        selectedFile,
+                                      )
+                                    }
+                                    disabled={uploadingFile}
+                                    size="sm"
+                                  >
+                                    {uploadingFile ? (
+                                      "Uploading..."
+                                    ) : (
+                                      <>
+                                        <Upload className="h-3 w-3 mr-1" />
+                                        Upload
+                                      </>
+                                    )}
+                                  </Button>
+                                )}
                             </div>
                           </div>
                         </div>
-                      );
-                    })
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </MainLayout>
     );
@@ -802,7 +797,7 @@ export default function RequirementsPage() {
                           "inline-flex items-center gap-1.5 h-8 px-2.5 rounded-2xl text-xs font-semibold text-[rgb(64,64,64)] bg-white transition-colors hover:bg-[rgb(250,250,250)]",
                           departmentFilter !== "all"
                             ? "border border-[#DDDDDD] border-solid"
-                            : "border border-dashed border-[#DDDDDD]"
+                            : "border border-dashed border-[#DDDDDD]",
                         )}
                       >
                         {departmentFilter !== "all" ? (
@@ -830,7 +825,7 @@ export default function RequirementsPage() {
                             </span>
                             <span className="font-semibold">
                               {departments.find(
-                                (d) => d.name === departmentFilter
+                                (d) => d.name === departmentFilter,
                               )?.name ?? departmentFilter}
                             </span>
                             <div
@@ -838,7 +833,7 @@ export default function RequirementsPage() {
                               style={{
                                 backgroundColor:
                                   departments.find(
-                                    (d) => d.name === departmentFilter
+                                    (d) => d.name === departmentFilter,
                                   )?.color ?? "#9CA3AF",
                               }}
                             />
@@ -870,7 +865,7 @@ export default function RequirementsPage() {
                             "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold",
                             departmentFilter === "all"
                               ? "bg-[rgb(245,245,245)]"
-                              : "hover:bg-[rgb(250,250,250)]"
+                              : "hover:bg-[rgb(250,250,250)]",
                           )}
                         >
                           <div className="h-2.5 w-2.5 rounded-full shrink-0 bg-[#9CA3AF]" />
@@ -888,7 +883,7 @@ export default function RequirementsPage() {
                               "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold",
                               departmentFilter === dept.name
                                 ? "bg-[rgb(245,245,245)]"
-                                : "hover:bg-[rgb(250,250,250)]"
+                                : "hover:bg-[rgb(250,250,250)]",
                             )}
                           >
                             <div

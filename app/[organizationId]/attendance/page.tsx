@@ -61,36 +61,36 @@ import { formatTime12Hour } from "@/utils/attendance-calculations";
 const AddAttendanceDialog = lazy(() =>
   import("./_components/add-attendance-dialog").then((mod) => ({
     default: mod.AddAttendanceDialog,
-  }))
+  })),
 );
 
 const BulkAddAttendanceDialog = lazy(() =>
   import("./_components/bulk-add-attendance-dialog").then((mod) => ({
     default: mod.BulkAddAttendanceDialog,
-  }))
+  })),
 );
 
 const EditAttendanceDialog = lazy(() =>
   import("./_components/edit-attendance-dialog").then((mod) => ({
     default: mod.EditAttendanceDialog,
-  }))
+  })),
 );
 
 const CreateEmployeeDialog = lazy(() =>
   import("../employees/_components/create-employee-dialog").then((mod) => ({
     default: mod.CreateEmployeeDialog,
-  }))
+  })),
 );
 
 export default function AttendancePage() {
   const { currentOrganizationId } = useOrganization();
   const user = useQuery(
     (api as any).organizations.getCurrentUser,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
   const employees = useQuery(
     (api as any).employees.getEmployees,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
   const isReadOnly = user?.role === "employee";
 
@@ -117,7 +117,7 @@ export default function AttendancePage() {
 
   // Filter states
   const [selectedMonth, setSelectedMonth] = useState(
-    format(new Date(), "yyyy-MM")
+    format(new Date(), "yyyy-MM"),
   );
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
   const [timeFormat, setTimeFormat] = useState<"minutes" | "hours">("minutes");
@@ -142,7 +142,7 @@ export default function AttendancePage() {
           startDate: monthStart,
           endDate: monthEnd,
         }
-      : "skip"
+      : "skip",
   );
 
   // Individual attendance (default view)
@@ -157,7 +157,7 @@ export default function AttendancePage() {
           endDate: monthEnd,
           employeeId: selectedEmployeeFilter,
         }
-      : "skip"
+      : "skip",
   );
 
   // Helper functions for time calculations
@@ -175,7 +175,7 @@ export default function AttendancePage() {
 
   const calculateLate = (
     scheduleIn: string,
-    actualIn?: string
+    actualIn?: string,
   ): number | null => {
     if (!actualIn) return null;
     const scheduleMinutes = timeToMinutes(scheduleIn);
@@ -186,7 +186,7 @@ export default function AttendancePage() {
 
   const calculateUndertime = (
     scheduleOut: string,
-    actualOut?: string
+    actualOut?: string,
   ): number | null => {
     if (!actualOut) return null;
     const scheduleMinutes = timeToMinutes(scheduleOut);
@@ -197,7 +197,7 @@ export default function AttendancePage() {
 
   const calculateOvertime = (
     scheduleOut: string,
-    actualOut?: string
+    actualOut?: string,
   ): number | null => {
     if (!actualOut) return null;
     const scheduleMinutes = timeToMinutes(scheduleOut);
@@ -216,7 +216,7 @@ export default function AttendancePage() {
   };
 
   const deleteAttendanceMutation = useMutation(
-    (api as any).attendance.deleteAttendance
+    (api as any).attendance.deleteAttendance,
   );
 
   const handleEdit = (record: any) => {
@@ -298,15 +298,15 @@ export default function AttendancePage() {
     if (!individualAttendance) return [];
     return [...individualAttendance].sort(
       (a: any, b: any) =>
-        new Date(b.date).getTime() - new Date(a.date).getTime()
+        new Date(b.date).getTime() - new Date(a.date).getTime(),
     );
   })();
   const paginatedIndividualAttendance = sortedIndividualAttendance.slice(
     (individualPage - 1) * individualPageSize,
-    individualPage * individualPageSize
+    individualPage * individualPageSize,
   );
   const totalIndividualPages = Math.ceil(
-    sortedIndividualAttendance.length / individualPageSize
+    sortedIndividualAttendance.length / individualPageSize,
   );
 
   return (
@@ -320,36 +320,36 @@ export default function AttendancePage() {
               </h1>
             </div>
             {!isReadOnly && (
-            <div className="flex flex-col sm:flex-row gap-2 sm:items-start shrink-0">
-              <Suspense
-                fallback={
-                  <Button
-                    variant="outline"
-                    disabled
-                    className="w-full sm:w-auto"
-                  >
-                    Bulk Add Attendance
-                  </Button>
-                }
-              >
-                <BulkAddAttendanceDialog
-                  employees={employees}
-                  currentOrganizationId={currentOrganizationId}
-                />
-              </Suspense>
-              <Suspense
-                fallback={
-                  <Button disabled className="w-full sm:w-auto">
-                    Add Attendance
-                  </Button>
-                }
-              >
-                <AddAttendanceDialog
-                  employees={employees}
-                  currentOrganizationId={currentOrganizationId}
-                />
-              </Suspense>
-            </div>
+              <div className="flex flex-col sm:flex-row gap-2 sm:items-start shrink-0">
+                <Suspense
+                  fallback={
+                    <Button
+                      variant="outline"
+                      disabled
+                      className="w-full sm:w-auto"
+                    >
+                      Bulk Add Attendance
+                    </Button>
+                  }
+                >
+                  <BulkAddAttendanceDialog
+                    employees={employees}
+                    currentOrganizationId={currentOrganizationId}
+                  />
+                </Suspense>
+                <Suspense
+                  fallback={
+                    <Button disabled className="w-full sm:w-auto">
+                      Add Attendance
+                    </Button>
+                  }
+                >
+                  <AddAttendanceDialog
+                    employees={employees}
+                    currentOrganizationId={currentOrganizationId}
+                  />
+                </Suspense>
+              </div>
             )}
           </div>
           <Suspense fallback={null}>
@@ -474,7 +474,7 @@ export default function AttendancePage() {
                           {selectedMonth
                             ? format(
                                 new Date(selectedMonth + "-01"),
-                                "MMMM yyyy"
+                                "MMMM yyyy",
                               )
                             : "Month"}
                         </span>
@@ -496,7 +496,7 @@ export default function AttendancePage() {
                               const prevMonth = new Date(
                                 current.getFullYear(),
                                 current.getMonth() - 1,
-                                1
+                                1,
                               );
                               setSelectedMonth(format(prevMonth, "yyyy-MM"));
                             }}
@@ -506,14 +506,14 @@ export default function AttendancePage() {
                           <div className="flex items-center gap-2">
                             <Select
                               value={getYear(
-                                new Date(selectedMonth + "-01")
+                                new Date(selectedMonth + "-01"),
                               ).toString()}
                               onValueChange={(year) => {
                                 const current = new Date(selectedMonth + "-01");
                                 const newDate = new Date(
                                   parseInt(year),
                                   current.getMonth(),
-                                  1
+                                  1,
                                 );
                                 setSelectedMonth(format(newDate, "yyyy-MM"));
                               }}
@@ -545,7 +545,7 @@ export default function AttendancePage() {
                               const nextMonth = new Date(
                                 current.getFullYear(),
                                 current.getMonth() + 1,
-                                1
+                                1,
                               );
                               setSelectedMonth(format(nextMonth, "yyyy-MM"));
                             }}
@@ -579,7 +579,7 @@ export default function AttendancePage() {
                                   const newDate = new Date(
                                     current.getFullYear(),
                                     index,
-                                    1
+                                    1,
                                   );
                                   setSelectedMonth(format(newDate, "yyyy-MM"));
                                   setMonthPickerOpen(false);
@@ -644,7 +644,8 @@ export default function AttendancePage() {
             </div>
           </CardHeader>
           <CardContent className="flex-1 overflow-hidden flex flex-col">
-            {!selectedEmployeeFilter || selectedEmployeeFilter === "__create__" ? (
+            {!selectedEmployeeFilter ||
+            selectedEmployeeFilter === "__create__" ? (
               <div className="text-center py-12 text-gray-500">
                 <p className="text-lg font-medium mb-2">
                   {employees && employees.length === 0
@@ -693,9 +694,9 @@ export default function AttendancePage() {
                             Overtime
                           </TableHead>
                           {!isReadOnly && (
-                          <TableHead className="min-w-[70px] sm:min-w-[80px]">
-                            Actions
-                          </TableHead>
+                            <TableHead className="min-w-[70px] sm:min-w-[80px]">
+                              Actions
+                            </TableHead>
                           )}
                         </TableRow>
                       </TableHeader>
@@ -722,19 +723,19 @@ export default function AttendancePage() {
                               ? null
                               : calculateLate(
                                   record.scheduleIn,
-                                  record.actualIn
+                                  record.actualIn,
                                 );
                             const undertime = isAbsentOrLeave
                               ? null
                               : calculateUndertime(
                                   record.scheduleOut,
-                                  record.actualOut
+                                  record.actualOut,
                                 );
                             const overtime = isAbsentOrLeave
                               ? null
                               : calculateOvertime(
                                   record.scheduleOut,
-                                  record.actualOut
+                                  record.actualOut,
                                 );
                             return (
                               <TableRow key={record._id}>
@@ -744,7 +745,7 @@ export default function AttendancePage() {
                                       <span>
                                         {format(
                                           new Date(record.date),
-                                          "MMM dd, yyyy"
+                                          "MMM dd, yyyy",
                                         )}
                                       </span>
                                       {record.remarks?.trim() ? (
@@ -801,7 +802,7 @@ export default function AttendancePage() {
                                   <Badge
                                     variant="secondary"
                                     className={getStatusBadgeClass(
-                                      record.status
+                                      record.status,
                                     )}
                                     style={getStatusBadgeStyle(record.status)}
                                   >
@@ -849,7 +850,9 @@ export default function AttendancePage() {
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        onClick={() => handleDeleteClick(record)}
+                                        onClick={() =>
+                                          handleDeleteClick(record)
+                                        }
                                         className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
                                         title="Delete attendance record"
                                       >
@@ -872,7 +875,7 @@ export default function AttendancePage() {
                       Showing {(individualPage - 1) * individualPageSize + 1} to{" "}
                       {Math.min(
                         individualPage * individualPageSize,
-                        sortedIndividualAttendance.length
+                        sortedIndividualAttendance.length,
                       )}{" "}
                       of {sortedIndividualAttendance.length} records
                     </div>
@@ -896,7 +899,7 @@ export default function AttendancePage() {
                           size="sm"
                           onClick={() =>
                             setIndividualPage((p) =>
-                              Math.min(totalIndividualPages, p + 1)
+                              Math.min(totalIndividualPages, p + 1),
                             )
                           }
                           disabled={individualPage === totalIndividualPages}
@@ -1027,15 +1030,15 @@ export default function AttendancePage() {
                                   if (!isAbsentOrLeave) {
                                     const late = calculateLate(
                                       record.scheduleIn,
-                                      record.actualIn
+                                      record.actualIn,
                                     );
                                     const undertime = calculateUndertime(
                                       record.scheduleOut,
-                                      record.actualOut
+                                      record.actualOut,
                                     );
                                     const overtime = calculateOvertime(
                                       record.scheduleOut,
-                                      record.actualOut
+                                      record.actualOut,
                                     );
                                     if (late) totalLate += late;
                                     if (undertime) totalUndertime += undertime;
@@ -1043,7 +1046,7 @@ export default function AttendancePage() {
                                       totalOvertime += overtime;
                                     } else if (record.overtime) {
                                       totalOvertime += Math.round(
-                                        record.overtime * 60
+                                        record.overtime * 60,
                                       );
                                     }
                                   }
@@ -1084,7 +1087,7 @@ export default function AttendancePage() {
                                                   ? "-"
                                                   : record.actualIn
                                                     ? formatTime12Hour(
-                                                        record.actualIn
+                                                        record.actualIn,
                                                       )
                                                     : "-"}
                                               </span>
@@ -1101,7 +1104,7 @@ export default function AttendancePage() {
                                                   ? "-"
                                                   : record.actualOut
                                                     ? formatTime12Hour(
-                                                        record.actualOut
+                                                        record.actualOut,
                                                       )
                                                     : "-"}
                                               </span>
@@ -1188,7 +1191,7 @@ export default function AttendancePage() {
                         Showing {(currentPage - 1) * pageSize + 1} to{" "}
                         {Math.min(
                           currentPage * pageSize,
-                          employees?.length || 0
+                          employees?.length || 0,
                         )}{" "}
                         of {employees?.length || 0} employees
                       </div>

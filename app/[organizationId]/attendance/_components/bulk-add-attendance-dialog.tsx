@@ -298,6 +298,8 @@ export function BulkAddAttendanceDialog({
     status: "present" | "absent" | "leave" | "half-day";
     notes: string;
     error: string | null;
+    /** When true, row will be imported; when false, excluded. User can toggle per row. */
+    includeInImport: boolean;
   };
   const [csvPreviewRows, setCsvPreviewRows] = useState<CsvPreviewRow[]>([]);
   const [csvParseError, setCsvParseError] = useState<string | null>(null);
@@ -446,6 +448,9 @@ export function BulkAddAttendanceDialog({
           if (!emp) error = "Employee not found";
           else if (dateStr && dateTs === 0) error = "Invalid date";
 
+          const day = dateTs > 0 ? new Date(dateTs).getDay() : -1;
+          const isWeekendExcluded =
+            (day === 6 && !includeSaturdayCsv) || (day === 0 && !includeSundayCsv);
           const row: CsvPreviewRow = {
             employeeId: emp?._id ?? null,
             employeeName: employeeKey || "—",
@@ -458,6 +463,7 @@ export function BulkAddAttendanceDialog({
             status,
             notes: "",
             error,
+            includeInImport: !isWeekendExcluded,
           };
           const dedupeKey = `${row.employeeId ?? ""}-${dateTs}`;
           const existingIndex = seen.get(dedupeKey);
@@ -602,6 +608,9 @@ export function BulkAddAttendanceDialog({
         else if (dateStr && dateTs === 0) error = "Invalid date";
         else if (status === "present" && !actualIn && !actualOut) error = "Time In/Out required for present";
 
+        const day = dateTs > 0 ? new Date(dateTs).getDay() : -1;
+        const isWeekendExcluded =
+          (day === 6 && !includeSaturdayCsv) || (day === 0 && !includeSundayCsv);
         preview.push({
           employeeId: emp?._id ?? null,
           employeeName: employeeKey || "—",
@@ -614,6 +623,7 @@ export function BulkAddAttendanceDialog({
           status,
           notes,
           error,
+          includeInImport: !isWeekendExcluded,
         });
       }
       setCsvPreviewRows(preview);
@@ -627,17 +637,11 @@ export function BulkAddAttendanceDialog({
     const valid = csvPreviewRows.filter(
       (r) => r.employeeId && !r.error && r.dateTs > 0,
     );
-    const dayOfWeek = (ts: number) => new Date(ts).getDay();
-    const toImport = valid.filter((r) => {
-      const day = dayOfWeek(r.dateTs);
-      if (day === 6 && !includeSaturdayCsv) return false;
-      if (day === 0 && !includeSundayCsv) return false;
-      return true;
-    });
+    const toImport = valid.filter((r) => r.includeInImport);
     if (toImport.length === 0) {
       toast({
         title: "Nothing to import",
-        description: "Fix errors in the CSV, add valid rows, or include weekend days.",
+        description: "Fix errors in the CSV, or check Include for rows you want to import.",
         variant: "destructive",
       });
       return;
@@ -1082,7 +1086,18 @@ export function BulkAddAttendanceDialog({
                         <input
                           type="checkbox"
                           checked={includeSaturdayCsv}
-                          onChange={(e) => setIncludeSaturdayCsv(e.target.checked)}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setIncludeSaturdayCsv(checked);
+                            setCsvPreviewRows((prev) =>
+                              prev.map((r) => {
+                                if (r.dateTs > 0 && new Date(r.dateTs).getDay() === 6) {
+                                  return { ...r, includeInImport: checked };
+                                }
+                                return r;
+                              })
+                            );
+                          }}
                           className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                         />
                         <span className="text-xs">Saturday</span>
@@ -1091,30 +1106,36 @@ export function BulkAddAttendanceDialog({
                         <input
                           type="checkbox"
                           checked={includeSundayCsv}
-                          onChange={(e) => setIncludeSundayCsv(e.target.checked)}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setIncludeSundayCsv(checked);
+                            setCsvPreviewRows((prev) =>
+                              prev.map((r) => {
+                                if (r.dateTs > 0 && new Date(r.dateTs).getDay() === 0) {
+                                  return { ...r, includeInImport: checked };
+                                }
+                                return r;
+                              })
+                            );
+                          }}
                           className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                         />
                         <span className="text-xs">Sunday</span>
                       </label>
                     </div>
                     <p className="text-xs text-gray-500">
-                      By default, Saturday and Sunday are not imported so those dates are not marked as absent.
+                      By default, Saturday and Sunday are not imported. Use the checkboxes above to include all Saturdays or Sundays, then use the Include column in the table to include or exclude individual days.
                     </p>
                   </div>
-                  <p className="text-xs text-gray-600">
+                    <p className="text-xs text-gray-600">
                     {(() => {
                       const valid = csvPreviewRows.filter((r) => r.employeeId && !r.error && r.dateTs > 0);
-                      const day = (ts: number) => new Date(ts).getDay();
-                      const toImport = valid.filter((r) => {
-                        if (day(r.dateTs) === 6 && !includeSaturdayCsv) return false;
-                        if (day(r.dateTs) === 0 && !includeSundayCsv) return false;
-                        return true;
-                      });
+                      const toImport = valid.filter((r) => r.includeInImport);
                       return (
                         <>
                           {toImport.length} row(s) will be imported.{" "}
                           {valid.length - toImport.length > 0 &&
-                            `${valid.length - toImport.length} weekend row(s) excluded. `}
+                            `${valid.length - toImport.length} row(s) excluded. `}
                           {csvPreviewRows.filter((r) => r.error).length > 0 &&
                             `${csvPreviewRows.filter((r) => r.error).length} row(s) have errors.`}
                         </>
@@ -1125,6 +1146,7 @@ export function BulkAddAttendanceDialog({
                     <Table>
                       <TableHeader>
                         <TableRow>
+                          <TableHead className="text-xs w-0 whitespace-nowrap">Include</TableHead>
                           <TableHead className="text-xs">Employee</TableHead>
                           <TableHead className="text-xs">Date</TableHead>
                           <TableHead className="text-xs">In</TableHead>
@@ -1136,16 +1158,37 @@ export function BulkAddAttendanceDialog({
                       </TableHeader>
                       <TableBody>
                         {csvPreviewRows.map((r, i) => {
-                          const day = r.dateTs > 0 ? new Date(r.dateTs).getDay() : -1;
-                          const isExcludedWeekend =
-                            (day === 6 && !includeSaturdayCsv) || (day === 0 && !includeSundayCsv);
-                          const displayStatus = isExcludedWeekend ? "Excluded (weekend)" : r.status;
-                          const rowError = isExcludedWeekend ? null : r.error;
+                          const isExcluded = !r.includeInImport;
+                          const displayStatus = isExcluded ? "Excluded" : r.status;
+                          const rowError = isExcluded ? null : r.error;
                           return (
                             <TableRow
                               key={i}
-                              className={rowError ? "bg-red-50" : isExcludedWeekend ? "bg-gray-50" : ""}
+                              className={rowError ? "bg-red-50" : isExcluded ? "bg-gray-50" : ""}
                             >
+                              <TableCell className="text-xs w-0 p-2">
+                                {!r.error && r.dateTs > 0 ? (
+                                  <label className="flex items-center gap-1.5 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={r.includeInImport}
+                                      onChange={() => {
+                                        setCsvPreviewRows((prev) =>
+                                          prev.map((row, idx) =>
+                                            idx === i
+                                              ? { ...row, includeInImport: !row.includeInImport }
+                                              : row
+                                          )
+                                        );
+                                      }}
+                                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                    />
+                                    <span className="sr-only">Include in import</span>
+                                  </label>
+                                ) : (
+                                  "—"
+                                )}
+                              </TableCell>
                               <TableCell className="text-xs">{r.employeeName}</TableCell>
                               <TableCell className="text-xs">{r.dateLabel}</TableCell>
                               <TableCell className="text-xs">
@@ -1180,16 +1223,9 @@ export function BulkAddAttendanceDialog({
                 onClick={handleCSVImport}
                 disabled={
                   isImportingCsv ||
-                  (() => {
-                    const valid = csvPreviewRows.filter((r) => r.employeeId && !r.error && r.dateTs > 0);
-                    const day = (ts: number) => new Date(ts).getDay();
-                    const toImport = valid.filter((r) => {
-                      if (day(r.dateTs) === 6 && !includeSaturdayCsv) return false;
-                      if (day(r.dateTs) === 0 && !includeSundayCsv) return false;
-                      return true;
-                    });
-                    return toImport.length === 0;
-                  })()
+                  csvPreviewRows.filter(
+                    (r) => r.employeeId && !r.error && r.dateTs > 0 && r.includeInImport
+                  ).length === 0
                 }
               >
                 {isImportingCsv ? (
