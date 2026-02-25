@@ -262,7 +262,7 @@ export function AddAttendanceDialog({
             <div className="grid gap-4 py-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="date">Date *</Label>
+                  <Label htmlFor="date">Date <span className="text-red-500">*</span></Label>
                   <DatePicker
                     value={selectedDate}
                     onValueChange={setSelectedDate}
@@ -270,7 +270,7 @@ export function AddAttendanceDialog({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="employee">Employee *</Label>
+                  <Label htmlFor="employee">Employee <span className="text-red-500">*</span></Label>
                   <EmployeeSelect
                     employees={employees}
                     value={selectedEmployee}
@@ -280,7 +280,7 @@ export function AddAttendanceDialog({
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="status">Status *</Label>
+                <Label htmlFor="status">Status <span className="text-red-500">*</span></Label>
                 <Select
                   value={status}
                   onValueChange={(value: any) => {

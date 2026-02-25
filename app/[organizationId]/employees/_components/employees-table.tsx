@@ -30,6 +30,15 @@ import {
   Mail,
 } from "lucide-react";
 
+type EmployeeColumnId =
+  | "name"
+  | "email"
+  | "position"
+  | "department"
+  | "status"
+  | "phone"
+  | "createdAt";
+
 interface EmployeesTableProps {
   employees: any[] | undefined;
   isCreatingEmployee: boolean;
@@ -58,6 +67,7 @@ interface EmployeesTableProps {
   totalEmployees: number;
   onPageChange: (page: number) => void;
   employeesUserAccounts: Record<string, boolean>;
+  visibleColumns: EmployeeColumnId[];
 }
 
 export function EmployeesTable({
@@ -80,6 +90,7 @@ export function EmployeesTable({
   totalEmployees,
   onPageChange,
   employeesUserAccounts,
+  visibleColumns,
 }: EmployeesTableProps) {
   const totalPages = Math.max(1, Math.ceil(totalEmployees / pageSize));
   const startIndex = (page - 1) * pageSize;
@@ -98,17 +109,39 @@ export function EmployeesTable({
               }
             >
               <TableHeader>
-                <TableRow>
-                  <TableHead className="min-w-[150px]">Name</TableHead>
-                  <TableHead className="min-w-[180px] hidden sm:table-cell">
-                    Email
-                  </TableHead>
-                  <TableHead className="min-w-[120px]">Position</TableHead>
-                  <TableHead className="min-w-[120px] hidden md:table-cell">
-                    Department
-                  </TableHead>
-                  <TableHead className="min-w-[100px]">Status</TableHead>
-                  <TableHead className="text-right min-w-[80px]">
+                <TableRow className="h-10">
+                  {visibleColumns.includes("name") && (
+                    <TableHead className="min-w-[150px] py-2">Name</TableHead>
+                  )}
+                  {visibleColumns.includes("email") && (
+                    <TableHead className="min-w-[180px] hidden sm:table-cell py-2">
+                      Email
+                    </TableHead>
+                  )}
+                  {visibleColumns.includes("position") && (
+                    <TableHead className="min-w-[120px] py-2">
+                      Position
+                    </TableHead>
+                  )}
+                  {visibleColumns.includes("department") && (
+                    <TableHead className="min-w-[120px] hidden md:table-cell py-2">
+                      Department
+                    </TableHead>
+                  )}
+                  {visibleColumns.includes("phone") && (
+                    <TableHead className="min-w-[120px] hidden lg:table-cell py-2">
+                      Phone
+                    </TableHead>
+                  )}
+                  {visibleColumns.includes("createdAt") && (
+                    <TableHead className="min-w-[140px] hidden lg:table-cell py-2">
+                      Created date
+                    </TableHead>
+                  )}
+                  {visibleColumns.includes("status") && (
+                    <TableHead className="min-w-[100px] py-2">Status</TableHead>
+                  )}
+                  <TableHead className="text-right min-w-[80px] py-2">
                     Actions
                   </TableHead>
                 </TableRow>
@@ -127,40 +160,66 @@ export function EmployeesTable({
                   paginatedEmployees.map((employee: any) => (
                     <TableRow
                       key={employee._id}
-                      className="cursor-pointer hover:bg-gray-50"
+                      className="cursor-pointer hover:bg-gray-50 text-sm h-11"
                       onClick={() => onRowClick(employee._id)}
                     >
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span>
-                            {employee.personalInfo.firstName}{" "}
-                            {employee.personalInfo.lastName}
-                          </span>
-                          <span className="text-xs text-gray-500 sm:hidden">
-                            {employee.personalInfo.email}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="hidden sm:table-cell">
-                        {employee.personalInfo.email}
-                      </TableCell>
-                      <TableCell>{employee.employment.position}</TableCell>
-                      <TableCell className="hidden md:table-cell">
-                        {employee.employment.department}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          className={
-                            employee.employment.status === "active"
-                              ? "bg-[#DCF7DC] border-[#A1E6A1] text-[#2E892E] font-normal rounded-md hover:bg-[#DCF7DC] focus:ring-0 focus:ring-offset-0 transition-none"
-                              : "bg-gray-100 text-gray-800 hover:bg-gray-100 border-gray-200 rounded-md focus:ring-0 focus:ring-offset-0 transition-none"
-                          }
-                        >
-                          {employee.employment.status}
-                        </Badge>
-                      </TableCell>
+                      {visibleColumns.includes("name") && (
+                        <TableCell className="py-2 px-4">
+                          <div className="flex flex-col">
+                            <span>
+                              {employee.personalInfo.firstName}{" "}
+                              {employee.personalInfo.lastName}
+                            </span>
+                            {visibleColumns.includes("email") && (
+                              <span className="text-xs text-gray-500 sm:hidden">
+                                {employee.personalInfo.email}
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+                      )}
+                      {visibleColumns.includes("email") && (
+                        <TableCell className="hidden sm:table-cell py-2 px-4">
+                          {employee.personalInfo.email}
+                        </TableCell>
+                      )}
+                      {visibleColumns.includes("position") && (
+                        <TableCell className="py-2 px-4">
+                          {employee.employment.position}
+                        </TableCell>
+                      )}
+                      {visibleColumns.includes("department") && (
+                        <TableCell className="hidden md:table-cell py-2 px-4">
+                          {employee.employment.department}
+                        </TableCell>
+                      )}
+                      {visibleColumns.includes("phone") && (
+                        <TableCell className="hidden lg:table-cell py-2 px-4">
+                          {employee.personalInfo.phone || "—"}
+                        </TableCell>
+                      )}
+                      {visibleColumns.includes("createdAt") && (
+                        <TableCell className="hidden lg:table-cell py-2 px-4 text-xs text-gray-600">
+                          {employee.createdAt
+                            ? new Date(employee.createdAt).toLocaleDateString()
+                            : "—"}
+                        </TableCell>
+                      )}
+                      {visibleColumns.includes("status") && (
+                        <TableCell className="py-2 px-4">
+                          <Badge
+                            className={
+                              employee.employment.status === "active"
+                                ? "bg-[#DCF7DC] border-[#A1E6A1] text-[#2E892E] font-normal rounded-md hover:bg-[#DCF7DC] focus:ring-0 focus:ring-offset-0 transition-none"
+                                : "bg-gray-100 text-gray-800 hover:bg-gray-100 border-gray-200 rounded-md focus:ring-0 focus:ring-offset-0 transition-none"
+                            }
+                          >
+                            {employee.employment.status}
+                          </Badge>
+                        </TableCell>
+                      )}
                       <TableCell
-                        className="text-right"
+                        className="text-right py-2.5"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div className="flex items-center justify-end gap-2">

@@ -125,7 +125,7 @@ export function CreateGroupChatModal({
         <form onSubmit={handleSubmit}>
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="groupName">Group Name *</Label>
+              <Label htmlFor="groupName">Group Name <span className="text-red-500">*</span></Label>
               <Input
                 id="groupName"
                 value={groupName}
@@ -135,7 +135,7 @@ export function CreateGroupChatModal({
               />
             </div>
             <div className="space-y-2">
-              <Label>Select Members *</Label>
+              <Label>Select Members <span className="text-red-500">*</span></Label>
               <Input
                 placeholder="Search members..."
                 value={searchQuery}

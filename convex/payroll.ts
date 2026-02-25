@@ -2977,17 +2977,16 @@ export const getPayrollRunSummary = query({
               undertimeMinutes = scheduleMinutes - actualMinutes;
               totalUndertimeMinutes += undertimeMinutes;
             }
-            if (actualMinutes > scheduleMinutes) {
-              const otMinutes = actualMinutes - scheduleMinutes;
-              const otHours = otMinutes / 60;
-              // Check if it's a holiday for special OT
-              if (att.isHoliday && att.holidayType === "special") {
-                totalSpecialOTHours += otHours;
-                specialOTHours = otHours;
-              } else {
-                totalRegularOTHours += otHours;
-                regularOTHours = otHours;
-              }
+          }
+
+          // Overtime: user-set only (no auto-calculation from time out)
+          if (att.status === "present" && att.overtime && att.overtime > 0) {
+            if (att.isHoliday && att.holidayType === "special") {
+              totalSpecialOTHours += att.overtime;
+              specialOTHours = att.overtime;
+            } else {
+              totalRegularOTHours += att.overtime;
+              regularOTHours = att.overtime;
             }
           }
 

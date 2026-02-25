@@ -481,7 +481,7 @@ export function OrganizationManagement(): React.ReactElement {
           <form onSubmit={handleEditOrganization}>
             <div className="grid gap-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-name">Organization Name *</Label>
+                <Label htmlFor="edit-name">Organization Name <span className="text-red-500">*</span></Label>
                 <Input
                   id="edit-name"
                   value={editFormData.name}
@@ -563,7 +563,7 @@ export function OrganizationManagement(): React.ReactElement {
           <form onSubmit={handleInviteUser}>
             <div className="grid gap-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="invite-email">Email *</Label>
+                <Label htmlFor="invite-email">Email <span className="text-red-500">*</span></Label>
                 <Input
                   id="invite-email"
                   type="email"
@@ -578,7 +578,7 @@ export function OrganizationManagement(): React.ReactElement {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="invite-role">Role *</Label>
+                <Label htmlFor="invite-role">Role <span className="text-red-500">*</span></Label>
                 <Select
                   value={inviteFormData.role}
                   onValueChange={(value: any) =>

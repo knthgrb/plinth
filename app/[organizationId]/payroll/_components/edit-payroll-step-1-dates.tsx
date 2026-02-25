@@ -20,7 +20,7 @@ export function EditPayrollStep1Dates({
     <div className="grid gap-4 py-4">
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="editCutoffStart">Cutoff Start *</Label>
+          <Label htmlFor="editCutoffStart">Cutoff Start <span className="text-red-500">*</span></Label>
           <Input
             id="editCutoffStart"
             type="date"
@@ -30,7 +30,7 @@ export function EditPayrollStep1Dates({
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="editCutoffEnd">Cutoff End *</Label>
+          <Label htmlFor="editCutoffEnd">Cutoff End <span className="text-red-500">*</span></Label>
           <Input
             id="editCutoffEnd"
             type="date"

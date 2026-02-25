@@ -90,7 +90,7 @@ export function AddRequirementDialog({
         </DialogHeader>
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label htmlFor="type">Requirement Type *</Label>
+            <Label htmlFor="type">Requirement Type <span className="text-red-500">*</span></Label>
             <Input
               id="type"
               value={formData.type}

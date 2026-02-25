@@ -122,6 +122,11 @@ export default defineSchema({
       ),
       regularHolidayRate: v.optional(v.number()), // Additional % for regular holidays (default 1.0 = 100%)
       specialHolidayRate: v.optional(v.number()), // Additional % for special holidays (default 0.3 = 30%)
+      nightDiffPercent: v.optional(v.number()), // Night differential override (default from settings)
+      overtimeRegularRate: v.optional(v.number()), // Regular OT override (default from settings)
+      overtimeRestDayRate: v.optional(v.number()), // Rest day OT override (default from settings)
+      regularHolidayOtRate: v.optional(v.number()), // Regular holiday OT override (default from settings)
+      specialHolidayOtRate: v.optional(v.number()), // Special holiday OT override (default from settings)
     }),
     schedule: v.object({
       defaultSchedule: v.object({

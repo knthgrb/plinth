@@ -158,7 +158,7 @@ export function AdjustCreditsDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="adjustReason">Reason *</Label>
+            <Label htmlFor="adjustReason">Reason <span className="text-red-500">*</span></Label>
             <Textarea
               id="adjustReason"
               value={adjustmentData.reason}

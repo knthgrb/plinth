@@ -358,7 +358,7 @@ export default function AcceptInvitationPage() {
             <form onSubmit={handleAccept} className="space-y-4">
               {!isExistingUser && (
                 <div className="space-y-2">
-                  <Label htmlFor="name">Full Name *</Label>
+                  <Label htmlFor="name">Full Name <span className="text-red-500">*</span></Label>
                   <Input
                     id="name"
                     type="text"
@@ -417,7 +417,7 @@ export default function AcceptInvitationPage() {
 
               {!isExistingUser && (
                 <div className="space-y-2">
-                  <Label htmlFor="confirmPassword">Confirm Password *</Label>
+                  <Label htmlFor="confirmPassword">Confirm Password <span className="text-red-500">*</span></Label>
                   <Input
                     id="confirmPassword"
                     type="password"

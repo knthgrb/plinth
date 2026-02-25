@@ -273,7 +273,7 @@ export function CreateAnnouncementModal({
         <form onSubmit={handleSubmit}>
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="title">Title *</Label>
+              <Label htmlFor="title">Title <span className="text-red-500">*</span></Label>
               <Input
                 id="title"
                 value={formData.title}
@@ -285,7 +285,7 @@ export function CreateAnnouncementModal({
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="priority">Priority *</Label>
+                <Label htmlFor="priority">Priority <span className="text-red-500">*</span></Label>
                 <Select
                   value={formData.priority}
                   onValueChange={(value: any) =>
@@ -303,7 +303,7 @@ export function CreateAnnouncementModal({
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="targetAudience">Target Audience *</Label>
+                <Label htmlFor="targetAudience">Target Audience <span className="text-red-500">*</span></Label>
                 <Select
                   value={formData.targetAudience}
                   onValueChange={(value: any) =>
@@ -332,7 +332,7 @@ export function CreateAnnouncementModal({
             {/* Department Selection */}
             {formData.targetAudience === "department" && (
               <div className="space-y-2">
-                <Label>Select Departments *</Label>
+                <Label>Select Departments <span className="text-red-500">*</span></Label>
                 <div className="max-h-48 overflow-y-auto border rounded-md p-3 space-y-2">
                   {settings?.departments && settings.departments.length > 0 ? (
                     settings.departments.map((dept: string) => (
@@ -367,7 +367,7 @@ export function CreateAnnouncementModal({
             {/* Employee Selection */}
             {formData.targetAudience === "specific-employees" && (
               <div className="space-y-2">
-                <Label>Select Employees *</Label>
+                <Label>Select Employees <span className="text-red-500">*</span></Label>
                 <Input
                   placeholder="Search employee..."
                   value={employeeSearch}
@@ -445,7 +445,7 @@ export function CreateAnnouncementModal({
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="content">Content *</Label>
+              <Label htmlFor="content">Content <span className="text-red-500">*</span></Label>
               <TiptapEditor
                 content={formData.content}
                 onChange={(content) => setFormData({ ...formData, content })}

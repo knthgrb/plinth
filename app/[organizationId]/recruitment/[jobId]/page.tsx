@@ -918,7 +918,7 @@ export default function JobDetailPage({
                       <div className="grid gap-4 py-4">
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-2">
-                            <Label htmlFor="firstName">First Name *</Label>
+                            <Label htmlFor="firstName">First Name <span className="text-red-500">*</span></Label>
                             <Input
                               id="firstName"
                               value={applicantFormData.firstName}
@@ -932,7 +932,7 @@ export default function JobDetailPage({
                             />
                           </div>
                           <div className="space-y-2">
-                            <Label htmlFor="lastName">Last Name *</Label>
+                            <Label htmlFor="lastName">Last Name <span className="text-red-500">*</span></Label>
                             <Input
                               id="lastName"
                               value={applicantFormData.lastName}

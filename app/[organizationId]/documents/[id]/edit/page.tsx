@@ -164,7 +164,7 @@ export default function EditDocumentPage() {
               <CardContent className="p-6 space-y-6">
                 <form onSubmit={handleSubmit} className="space-y-6">
                   <div className="space-y-2">
-                    <Label htmlFor="title">Title *</Label>
+                    <Label htmlFor="title">Title <span className="text-red-500">*</span></Label>
                     <Input
                       id="title"
                       value={formData.title}
@@ -179,7 +179,7 @@ export default function EditDocumentPage() {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="type">Type *</Label>
+                      <Label htmlFor="type">Type <span className="text-red-500">*</span></Label>
                       <Select
                         value={formData.type}
                         onValueChange={(value: any) =>

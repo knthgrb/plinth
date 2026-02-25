@@ -138,6 +138,25 @@ input[type="search"]::-webkit-search-decoration {
   background: #9ca3af;
 }
 
+/* Thin custom scrollbar for dialogs (e.g. Add Employee modal): no track, at right edge */
+.dialog-thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db transparent; /* thumb visible, track transparent */
+}
+.dialog-thin-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.dialog-thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dialog-thin-scrollbar::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+.dialog-thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
 /* Hide scrollbar but keep scrolling functionality */
 .hide-scrollbar {
   scrollbar-width: none; /* Firefox */

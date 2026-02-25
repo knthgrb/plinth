@@ -83,7 +83,7 @@ export function CreateOrganizationDialog({
         <form onSubmit={handleSubmit}>
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Organization Name *</Label>
+              <Label htmlFor="name">Organization Name <span className="text-red-500">*</span></Label>
               <Input
                 id="name"
                 value={formData.name}

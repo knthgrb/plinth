@@ -38,7 +38,6 @@ import { EmployeeSelect } from "@/components/ui/employee-select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { TimePicker } from "@/components/ui/time-picker";
 import {
-  calculateOvertime,
   calculateLate,
   calculateUndertime,
 } from "@/utils/attendance-calculations";
@@ -153,7 +152,6 @@ function parseBiometricTimesheetCSV(text: string): BiometricCsvRow[] {
         .trim()
         .replace(/\s+/g, " ");
       currentEmployee = namePart;
-      // Same row may contain first date in a later column (e.g. col 24/26) — scan for MM/DD/YYYY
       for (let i = 6; i < cells.length - 1; i++) {
         const cell = (cells[i] ?? "").trim();
         if (DATE_ROW_REGEX.test(cell)) {
@@ -191,7 +189,6 @@ function parseBiometricTimesheetCSV(text: string): BiometricCsvRow[] {
   return result;
 }
 
-// Mustard Seed / biometric timesheet: "Employee: Name (id)" in col5; same row may have first date in a later column (e.g. 26); data rows have date in col5, times in col6/7 or col8/9
 function isBiometricTimesheetFormat(text: string): boolean {
   const lines = text.split(/\r?\n/).filter((line) => line.trim());
   for (let r = 0; r < Math.min(20, lines.length); r++) {
@@ -481,7 +478,6 @@ export function BulkAddAttendanceDialog({
             error,
             includeInImport: !isWeekendExcluded,
           };
-          // When employee not found, include name in key so we don't collapse all "not found" rows for same date into one
           const dedupeKey = row.employeeId
             ? `${row.employeeId}-${dateTs}`
             : `name:${row.employeeName}-${dateTs}`;
@@ -499,7 +495,6 @@ export function BulkAddAttendanceDialog({
 
       const { headers, rows } = parseCSV(text);
       const lowerHeaders = headers.map((h) => h.toLowerCase().trim());
-      // Find first header that matches any of the given aliases (case-insensitive)
       const colAny = (...aliases: string[]): string | null => {
         for (const alias of aliases) {
           const idx = lowerHeaders.indexOf(alias.toLowerCase().trim());
@@ -507,62 +502,10 @@ export function BulkAddAttendanceDialog({
         }
         return null;
       };
-      // Name: employee, name, staff, full name, etc.
-      const employeeCol =
-        colAny(
-          "employee",
-          "employee name",
-          "name",
-          "employee id",
-          "staff",
-          "staff name",
-          "full name",
-          "worker",
-          "emp name",
-          "emp",
-        );
-      // Date: date, work date, attendance date, day, etc.
-      const dateCol =
-        colAny(
-          "date",
-          "work date",
-          "attendance date",
-          "day",
-          "transaction date",
-          "punch date",
-          "dates",
-          "workday",
-        );
-      // Time In
-      const timeInCol =
-        colAny(
-          "time in",
-          "timein",
-          "in",
-          "clock in",
-          "clockin",
-          "check in",
-          "checkin",
-          "start time",
-          "punch in",
-          "time in (required)",
-          "in time",
-        );
-      // Time Out
-      const timeOutCol =
-        colAny(
-          "time out",
-          "timeout",
-          "out",
-          "clock out",
-          "clockout",
-          "check out",
-          "checkout",
-          "end time",
-          "punch out",
-          "time out (required)",
-          "out time",
-        );
+      const employeeCol = colAny("employee", "employee name", "name", "employee id", "staff", "staff name", "full name", "worker", "emp name", "emp");
+      const dateCol = colAny("date", "work date", "attendance date", "day", "transaction date", "punch date", "dates", "workday");
+      const timeInCol = colAny("time in", "timein", "in", "clock in", "clockin", "check in", "checkin", "start time", "punch in", "time in (required)", "in time");
+      const timeOutCol = colAny("time out", "timeout", "out", "clock out", "clockout", "check out", "checkout", "end time", "punch out", "time out (required)", "out time");
       const statusCol = colAny("status", "attendance status", "type");
       const notesCol = colAny("notes", "remarks", "comment", "comments");
 
@@ -593,11 +536,7 @@ export function BulkAddAttendanceDialog({
         const status = statusMap[statusStr] ?? "present";
 
         const emp = findEmployeeByKey(employeeKey);
-
         const { ts: dateTs, label: dateLabel } = parseDateToLocalTimestamp(dateStr);
-        const invalidDate = dateTs === 0 && dateStr.length > 0;
-        const dateParsed = dateTs > 0 ? new Date(dateTs) : null;
-
         const actualIn = timeInStr ? parseTimeToHHmm(timeInStr) ?? undefined : undefined;
         const actualOut = timeOutStr ? parseTimeToHHmm(timeOutStr) ?? undefined : undefined;
 
@@ -636,8 +575,8 @@ export function BulkAddAttendanceDialog({
         });
       }
       setCsvPreviewRows(preview);
-    } catch (err: any) {
-      setCsvParseError(err?.message ?? "Failed to parse CSV");
+    } catch (err: unknown) {
+      setCsvParseError(err instanceof Error ? err.message : "Failed to parse CSV");
     }
   };
 
@@ -897,13 +836,15 @@ export function BulkAddAttendanceDialog({
             ? calculateLate(daySchedule.in, finalTimeIn, false)
             : 0;
 
-        // Calculate overtime if not manually provided
-        const calculatedOvertimeValue =
-          dayTimes.status === "present" && finalTimeOut
-            ? calculateOvertime(daySchedule.out, finalTimeOut)
-            : 0;
+        // Overtime: user-set only (no auto-calculation)
+        const finalOvertime =
+          dayTimes.status === "leave" || dayTimes.status === "absent"
+            ? undefined
+            : dayTimes.useManualOvertime && dayTimes.overtime
+              ? parseFloat(dayTimes.overtime)
+              : undefined;
 
-        // Use manual values if enabled, otherwise use calculated
+        // Use manual values if enabled, otherwise use calculated (late and undertime only)
         const finalLate =
           dayTimes.status === "leave" || dayTimes.status === "absent"
             ? undefined
@@ -924,17 +865,6 @@ export function BulkAddAttendanceDialog({
                 : 0
               : calculatedUndertimeValue > 0
                 ? calculatedUndertimeValue
-                : undefined;
-
-        const finalOvertime =
-          dayTimes.status === "leave" || dayTimes.status === "absent"
-            ? undefined
-            : dayTimes.useManualOvertime
-              ? dayTimes.overtime
-                ? parseFloat(dayTimes.overtime)
-                : 0
-              : calculatedOvertimeValue > 0
-                ? calculatedOvertimeValue
                 : undefined;
 
         const entry: {
@@ -1440,17 +1370,7 @@ export function BulkAddAttendanceDialog({
                                   )
                                 : 0;
 
-                            const calculatedOvertime =
-                              daySchedule &&
-                              dayTimes.status === "present" &&
-                              dayTimes.timeOut
-                                ? calculateOvertime(
-                                    daySchedule.out,
-                                    dayTimes.timeOut,
-                                  )
-                                : 0;
-
-                            // Use manual values if enabled, otherwise use calculated
+                            // Use manual values if enabled, otherwise use calculated (late and undertime only). Overtime is user-set only.
                             const displayLate = dayTimes.useManualLate
                               ? dayTimes.late
                               : calculatedLate.toString();
@@ -1461,7 +1381,7 @@ export function BulkAddAttendanceDialog({
 
                             const displayOvertime = dayTimes.useManualOvertime
                               ? dayTimes.overtime
-                              : calculatedOvertime.toFixed(2);
+                              : "";
 
                             return (
                               <TableRow key={dateInfo.timestamp}>
@@ -1880,7 +1800,7 @@ export function BulkAddAttendanceDialog({
                                         }
                                         readOnly={!dayTimes.useManualOvertime}
                                         onFocus={() => {
-                                          // Enable manual override when user focuses on input
+                                          // Enable manual override when user focuses on input (overtime is user-set only)
                                           if (!dayTimes.useManualOvertime) {
                                             setBulkDayTimes((prev) => ({
                                               ...prev,
@@ -1888,7 +1808,8 @@ export function BulkAddAttendanceDialog({
                                                 ...prev[dateInfo.timestamp],
                                                 useManualOvertime: true,
                                                 overtime:
-                                                  calculatedOvertime.toFixed(2),
+                                                  prev[dateInfo.timestamp]
+                                                    ?.overtime || "",
                                               },
                                             }));
                                           }
@@ -1912,10 +1833,7 @@ export function BulkAddAttendanceDialog({
                                                       e.target.checked,
                                                     overtime: e.target.checked
                                                       ? prev[dateInfo.timestamp]
-                                                          ?.overtime ||
-                                                        calculatedOvertime.toFixed(
-                                                          2,
-                                                        )
+                                                          ?.overtime || ""
                                                       : "",
                                                   },
                                                 }));
@@ -1930,14 +1848,6 @@ export function BulkAddAttendanceDialog({
                                           </label>
                                         )}
                                     </div>
-                                    {dayTimes.status === "present" &&
-                                      daySchedule &&
-                                      !dayTimes.useManualOvertime &&
-                                      calculatedOvertime > 0 && (
-                                        <p className="text-[9px] text-gray-500">
-                                          {calculatedOvertime.toFixed(2)} hrs
-                                        </p>
-                                      )}
                                   </div>
                                 </TableCell>
                                 <TableCell className="px-2 sm:px-4 py-2 sm:py-3 w-[110px] min-w-[110px]">

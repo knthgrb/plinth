@@ -44,6 +44,11 @@ export async function createEmployee(data: {
     };
     regularHolidayRate?: number;
     specialHolidayRate?: number;
+    nightDiffPercent?: number;
+    overtimeRegularRate?: number;
+    overtimeRestDayRate?: number;
+    regularHolidayOtRate?: number;
+    specialHolidayOtRate?: number;
   };
   schedule: {
     defaultSchedule: {
@@ -104,6 +109,11 @@ export async function updateEmployee(
       };
       regularHolidayRate?: number;
       specialHolidayRate?: number;
+      nightDiffPercent?: number;
+      overtimeRegularRate?: number;
+      overtimeRestDayRate?: number;
+      regularHolidayOtRate?: number;
+      specialHolidayOtRate?: number;
     };
     schedule?: {
       defaultSchedule?: {

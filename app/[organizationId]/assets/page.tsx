@@ -526,7 +526,7 @@ export default function AssetsPage() {
                 <div className="grid gap-4 py-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="name">Asset Name *</Label>
+                      <Label htmlFor="name">Asset Name <span className="text-red-500">*</span></Label>
                       <Input
                         id="name"
                         value={formData.name}
@@ -568,7 +568,7 @@ export default function AssetsPage() {
 
                   <div className="grid grid-cols-3 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="quantity">Quantity *</Label>
+                      <Label htmlFor="quantity">Quantity <span className="text-red-500">*</span></Label>
                       <Input
                         id="quantity"
                         type="number"

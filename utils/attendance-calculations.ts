@@ -117,3 +117,18 @@ export function formatTime12Hour(time24: string): string {
   const hour12 = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
   return `${hour12}:${minutes.toString().padStart(2, "0")} ${period}`;
 }
+
+/**
+ * Format 24-hour time with AM/PM on a separate line below (for uniform table display).
+ * e.g. "09:30" → "9:30\nAM", "22:56" → "10:56\nPM"
+ */
+export function formatTime12HourStacked(time24: string): string {
+  if (!time24 || typeof time24 !== "string") return "";
+  const parts = time24.trim().split(":");
+  const hours = parseInt(parts[0], 10);
+  const minutes = parseInt(parts[1], 10) || 0;
+  if (isNaN(hours)) return "";
+  const period = hours >= 12 ? "PM" : "AM";
+  const hour12 = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+  return `${hour12}:${minutes.toString().padStart(2, "0")}\n${period}`;
+}

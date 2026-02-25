@@ -31,6 +31,7 @@ import {
   MessageSquare,
   BarChart2,
   Plus,
+  Loader2,
 } from "lucide-react";
 import {
   format,
@@ -121,10 +122,19 @@ export default function AttendancePage() {
   );
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
   const [timeFormat, setTimeFormat] = useState<"minutes" | "hours">("minutes");
+  // Summary modal has its own month/year for tracking back
+  const [summaryMonth, setSummaryMonth] = useState(
+    format(new Date(), "yyyy-MM"),
+  );
 
   useEffect(() => {
     setIndividualPage(1);
   }, [selectedEmployeeFilter, selectedMonth]);
+
+  // When opening summary modal, default to current page month
+  useEffect(() => {
+    if (isSummaryModalOpen) setSummaryMonth(selectedMonth);
+  }, [isSummaryModalOpen, selectedMonth]);
 
   // Calculate date range for selected month
   const selectedMonthDate = selectedMonth
@@ -133,14 +143,25 @@ export default function AttendancePage() {
   const monthStart = startOfMonth(selectedMonthDate).getTime();
   const monthEnd = endOfMonth(selectedMonthDate).getTime();
 
-  // All employees attendance (for summary modal)
+  // Summary modal month range
+  const summaryMonthDate = summaryMonth
+    ? new Date(summaryMonth + "-01")
+    : new Date();
+  const summaryMonthStart = startOfMonth(summaryMonthDate).getTime();
+  const summaryMonthEnd = endOfMonth(summaryMonthDate).getTime();
+  const summaryMonthDates = eachDayOfInterval({
+    start: startOfMonth(summaryMonthDate),
+    end: endOfMonth(summaryMonthDate),
+  });
+
+  // All employees attendance (for summary modal) — uses summary month when modal open
   const allAttendance = useQuery(
     (api as any).attendance.getAttendance,
     currentOrganizationId && isSummaryModalOpen
       ? {
           organizationId: currentOrganizationId,
-          startDate: monthStart,
-          endDate: monthEnd,
+          startDate: summaryMonthStart,
+          endDate: summaryMonthEnd,
         }
       : "skip",
   );
@@ -195,17 +216,6 @@ export default function AttendancePage() {
     return undertime > 0 ? undertime : null;
   };
 
-  const calculateOvertime = (
-    scheduleOut: string,
-    actualOut?: string,
-  ): number | null => {
-    if (!actualOut) return null;
-    const scheduleMinutes = timeToMinutes(scheduleOut);
-    const actualMinutes = timeToMinutes(actualOut);
-    const overtime = actualMinutes - scheduleMinutes;
-    return overtime > 0 ? overtime : null;
-  };
-
   const formatTime = (minutes: number | null): string => {
     if (minutes === null) return "-";
     if (timeFormat === "hours") {
@@ -251,12 +261,7 @@ export default function AttendancePage() {
   };
 
   // Generate all dates in the selected month
-  const monthDates = eachDayOfInterval({
-    start: startOfMonth(selectedMonthDate),
-    end: endOfMonth(selectedMonthDate),
-  });
-
-  // Transform attendance data by employee and date
+  // Transform attendance data by employee and date (for summary modal — uses summary month)
   const attendanceByEmployeeAndDate = (() => {
     if (!allAttendance || !employees) return {};
 
@@ -265,13 +270,13 @@ export default function AttendancePage() {
     // Initialize all employees
     employees.forEach((emp: any) => {
       result[emp._id] = {};
-      monthDates.forEach((date) => {
+      summaryMonthDates.forEach((date) => {
         const dateTimestamp = date.getTime();
         result[emp._id][dateTimestamp] = null;
       });
     });
 
-    // Fill in attendance records — key by local start-of-day so stored UTC-midnight dates match monthDates (local midnight)
+    // Fill in attendance records — key by local start-of-day so stored UTC-midnight dates match (local midnight)
     allAttendance.forEach((record: any) => {
       if (!result[record.employeeId]) {
         result[record.employeeId] = {};
@@ -321,6 +326,15 @@ export default function AttendancePage() {
             </div>
             {!isReadOnly && (
               <div className="flex flex-col sm:flex-row gap-2 sm:items-start shrink-0">
+                <Button
+                  variant="outline"
+                  className="h-8 shrink-0 rounded-lg border-[#DDDDDD] bg-white text-sm shadow-sm [&_svg]:text-current hover:bg-[rgb(250,250,250)] hover:border-[rgb(150,150,150)]"
+                  style={{ color: "rgb(64,64,64)" }}
+                  onClick={() => setIsSummaryModalOpen(true)}
+                >
+                  <BarChart2 className="h-3.5 w-3.5 mr-1.5 shrink-0" />
+                  View month summary
+                </Button>
                 <Suspense
                   fallback={
                     <Button
@@ -631,15 +645,6 @@ export default function AttendancePage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <Button
-                  variant="outline"
-                  className="h-8 shrink-0 rounded-lg border-[#DDDDDD] bg-white text-sm font-semibold shadow-sm [&_svg]:text-current hover:bg-[rgb(250,250,250)] hover:border-[rgb(150,150,150)]"
-                  style={{ color: "rgb(64,64,64)" }}
-                  onClick={() => setIsSummaryModalOpen(true)}
-                >
-                  <BarChart2 className="h-3.5 w-3.5 mr-1.5 shrink-0" />
-                  Summary
-                </Button>
               </div>
             </div>
           </CardHeader>
@@ -661,7 +666,7 @@ export default function AttendancePage() {
             ) : individualAttendance === undefined ? (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center">
-                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-2"></div>
+                  <Loader2 className="h-8 w-8 animate-spin text-[#695eff] mx-auto mb-2" />
                   <p className="text-sm text-gray-600">Loading attendance...</p>
                 </div>
               </div>
@@ -719,24 +724,26 @@ export default function AttendancePage() {
                             const isAbsentOrLeave =
                               record.status === "absent" ||
                               record.status === "leave";
+                            // Late and undertime: use stored value or auto-calculate (only these are auto-calculated)
                             const late = isAbsentOrLeave
                               ? null
-                              : calculateLate(
-                                  record.scheduleIn,
-                                  record.actualIn,
-                                );
+                              : record.late != null
+                                ? record.late
+                                : calculateLate(
+                                    record.scheduleIn,
+                                    record.actualIn,
+                                  );
                             const undertime = isAbsentOrLeave
                               ? null
-                              : calculateUndertime(
-                                  record.scheduleOut,
-                                  record.actualOut,
-                                );
-                            const overtime = isAbsentOrLeave
-                              ? null
-                              : calculateOvertime(
-                                  record.scheduleOut,
-                                  record.actualOut,
-                                );
+                              : record.undertime != null
+                                ? Math.round(record.undertime * 60) // stored in hours, display in mins
+                                : calculateUndertime(
+                                    record.scheduleOut,
+                                    record.actualOut,
+                                  );
+                            const hasLate = late !== null && late > 0;
+                            const hasUndertime =
+                              undertime !== null && undertime > 0;
                             return (
                               <TableRow key={record._id}>
                                 <TableCell className="font-medium">
@@ -782,7 +789,9 @@ export default function AttendancePage() {
                                     </span>
                                   </div>
                                 </TableCell>
-                                <TableCell className="hidden sm:table-cell">
+                                <TableCell
+                                  className={`hidden sm:table-cell ${hasLate ? "text-red-600 font-medium" : ""}`}
+                                >
                                   {record.status === "leave" ||
                                   record.status === "absent"
                                     ? "-"
@@ -790,7 +799,9 @@ export default function AttendancePage() {
                                       ? formatTime12Hour(record.actualIn)
                                       : "-"}
                                 </TableCell>
-                                <TableCell className="hidden sm:table-cell">
+                                <TableCell
+                                  className={`hidden sm:table-cell ${hasUndertime ? "text-red-600 font-medium" : ""}`}
+                                >
                                   {record.status === "leave" ||
                                   record.status === "absent"
                                     ? "-"
@@ -815,25 +826,21 @@ export default function AttendancePage() {
                                   {formatTime(late)}
                                 </TableCell>
                                 <TableCell
-                                  className={`hidden md:table-cell ${undertime ? "text-orange-600 font-medium" : ""}`}
+                                  className={`hidden md:table-cell ${hasUndertime ? "text-red-600 font-medium" : ""}`}
                                 >
                                   {formatTime(undertime)}
                                 </TableCell>
                                 <TableCell
-                                  className={`hidden md:table-cell ${
-                                    !isAbsentOrLeave &&
-                                    (record.overtime || overtime)
-                                      ? "text-green-600 font-medium"
-                                      : ""
-                                  }`}
+                                  className={`hidden md:table-cell ${!isAbsentOrLeave && record.overtime != null && record.overtime > 0 ? "text-green-600 font-medium" : ""}`}
                                 >
                                   {isAbsentOrLeave
                                     ? "-"
-                                    : record.overtime
+                                    : record.overtime != null &&
+                                        record.overtime > 0
                                       ? timeFormat === "hours"
                                         ? `${record.overtime.toFixed(2)} hrs`
                                         : `${Math.round(record.overtime * 60)} mins`
-                                      : formatTime(overtime)}
+                                      : "-"}
                                 </TableCell>
                                 <TableCell>
                                   {!isReadOnly && (
@@ -918,16 +925,85 @@ export default function AttendancePage() {
         {/* Attendance Summary Modal */}
         <Dialog open={isSummaryModalOpen} onOpenChange={setIsSummaryModalOpen}>
           <DialogContent className="max-w-[96vw] w-full max-h-[90vh] overflow-hidden flex flex-col gap-0 p-0">
-            <DialogHeader className="shrink-0 px-6 pt-6 pb-2 border-b border-[#DDDDDD]">
-              <DialogTitle>
-                Attendance Summary – {format(selectedMonthDate, "MMMM yyyy")}
-              </DialogTitle>
+            <DialogHeader className="shrink-0 px-6 pt-6 pb-4 border-b border-[#DDDDDD]">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <DialogTitle className="text-lg sm:text-xl">
+                  Attendance Summary – {format(summaryMonthDate, "MMMM yyyy")}
+                </DialogTitle>
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={getYear(summaryMonthDate).toString()}
+                    onValueChange={(year) => {
+                      const next = new Date(
+                        parseInt(year, 10),
+                        summaryMonthDate.getMonth(),
+                        1,
+                      );
+                      setSummaryMonth(format(next, "yyyy-MM"));
+                    }}
+                  >
+                    <SelectTrigger className="w-[100px] h-8 text-sm">
+                      <SelectValue placeholder="Year" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 12 }, (_, i) => {
+                        const y = summaryMonthDate.getFullYear() - 5 + i;
+                        return (
+                          <SelectItem key={y} value={y.toString()}>
+                            {y}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={(summaryMonthDate.getMonth() + 1)
+                      .toString()
+                      .padStart(2, "0")}
+                    onValueChange={(month) => {
+                      const next = new Date(
+                        summaryMonthDate.getFullYear(),
+                        parseInt(month, 10) - 1,
+                        1,
+                      );
+                      setSummaryMonth(format(next, "yyyy-MM"));
+                    }}
+                  >
+                    <SelectTrigger className="w-[120px] h-8 text-sm">
+                      <SelectValue placeholder="Month" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[
+                        "January",
+                        "February",
+                        "March",
+                        "April",
+                        "May",
+                        "June",
+                        "July",
+                        "August",
+                        "September",
+                        "October",
+                        "November",
+                        "December",
+                      ].map((name, i) => (
+                        <SelectItem
+                          key={name}
+                          value={(i + 1).toString().padStart(2, "0")}
+                        >
+                          {name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </DialogHeader>
             <div className="flex-1 overflow-hidden flex flex-col min-h-0">
               {allAttendance === undefined ? (
                 <div className="flex items-center justify-center flex-1 py-12">
                   <div className="text-center">
-                    <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mb-2"></div>
+                    <Loader2 className="h-8 w-8 animate-spin text-[#695eff] mx-auto mb-2" />
                     <p className="text-sm text-gray-600">
                       Loading attendance...
                     </p>
@@ -943,9 +1019,10 @@ export default function AttendancePage() {
                             <TableHead className="sticky left-0 bg-white z-40 min-w-[150px] max-w-[150px] border-r border-[#DDDDDD] shadow-[2px_0_4px_rgba(0,0,0,0.08)]">
                               Employee
                             </TableHead>
-                            {monthDates.map((date, index) => {
+                            {summaryMonthDates.map((date, index) => {
                               const dateTimestamp = date.getTime();
-                              const isLast = index === monthDates.length - 1;
+                              const isLast =
+                                index === summaryMonthDates.length - 1;
                               return (
                                 <TableHead
                                   key={dateTimestamp}
@@ -977,12 +1054,18 @@ export default function AttendancePage() {
                                 Overtime
                               </span>
                             </TableHead>
+                            <TableHead className="min-w-[90px] w-[90px] text-center px-2 bg-white">
+                              <span className="text-xs font-semibold whitespace-nowrap">
+                                Freq. of lates
+                              </span>
+                            </TableHead>
                           </TableRow>
                           <TableRow>
                             <TableHead className="sticky left-0 bg-white z-40 border-r border-[#DDDDDD] shadow-[2px_0_4px_rgba(0,0,0,0.08)]"></TableHead>
-                            {monthDates.map((date, index) => {
+                            {summaryMonthDates.map((date, index) => {
                               const dateTimestamp = date.getTime();
-                              const isLast = index === monthDates.length - 1;
+                              const isLast =
+                                index === summaryMonthDates.length - 1;
                               return (
                                 <TableHead
                                   key={dateTimestamp}
@@ -998,13 +1081,14 @@ export default function AttendancePage() {
                             <TableHead className="min-w-[100px] w-[100px] border-l border-[#DDDDDD] bg-white"></TableHead>
                             <TableHead className="min-w-[100px] w-[100px] bg-white"></TableHead>
                             <TableHead className="min-w-[100px] w-[100px] bg-white"></TableHead>
+                            <TableHead className="min-w-[90px] w-[90px] bg-white"></TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {paginatedEmployees.length === 0 ? (
                             <TableRow>
                               <TableCell
-                                colSpan={monthDates.length + 4}
+                                colSpan={summaryMonthDates.length + 5}
                                 className="text-center text-gray-500 py-8"
                               >
                                 <p className="text-sm sm:text-base">
@@ -1018,9 +1102,10 @@ export default function AttendancePage() {
                                 attendanceByEmployeeAndDate[employee._id] || {};
                               let totalLate = 0;
                               let totalUndertime = 0;
-                              let totalOvertime = 0;
+                              let totalOvertime = 0; // minutes (from user-set overtime only)
+                              let frequencyLates = 0;
 
-                              monthDates.forEach((date) => {
+                              summaryMonthDates.forEach((date) => {
                                 const dateTimestamp = date.getTime();
                                 const record = empAttendance[dateTimestamp];
                                 if (record) {
@@ -1028,23 +1113,30 @@ export default function AttendancePage() {
                                     record.status === "absent" ||
                                     record.status === "leave";
                                   if (!isAbsentOrLeave) {
-                                    const late = calculateLate(
-                                      record.scheduleIn,
-                                      record.actualIn,
-                                    );
-                                    const undertime = calculateUndertime(
-                                      record.scheduleOut,
-                                      record.actualOut,
-                                    );
-                                    const overtime = calculateOvertime(
-                                      record.scheduleOut,
-                                      record.actualOut,
-                                    );
-                                    if (late) totalLate += late;
+                                    const late =
+                                      record.late != null
+                                        ? record.late
+                                        : calculateLate(
+                                            record.scheduleIn,
+                                            record.actualIn,
+                                          );
+                                    const undertime =
+                                      record.undertime != null
+                                        ? Math.round(record.undertime * 60)
+                                        : calculateUndertime(
+                                            record.scheduleOut,
+                                            record.actualOut,
+                                          );
+                                    if (late) {
+                                      totalLate += late;
+                                      frequencyLates += 1;
+                                    }
                                     if (undertime) totalUndertime += undertime;
-                                    if (overtime) {
-                                      totalOvertime += overtime;
-                                    } else if (record.overtime) {
+                                    // Overtime: user-set only (no auto-calculation)
+                                    if (
+                                      record.overtime != null &&
+                                      record.overtime > 0
+                                    ) {
                                       totalOvertime += Math.round(
                                         record.overtime * 60,
                                       );
@@ -1061,11 +1153,37 @@ export default function AttendancePage() {
                                       {employee.personalInfo.lastName}
                                     </span>
                                   </TableCell>
-                                  {monthDates.map((date, index) => {
+                                  {summaryMonthDates.map((date, index) => {
                                     const dateTimestamp = date.getTime();
                                     const record = empAttendance[dateTimestamp];
                                     const isLast =
-                                      index === monthDates.length - 1;
+                                      index === summaryMonthDates.length - 1;
+                                    const dayLate =
+                                      record &&
+                                      record.status !== "absent" &&
+                                      record.status !== "leave"
+                                        ? record.late != null
+                                          ? record.late
+                                          : calculateLate(
+                                              record.scheduleIn,
+                                              record.actualIn,
+                                            )
+                                        : null;
+                                    const dayUndertime =
+                                      record &&
+                                      record.status !== "absent" &&
+                                      record.status !== "leave"
+                                        ? record.undertime != null
+                                          ? Math.round(record.undertime * 60)
+                                          : calculateUndertime(
+                                              record.scheduleOut,
+                                              record.actualOut,
+                                            )
+                                        : null;
+                                    const hasDayLate =
+                                      dayLate != null && dayLate > 0;
+                                    const hasDayUndertime =
+                                      dayUndertime != null && dayUndertime > 0;
                                     return (
                                       <TableCell
                                         key={dateTimestamp}
@@ -1073,13 +1191,15 @@ export default function AttendancePage() {
                                       >
                                         {record ? (
                                           <>
-                                            <div className="grid grid-cols-2 gap-1 text-xs">
+                                            <div className="grid grid-cols-2 gap-1 text-xs text-left">
                                               <span
                                                 className={
                                                   record.status === "leave" ||
                                                   record.status === "absent"
                                                     ? "text-gray-400"
-                                                    : "text-gray-900"
+                                                    : hasDayLate
+                                                      ? "text-red-600 font-medium"
+                                                      : "text-gray-900"
                                                 }
                                               >
                                                 {record.status === "leave" ||
@@ -1096,7 +1216,9 @@ export default function AttendancePage() {
                                                   record.status === "leave" ||
                                                   record.status === "absent"
                                                     ? "text-gray-400"
-                                                    : "text-gray-900"
+                                                    : hasDayUndertime
+                                                      ? "text-red-600 font-medium"
+                                                      : "text-gray-900"
                                                 }
                                               >
                                                 {record.status === "leave" ||
@@ -1158,7 +1280,7 @@ export default function AttendancePage() {
                                   <TableCell className="min-w-[100px] w-[100px] text-center text-xs px-2 py-2 bg-white">
                                     <span className="block">
                                       {totalUndertime > 0 ? (
-                                        <span className="text-orange-600 font-medium whitespace-nowrap">
+                                        <span className="text-red-600 font-medium whitespace-nowrap">
                                           {formatTime(totalUndertime)}
                                         </span>
                                       ) : (
@@ -1176,6 +1298,15 @@ export default function AttendancePage() {
                                         <span className="text-gray-400">-</span>
                                       )}
                                     </span>
+                                  </TableCell>
+                                  <TableCell className="min-w-[90px] w-[90px] text-center text-xs px-2 py-2 bg-white font-medium">
+                                    {frequencyLates > 0 ? (
+                                      <span className="text-red-600">
+                                        {frequencyLates}
+                                      </span>
+                                    ) : (
+                                      <span className="text-gray-400">0</span>
+                                    )}
                                   </TableCell>
                                 </TableRow>
                               );

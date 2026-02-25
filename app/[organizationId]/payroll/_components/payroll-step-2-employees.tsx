@@ -20,7 +20,7 @@ export function PayrollStep2Employees({
     <div className="grid gap-4 py-4">
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <Label>Select Employees *</Label>
+          <Label>Select Employees <span className="text-red-500">*</span></Label>
           <Button
             type="button"
             variant="outline"

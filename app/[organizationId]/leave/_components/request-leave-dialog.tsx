@@ -92,7 +92,7 @@ export function RequestLeaveDialog({
         <form onSubmit={handleSubmit}>
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="leaveType">Leave Type *</Label>
+              <Label htmlFor="leaveType">Leave Type <span className="text-red-500">*</span></Label>
               <Select
                 value={formData.leaveType}
                 onValueChange={(value: any) =>
@@ -113,7 +113,7 @@ export function RequestLeaveDialog({
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="startDate">Start Date *</Label>
+                <Label htmlFor="startDate">Start Date <span className="text-red-500">*</span></Label>
                 <Input
                   id="startDate"
                   type="date"
@@ -128,7 +128,7 @@ export function RequestLeaveDialog({
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="endDate">End Date *</Label>
+                <Label htmlFor="endDate">End Date <span className="text-red-500">*</span></Label>
                 <Input
                   id="endDate"
                   type="date"
@@ -144,7 +144,7 @@ export function RequestLeaveDialog({
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="reason">Reason *</Label>
+              <Label htmlFor="reason">Reason <span className="text-red-500">*</span></Label>
               <Textarea
                 id="reason"
                 value={formData.reason}

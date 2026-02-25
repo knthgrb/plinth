@@ -393,6 +393,11 @@ export const createEmployee = mutation({
       ),
       regularHolidayRate: v.optional(v.number()),
       specialHolidayRate: v.optional(v.number()),
+      nightDiffPercent: v.optional(v.number()),
+      overtimeRegularRate: v.optional(v.number()),
+      overtimeRestDayRate: v.optional(v.number()),
+      regularHolidayOtRate: v.optional(v.number()),
+      specialHolidayOtRate: v.optional(v.number()),
     }),
     schedule: v.object({
       defaultSchedule: v.object({
@@ -623,6 +628,11 @@ export const updateEmployee = mutation({
         ),
         regularHolidayRate: v.optional(v.number()),
         specialHolidayRate: v.optional(v.number()),
+        nightDiffPercent: v.optional(v.number()),
+        overtimeRegularRate: v.optional(v.number()),
+        overtimeRestDayRate: v.optional(v.number()),
+        regularHolidayOtRate: v.optional(v.number()),
+        specialHolidayOtRate: v.optional(v.number()),
       })
     ),
     schedule: v.optional(

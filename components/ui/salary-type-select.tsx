@@ -45,7 +45,7 @@ export function SalaryTypeSelect({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-full justify-between h-9"
+          className="w-full justify-between h-9 focus-visible:ring-[#695eff] focus-visible:border-[#695eff]"
           disabled={disabled}
         >
           <span className={cn(value ? "text-[rgb(64,64,64)]" : "text-gray-500")}>

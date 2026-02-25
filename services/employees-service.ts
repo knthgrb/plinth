@@ -40,6 +40,11 @@ export class EmployeesService {
       };
       regularHolidayRate?: number;
       specialHolidayRate?: number;
+    nightDiffPercent?: number;
+    overtimeRegularRate?: number;
+    overtimeRestDayRate?: number;
+    regularHolidayOtRate?: number;
+    specialHolidayOtRate?: number;
     };
     schedule: {
       defaultSchedule: {
@@ -123,6 +128,11 @@ export class EmployeesService {
         };
         regularHolidayRate?: number;
         specialHolidayRate?: number;
+        nightDiffPercent?: number;
+        overtimeRegularRate?: number;
+        overtimeRestDayRate?: number;
+        regularHolidayOtRate?: number;
+        specialHolidayOtRate?: number;
       };
       schedule?: {
         defaultSchedule?: {

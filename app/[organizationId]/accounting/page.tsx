@@ -748,7 +748,7 @@ export default function AccountingPage() {
               <form onSubmit={handleSubmitItem}>
                 <div className="grid gap-4 py-4">
                   <div className="space-y-2">
-                    <Label htmlFor="name">Expense Name *</Label>
+                    <Label htmlFor="name">Expense Name <span className="text-red-500">*</span></Label>
                     <Input
                       id="name"
                       value={itemFormData.name}
@@ -780,7 +780,7 @@ export default function AccountingPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="frequency">Frequency *</Label>
+                    <Label htmlFor="frequency">Frequency <span className="text-red-500">*</span></Label>
                     <Select
                       value={itemFormData.frequency}
                       onValueChange={(value: any) =>
@@ -805,7 +805,7 @@ export default function AccountingPage() {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="amount">Total Amount (₱) *</Label>
+                      <Label htmlFor="amount">Total Amount (₱) <span className="text-red-500">*</span></Label>
                       <Input
                         id="amount"
                         type="number"
