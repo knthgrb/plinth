@@ -103,16 +103,16 @@ export default function JobDetailPage({
 
   const jobs = useQuery(
     (api as any).recruitment.getJobs,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
   const applicants = useQuery(
     (api as any).recruitment.getApplicants,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   const settings = useQuery(
     (api as any).settings.getSettings,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   const selectedJob = jobs?.find((job: any) => job._id === jobId);
@@ -217,10 +217,10 @@ export default function JobDetailPage({
     if (settings?.recruitmentTableColumns) {
       // Merge saved columns with defaults - ensure all defaults are present
       const savedColumns = settings.recruitmentTableColumns.filter(
-        (c: Column) => !c.isDefault
+        (c: Column) => !c.isDefault,
       );
       const savedDefaultColumns = settings.recruitmentTableColumns.filter(
-        (c: Column) => c.isDefault
+        (c: Column) => c.isDefault,
       );
 
       // Merge defaults with saved defaults (preserve hidden state)
@@ -236,7 +236,7 @@ export default function JobDetailPage({
   }, [settings]);
 
   const [selectedApplicantId, setSelectedApplicantId] = useState<string | null>(
-    null
+    null,
   );
   const [isApplicantDialogOpen, setIsApplicantDialogOpen] = useState(false);
   const [applicantFormData, setApplicantFormData] = useState({
@@ -276,7 +276,7 @@ export default function JobDetailPage({
   const sidePanelFileInputRef = useRef<HTMLInputElement>(null);
   const sidePanelDropZoneRef = useRef<HTMLDivElement>(null);
   const [sidePanelResumeFile, setSidePanelResumeFile] = useState<File | null>(
-    null
+    null,
   );
   const [sidePanelResumeUrl, setSidePanelResumeUrl] = useState("");
 
@@ -325,7 +325,7 @@ export default function JobDetailPage({
   }, []);
 
   const selectedApplicant = applicants?.find(
-    (applicant: any) => applicant._id === selectedApplicantId
+    (applicant: any) => applicant._id === selectedApplicantId,
   );
 
   // Initialize editing links when selectedApplicant changes
@@ -367,13 +367,13 @@ export default function JobDetailPage({
               variant="ghost"
               onClick={() =>
                 router.push(
-                  getOrganizationPath(currentOrganizationId, "/recruitment")
+                  getOrganizationPath(currentOrganizationId, "/recruitment"),
                 )
               }
               className="mb-4"
             >
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to positions
+              Back
             </Button>
             <p className="text-[rgb(133,133,133)]">Loading...</p>
           </div>
@@ -393,13 +393,13 @@ export default function JobDetailPage({
               variant="ghost"
               onClick={() =>
                 router.push(
-                  getOrganizationPath(currentOrganizationId, "/recruitment")
+                  getOrganizationPath(currentOrganizationId, "/recruitment"),
                 )
               }
               className="mb-4"
             >
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to positions
+              Back
             </Button>
             <p className="text-[rgb(133,133,133)]">
               Position not found. Redirecting...
@@ -622,7 +622,7 @@ export default function JobDetailPage({
           | "assessment"
           | "offer"
           | "hired"
-          | "rejected"
+          | "rejected",
       );
       window.location.reload();
     } catch (error: any) {
@@ -638,7 +638,7 @@ export default function JobDetailPage({
     try {
       await addApplicantNote(
         selectedApplicantId,
-        `Reason for rejection: ${declineReason.trim()}`
+        `Reason for rejection: ${declineReason.trim()}`,
       );
       setDeclineReason("");
       window.location.reload();
@@ -750,13 +750,13 @@ export default function JobDetailPage({
             variant="ghost"
             onClick={() =>
               router.push(
-                getOrganizationPath(currentOrganizationId, "/recruitment")
+                getOrganizationPath(currentOrganizationId, "/recruitment"),
               )
             }
             className="mb-4 text-[rgb(64,64,64)] hover:bg-[rgb(250,250,250)]"
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to positions
+            Back
           </Button>
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
             <div>
@@ -854,7 +854,7 @@ export default function JobDetailPage({
                       {selectedJob.requirements.map(
                         (req: string, idx: number) => (
                           <li key={idx}>{req}</li>
-                        )
+                        ),
                       )}
                     </ul>
                   </div>
@@ -869,7 +869,7 @@ export default function JobDetailPage({
                       {selectedJob.qualifications.map(
                         (qual: string, idx: number) => (
                           <li key={idx}>{qual}</li>
-                        )
+                        ),
                       )}
                     </ul>
                   </div>
@@ -918,7 +918,9 @@ export default function JobDetailPage({
                       <div className="grid gap-4 py-4">
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-2">
-                            <Label htmlFor="firstName">First Name <span className="text-red-500">*</span></Label>
+                            <Label htmlFor="firstName">
+                              First Name <span className="text-red-500">*</span>
+                            </Label>
                             <Input
                               id="firstName"
                               value={applicantFormData.firstName}
@@ -932,7 +934,9 @@ export default function JobDetailPage({
                             />
                           </div>
                           <div className="space-y-2">
-                            <Label htmlFor="lastName">Last Name <span className="text-red-500">*</span></Label>
+                            <Label htmlFor="lastName">
+                              Last Name <span className="text-red-500">*</span>
+                            </Label>
                             <Input
                               id="lastName"
                               value={applicantFormData.lastName}
@@ -1222,7 +1226,7 @@ export default function JobDetailPage({
                   {tableColumns
                     .filter(
                       (col) =>
-                        col.field !== "status" && !col.field.includes("Link")
+                        col.field !== "status" && !col.field.includes("Link"),
                     )
                     .map((column) => {
                       const getFieldValue = (field: string): any => {
@@ -1480,7 +1484,7 @@ export default function JobDetailPage({
                           <p className="text-xs text-gray-500">
                             {format(
                               new Date(note.date),
-                              "MMM dd, yyyy 'at' h:mm a"
+                              "MMM dd, yyyy 'at' h:mm a",
                             )}
                           </p>
                         </div>
@@ -1626,7 +1630,7 @@ export default function JobDetailPage({
                         if (sidePanelResumeUrl.trim()) {
                           handleUpdateApplicantResume(
                             undefined,
-                            sidePanelResumeUrl.trim()
+                            sidePanelResumeUrl.trim(),
                           );
                         }
                       }}

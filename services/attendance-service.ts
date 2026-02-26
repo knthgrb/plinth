@@ -16,7 +16,7 @@ export class AttendanceService {
     late?: number; // Manual override for late (minutes)
     undertime?: number; // Manual override for undertime (hours)
     isHoliday?: boolean;
-    holidayType?: "regular" | "special";
+    holidayType?: "regular" | "special" | "special_working";
     remarks?: string;
     status: "present" | "absent" | "half-day" | "leave";
   }) {
@@ -42,7 +42,7 @@ export class AttendanceService {
       late?: number | null; // Manual override for late (minutes), or null to recalculate
       undertime?: number | null; // Manual override for undertime (hours), or null to recalculate
       isHoliday?: boolean;
-      holidayType?: "regular" | "special";
+      holidayType?: "regular" | "special" | "special_working";
       remarks?: string;
       status?: "present" | "absent" | "half-day" | "leave";
     },
@@ -76,7 +76,7 @@ export class AttendanceService {
       late?: number; // Manual override for late (minutes)
       undertime?: number; // Manual override for undertime (hours)
       isHoliday?: boolean;
-      holidayType?: "regular" | "special";
+      holidayType?: "regular" | "special" | "special_working";
       remarks?: string;
       status: "present" | "absent" | "half-day" | "leave";
     }>,

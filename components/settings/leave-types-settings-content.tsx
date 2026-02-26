@@ -114,16 +114,41 @@ export function LeaveTypesSettingsContent() {
     carryOver: false,
     maxCarryOver: undefined as number | undefined,
   });
-  const [proratedLeave, setProratedLeave] = useState(false);
+  const [proratedLeave, setProratedLeave] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
+  const DEFAULT_LEAVE_TYPES = [
+    {
+      type: "sick",
+      name: "Sick Leave",
+      defaultCredits: 4,
+      isPaid: true,
+      requiresApproval: true,
+      maxConsecutiveDays: 30,
+      carryOver: true,
+      maxCarryOver: 5,
+      isAnniversary: false,
+    },
+    {
+      type: "vacation",
+      name: "Vacation Leave",
+      defaultCredits: 4,
+      isPaid: true,
+      requiresApproval: true,
+      maxConsecutiveDays: 30,
+      carryOver: true,
+      maxCarryOver: 5,
+      isAnniversary: false,
+    },
+  ] as const;
+
   useEffect(() => {
-    if (settings?.leaveTypes) {
+    if (settings?.leaveTypes && settings.leaveTypes.length > 0) {
       setLeaveTypes(settings.leaveTypes);
+    } else {
+      setLeaveTypes([...DEFAULT_LEAVE_TYPES]);
     }
-    if (settings?.proratedLeave !== undefined) {
-      setProratedLeave(settings.proratedLeave);
-    }
+    setProratedLeave(settings?.proratedLeave ?? true);
   }, [settings]);
 
   const handleSave = async () => {

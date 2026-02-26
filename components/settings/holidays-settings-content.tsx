@@ -25,6 +25,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Plus, Pencil, Trash2, Upload } from "lucide-react";
 import { useOrganization } from "@/hooks/organization-context";
 import { useToast } from "@/components/ui/use-toast";
@@ -49,7 +57,7 @@ export function HolidaysSettingsContent() {
   const [formData, setFormData] = useState({
     name: "",
     date: "",
-    type: "regular" as "regular" | "special",
+    type: "regular" as "regular" | "special" | "special_working",
     isRecurring: false,
   });
   const [bulkText, setBulkText] = useState("");
@@ -61,7 +69,7 @@ export function HolidaysSettingsContent() {
       name: "",
       date: "",
       type: "regular",
-      isRecurring: false,
+    isRecurring: false,
     });
     setIsDialogOpen(true);
   };
@@ -197,10 +205,16 @@ export function HolidaysSettingsContent() {
                         className={`px-2 py-1 rounded text-xs ${
                           holiday.type === "regular"
                             ? "bg-blue-100 text-blue-800"
-                            : "bg-purple-100 text-purple-800"
+                            : holiday.type === "special"
+                              ? "bg-purple-100 text-purple-800"
+                              : "bg-gray-100 text-gray-800"
                         }`}
                       >
-                        {holiday.type}
+                        {holiday.type === "regular"
+                          ? "Regular holiday"
+                          : holiday.type === "special"
+                            ? "Special non-working holiday"
+                            : "Special working holiday"}
                       </span>
                     </TableCell>
                     <TableCell>
@@ -250,31 +264,40 @@ export function HolidaysSettingsContent() {
                 </div>
                 <div className="space-y-2">
                   <Label>Date</Label>
-                  <Input
-                    type="date"
+                  <DatePicker
                     value={formData.date}
-                    onChange={(e) =>
-                      setFormData({ ...formData, date: e.target.value })
+                    onValueChange={(value) =>
+                      setFormData((prev) => ({ ...prev, date: value }))
                     }
+                    placeholder="Select holiday date"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>Type</Label>
-                  <select
+                  <Select
                     value={formData.type}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        type: e.target.value as "regular" | "special",
-                      })
+                    onValueChange={(
+                      value: "regular" | "special" | "special_working",
+                    ) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        type: value,
+                      }))
                     }
-                    className="w-full px-3 py-2 border rounded-md"
                   >
-                    <option value="regular">Regular Holiday</option>
-                    <option value="special">
-                      Special Non-Working Holiday
-                    </option>
-                  </select>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select holiday type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="regular">Regular holiday</SelectItem>
+                      <SelectItem value="special">
+                        Special non-working holiday
+                      </SelectItem>
+                      <SelectItem value="special_working">
+                        Special working holiday
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="flex items-center gap-2">
                   <Checkbox
@@ -318,7 +341,7 @@ export function HolidaysSettingsContent() {
                   <br />
                   Date format: YYYY-MM-DD
                   <br />
-                  Type: regular or special
+                  Type: regular, special, or special_working
                   <br />
                   Recurring: true or false
                 </DialogDescription>
@@ -374,9 +397,11 @@ All Saints' Day,2025-11-01,special,false`}
                           const isRecurring =
                             recurringStr.toLowerCase() === "true";
                           const holidayType =
-                            type.toLowerCase() === "special"
-                              ? "special"
-                              : "regular";
+                            type.toLowerCase() === "special_working"
+                              ? "special_working"
+                              : type.toLowerCase() === "special"
+                                ? "special"
+                                : "regular";
 
                           return {
                             name,
@@ -391,7 +416,7 @@ All Saints' Day,2025-11-01,special,false`}
                         .filter((h) => h !== null) as Array<{
                         name: string;
                         date: number;
-                        type: "regular" | "special";
+                        type: "regular" | "special" | "special_working";
                         isRecurring: boolean;
                         year?: number;
                       }>;

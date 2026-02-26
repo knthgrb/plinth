@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense, lazy } from "react";
+import { useState, useEffect, useMemo, Suspense, lazy } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
@@ -83,6 +83,23 @@ const CreateEmployeeDialog = lazy(() =>
   })),
 );
 
+type Holiday = {
+  _id: string;
+  name: string;
+  date: number;
+  type: "regular" | "special" | "special_working";
+  isRecurring: boolean;
+  year?: number;
+};
+
+function holidayDateInYear(h: Holiday, year: number): Date {
+  const d = new Date(h.date);
+  if (h.isRecurring) {
+    return new Date(year, d.getMonth(), d.getDate());
+  }
+  return d;
+}
+
 export default function AttendancePage() {
   const { currentOrganizationId } = useOrganization();
   const user = useQuery(
@@ -99,6 +116,7 @@ export default function AttendancePage() {
   const pageSize = 20; // min 20 per page
 
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
+  const [isEmployeeSummaryOpen, setIsEmployeeSummaryOpen] = useState(false);
 
   const [selectedEmployeeFilter, setSelectedEmployeeFilter] =
     useState<string>("");
@@ -154,6 +172,9 @@ export default function AttendancePage() {
     end: endOfMonth(summaryMonthDate),
   });
 
+  const selectedYear = getYear(selectedMonthDate);
+  const summaryYear = getYear(summaryMonthDate);
+
   // All employees attendance (for summary modal) — uses summary month when modal open
   const allAttendance = useQuery(
     (api as any).attendance.getAttendance,
@@ -162,6 +183,28 @@ export default function AttendancePage() {
           organizationId: currentOrganizationId,
           startDate: summaryMonthStart,
           endDate: summaryMonthEnd,
+        }
+      : "skip",
+  );
+
+  // Holidays for individual view (selected month/year)
+  const holidaysForMonth = useQuery(
+    (api as any).holidays.getHolidays,
+    currentOrganizationId
+      ? {
+          organizationId: currentOrganizationId,
+          year: selectedYear,
+        }
+      : "skip",
+  );
+
+  // Holidays for summary view (summary month/year)
+  const holidaysForSummary = useQuery(
+    (api as any).holidays.getHolidays,
+    currentOrganizationId && isSummaryModalOpen
+      ? {
+          organizationId: currentOrganizationId,
+          year: summaryYear,
         }
       : "skip",
   );
@@ -180,6 +223,55 @@ export default function AttendancePage() {
         }
       : "skip",
   );
+
+  // Map of holidays by local start-of-day timestamp for selected month
+  const holidaysByDateForMonth: Record<number, Holiday[]> = useMemo(() => {
+    const map: Record<number, Holiday[]> = {};
+    if (!holidaysForMonth) return map;
+
+    const viewMonth = selectedMonthDate.getMonth();
+    holidaysForMonth.forEach((h: Holiday) => {
+      const d = holidayDateInYear(h, selectedYear);
+      if (d.getMonth() !== viewMonth) return;
+      const key = startOfDay(d).getTime();
+      if (!map[key]) map[key] = [];
+
+      // Avoid duplicates with same name/type on same day
+      if (
+        !map[key].some(
+          (existing) => existing.name === h.name && existing.type === h.type,
+        )
+      ) {
+        map[key].push(h);
+      }
+    });
+
+    return map;
+  }, [holidaysForMonth, selectedMonthDate, selectedYear]);
+
+  // Map of holidays by local start-of-day timestamp for summary month
+  const holidaysByDateForSummary: Record<number, Holiday[]> = useMemo(() => {
+    const map: Record<number, Holiday[]> = {};
+    if (!holidaysForSummary) return map;
+
+    const viewMonth = summaryMonthDate.getMonth();
+    holidaysForSummary.forEach((h: Holiday) => {
+      const d = holidayDateInYear(h, summaryYear);
+      if (d.getMonth() !== viewMonth) return;
+      const key = startOfDay(d).getTime();
+      if (!map[key]) map[key] = [];
+
+      if (
+        !map[key].some(
+          (existing) => existing.name === h.name && existing.type === h.type,
+        )
+      ) {
+        map[key].push(h);
+      }
+    });
+
+    return map;
+  }, [holidaysForSummary, summaryMonthDate, summaryYear]);
 
   // Helper functions for time calculations
   const timeToMinutes = (time: string): number => {
@@ -313,6 +405,84 @@ export default function AttendancePage() {
   const totalIndividualPages = Math.ceil(
     sortedIndividualAttendance.length / individualPageSize,
   );
+
+  const selectedEmployee =
+    employees && selectedEmployeeFilter && selectedEmployeeFilter !== "__create__"
+      ? employees.find((emp: any) => emp._id === selectedEmployeeFilter) ?? null
+      : null;
+
+  const employeeSummary = useMemo(() => {
+    if (
+      !individualAttendance ||
+      !selectedEmployeeFilter ||
+      selectedEmployeeFilter === "__create__"
+    ) {
+      return {
+        lates: [] as { date: number; minutes: number }[],
+        absences: [] as { date: number }[],
+        undertimes: [] as { date: number; minutes: number }[],
+        overtimes: [] as { date: number; start: string; end: string }[],
+      };
+    }
+
+    const lates: { date: number; minutes: number }[] = [];
+    const absences: { date: number }[] = [];
+    const undertimes: { date: number; minutes: number }[] = [];
+    const overtimes: { date: number; start: string; end: string }[] = [];
+
+    individualAttendance.forEach((record: any) => {
+      const dayKey = startOfDay(new Date(record.date)).getTime();
+      const dayHolidays = holidaysByDateForMonth[dayKey] || [];
+
+      const noTimeRecorded = !record.actualIn && !record.actualOut;
+      const effectiveStatus =
+        noTimeRecorded && dayHolidays.length > 0
+          ? dayHolidays.some((h) => h.type === "special_working")
+            ? "absent"
+            : "present"
+          : record.status;
+
+      if (effectiveStatus === "absent") {
+        absences.push({ date: record.date });
+      }
+
+      const isAbsentOrLeave =
+        effectiveStatus === "absent" || effectiveStatus === "leave";
+
+      if (!isAbsentOrLeave) {
+        const late =
+          record.late != null
+            ? record.late
+            : calculateLate(record.scheduleIn, record.actualIn);
+        if (late && late > 0) {
+          lates.push({ date: record.date, minutes: late });
+        }
+
+        const undertimeMinutes =
+          record.undertime != null
+            ? Math.round(record.undertime * 60)
+            : calculateUndertime(record.scheduleOut, record.actualOut);
+        if (undertimeMinutes && undertimeMinutes > 0) {
+          undertimes.push({ date: record.date, minutes: undertimeMinutes });
+        }
+
+        if (record.overtime != null && record.overtime > 0 && record.actualOut) {
+          overtimes.push({
+            date: record.date,
+            start: record.scheduleOut,
+            end: record.actualOut,
+          });
+        }
+      }
+    });
+
+    lates.sort((a, b) => a.date - b.date);
+    absences.sort((a, b) => a.date - b.date);
+    undertimes.sort((a, b) => a.date - b.date);
+    overtimes.sort((a, b) => a.date - b.date);
+
+    return { lates, absences, undertimes, overtimes };
+  }, [individualAttendance, holidaysByDateForMonth, selectedEmployeeFilter]);
 
   return (
     <MainLayout>
@@ -645,6 +815,17 @@ export default function AttendancePage() {
                     </SelectContent>
                   </Select>
                 </div>
+                {selectedEmployeeFilter &&
+                  selectedEmployeeFilter !== "__create__" && (
+                    <Button
+                      variant="outline"
+                      className="h-8 shrink-0 rounded-lg border-[#DDDDDD] bg-white text-xs shadow-sm px-3 [&_svg]:text-current hover:bg-[rgb(250,250,250)] hover:border-[rgb(150,150,150)]"
+                      style={{ color: "rgb(64,64,64)" }}
+                      onClick={() => setIsEmployeeSummaryOpen(true)}
+                    >
+                      View employee summary
+                    </Button>
+                  )}
               </div>
             </div>
           </CardHeader>
@@ -677,29 +858,29 @@ export default function AttendancePage() {
                     <Table>
                       <TableHeader className="sticky top-0 bg-white z-10">
                         <TableRow>
-                          <TableHead className="min-w-[100px] sm:min-w-[120px]">
+                          <TableHead className="min-w-[100px] sm:min-w-[120px] h-8 py-1.5">
                             Date
                           </TableHead>
-                          <TableHead className="min-w-[80px] sm:min-w-[100px]">
+                          <TableHead className="min-w-[80px] sm:min-w-[100px] h-8 py-1.5">
                             Time In
                           </TableHead>
-                          <TableHead className="min-w-[80px] sm:min-w-[100px]">
+                          <TableHead className="min-w-[80px] sm:min-w-[100px] h-8 py-1.5">
                             Time Out
                           </TableHead>
-                          <TableHead className="min-w-[80px] sm:min-w-[100px]">
+                          <TableHead className="min-w-[80px] sm:min-w-[100px] h-8 py-1.5">
                             Status
                           </TableHead>
-                          <TableHead className="min-w-[70px] sm:min-w-[80px] hidden sm:table-cell">
+                          <TableHead className="min-w-[70px] sm:min-w-[80px] hidden sm:table-cell h-8 py-1.5">
                             Late
                           </TableHead>
-                          <TableHead className="min-w-[80px] sm:min-w-[100px] hidden md:table-cell">
+                          <TableHead className="min-w-[80px] sm:min-w-[100px] hidden md:table-cell h-8 py-1.5">
                             Undertime
                           </TableHead>
-                          <TableHead className="min-w-[80px] sm:min-w-[100px] hidden md:table-cell">
+                          <TableHead className="min-w-[80px] sm:min-w-[100px] hidden md:table-cell h-8 py-1.5">
                             Overtime
                           </TableHead>
                           {!isReadOnly && (
-                            <TableHead className="min-w-[70px] sm:min-w-[80px]">
+                            <TableHead className="min-w-[70px] sm:min-w-[80px] h-8 py-1.5">
                               Actions
                             </TableHead>
                           )}
@@ -721,9 +902,26 @@ export default function AttendancePage() {
                           </TableRow>
                         ) : (
                           paginatedIndividualAttendance.map((record: any) => {
+                            const dayKey = startOfDay(
+                              new Date(record.date),
+                            ).getTime();
+                            const dayHolidays =
+                              holidaysByDateForMonth[dayKey] || [];
+                            // Holiday with no time in/out: absent only for special_working; regular/special → present
+                            const noTimeRecorded =
+                              !record.actualIn && !record.actualOut;
+                            const effectiveStatus =
+                              noTimeRecorded &&
+                              dayHolidays.length > 0
+                                ? dayHolidays.some(
+                                    (h) => h.type === "special_working",
+                                  )
+                                  ? "absent"
+                                  : "present"
+                                : record.status;
                             const isAbsentOrLeave =
-                              record.status === "absent" ||
-                              record.status === "leave";
+                              effectiveStatus === "absent" ||
+                              effectiveStatus === "leave";
                             // Late and undertime: use stored value or auto-calculate (only these are auto-calculated)
                             const late = isAbsentOrLeave
                               ? null
@@ -745,8 +943,8 @@ export default function AttendancePage() {
                             const hasUndertime =
                               undertime !== null && undertime > 0;
                             return (
-                              <TableRow key={record._id}>
-                                <TableCell className="font-medium">
+                              <TableRow key={record._id} className="text-sm">
+                                <TableCell className="font-medium py-1.5 px-3 align-top">
                                   <div className="flex flex-col gap-0.5">
                                     <div className="flex items-center gap-1.5">
                                       <span>
@@ -781,57 +979,99 @@ export default function AttendancePage() {
                                         </Popover>
                                       ) : null}
                                     </div>
+                                    {dayHolidays.length > 0 && (
+                                      <div className="flex flex-wrap gap-1">
+                                        {dayHolidays.map((h) => (
+                                          <Badge
+                                            key={h._id}
+                                            variant="secondary"
+                                            className={`text-[10px] font-medium px-1.5 py-0.5 border-0 ${
+                                              h.type === "regular"
+                                                ? "bg-rose-100 text-rose-800"
+                                                : h.type === "special"
+                                                  ? "bg-amber-100 text-amber-800"
+                                                  : "bg-gray-100 text-gray-800"
+                                            }`}
+                                          >
+                                            HOLIDAY
+                                          </Badge>
+                                        ))}
+                                      </div>
+                                    )}
                                     <span className="text-xs text-gray-500 sm:hidden">
-                                      {record.status === "leave" ||
-                                      record.status === "absent"
+                                      {effectiveStatus === "leave" ||
+                                      effectiveStatus === "absent"
                                         ? "-"
                                         : `${record.actualIn ? formatTime12Hour(record.actualIn) : "-"} - ${record.actualOut ? formatTime12Hour(record.actualOut) : "-"}`}
                                     </span>
                                   </div>
                                 </TableCell>
                                 <TableCell
-                                  className={`hidden sm:table-cell ${hasLate ? "text-red-600 font-medium" : ""}`}
+                                  className={`hidden sm:table-cell py-1.5 px-3 ${hasLate ? "text-red-600 font-medium" : ""}`}
                                 >
-                                  {record.status === "leave" ||
-                                  record.status === "absent"
+                                  {effectiveStatus === "leave" ||
+                                  effectiveStatus === "absent"
                                     ? "-"
                                     : record.actualIn
                                       ? formatTime12Hour(record.actualIn)
                                       : "-"}
                                 </TableCell>
                                 <TableCell
-                                  className={`hidden sm:table-cell ${hasUndertime ? "text-red-600 font-medium" : ""}`}
+                                  className={`hidden sm:table-cell py-1.5 px-3 ${hasUndertime ? "text-red-600 font-medium" : ""}`}
                                 >
-                                  {record.status === "leave" ||
-                                  record.status === "absent"
+                                  {effectiveStatus === "leave" ||
+                                  effectiveStatus === "absent"
                                     ? "-"
                                     : record.actualOut
                                       ? formatTime12Hour(record.actualOut)
                                       : "-"}
                                 </TableCell>
-                                <TableCell>
-                                  <Badge
-                                    variant="secondary"
-                                    className={getStatusBadgeClass(
-                                      record.status,
+                                <TableCell className="py-1.5 px-3">
+                                  <div className="flex flex-col gap-1">
+                                    <Badge
+                                      variant="secondary"
+                                      className={getStatusBadgeClass(
+                                        effectiveStatus,
+                                      )}
+                                      style={getStatusBadgeStyle(
+                                        effectiveStatus,
+                                      )}
+                                    >
+                                      {effectiveStatus}
+                                    </Badge>
+                                    {dayHolidays.length > 0 && (
+                                      <div className="flex flex-wrap gap-1">
+                                        {dayHolidays.map((h) => (
+                                          <Badge
+                                            key={h._id}
+                                            variant="outline"
+                                            className={`text-[10px] px-1.5 py-0.5 ${
+                                              h.type === "regular"
+                                                ? "border-rose-200 text-rose-700"
+                                                : h.type === "special"
+                                                  ? "border-amber-200 text-amber-700"
+                                                  : "border-gray-200 text-gray-700"
+                                            }`}
+                                          >
+                                            Holiday
+                                          </Badge>
+                                        ))}
+                                      </div>
                                     )}
-                                    style={getStatusBadgeStyle(record.status)}
-                                  >
-                                    {record.status}
-                                  </Badge>
+                                  </div>
                                 </TableCell>
                                 <TableCell
-                                  className={`hidden sm:table-cell ${late ? "text-red-600 font-medium" : ""}`}
+                                  className={`hidden sm:table-cell py-1.5 px-3 ${late ? "text-red-600 font-medium" : ""}`}
                                 >
                                   {formatTime(late)}
                                 </TableCell>
                                 <TableCell
-                                  className={`hidden md:table-cell ${hasUndertime ? "text-red-600 font-medium" : ""}`}
+                                  className={`hidden md:table-cell py-1.5 px-3 ${hasUndertime ? "text-red-600 font-medium" : ""}`}
                                 >
                                   {formatTime(undertime)}
                                 </TableCell>
                                 <TableCell
-                                  className={`hidden md:table-cell ${!isAbsentOrLeave && record.overtime != null && record.overtime > 0 ? "text-green-600 font-medium" : ""}`}
+                                  className={`hidden md:table-cell py-1.5 px-3 ${!isAbsentOrLeave && record.overtime != null && record.overtime > 0 ? "text-green-600 font-medium" : ""}`}
                                 >
                                   {isAbsentOrLeave
                                     ? "-"
@@ -842,7 +1082,7 @@ export default function AttendancePage() {
                                         : `${Math.round(record.overtime * 60)} mins`
                                       : "-"}
                                 </TableCell>
-                                <TableCell>
+                                <TableCell className="py-1.5 px-3">
                                   {!isReadOnly && (
                                     <div className="flex items-center gap-1">
                                       <Button
@@ -921,6 +1161,112 @@ export default function AttendancePage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Employee Summary Modal */}
+        <Dialog
+          open={isEmployeeSummaryOpen}
+          onOpenChange={setIsEmployeeSummaryOpen}
+        >
+          <DialogContent className="max-w-lg w-full">
+            <DialogHeader>
+              <DialogTitle className="text-lg">
+                Employee Summary
+              </DialogTitle>
+              <DialogDescription>
+                {selectedEmployee
+                  ? `${selectedEmployee.personalInfo.firstName} ${selectedEmployee.personalInfo.lastName} – ${format(selectedMonthDate, "MMMM yyyy")}`
+                  : format(selectedMonthDate, "MMMM yyyy")}
+              </DialogDescription>
+            </DialogHeader>
+            {individualAttendance === undefined ? (
+              <div className="flex items-center justify-center py-6">
+                <div className="text-center">
+                  <Loader2 className="h-6 w-6 animate-spin text-[#695eff] mx-auto mb-2" />
+                  <p className="text-sm text-gray-600">
+                    Loading employee attendance...
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+                {employeeSummary.lates.length === 0 &&
+                employeeSummary.absences.length === 0 &&
+                employeeSummary.undertimes.length === 0 &&
+                employeeSummary.overtimes.length === 0 ? (
+                  <p className="text-sm text-gray-500">
+                    No summary data for this employee in{" "}
+                    {format(selectedMonthDate, "MMMM yyyy")}.
+                  </p>
+                ) : (
+                  <>
+                    <div>
+                      <h3 className="text-sm font-semibold mb-1">Lates</h3>
+                      {employeeSummary.lates.length === 0 ? (
+                        <p className="text-xs text-gray-500">No lates.</p>
+                      ) : (
+                        <ul className="text-xs text-gray-700 space-y-0.5">
+                          {employeeSummary.lates.map((late) => (
+                            <li key={`late-${late.date}`}>
+                              {format(new Date(late.date), "MMM dd, yyyy")} –{" "}
+                              {formatTime(late.minutes)}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold mb-1">Absences</h3>
+                      {employeeSummary.absences.length === 0 ? (
+                        <p className="text-xs text-gray-500">No absences.</p>
+                      ) : (
+                        <ul className="text-xs text-gray-700 space-y-0.5">
+                          {employeeSummary.absences.map((abs) => (
+                            <li key={`abs-${abs.date}`}>
+                              {format(new Date(abs.date), "MMM dd, yyyy")}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold mb-1">Undertime</h3>
+                      {employeeSummary.undertimes.length === 0 ? (
+                        <p className="text-xs text-gray-500">No undertime.</p>
+                      ) : (
+                        <ul className="text-xs text-gray-700 space-y-0.5">
+                          {employeeSummary.undertimes.map((u) => (
+                            <li key={`under-${u.date}`}>
+                              {format(new Date(u.date), "MMM dd, yyyy")} –{" "}
+                              {formatTime(u.minutes)}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold mb-1">Overtime</h3>
+                      {employeeSummary.overtimes.length === 0 ? (
+                        <p className="text-xs text-gray-500">No overtime.</p>
+                      ) : (
+                        <ul className="text-xs text-gray-700 space-y-0.5">
+                          {employeeSummary.overtimes.map((ot) => (
+                            <li
+                              key={`ot-${ot.date}-${ot.start}-${ot.end}`}
+                            >
+                              {format(new Date(ot.date), "MMM dd, yyyy")} –{" "}
+                              {formatTime12Hour(ot.start)} -{" "}
+                              {formatTime12Hour(ot.end)}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* Attendance Summary Modal */}
         <Dialog open={isSummaryModalOpen} onOpenChange={setIsSummaryModalOpen}>
@@ -1155,6 +1501,12 @@ export default function AttendancePage() {
                                   </TableCell>
                                   {summaryMonthDates.map((date, index) => {
                                     const dateTimestamp = date.getTime();
+                                    const holidayKey = startOfDay(
+                                      date,
+                                    ).getTime();
+                                    const dayHolidays =
+                                      holidaysByDateForSummary[holidayKey] ||
+                                      [];
                                     const record = empAttendance[dateTimestamp];
                                     const isLast =
                                       index === summaryMonthDates.length - 1;
@@ -1231,6 +1583,25 @@ export default function AttendancePage() {
                                                     : "-"}
                                               </span>
                                             </div>
+                                            {dayHolidays.length > 0 && (
+                                              <div className="mt-0.5 flex flex-wrap gap-0.5 justify-center">
+                                                {dayHolidays.map((h) => (
+                                                  <Badge
+                                                    key={h._id}
+                                                    variant="secondary"
+                                                    className={`text-[9px] px-1 py-0 ${
+                                                      h.type === "regular"
+                                                        ? "bg-rose-100 text-rose-800"
+                                                        : h.type === "special"
+                                                          ? "bg-amber-100 text-amber-800"
+                                                          : "bg-gray-100 text-gray-800"
+                                                    }`}
+                                                  >
+                                                    HOLIDAY
+                                                  </Badge>
+                                                ))}
+                                              </div>
+                                            )}
                                             {record.remarks?.trim() ? (
                                               <Popover>
                                                 <PopoverTrigger asChild>
@@ -1257,6 +1628,15 @@ export default function AttendancePage() {
                                               </Popover>
                                             ) : null}
                                           </>
+                                        ) : dayHolidays.length > 0 ? (
+                                          <div className="flex items-center justify-center h-full">
+                                            <Badge
+                                              variant="outline"
+                                              className="text-[10px] px-1.5 py-0.5 border-rose-200 text-rose-700"
+                                            >
+                                              HOLIDAY
+                                            </Badge>
+                                          </div>
                                         ) : (
                                           <div className="grid grid-cols-2 gap-1 text-xs text-gray-300">
                                             <span>-</span>

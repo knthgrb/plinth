@@ -115,7 +115,7 @@ export const getSettings = query({
       return {
         _id: null,
         organizationId: args.organizationId,
-        proratedLeave: false,
+        proratedLeave: true,
         payrollSettings: {
           nightDiffPercent: 0.1, // 10% per hour from 10 PM
           regularHolidayRate: 1.0, // 100% of daily pay additional (regular holiday)
@@ -129,9 +129,9 @@ export const getSettings = query({
         },
         leaveTypes: [
           {
-            type: "vacation",
-            name: "Vacation Leave",
-            defaultCredits: 15,
+            type: "sick",
+            name: "Sick Leave",
+            defaultCredits: 4,
             isPaid: true,
             requiresApproval: true,
             maxConsecutiveDays: 30,
@@ -139,9 +139,9 @@ export const getSettings = query({
             maxCarryOver: 5,
           },
           {
-            type: "sick",
-            name: "Sick Leave",
-            defaultCredits: 15,
+            type: "vacation",
+            name: "Vacation Leave",
+            defaultCredits: 4,
             isPaid: true,
             requiresApproval: true,
             maxConsecutiveDays: 30,
@@ -252,7 +252,7 @@ export const updateLeaveTypes = mutation({
       await ctx.db.insert("settings", {
         organizationId: args.organizationId,
         leaveTypes: args.leaveTypes,
-        proratedLeave: args.proratedLeave ?? false,
+        proratedLeave: args.proratedLeave ?? true,
         createdAt: now,
         updatedAt: now,
       });

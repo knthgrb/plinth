@@ -330,11 +330,11 @@ export default function LeavePage() {
       );
       setEmployeeLeaveCredits(credits);
 
-      // Filter leave history for this employee
-      const history = leaveRequests?.filter(
+      // Filter leave history for this employee (newest first)
+      const history = (leaveRequests?.filter(
         (req: any) => req.employeeId === userEmployeeId
-      );
-      setEmployeeLeaveHistory(history || []);
+      ) || []).sort((a: any, b: any) => (b.filedDate ?? 0) - (a.filedDate ?? 0));
+      setEmployeeLeaveHistory(history);
     } catch (error) {
       console.error("Error loading employee data:", error);
     }
@@ -360,6 +360,8 @@ export default function LeavePage() {
                 onOpenChange={setIsDialogOpen}
                 organizationId={currentOrganizationId || ""}
                 employeeId={userEmployeeId || ""}
+                leaveTypes={settings?.leaveTypes ?? []}
+                leaveCredits={employeeLeaveCredits}
                 onSuccess={() => {
                   if (canRequestLeave && userEmployeeId) {
                     loadEmployeeData();
@@ -614,6 +616,8 @@ export default function LeavePage() {
                 onOpenChange={setIsDialogOpen}
                 organizationId={currentOrganizationId || ""}
                 employeeId={userEmployeeId || ""}
+                leaveTypes={settings?.leaveTypes ?? []}
+                leaveCredits={employeeLeaveCredits}
                 onSuccess={() => {
                   if (canRequestLeave && userEmployeeId) {
                     loadEmployeeData();
@@ -764,6 +768,7 @@ export default function LeavePage() {
             onOpenChange={setIsAdjustCreditsOpen}
             organizationId={currentOrganizationId || ""}
             employeeId={selectedEmployeeForCredits}
+            leaveTypes={settings?.leaveTypes ?? []}
             onSuccess={() => {
               setCreditsTableRefreshKey((k) => k + 1);
             }}

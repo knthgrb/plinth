@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -23,11 +23,14 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { updateEmployeeLeaveCredits } from "@/actions/leave";
 
+export type OrgLeaveType = { type: string; name: string };
+
 interface AdjustCreditsDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   organizationId: string;
   employeeId: string;
+  leaveTypes?: OrgLeaveType[];
   onSuccess?: () => void;
 }
 
@@ -36,18 +39,38 @@ export function AdjustCreditsDialog({
   onOpenChange,
   organizationId,
   employeeId,
+  leaveTypes = [],
   onSuccess,
 }: AdjustCreditsDialogProps) {
   const { toast } = useToast();
   const [adjustmentData, setAdjustmentData] = useState({
-    leaveType: "vacation" as "vacation" | "sick" | "custom",
-    customType: "",
+    selectedType: "",
     adjustment: 0,
     reason: "",
   });
 
+  useEffect(() => {
+    if (isOpen && leaveTypes.length > 0) {
+      const first = leaveTypes[0].type;
+      setAdjustmentData((prev) => ({
+        ...prev,
+        selectedType: prev.selectedType && leaveTypes.some((lt) => lt.type === prev.selectedType)
+          ? prev.selectedType
+          : first,
+      }));
+    }
+  }, [isOpen, leaveTypes]);
+
   const handleSubmit = async () => {
     if (!organizationId || !employeeId) return;
+    if (!adjustmentData.selectedType) {
+      toast({
+        title: "Error",
+        description: "Please select a leave type",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!adjustmentData.reason.trim()) {
       toast({
         title: "Error",
@@ -57,22 +80,27 @@ export function AdjustCreditsDialog({
       return;
     }
 
+    const leaveType =
+      adjustmentData.selectedType === "vacation"
+        ? "vacation"
+        : adjustmentData.selectedType === "sick"
+          ? "sick"
+          : "custom";
+    const customType =
+      leaveType === "custom" ? adjustmentData.selectedType : undefined;
+
     try {
       await updateEmployeeLeaveCredits({
         organizationId,
         employeeId,
-        leaveType: adjustmentData.leaveType,
-        customType:
-          adjustmentData.leaveType === "custom"
-            ? adjustmentData.customType
-            : undefined,
+        leaveType,
+        customType,
         adjustment: adjustmentData.adjustment,
         reason: adjustmentData.reason,
       });
       onOpenChange(false);
       setAdjustmentData({
-        leaveType: "vacation",
-        customType: "",
+        selectedType: leaveTypes[0]?.type ?? "",
         adjustment: 0,
         reason: "",
       });
@@ -90,6 +118,9 @@ export function AdjustCreditsDialog({
     }
   };
 
+  const defaultSelected = leaveTypes[0]?.type ?? "";
+  const selectedType = adjustmentData.selectedType || defaultSelected;
+
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -102,42 +133,30 @@ export function AdjustCreditsDialog({
         <div className="space-y-4 py-4">
           <div className="space-y-2">
             <Label htmlFor="adjustLeaveType">Leave Type</Label>
-            <Select
-              value={adjustmentData.leaveType}
-              onValueChange={(value: any) =>
-                setAdjustmentData({
-                  ...adjustmentData,
-                  leaveType: value,
-                  customType: "",
-                })
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="vacation">Vacation</SelectItem>
-                <SelectItem value="sick">Sick</SelectItem>
-                <SelectItem value="custom">Custom</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          {adjustmentData.leaveType === "custom" && (
-            <div className="space-y-2">
-              <Label htmlFor="customType">Custom Leave Type Name</Label>
-              <Input
-                id="customType"
-                value={adjustmentData.customType}
-                onChange={(e) =>
-                  setAdjustmentData({
-                    ...adjustmentData,
-                    customType: e.target.value,
-                  })
+            {leaveTypes.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No leave types configured. Add leave types in Settings.
+              </p>
+            ) : (
+              <Select
+                value={selectedType}
+                onValueChange={(value) =>
+                  setAdjustmentData({ ...adjustmentData, selectedType: value })
                 }
-                placeholder="e.g., Emergency, Maternity"
-              />
-            </div>
-          )}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select leave type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {leaveTypes.map((lt) => (
+                    <SelectItem key={lt.type} value={lt.type}>
+                      {lt.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
           <div className="space-y-2">
             <Label htmlFor="adjustment">
               Adjustment (positive to add, negative to subtract)
@@ -179,8 +198,7 @@ export function AdjustCreditsDialog({
             onClick={() => {
               onOpenChange(false);
               setAdjustmentData({
-                leaveType: "vacation",
-                customType: "",
+                selectedType: leaveTypes[0]?.type ?? "",
                 adjustment: 0,
                 reason: "",
               });
@@ -188,7 +206,9 @@ export function AdjustCreditsDialog({
           >
             Cancel
           </Button>
-          <Button onClick={handleSubmit}>Save Adjustment</Button>
+          <Button onClick={handleSubmit} disabled={leaveTypes.length === 0}>
+            Save Adjustment
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

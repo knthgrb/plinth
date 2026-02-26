@@ -48,14 +48,16 @@ export function PayslipDetail({
     const cutoffDay = cutoffEndDate.getDate();
 
     // Get organization paydates (default to 15 and 30)
-    const firstPayDate = organization?.firstPayDate || 15;
-    const secondPayDate = organization?.secondPayDate || 30;
+    const firstPayDate = organization?.firstPayDate ?? 15;
+    const secondPayDate = organization?.secondPayDate ?? 30;
+    const isMonthly =
+      organization?.salaryPaymentFrequency === "monthly";
 
-    // Determine which paydate to use based on cutoff end date
-    // If cutoff ends on or before 15th, use first paydate
-    // Otherwise, use second paydate
+    // Monthly: single pay date per month. Bimonthly: first or second based on cutoff
     let payDay: number;
-    if (cutoffDay <= 15) {
+    if (isMonthly) {
+      payDay = firstPayDate;
+    } else if (cutoffDay <= 15) {
       payDay = firstPayDate;
     } else {
       payDay = secondPayDate;
@@ -82,7 +84,6 @@ export function PayslipDetail({
   const storedGrossPay = payslip.grossPay || 0;
 
   const holidayPay = payslip.holidayPay || 0;
-  const restDayPay = payslip.restDayPay || 0;
 
   // Payroll settings for daily rate formula: (basic + allowance?) × 12/workingDaysPerYear
   const settings = useQuery(
@@ -175,9 +176,13 @@ export function PayslipDetail({
   let hourlyRate = 0;
   let workingDaysInCutoff = 0;
 
+  const orgPayFrequency =
+    organization?.salaryPaymentFrequency === "monthly" ? "monthly" : "bimonthly";
+  const payDivisor = orgPayFrequency === "monthly" ? 1 : 2;
+
   if (salaryType === "monthly" && cutoffStart && cutoffEnd) {
-    // For bi-monthly cutoff, show the full bi-monthly amount
-    fullBasicPay = monthlySalary / 2;
+    // Base pay per cutoff: full monthly or semi-monthly depending on org settings
+    fullBasicPay = monthlySalary / payDivisor;
     workingDaysInCutoff = calculateWorkingDaysInRange(
       cutoffStart,
       cutoffEnd,
@@ -218,7 +223,7 @@ export function PayslipDetail({
     fullBasicPay = dailyRate * workingDaysInCutoff;
   } else if (salaryType === "monthly") {
     // Fallback if cutoff dates not provided
-    fullBasicPay = monthlySalary / 2;
+    fullBasicPay = monthlySalary / payDivisor;
     const monthlyBase =
       monthlySalary + (dailyRateIncludesAllowance ? allowance : 0);
     dailyRate = monthlyBase * (12 / dailyRateWorkingDaysPerYear);
@@ -270,7 +275,6 @@ export function PayslipDetail({
   const hasOtherEarnings =
     (payslip.nightDiffPay ?? 0) > 0 ||
     (payslip.holidayPay ?? 0) > 0 ||
-    (payslip.restDayPay ?? 0) > 0 ||
     (payslip.overtimeRegular ?? 0) > 0 ||
     (payslip.overtimeRestDay ?? 0) > 0 ||
     (payslip.overtimeRestDayExcess ?? 0) > 0 ||
@@ -415,73 +419,60 @@ export function PayslipDetail({
                 <div className="mt-4">
                   <p className="font-semibold mb-2">Other Earnings</p>
                   <div className="space-y-1 text-sm">
-                    {payslip.nightDiffPay && payslip.nightDiffPay > 0 && (
+                    {(payslip.nightDiffPay ?? 0) > 0 && (
                       <div className="flex justify-between">
                         <span>Night Differential</span>
                         <span>
                           ₱
-                          {payslip.nightDiffPay.toLocaleString("en-US", {
+                          {payslip.nightDiffPay!.toLocaleString("en-US", {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}
                         </span>
                       </div>
                     )}
-                    {payslip.holidayPay && payslip.holidayPay > 0 && (
+                    {(payslip.holidayPay ?? 0) > 0 && (
                       <div className="flex justify-between">
                         <span>Holiday Pay</span>
                         <span>
                           ₱
-                          {payslip.holidayPay.toLocaleString("en-US", {
+                          {payslip.holidayPay!.toLocaleString("en-US", {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}
                         </span>
                       </div>
                     )}
-                    {payslip.restDayPay && payslip.restDayPay > 0 && (
-                      <div className="flex justify-between">
-                        <span>Rest Day Pay</span>
-                        <span>
-                          ₱
-                          {payslip.restDayPay.toLocaleString("en-US", {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
-                        </span>
-                      </div>
-                    )}
-                    {payslip.overtimeRegular && payslip.overtimeRegular > 0 && (
+                    {(payslip.overtimeRegular ?? 0) > 0 && (
                       <div className="flex justify-between">
                         <span>Overtime - Regular</span>
                         <span>
                           ₱
-                          {payslip.overtimeRegular.toLocaleString("en-US", {
+                          {payslip.overtimeRegular!.toLocaleString("en-US", {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}
                         </span>
                       </div>
                     )}
-                    {payslip.overtimeRestDay && payslip.overtimeRestDay > 0 && (
+                    {(payslip.overtimeRestDay ?? 0) > 0 && (
                       <div className="flex justify-between">
                         <span>Overtime - Rest Day</span>
                         <span>
                           ₱
-                          {payslip.overtimeRestDay.toLocaleString("en-US", {
+                          {payslip.overtimeRestDay!.toLocaleString("en-US", {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}
                         </span>
                       </div>
                     )}
-                    {payslip.overtimeRestDayExcess &&
-                      payslip.overtimeRestDayExcess > 0 && (
+                    {(payslip.overtimeRestDayExcess ?? 0) > 0 && (
                         <div className="flex justify-between">
                           <span>Overtime - RD excess of 8 hrs.</span>
                           <span>
                             ₱
-                            {payslip.overtimeRestDayExcess.toLocaleString(
+                            {payslip.overtimeRestDayExcess!.toLocaleString(
                               "en-US",
                               {
                                 minimumFractionDigits: 2,
@@ -491,13 +482,12 @@ export function PayslipDetail({
                           </span>
                         </div>
                       )}
-                    {payslip.overtimeSpecialHoliday &&
-                      payslip.overtimeSpecialHoliday > 0 && (
+                    {(payslip.overtimeSpecialHoliday ?? 0) > 0 && (
                         <div className="flex justify-between">
-                          <span>Overtime - Special Holiday</span>
+                          <span>Overtime - Special non-working holiday</span>
                           <span>
                             ₱
-                            {payslip.overtimeSpecialHoliday.toLocaleString(
+                            {payslip.overtimeSpecialHoliday!.toLocaleString(
                               "en-US",
                               {
                                 minimumFractionDigits: 2,
@@ -507,13 +497,12 @@ export function PayslipDetail({
                           </span>
                         </div>
                       )}
-                    {payslip.overtimeSpecialHolidayExcess &&
-                      payslip.overtimeSpecialHolidayExcess > 0 && (
+                    {(payslip.overtimeSpecialHolidayExcess ?? 0) > 0 && (
                         <div className="flex justify-between">
                           <span>Overtime - SH excess of 8 hrs.</span>
                           <span>
                             ₱
-                            {payslip.overtimeSpecialHolidayExcess.toLocaleString(
+                            {payslip.overtimeSpecialHolidayExcess!.toLocaleString(
                               "en-US",
                               {
                                 minimumFractionDigits: 2,
@@ -523,13 +512,12 @@ export function PayslipDetail({
                           </span>
                         </div>
                       )}
-                    {payslip.overtimeLegalHoliday &&
-                      payslip.overtimeLegalHoliday > 0 && (
+                    {(payslip.overtimeLegalHoliday ?? 0) > 0 && (
                         <div className="flex justify-between">
                           <span>Overtime - Legal Holiday</span>
                           <span>
                             ₱
-                            {payslip.overtimeLegalHoliday.toLocaleString(
+                            {payslip.overtimeLegalHoliday!.toLocaleString(
                               "en-US",
                               {
                                 minimumFractionDigits: 2,
@@ -539,13 +527,12 @@ export function PayslipDetail({
                           </span>
                         </div>
                       )}
-                    {payslip.overtimeLegalHolidayExcess &&
-                      payslip.overtimeLegalHolidayExcess > 0 && (
+                    {(payslip.overtimeLegalHolidayExcess ?? 0) > 0 && (
                         <div className="flex justify-between">
                           <span>Overtime - LH excess of 8 hrs.</span>
                           <span>
                             ₱
-                            {payslip.overtimeLegalHolidayExcess.toLocaleString(
+                            {payslip.overtimeLegalHolidayExcess!.toLocaleString(
                               "en-US",
                               {
                                 minimumFractionDigits: 2,

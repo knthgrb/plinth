@@ -19,6 +19,9 @@ export default defineSchema({
     ),
     firstPayDate: v.optional(v.number()), // Day of month for first payroll (default: 15)
     secondPayDate: v.optional(v.number()), // Day of month for second payroll (default: 30)
+    salaryPaymentFrequency: v.optional(
+      v.union(v.literal("monthly"), v.literal("bimonthly"))
+    ), // "monthly" = once per month, "bimonthly" = twice per month (e.g. 15th & 30th)
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_name", ["name"]),
@@ -275,7 +278,11 @@ export default defineSchema({
     undertime: v.optional(v.number()), // Hours undertime
     isHoliday: v.optional(v.boolean()),
     holidayType: v.optional(
-      v.union(v.literal("regular"), v.literal("special"))
+      v.union(
+        v.literal("regular"),
+        v.literal("special"),
+        v.literal("special_working")
+      )
     ),
     remarks: v.optional(v.string()),
     status: v.union(
@@ -297,7 +304,11 @@ export default defineSchema({
     organizationId: v.id("organizations"),
     name: v.string(),
     date: v.number(), // Unix timestamp
-    type: v.union(v.literal("regular"), v.literal("special")),
+    type: v.union(
+      v.literal("regular"),
+      v.literal("special"), // Special non-working holiday (has premium rate)
+      v.literal("special_working") // Special working holiday (no additional rate)
+    ),
     isRecurring: v.boolean(),
     year: v.optional(v.number()), // For non-recurring holidays
     createdAt: v.number(),

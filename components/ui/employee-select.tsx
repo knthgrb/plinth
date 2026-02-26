@@ -97,7 +97,7 @@ export function EmployeeSelect({
           <div className="relative mb-2">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <Input
-              placeholder="Search employee..."
+              placeholder="Search employees..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-8"
@@ -117,7 +117,7 @@ export function EmployeeSelect({
                     onClick={() => handleSelect(emp._id)}
                     className={cn(
                       "w-full flex flex-col items-start gap-1 px-3 py-2 text-sm rounded-md hover:bg-gray-100 transition-colors text-left",
-                      value === emp._id && "bg-gray-100"
+                      value === emp._id && "bg-gray-100",
                     )}
                   >
                     <span className="font-medium">

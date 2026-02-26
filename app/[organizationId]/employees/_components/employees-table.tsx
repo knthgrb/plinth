@@ -109,39 +109,43 @@ export function EmployeesTable({
               }
             >
               <TableHeader>
-                <TableRow className="h-10">
+                <TableRow className="h-9">
                   {visibleColumns.includes("name") && (
-                    <TableHead className="min-w-[150px] py-2">Name</TableHead>
+                    <TableHead className="min-w-[150px] py-1.5">
+                      Name
+                    </TableHead>
                   )}
                   {visibleColumns.includes("email") && (
-                    <TableHead className="min-w-[180px] hidden sm:table-cell py-2">
+                    <TableHead className="min-w-[180px] hidden sm:table-cell py-1.5">
                       Email
                     </TableHead>
                   )}
                   {visibleColumns.includes("position") && (
-                    <TableHead className="min-w-[120px] py-2">
+                    <TableHead className="min-w-[120px] py-1.5">
                       Position
                     </TableHead>
                   )}
                   {visibleColumns.includes("department") && (
-                    <TableHead className="min-w-[120px] hidden md:table-cell py-2">
+                    <TableHead className="min-w-[120px] hidden md:table-cell py-1.5">
                       Department
                     </TableHead>
                   )}
                   {visibleColumns.includes("phone") && (
-                    <TableHead className="min-w-[120px] hidden lg:table-cell py-2">
+                    <TableHead className="min-w-[120px] hidden lg:table-cell py-1.5">
                       Phone
                     </TableHead>
                   )}
                   {visibleColumns.includes("createdAt") && (
-                    <TableHead className="min-w-[140px] hidden lg:table-cell py-2">
+                    <TableHead className="min-w-[140px] hidden lg:table-cell py-1.5">
                       Created date
                     </TableHead>
                   )}
                   {visibleColumns.includes("status") && (
-                    <TableHead className="min-w-[100px] py-2">Status</TableHead>
+                    <TableHead className="min-w-[100px] py-1.5">
+                      Status
+                    </TableHead>
                   )}
-                  <TableHead className="text-right min-w-[80px] py-2">
+                  <TableHead className="text-right min-w-[80px] py-1.5">
                     Actions
                   </TableHead>
                 </TableRow>
@@ -160,11 +164,11 @@ export function EmployeesTable({
                   paginatedEmployees.map((employee: any) => (
                     <TableRow
                       key={employee._id}
-                      className="cursor-pointer hover:bg-gray-50 text-sm h-11"
+                      className="cursor-pointer hover:bg-[rgb(250,250,250)] text-sm h-9"
                       onClick={() => onRowClick(employee._id)}
                     >
                       {visibleColumns.includes("name") && (
-                        <TableCell className="py-2 px-4">
+                        <TableCell className="py-1.5 px-3">
                           <div className="flex flex-col">
                             <span>
                               {employee.personalInfo.firstName}{" "}
@@ -179,34 +183,34 @@ export function EmployeesTable({
                         </TableCell>
                       )}
                       {visibleColumns.includes("email") && (
-                        <TableCell className="hidden sm:table-cell py-2 px-4">
+                        <TableCell className="hidden sm:table-cell py-1.5 px-3">
                           {employee.personalInfo.email}
                         </TableCell>
                       )}
                       {visibleColumns.includes("position") && (
-                        <TableCell className="py-2 px-4">
+                        <TableCell className="py-1.5 px-3">
                           {employee.employment.position}
                         </TableCell>
                       )}
                       {visibleColumns.includes("department") && (
-                        <TableCell className="hidden md:table-cell py-2 px-4">
+                        <TableCell className="hidden md:table-cell py-1.5 px-3">
                           {employee.employment.department}
                         </TableCell>
                       )}
                       {visibleColumns.includes("phone") && (
-                        <TableCell className="hidden lg:table-cell py-2 px-4">
+                        <TableCell className="hidden lg:table-cell py-1.5 px-3">
                           {employee.personalInfo.phone || "—"}
                         </TableCell>
                       )}
                       {visibleColumns.includes("createdAt") && (
-                        <TableCell className="hidden lg:table-cell py-2 px-4 text-xs text-gray-600">
+                        <TableCell className="hidden lg:table-cell py-1.5 px-3 text-xs text-gray-600">
                           {employee.createdAt
                             ? new Date(employee.createdAt).toLocaleDateString()
                             : "—"}
                         </TableCell>
                       )}
                       {visibleColumns.includes("status") && (
-                        <TableCell className="py-2 px-4">
+                        <TableCell className="py-1.5 px-3">
                           <Badge
                             className={
                               employee.employment.status === "active"
@@ -219,7 +223,7 @@ export function EmployeesTable({
                         </TableCell>
                       )}
                       <TableCell
-                        className="text-right py-2.5"
+                        className="text-right py-1.5 pr-3"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div className="flex items-center justify-end gap-2">

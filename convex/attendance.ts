@@ -206,7 +206,11 @@ export const createAttendance = mutation({
     undertime: v.optional(v.number()), // Manual override for undertime (hours)
     isHoliday: v.optional(v.boolean()),
     holidayType: v.optional(
-      v.union(v.literal("regular"), v.literal("special")),
+      v.union(
+        v.literal("regular"),
+        v.literal("special"),
+        v.literal("special_working"),
+      ),
     ),
     remarks: v.optional(v.string()),
     status: v.union(
@@ -291,7 +295,11 @@ export const updateAttendance = mutation({
     undertime: v.optional(v.union(v.number(), v.null())), // Manual override (hours), or null to recalculate
     isHoliday: v.optional(v.boolean()),
     holidayType: v.optional(
-      v.union(v.literal("regular"), v.literal("special")),
+      v.union(
+        v.literal("regular"),
+        v.literal("special"),
+        v.literal("special_working"),
+      ),
     ),
     remarks: v.optional(v.string()),
     status: v.optional(
@@ -409,7 +417,11 @@ export const bulkCreateAttendance = mutation({
         undertime: v.optional(v.number()), // Manual override for undertime (hours)
         isHoliday: v.optional(v.boolean()),
         holidayType: v.optional(
-          v.union(v.literal("regular"), v.literal("special")),
+          v.union(
+            v.literal("regular"),
+            v.literal("special"),
+            v.literal("special_working"),
+          ),
         ),
         remarks: v.optional(v.string()),
         status: v.union(

@@ -387,6 +387,9 @@ export const updateOrganization = mutation({
     taxId: v.optional(v.string()),
     firstPayDate: v.optional(v.number()),
     secondPayDate: v.optional(v.number()),
+    salaryPaymentFrequency: v.optional(
+      v.union(v.literal("monthly"), v.literal("bimonthly"))
+    ),
   },
   handler: async (ctx, args) => {
     const userRecord = await getUserRecord(ctx);
@@ -419,6 +422,8 @@ export const updateOrganization = mutation({
       updates.firstPayDate = args.firstPayDate;
     if (args.secondPayDate !== undefined)
       updates.secondPayDate = args.secondPayDate;
+    if (args.salaryPaymentFrequency !== undefined)
+      updates.salaryPaymentFrequency = args.salaryPaymentFrequency;
 
     await ctx.db.patch(args.organizationId, updates);
     return { success: true };

@@ -9,6 +9,13 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useOrganization } from "@/hooks/organization-context";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -73,6 +80,7 @@ export function PayrollSettingsContent() {
     specialHolidayOtRate: 169,
     dailyRateIncludesAllowance: false,
     dailyRateWorkingDaysPerYear: 261,
+    salaryPaymentFrequency: "bimonthly" as "monthly" | "bimonthly",
     firstPayDate: 15,
     secondPayDate: 30,
   });
@@ -99,14 +107,22 @@ export function PayrollSettingsContent() {
           settings.payrollSettings.dailyRateIncludesAllowance ?? false,
         dailyRateWorkingDaysPerYear:
           settings.payrollSettings.dailyRateWorkingDaysPerYear ?? 261,
-        firstPayDate: organization?.firstPayDate || 15,
-        secondPayDate: organization?.secondPayDate || 30,
+        salaryPaymentFrequency:
+          organization?.salaryPaymentFrequency === "monthly"
+            ? "monthly"
+            : "bimonthly",
+        firstPayDate: organization?.firstPayDate ?? 15,
+        secondPayDate: organization?.secondPayDate ?? 30,
       });
     } else {
       setFormData((prev) => ({
         ...prev,
-        firstPayDate: organization?.firstPayDate || 15,
-        secondPayDate: organization?.secondPayDate || 30,
+        salaryPaymentFrequency:
+          organization?.salaryPaymentFrequency === "monthly"
+            ? "monthly"
+            : "bimonthly",
+        firstPayDate: organization?.firstPayDate ?? 15,
+        secondPayDate: organization?.secondPayDate ?? 30,
       }));
     }
   }, [settings, organization]);
@@ -132,8 +148,12 @@ export function PayrollSettingsContent() {
 
       await updateOrganization({
         organizationId: currentOrganizationId,
+        salaryPaymentFrequency: formData.salaryPaymentFrequency,
         firstPayDate: formData.firstPayDate,
-        secondPayDate: formData.secondPayDate,
+        secondPayDate:
+          formData.salaryPaymentFrequency === "bimonthly"
+            ? formData.secondPayDate
+            : undefined,
       });
 
       toast({
@@ -162,7 +182,7 @@ export function PayrollSettingsContent() {
             <LabelWithHelp
               id="nightDiff"
               label="Night Differential (%)"
-              tooltip="Additional pay per hour for hours worked from 10 PM onwards. Pay = (night diff hours) × hourly rate × (this %). E.g. 10% = add 10% of hourly rate for each such hour."
+              tooltip="Night diff pay = hourly rate × 10% × no. of hours worked between 10 PM–6 AM (added on top of regular pay)."
             />
             <Input
               id="nightDiff"
@@ -181,7 +201,7 @@ export function PayrollSettingsContent() {
             <LabelWithHelp
               id="regularHoliday"
               label="Regular Holiday Rate (%)"
-              tooltip="Additional day premium: add this % of daily pay when the employee works on a regular holiday. E.g. 100% = one full daily rate extra for that day."
+              tooltip="If &quot;Include allowance in daily rate&quot; is checked → Pay = daily rate + (100% × daily rate). Otherwise → Pay = daily rate + (100% × basic daily pay)."
             />
             <Input
               id="regularHoliday"
@@ -199,8 +219,8 @@ export function PayrollSettingsContent() {
           <div className="space-y-2">
             <LabelWithHelp
               id="specialHoliday"
-              label="Special Holiday Rate (%)"
-              tooltip="Additional day premium: add this % of daily pay when the employee works on a special holiday. E.g. 30% = 30% of daily rate extra for that day."
+              label="Special non-working holiday rate (%)"
+              tooltip="If &quot;Include allowance in daily rate&quot; is checked → Pay = daily rate + (30% × daily rate). Otherwise → Pay = daily rate + (30% × basic daily pay)."
             />
             <Input
               id="specialHoliday"
@@ -219,7 +239,7 @@ export function PayrollSettingsContent() {
             <LabelWithHelp
               id="overtimeRegular"
               label="Overtime Regular Rate (%)"
-              tooltip="Multiplied by OT hours: OT pay = hourly rate × (this % ÷ 100) × OT hours. E.g. 125% = 1.25× hourly rate per OT hour (25% additional per hour on top of regular)."
+              tooltip="OT pay = hourly rate × 125% × no. of OT hours (added on top of regular day pay)."
             />
             <Input
               id="overtimeRegular"
@@ -238,7 +258,7 @@ export function PayrollSettingsContent() {
             <LabelWithHelp
               id="overtimeRestDay"
               label="Overtime Rest Day Rate (%)"
-              tooltip="Multiplied by OT hours on a rest day: OT pay = hourly rate × (this % ÷ 100) × OT hours. E.g. 169% = 1.69× hourly rate per OT hour."
+              tooltip="OT pay on rest day = hourly rate × 169% × no. of OT hours on the rest day."
             />
             <Input
               id="overtimeRestDay"
@@ -257,7 +277,7 @@ export function PayrollSettingsContent() {
             <LabelWithHelp
               id="regularHolidayOt"
               label="Regular Holiday OT Rate (%)"
-              tooltip="Multiplied by OT hours on a regular holiday: OT pay = hourly rate × (this % ÷ 100) × OT hours. E.g. 200% = 2× hourly rate per OT hour."
+              tooltip="OT pay on regular holiday = hourly rate × 200% × no. of OT hours on the regular holiday."
             />
             <Input
               id="regularHolidayOt"
@@ -275,8 +295,8 @@ export function PayrollSettingsContent() {
           <div className="space-y-2">
             <LabelWithHelp
               id="specialHolidayOt"
-              label="Special Holiday OT Rate (%)"
-              tooltip="Multiplied by OT hours on a special holiday: OT pay = hourly rate × (this % ÷ 100) × OT hours. E.g. 169% = 1.69× hourly rate per OT hour."
+              label="Special non-working holiday OT rate (%)"
+              tooltip="OT pay on special non-working holiday = hourly rate × 169% × no. of OT hours on the special non-working holiday."
             />
             <Input
               id="specialHolidayOt"
@@ -339,39 +359,78 @@ export function PayrollSettingsContent() {
           </div>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-2">
+        <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="firstPayDate">First Pay Date (Day of Month)</Label>
-            <Input
-              id="firstPayDate"
-              type="number"
-              min="1"
-              max="31"
-              value={formData.firstPayDate}
-              onChange={(e) =>
+            <Label htmlFor="salaryPaymentFrequency">
+              Salary payment frequency
+            </Label>
+            <Select
+              value={formData.salaryPaymentFrequency}
+              onValueChange={(value: "monthly" | "bimonthly") =>
                 setFormData({
                   ...formData,
-                  firstPayDate: parseInt(e.target.value) || 15,
+                  salaryPaymentFrequency: value,
+                  secondPayDate: value === "bimonthly" ? formData.secondPayDate : 30,
                 })
               }
-            />
+            >
+              <SelectTrigger id="salaryPaymentFrequency" className="max-w-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="monthly">Once per month</SelectItem>
+                <SelectItem value="bimonthly">
+                  Twice per month (e.g. 15th & 30th)
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Choose how often the company runs payroll for monthly employees.
+            </p>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="secondPayDate">Second Pay Date (Day of Month)</Label>
-            <Input
-              id="secondPayDate"
-              type="number"
-              min="1"
-              max="31"
-              value={formData.secondPayDate}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  secondPayDate: parseInt(e.target.value) || 30,
-                })
-              }
-            />
+          <div className="grid gap-6 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="firstPayDate">
+                {formData.salaryPaymentFrequency === "monthly"
+                  ? "Pay date (day of month)"
+                  : "First pay date (day of month)"}
+              </Label>
+              <Input
+                id="firstPayDate"
+                type="number"
+                min="1"
+                max="31"
+                value={formData.firstPayDate}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    firstPayDate: parseInt(e.target.value) || 15,
+                  })
+                }
+              />
+            </div>
+
+            {formData.salaryPaymentFrequency === "bimonthly" && (
+              <div className="space-y-2">
+                <Label htmlFor="secondPayDate">
+                  Second pay date (day of month)
+                </Label>
+                <Input
+                  id="secondPayDate"
+                  type="number"
+                  min="1"
+                  max="31"
+                  value={formData.secondPayDate}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      secondPayDate: parseInt(e.target.value) || 30,
+                    })
+                  }
+                />
+              </div>
+            )}
           </div>
         </div>
 

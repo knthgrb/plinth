@@ -75,13 +75,20 @@ function getDayName(date: number): string {
   return dayNames[dateObj.getDay()];
 }
 
-// Helper to check if a date is a rest day for an employee
+// Helper to check if a date is a rest day for an employee.
+// Uses the employee's scheduled work days: only returns true when that day is
+// explicitly a non-workday (e.g. Saturday/Sunday). Work on such days is rest day OT.
+// If schedule is missing or the day key is missing, we treat as work day (return false)
+// so we never add rest day pay by mistake.
 function isRestDay(date: number, employeeSchedule: any): boolean {
+  if (!employeeSchedule?.defaultSchedule) return false;
   const dayName = getDayName(date);
   const daySchedule =
     employeeSchedule.defaultSchedule[
       dayName as keyof typeof employeeSchedule.defaultSchedule
     ];
+  if (!daySchedule || typeof daySchedule.isWorkday !== "boolean")
+    return false;
 
   // Check if there's a schedule override for this date
   if (employeeSchedule.scheduleOverrides) {
@@ -192,14 +199,61 @@ function getDailyRateForEmployee(
   return basicSalary / 22;
 }
 
-// Government contributions (monthly). Per cutoff = monthly / 2 for semi-monthly.
+// Government contributions (monthly amounts).
 const PHILHEALTH_EMPLOYEE_MONTHLY = 500;
 const PHILHEALTH_EMPLOYER_MONTHLY = 500;
 const PAGIBIG_EMPLOYEE_MONTHLY = 200;
 const PAGIBIG_EMPLOYER_MONTHLY = 200;
-/** Withholding tax: 12% of basic salary when monthly basic >= threshold. */
-const TAX_RATE = 0.12;
-const WITHHOLDING_TAX_THRESHOLD = 23000; // No tax when monthly basic below this
+
+type PayFrequency = "monthly" | "bimonthly";
+type DeductionFrequency = "full" | "half";
+
+/** TRAIN tax table (annual taxable income, basic pay only, no allowance). */
+function computeAnnualTaxFromBasic(annualBasic: number): number {
+  if (annualBasic <= 250_000) return 0;
+  if (annualBasic <= 400_000) {
+    return 0.15 * (annualBasic - 250_000);
+  }
+  if (annualBasic <= 800_000) {
+    return 22_500 + 0.2 * (annualBasic - 400_000);
+  }
+  if (annualBasic <= 2_000_000) {
+    return 102_500 + 0.25 * (annualBasic - 800_000);
+  }
+  if (annualBasic <= 8_000_000) {
+    return 402_500 + 0.3 * (annualBasic - 2_000_000);
+  }
+  return 2_205_500 + 0.35 * (annualBasic - 8_000_000);
+}
+
+/** Resolve organization pay frequency with sensible default (bimonthly). */
+function getOrganizationPayFrequency(org: any | null | undefined): PayFrequency {
+  const freq = org?.salaryPaymentFrequency;
+  return freq === "monthly" || freq === "bimonthly" ? freq : "bimonthly";
+}
+
+/** Split a monthly amount per cutoff, honoring org + per-employee frequency. */
+function getPerCutoffAmount(
+  monthlyAmount: number,
+  orgFrequency: PayFrequency,
+  perEmployeeFrequency?: DeductionFrequency,
+): number {
+  const effective: DeductionFrequency =
+    perEmployeeFrequency ??
+    (orgFrequency === "bimonthly" ? "half" : "full");
+  return effective === "half" ? monthlyAmount / 2 : monthlyAmount;
+}
+
+/** Government deductions are taken once per month (full monthly amount). For semi-monthly, apply only on the first cutoff of the month. */
+function getGovDeductionAmount(
+  monthlyAmount: number,
+  cutoffStart: number,
+  payFrequency: PayFrequency,
+): number {
+  if (payFrequency === "monthly") return monthlyAmount;
+  const dayOfMonth = new Date(cutoffStart).getDate();
+  return dayOfMonth <= 15 ? monthlyAmount : 0;
+}
 
 // Default OT/holiday rates (used when org settings not set)
 const DEFAULT_REGULAR_OT = 1.25;
@@ -260,6 +314,31 @@ function getNightDiffHoursFromActualOut(actualOut: string | undefined): number {
   return 0;
 }
 
+/**
+ * Get total hours worked for a day from attendance (actual in/out minus 1 hr lunch).
+ * Fallback: 8 * dayMultiplier + overtime when actual times missing.
+ */
+function getHoursWorkedFromAttendance(att: {
+  actualIn?: string;
+  actualOut?: string;
+  scheduleIn?: string;
+  scheduleOut?: string;
+  status?: string;
+  overtime?: number;
+}): number {
+  const dayMultiplier = att.status === "half-day" ? 0.5 : 1;
+  if (att.actualIn && att.actualOut) {
+    const [inH, inM] = att.actualIn.split(":").map(Number);
+    const [outH, outM] = att.actualOut.split(":").map(Number);
+    const inMins = (inH ?? 0) * 60 + (inM ?? 0);
+    const outMins = (outH ?? 0) * 60 + (outM ?? 0);
+    const workMins = outMins - inMins - 60; // 1 hr lunch
+    const hours = Math.max(0, workMins / 60);
+    return hours;
+  }
+  return 8 * dayMultiplier + (att.overtime ?? 0);
+}
+
 // Compute payroll for employee
 export const computeEmployeePayroll = query({
   args: {
@@ -272,6 +351,9 @@ export const computeEmployeePayroll = query({
     if (!employee) throw new Error("Employee not found");
 
     const userRecord = await checkAuth(ctx, employee.organizationId);
+
+    const organization = await ctx.db.get(employee.organizationId);
+    const payFrequency: PayFrequency = getOrganizationPayFrequency(organization);
 
     // Get attendance for the period
     const attendance = await (ctx.db.query("attendance") as any)
@@ -307,7 +389,6 @@ export const computeEmployeePayroll = query({
     let undertimeHours = 0;
     let overtimeHours = 0;
     let holidayPay = 0;
-    let restDayPay = 0;
     let nightDiffPay = 0;
     let overtimeRegular = 0;
     let overtimeRestDay = 0;
@@ -332,12 +413,13 @@ export const computeEmployeePayroll = query({
     );
     const hourlyRate = dailyRate / 8;
 
-    // For monthly employees, start with semi-monthly base pay (monthly / 2)
+    // For monthly employees, start with base pay for this cutoff (monthly or semi-monthly)
     // For daily/hourly employees, start at 0 and accumulate based on days worked
     const salaryType = employee.compensation.salaryType || "monthly";
     if (salaryType === "monthly") {
       const monthlySalary = employee.compensation.basicSalary || 0;
-      basicPay = monthlySalary / 2; // Semi-monthly base pay
+      const divisor = payFrequency === "monthly" ? 1 : 2;
+      basicPay = monthlySalary / divisor; // Base pay for this cutoff
     }
 
     // Get approved leave requests for the period to check for paid leave
@@ -389,7 +471,7 @@ export const computeEmployeePayroll = query({
     const getHolidayInfo = (
       date: number,
       attendanceRecord?: any
-    ): { isHoliday: boolean; holidayType?: "regular" | "special" } => {
+    ): { isHoliday: boolean; holidayType?: "regular" | "special" | "special_working" } => {
       // First check if attendance record has holiday info
       if (attendanceRecord?.isHoliday && attendanceRecord?.holidayType) {
         return { isHoliday: true, holidayType: attendanceRecord.holidayType };
@@ -425,15 +507,18 @@ export const computeEmployeePayroll = query({
         const isHolidayDay = holidayInfo.isHoliday;
         const holidayType = holidayInfo.holidayType;
 
-        // For daily/hourly employees, add daily rate per day worked
-        // For monthly employees, we already have the base pay, so we don't add here
-        if (salaryType !== "monthly") {
+        // For daily/hourly employees, add daily rate per day worked (skip for rest-day-only; we pay 169% for those hours instead)
+        const isHolidayDayRest = holidayInfo.isHoliday;
+        if (salaryType !== "monthly" && !(isRestDayForEmployee && !isHolidayDayRest)) {
           basicPay += dayMultiplier * dailyRate;
         }
 
-        // Rest day premium: 30% of daily rate for working on rest day
-        if (isRestDayForEmployee) {
-          restDayPay += dayMultiplier * dailyRate * 0.3;
+        // Work on a rest day (non-holiday): pay all hours at 169% (rest day OT rate)
+        if (isRestDayForEmployee && !isHolidayDayRest) {
+          const hoursWorked = getHoursWorkedFromAttendance(att);
+          const restDayAmount = hoursWorked * hourlyRate * rates.restDayOt;
+          overtimeRestDay += restDayAmount;
+          basicPay += restDayAmount;
         }
 
         // Calculate overtime with proper rates based on day type
@@ -484,12 +569,7 @@ export const computeEmployeePayroll = query({
               basicPay += regularOTAmount + (excessOTHours > 0 ? excessOTHours * hourlyRate * rates.specialHolidayOt : 0);
             }
           } else if (isRestDayForEmployee) {
-            const regularOTAmount = regularOTHours * hourlyRate * rates.restDayOt;
-            overtimeRestDay += regularOTAmount;
-            if (excessOTHours > 0) {
-              overtimeRestDayExcess += excessOTHours * hourlyRate * rates.restDayOt;
-            }
-            basicPay += regularOTAmount + (excessOTHours > 0 ? excessOTHours * hourlyRate * rates.restDayOt : 0);
+            // Rest day only (no holiday): already paid as hoursWorked × 169% above; skip to avoid double-count
           } else {
             const regularOTAmount = att.overtime * hourlyRate * rates.regularOt;
             overtimeRegular += regularOTAmount;
@@ -566,11 +646,15 @@ export const computeEmployeePayroll = query({
           }
           daysWorked += 1;
         } else {
-          // For monthly employees, track absent deduction separately
-          // For daily/hourly employees, absences don't affect basic pay (they just don't get paid)
-          absences += 1;
-          if (salaryType === "monthly") {
-            absentDeduction += dailyRate;
+          // Do not count as absent on regular or special (non-working) holidays; only on special_working or regular working days
+          const holidayInfoAbs = getHolidayInfo(att.date, att);
+          if (holidayInfoAbs.isHoliday && (holidayInfoAbs.holidayType === "regular" || holidayInfoAbs.holidayType === "special")) {
+            // Holiday: no absence deduction
+          } else {
+            absences += 1;
+            if (salaryType === "monthly") {
+              absentDeduction += dailyRate;
+            }
           }
         }
       }
@@ -607,9 +691,9 @@ export const computeEmployeePayroll = query({
       // Rest days are not counted as absences
       if (isRest) continue;
 
-      // Regular holidays with no attendance are handled separately in the
-      // holidayPay loop below and should not be treated as absences
-      if (holidayInfo.isHoliday && holidayInfo.holidayType === "regular") {
+      // Regular and special non-working holidays: no attendance required, do not count as absence.
+      // Only special_working holidays require attendance; absence only if no time in/out record.
+      if (holidayInfo.isHoliday && (holidayInfo.holidayType === "regular" || holidayInfo.holidayType === "special")) {
         continue;
       }
 
@@ -667,21 +751,59 @@ export const computeEmployeePayroll = query({
 
     // Calculate gross pay (total earnings before any deductions)
     const grossPay =
-      basicPay + holidayPay + restDayPay + nightDiffPay + incentiveTotal;
+      basicPay + holidayPay + nightDiffPay + incentiveTotal;
 
     // Check if employee worked at least 1 day
     const hasWorkedAtLeastOneDay = daysWorked > 0;
 
-    // Government deductions: full monthly amounts (SSS from table; PhilHealth 500, Pag-IBIG 200; tax 12% of basic)
-    const monthlyBasic = employee.compensation.basicSalary ?? 0;
-    const sssMonthly = getSSSContribution(monthlyBasic);
-    const sssAmount = sssMonthly.employeeShare;
-    const philhealthAmount = PHILHEALTH_EMPLOYEE_MONTHLY;
-    const pagibigAmount = PAGIBIG_EMPLOYEE_MONTHLY;
-    const withholdingTaxAmount =
-      monthlyBasic >= WITHHOLDING_TAX_THRESHOLD
-        ? round2(monthlyBasic * TAX_RATE)
-        : 0;
+    // Government deductions: based on monthly amounts, split per cutoff by pay frequency.
+    // Tax uses TRAIN brackets on annual basic pay (no allowance).
+    const monthlyBasicForTax = (() => {
+      const salaryTypeForTax = employee.compensation.salaryType || "monthly";
+      const basicSalary = employee.compensation.basicSalary || 0;
+      if (salaryTypeForTax === "monthly") {
+        return basicSalary;
+      }
+      // Derive equivalent monthly from daily/hourly basic (exclude allowance).
+      const dailyRateNoAllowance = getDailyRateForEmployee(
+        employee,
+        args.cutoffStart,
+        args.cutoffEnd,
+        {
+          includeAllowance: false,
+          workingDaysPerYear: rates.dailyRateWorkingDaysPerYear,
+        },
+      );
+      return (
+        dailyRateNoAllowance *
+        (rates.dailyRateWorkingDaysPerYear / 12)
+      );
+    })();
+
+    const annualTax = computeAnnualTaxFromBasic(monthlyBasicForTax * 12);
+    const monthlyTax = round2(annualTax / 12);
+
+    const sssMonthly = getSSSContribution(monthlyBasicForTax);
+    const sssAmount = getGovDeductionAmount(
+      sssMonthly.employeeShare,
+      args.cutoffStart,
+      payFrequency,
+    );
+    const philhealthAmount = getGovDeductionAmount(
+      PHILHEALTH_EMPLOYEE_MONTHLY,
+      args.cutoffStart,
+      payFrequency,
+    );
+    const pagibigAmount = getGovDeductionAmount(
+      PAGIBIG_EMPLOYEE_MONTHLY,
+      args.cutoffStart,
+      payFrequency,
+    );
+    const withholdingTaxAmount = getGovDeductionAmount(
+      monthlyTax,
+      args.cutoffStart,
+      payFrequency,
+    );
 
     // Total deductions = attendance deductions + government deductions + custom deductions
     // If employee didn't work at least 1 day, no government deductions (they'll be pending)
@@ -754,7 +876,7 @@ export const computeEmployeePayroll = query({
       undertimeHours,
       overtimeHours,
       holidayPay,
-      restDayPay,
+      restDayPay: 0,
       nightDiffPay,
       overtimeRegular,
       overtimeRestDay,
@@ -851,6 +973,10 @@ export const createPayrollRun = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
+
+    const organization = await ctx.db.get(args.organizationId);
+    const payFrequency: PayFrequency = getOrganizationPayFrequency(organization);
+    const payDivisor = payFrequency === "monthly" ? 1 : 2;
 
     const now = Date.now();
     const startDate = new Date(args.cutoffStart);
@@ -949,7 +1075,8 @@ export const createPayrollRun = mutation({
       let undertimeHours = 0;
       let overtimeHours = 0;
       let holidayPay = 0;
-      let restDayPay = 0;
+      let restDayDayPremium = 0;
+      let restDayOnlyEquivalents = 0; // day multiplier for rest-day-only days (excluded from regular basic)
       let nightDiffPay = 0;
       let overtimeRegular = 0;
       let overtimeRestDay = 0;
@@ -1019,15 +1146,19 @@ export const createPayrollRun = mutation({
           // Check if this is a rest day for the employee
           const isRestDayForEmployee = isRestDay(att.date, employee.schedule);
 
-          // Rest day premium: 30% of daily rate for working on rest day
-          if (isRestDayForEmployee) {
-            restDayPay += dailyRate * 0.3 * dayMultiplier;
-          }
-
           // Automatically detect holiday
           const holidayInfo = getHolidayInfo(att.date, att);
           const isHolidayDay = holidayInfo.isHoliday;
           const holidayType = holidayInfo.holidayType;
+
+          // Work on a rest day (non-holiday): pay all hours at 169% (rest day OT rate)
+          if (isRestDayForEmployee && !isHolidayDay) {
+            const hoursWorked = getHoursWorkedFromAttendance(att);
+            const amt = hoursWorked * hourlyRate * rates.restDayOt;
+            restDayDayPremium += amt;
+            overtimeRestDay += amt;
+            restDayOnlyEquivalents += dayMultiplier;
+          }
 
           // Calculate overtime with proper rates based on day type
           // Overtime hours get additional premium on top of the base day rate
@@ -1115,11 +1246,15 @@ export const createPayrollRun = mutation({
             }
             daysWorked += 1;
           } else {
-            // For monthly employees, track absent deduction separately
-            // For daily/hourly employees, absences don't affect basic pay (they just don't get paid)
-            absences += 1;
-            if (salaryType === "monthly") {
-              absentDeduction += dailyRate;
+            // Do not count as absent on regular or special (non-working) holidays
+            const holidayInfoAbs = getHolidayInfo(att.date, att);
+            if (holidayInfoAbs.isHoliday && (holidayInfoAbs.holidayType === "regular" || holidayInfoAbs.holidayType === "special")) {
+              // Holiday: no absence deduction
+            } else {
+              absences += 1;
+              if (salaryType === "monthly") {
+                absentDeduction += dailyRate;
+              }
             }
           }
         }
@@ -1158,9 +1293,9 @@ export const createPayrollRun = mutation({
         // Rest days are not counted as absences
         if (isRest) continue;
 
-        // Regular holidays with no attendance are handled separately in the
-        // holidayPay loop below and should not be treated as absences
-        if (holidayInfo.isHoliday && holidayInfo.holidayType === "regular") {
+        // Regular and special non-working holidays: no attendance required, do not count as absence.
+        // Only special_working holidays require attendance; absence only if no time in/out record.
+        if (holidayInfo.isHoliday && (holidayInfo.holidayType === "regular" || holidayInfo.holidayType === "special")) {
           continue;
         }
 
@@ -1174,7 +1309,7 @@ export const createPayrollRun = mutation({
           continue;
         }
 
-        // Otherwise, this is an unpaid working day (absence)
+        // Otherwise, this is an unpaid working day (absence), or special_working holiday with no time in/out
         absences += 1;
         if (salaryType === "monthly") {
           absentDeduction += dailyRate;
@@ -1201,16 +1336,17 @@ export const createPayrollRun = mutation({
         }
       }
 
-      // Calculate basic pay (full amount, without subtracting absent/late/undertime)
+      // Calculate basic pay (full amount for this cutoff, without subtracting absent/late/undertime)
       let basicPay = 0;
       if (salaryType === "monthly") {
         const monthlySalary = employee.compensation.basicSalary || 0;
-        basicPay = monthlySalary / 2; // Semi-monthly base pay (full amount)
+        basicPay = monthlySalary / payDivisor; // Base pay per cutoff (monthly or semi-monthly)
         // Absent deductions are tracked separately and will be added to totalDeductions
       } else {
-        // For daily/hourly employees, calculate based on days worked
-        basicPay = daysWorked * dailyRate;
+        // For daily/hourly: regular days at daily rate; rest-day-only days already in restDayDayPremium (169% of hours)
+        basicPay = (daysWorked - restDayOnlyEquivalents) * dailyRate;
       }
+      basicPay += restDayDayPremium;
 
       // Add overtime pay for all salary types
       // Overtime hours get additional premium on top of the base day rate
@@ -1260,10 +1396,7 @@ export const createPayrollRun = mutation({
               basicPay += regularOTAmount + (excessOTHours > 0 ? excessOTHours * hourlyRate * rates.specialHolidayOt : 0);
             }
           } else if (isRestDayForEmployee) {
-            const regularOTAmount = regularOTHours * hourlyRate * rates.restDayOt;
-            overtimeRestDay += regularOTAmount;
-            if (excessOTHours > 0) overtimeRestDayExcess += excessOTHours * hourlyRate * rates.restDayOt;
-            basicPay += regularOTAmount + (excessOTHours > 0 ? excessOTHours * hourlyRate * rates.restDayOt : 0);
+            // Rest day only (no holiday): already paid as hoursWorked × 169% above
           } else {
             const regularOTAmount = att.overtime * hourlyRate * rates.regularOt;
             overtimeRegular += regularOTAmount;
@@ -1303,18 +1436,72 @@ export const createPayrollRun = mutation({
         [];
 
       const basicSalary = employee.compensation.basicSalary ?? 0;
-      // Full monthly amounts only (no semi-monthly split). Run-level deductionsEnabled and per-employee override control what's applied.
-      const sssContribution = getSSSContribution(basicSalary);
-      const sssEmployeeAmount = sssContribution.employeeShare;
-      const sssEmployerAmount = sssContribution.employerShare;
-      const philhealthEmployeeAmount = PHILHEALTH_EMPLOYEE_MONTHLY;
-      const philhealthEmployerAmount = PHILHEALTH_EMPLOYER_MONTHLY;
-      const pagibigEmployeeAmount = PAGIBIG_EMPLOYEE_MONTHLY;
-      const pagibigEmployerAmount = PAGIBIG_EMPLOYER_MONTHLY;
-      const taxAmount =
-        basicSalary >= WITHHOLDING_TAX_THRESHOLD
-          ? round2(basicSalary * TAX_RATE)
-          : 0;
+
+      // Monthly basis for contributions and tax (TRAIN brackets on annual basic pay only).
+      const monthlyBasicForTax = (() => {
+        const salaryTypeForTax = employee.compensation.salaryType || "monthly";
+        if (salaryTypeForTax === "monthly") return basicSalary;
+        const dailyRateNoAllowance = getDailyRateForEmployee(
+          employee,
+          args.cutoffStart,
+          args.cutoffEnd,
+          {
+            includeAllowance: false,
+            workingDaysPerYear: rates.dailyRateWorkingDaysPerYear,
+          },
+        );
+        return (
+          dailyRateNoAllowance *
+          (rates.dailyRateWorkingDaysPerYear / 12)
+        );
+      })();
+
+      const annualTax = computeAnnualTaxFromBasic(monthlyBasicForTax * 12);
+      const monthlyTax = round2(annualTax / 12);
+
+      const sssContribution = getSSSContribution(monthlyBasicForTax);
+      const sssEmployeeMonthly = sssContribution.employeeShare;
+      const sssEmployerMonthly = sssContribution.employerShare;
+      const philhealthEmployeeMonthly = PHILHEALTH_EMPLOYEE_MONTHLY;
+      const philhealthEmployerMonthly = PHILHEALTH_EMPLOYER_MONTHLY;
+      const pagibigEmployeeMonthly = PAGIBIG_EMPLOYEE_MONTHLY;
+      const pagibigEmployerMonthly = PAGIBIG_EMPLOYER_MONTHLY;
+
+      const sssEmployeeAmount = getGovDeductionAmount(
+        sssEmployeeMonthly,
+        args.cutoffStart,
+        payFrequency,
+      );
+      const sssEmployerAmount = getGovDeductionAmount(
+        sssEmployerMonthly,
+        args.cutoffStart,
+        payFrequency,
+      );
+      const philhealthEmployeeAmount = getGovDeductionAmount(
+        philhealthEmployeeMonthly,
+        args.cutoffStart,
+        payFrequency,
+      );
+      const philhealthEmployerAmount = getGovDeductionAmount(
+        philhealthEmployerMonthly,
+        args.cutoffStart,
+        payFrequency,
+      );
+      const pagibigEmployeeAmount = getGovDeductionAmount(
+        pagibigEmployeeMonthly,
+        args.cutoffStart,
+        payFrequency,
+      );
+      const pagibigEmployerAmount = getGovDeductionAmount(
+        pagibigEmployerMonthly,
+        args.cutoffStart,
+        payFrequency,
+      );
+      const taxAmount = getGovDeductionAmount(
+        monthlyTax,
+        args.cutoffStart,
+        payFrequency,
+      );
 
       const runDeductionsEnabled = deductionsEnabled;
 
@@ -1410,12 +1597,13 @@ export const createPayrollRun = mutation({
         0
       );
 
-      // Non-taxable allowance: monthly value, half per semi-monthly cutoff
-      const nonTaxableAllowance = (employee.compensation.allowance || 0) / 2;
+      // Non-taxable allowance: monthly value, split by pay frequency
+      const nonTaxableAllowance =
+        (employee.compensation.allowance || 0) / payDivisor;
 
-      // Calculate gross pay (total earnings: basic pay + holiday pay + rest day pay + overtime + incentives)
-      // Note: overtime is already included in basicPay from the calculation above
-      let grossPay = basicPay + holidayPay + restDayPay + totalIncentives;
+      // Calculate gross pay (total earnings: basic pay + holiday pay + rest day OT + overtime + incentives)
+      // Note: overtime and rest day day premium are already included in basicPay
+      let grossPay = basicPay + holidayPay + totalIncentives;
 
       // For daily/hourly employees, add pay for paid leaves to gross pay
       if (salaryType !== "monthly") {
@@ -1590,7 +1778,6 @@ export const createPayrollRun = mutation({
         undertimeHours,
         overtimeHours,
         holidayPay: holidayPay > 0 ? round2(holidayPay) : undefined,
-        restDayPay: restDayPay > 0 ? round2(restDayPay) : undefined,
         nightDiffPay: nightDiffPay > 0 ? round2(nightDiffPay) : undefined,
         overtimeRegular: overtimeRegular > 0 ? round2(overtimeRegular) : undefined,
         overtimeRestDay: overtimeRestDay > 0 ? round2(overtimeRestDay) : undefined,
@@ -1739,6 +1926,9 @@ export const updatePayrollRun = mutation({
       const cutoffEnd = args.cutoffEnd || payrollRun.cutoffEnd;
 
       const rates = await getPayrollRates(ctx, payrollRun.organizationId);
+      const organizationUpdate = await ctx.db.get(payrollRun.organizationId);
+      const payFrequencyUpdate: PayFrequency = getOrganizationPayFrequency(organizationUpdate);
+      const payDivisorUpdate = payFrequencyUpdate === "monthly" ? 1 : 2;
 
       for (const employeeId of employeeIds) {
         const employee = await ctx.db.get(employeeId);
@@ -1787,7 +1977,8 @@ export const updatePayrollRun = mutation({
         let undertimeHours = 0;
         let overtimeHours = 0;
         let holidayPay = 0;
-        let restDayPay = 0;
+        let restDayDayPremium = 0;
+        let restDayOnlyEquivalents = 0;
         let nightDiffPay = 0;
         let lateDeduction = 0;
         let undertimeDeduction = 0;
@@ -1845,18 +2036,18 @@ export const updatePayrollRun = mutation({
         const getHolidayInfo = (
           date: number,
           attendanceRecord?: any
-        ): { isHoliday: boolean; holidayType?: "regular" | "special" } => {
-          // First check if attendance record has holiday info
-          if (attendanceRecord?.isHoliday && attendanceRecord?.holidayType) {
-            return {
-              isHoliday: true,
-              holidayType: attendanceRecord.holidayType,
-            };
-          }
+): { isHoliday: boolean; holidayType?: "regular" | "special" | "special_working" } => {
+      // First check if attendance record has holiday info
+      if (attendanceRecord?.isHoliday && attendanceRecord?.holidayType) {
+        return {
+          isHoliday: true,
+          holidayType: attendanceRecord.holidayType,
+        };
+      }
 
-          // Otherwise, check against organization holidays
-          const dateObj = new Date(date);
-          const holiday = periodHolidays.find((h: any) => {
+      // Otherwise, check against organization holidays
+      const dateObj = new Date(date);
+      const holiday = periodHolidays.find((h: any) => {
             const holidayDate = new Date(h.date);
             return (
               holidayDate.getFullYear() === dateObj.getFullYear() &&
@@ -1885,9 +2076,11 @@ export const updatePayrollRun = mutation({
             const isHolidayDay = holidayInfo.isHoliday;
             const holidayType = holidayInfo.holidayType;
 
-            // Rest day premium: 30% of daily rate for working on rest day
-            if (isRestDayForEmployee) {
-              restDayPay += dailyRate * 0.3 * dayMultiplier;
+            // Work on a rest day (non-holiday): pay all hours at 169% (rest day OT rate)
+            if (isRestDayForEmployee && !isHolidayDay) {
+              const hoursWorked = getHoursWorkedFromAttendance(att);
+              restDayDayPremium += hoursWorked * hourlyRate * rates.restDayOt;
+              restDayOnlyEquivalents += dayMultiplier;
             }
 
             // Calculate overtime with proper rates based on day type
@@ -1965,11 +2158,15 @@ export const updatePayrollRun = mutation({
             if (isPaidLeave(att.date)) {
               daysWorked += 1;
             } else {
-              // For monthly employees, track absent deduction separately
-              // For daily/hourly employees, absences don't affect basic pay (they just don't get paid)
-              absences += 1;
-              if (salaryType === "monthly") {
-                absentDeduction += dailyRate;
+              // Do not count as absent on regular or special (non-working) holidays
+              const holidayInfoAbs = getHolidayInfo(att.date, att);
+              if (holidayInfoAbs.isHoliday && (holidayInfoAbs.holidayType === "regular" || holidayInfoAbs.holidayType === "special")) {
+                // Holiday: no absence deduction
+              } else {
+                absences += 1;
+                if (salaryType === "monthly") {
+                  absentDeduction += dailyRate;
+                }
               }
             }
           }
@@ -1995,31 +2192,28 @@ export const updatePayrollRun = mutation({
           }
         }
 
-        // Calculate basic pay (full amount, without subtracting absent/late/undertime)
+        // Calculate basic pay (full amount for this cutoff, without subtracting absent/late/undertime)
         let basicPay = 0;
         if (salaryType === "monthly") {
           const monthlySalary = employee.compensation.basicSalary || 0;
-          basicPay = monthlySalary / 2; // Semi-monthly base pay (full amount)
+          basicPay = monthlySalary / payDivisorUpdate; // Base pay per cutoff (monthly or semi-monthly)
           // Absent deductions are tracked separately and will be added to totalDeductions
         } else {
-          // For daily/hourly employees, calculate based on days worked
-          basicPay = daysWorked * dailyRate;
+          // For daily/hourly: regular days at daily rate; rest-day-only already in restDayDayPremium
+          basicPay = (daysWorked - restDayOnlyEquivalents) * dailyRate;
         }
 
-        // Add overtime pay for all salary types
-        // Overtime hours get additional premium on top of the base day rate
-        // Uses employee-specific holiday rates and automatically detects holidays
+        // Add overtime pay for all salary types (skip rest-day-only; already in restDayDayPremium)
         for (const att of periodAttendance) {
           if (
             (att.status === "present" || att.status === "half-day") &&
             att.overtime
           ) {
             const isRestDayForEmployee = isRestDay(att.date, employee.schedule);
-
-            // Automatically detect holiday
             const holidayInfo = getHolidayInfo(att.date, att);
             const isHolidayDay = holidayInfo.isHoliday;
             const holidayType = holidayInfo.holidayType;
+            if (isRestDayForEmployee && !isHolidayDay) continue;
 
             let overtimeMultiplier = rates.regularOt;
             if (isRestDayForEmployee && isHolidayDay) {
@@ -2060,17 +2254,62 @@ export const updatePayrollRun = mutation({
           [];
 
         const basicSalaryUpdate = employee.compensation.basicSalary ?? 0;
-        const sssContributionUpdate = getSSSContribution(basicSalaryUpdate);
-        const sssEmployeeAmountUpdate = sssContributionUpdate.employeeShare;
-        const sssEmployerAmountUpdate = sssContributionUpdate.employerShare;
-        const philhealthEmployeeAmountUpdate = PHILHEALTH_EMPLOYEE_MONTHLY;
-        const philhealthEmployerAmountUpdate = PHILHEALTH_EMPLOYER_MONTHLY;
-        const pagibigEmployeeAmountUpdate = PAGIBIG_EMPLOYEE_MONTHLY;
-        const pagibigEmployerAmountUpdate = PAGIBIG_EMPLOYER_MONTHLY;
-        const taxAmountUpdate =
-          basicSalaryUpdate >= WITHHOLDING_TAX_THRESHOLD
-            ? round2(basicSalaryUpdate * TAX_RATE)
-            : 0;
+        const monthlyBasicForTaxUpdate = (() => {
+          const salaryTypeForTax = employee.compensation.salaryType || "monthly";
+          if (salaryTypeForTax === "monthly") return basicSalaryUpdate;
+          const dailyRateNoAllowance = getDailyRateForEmployee(
+            employee,
+            cutoffStart,
+            cutoffEnd,
+            {
+              includeAllowance: false,
+              workingDaysPerYear: rates.dailyRateWorkingDaysPerYear,
+            },
+          );
+          return (
+            dailyRateNoAllowance *
+            (rates.dailyRateWorkingDaysPerYear / 12)
+          );
+        })();
+        const annualTaxUpdate = computeAnnualTaxFromBasic(monthlyBasicForTaxUpdate * 12);
+        const monthlyTaxUpdate = round2(annualTaxUpdate / 12);
+
+        const sssContributionUpdate = getSSSContribution(monthlyBasicForTaxUpdate);
+        const sssEmployeeAmountUpdate = getGovDeductionAmount(
+          sssContributionUpdate.employeeShare,
+          cutoffStart,
+          payFrequencyUpdate,
+        );
+        const sssEmployerAmountUpdate = getGovDeductionAmount(
+          sssContributionUpdate.employerShare,
+          cutoffStart,
+          payFrequencyUpdate,
+        );
+        const philhealthEmployeeAmountUpdate = getGovDeductionAmount(
+          PHILHEALTH_EMPLOYEE_MONTHLY,
+          cutoffStart,
+          payFrequencyUpdate,
+        );
+        const philhealthEmployerAmountUpdate = getGovDeductionAmount(
+          PHILHEALTH_EMPLOYER_MONTHLY,
+          cutoffStart,
+          payFrequencyUpdate,
+        );
+        const pagibigEmployeeAmountUpdate = getGovDeductionAmount(
+          PAGIBIG_EMPLOYEE_MONTHLY,
+          cutoffStart,
+          payFrequencyUpdate,
+        );
+        const pagibigEmployerAmountUpdate = getGovDeductionAmount(
+          PAGIBIG_EMPLOYER_MONTHLY,
+          cutoffStart,
+          payFrequencyUpdate,
+        );
+        const taxAmountUpdate = getGovDeductionAmount(
+          monthlyTaxUpdate,
+          cutoffStart,
+          payFrequencyUpdate,
+        );
 
         if (runDeductionsEnabled) {
           if (govSettings) {
@@ -2163,11 +2402,11 @@ export const updatePayrollRun = mutation({
         );
 
         // Non-taxable allowance: monthly value, half per semi-monthly cutoff
-        const nonTaxableAllowance = (employee.compensation.allowance || 0) / 2;
+        const nonTaxableAllowance = (employee.compensation.allowance || 0) / payDivisorUpdate;
 
-        // Calculate gross pay (total earnings: basic pay + holiday pay + rest day pay + overtime + incentives)
+        // Calculate gross pay (total earnings: basic pay + holiday pay + rest day OT premium + overtime + incentives)
         // Note: basicPay is the full amount, overtime is added separately below
-        let grossPay = basicPay + holidayPay + restDayPay + nightDiffPay + totalIncentives;
+        let grossPay = basicPay + holidayPay + restDayDayPremium + nightDiffPay + totalIncentives;
 
         // Add overtime pay to gross pay
         for (const att of periodAttendance) {
@@ -2357,7 +2596,6 @@ export const updatePayrollRun = mutation({
           undertimeHours,
           overtimeHours,
           holidayPay: holidayPay > 0 ? round2(holidayPay) : undefined,
-          restDayPay: restDayPay > 0 ? round2(restDayPay) : undefined,
           nightDiffPay: nightDiffPay > 0 ? round2(nightDiffPay) : undefined,
           pendingDeductions:
             pendingDeductions > 0 ? round2(pendingDeductions) : undefined,

@@ -775,17 +775,30 @@ export default function RequirementsPage() {
 
           <Card>
             <CardHeader>
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <div className="relative w-full sm:w-[200px] sm:max-w-[240px]">
-                    <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[rgb(64,64,64)] pointer-events-none" />
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="relative w-full max-w-[260px]">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-[rgb(133,133,133)] pointer-events-none" />
                     <Input
                       placeholder="Search employees..."
                       value={employeeSearch}
                       onChange={(e) => setEmployeeSearch(e.target.value)}
-                      className="h-8 pl-8 rounded-lg border border-[#DDDDDD] hover:border-[rgb(120,120,120)] bg-[rgb(250,250,250)] text-xs font-semibold text-[rgb(64,64,64)] placeholder:text-[rgb(133,133,133)] shadow-sm focus-visible:outline-none"
+                      className="h-8 pl-7 pr-2 rounded-lg text-[11px] font-semibold text-[rgb(64,64,64)] bg-white border border-solid border-[#DDDDDD] shadow-sm focus-visible:ring-[#695eff] focus-visible:ring-offset-0"
                     />
                   </div>
+                  <div className="shrink-0">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setIsColumnModalOpen(true)}
+                      className="h-8 border-[rgb(230,230,230)]"
+                    >
+                      <Settings className="h-4 w-4 mr-2" />
+                      Manage Columns
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                   <Popover
                     open={departmentPopoverOpen}
                     onOpenChange={setDepartmentPopoverOpen}
@@ -794,7 +807,7 @@ export default function RequirementsPage() {
                       <button
                         type="button"
                         className={cn(
-                          "inline-flex items-center gap-1.5 h-8 px-2.5 rounded-2xl text-xs font-semibold text-[rgb(64,64,64)] bg-white transition-colors hover:bg-[rgb(250,250,250)]",
+                          "inline-flex items-center gap-1 h-7 px-2 rounded-xl text-[11px] font-semibold text-[rgb(64,64,64)] bg-white transition-colors hover:bg-[rgb(250,250,250)]",
                           departmentFilter !== "all"
                             ? "border border-[#DDDDDD] border-solid"
                             : "border border-dashed border-[#DDDDDD]",
@@ -812,13 +825,14 @@ export default function RequirementsPage() {
                               onKeyDown={(e) => {
                                 if (e.key === "Enter" || e.key === " ") {
                                   e.preventDefault();
+                                  e.stopPropagation();
                                   setDepartmentFilter("all");
                                 }
                               }}
-                              className="flex items-center justify-center w-4 h-4 rounded-full hover:bg-[rgb(230,230,230)] text-[rgb(100,100,100)] cursor-pointer"
+                              className="flex items-center justify-center w-3.5 h-3.5 rounded-full hover:bg-[rgb(230,230,230)] text-[rgb(100,100,100)] cursor-pointer"
                               aria-label="Clear department"
                             >
-                              <X className="h-2.5 w-2.5" />
+                              <X className="h-2 w-2" />
                             </span>
                             <span className="text-[rgb(133,133,133)] font-semibold">
                               Department
@@ -829,7 +843,7 @@ export default function RequirementsPage() {
                               )?.name ?? departmentFilter}
                             </span>
                             <div
-                              className="h-2.5 w-2.5 rounded-full shrink-0"
+                              className="h-2 w-2 rounded-full shrink-0"
                               style={{
                                 backgroundColor:
                                   departments.find(
@@ -837,21 +851,21 @@ export default function RequirementsPage() {
                                   )?.color ?? "#9CA3AF",
                               }}
                             />
-                            <ChevronDown className="h-3 w-3 shrink-0 text-[rgb(133,133,133)]" />
+                            <ChevronDown className="h-2.5 w-2.5 shrink-0 text-[rgb(133,133,133)]" />
                           </>
                         ) : (
                           <>
-                            <span className="flex items-center justify-center w-4 h-4 rounded-full border border-[rgb(180,180,180)] text-[rgb(120,120,120)]">
-                              <Plus className="h-2.5 w-2.5" />
+                            <span className="flex items-center justify-center w-3.5 h-3.5 rounded-full border border-[rgb(180,180,180)] text-[rgb(120,120,120)]">
+                              <Plus className="h-2 w-2" />
                             </span>
                             <span className="font-semibold">Department</span>
-                            <ChevronDown className="h-3 w-3 shrink-0 text-[rgb(133,133,133)]" />
+                            <ChevronDown className="h-2.5 w-2.5 shrink-0 text-[rgb(133,133,133)]" />
                           </>
                         )}
                       </button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-64 p-3" align="end">
-                      <h4 className="font-semibold text-xs text-[rgb(64,64,64)] mb-3">
+                    <PopoverContent className="w-64 p-2.5" align="start">
+                      <h4 className="font-semibold text-[11px] text-[rgb(64,64,64)] mb-2">
                         Filter by: Department
                       </h4>
                       <div className="space-y-0.5 max-h-[280px] overflow-y-auto">
@@ -904,22 +918,11 @@ export default function RequirementsPage() {
                         setEmployeeSearch("");
                         setDepartmentFilter("all");
                       }}
-                      className="text-xs font-semibold text-[#695eff] hover:text-[#5547e8] shrink-0"
+                      className="text-[11px] font-semibold text-[#695eff] hover:text-[#5547e8] shrink-0"
                     >
                       Clear filters
                     </button>
                   ) : null}
-                </div>
-                <div className="shrink-0">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setIsColumnModalOpen(true)}
-                    className="h-8 border-[rgb(230,230,230)]"
-                  >
-                    <Settings className="h-4 w-4 mr-2" />
-                    Manage Columns
-                  </Button>
                 </div>
               </div>
             </CardHeader>

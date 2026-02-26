@@ -28,7 +28,7 @@ type Holiday = {
   _id: string;
   name: string;
   date: number;
-  type: "regular" | "special";
+  type: "regular" | "special" | "special_working";
   isRecurring: boolean;
   year?: number;
 };
@@ -145,7 +145,16 @@ export default function CalendarPage() {
                   aria-hidden
                 />
                 <span className="text-xs font-medium text-[rgb(100,100,100)]">
-                  Special holiday
+                  Special non-working holiday
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span
+                  className="inline-block h-3 w-3 rounded-full bg-gray-400"
+                  aria-hidden
+                />
+                <span className="text-xs font-medium text-[rgb(100,100,100)]">
+                  Special working holiday
                 </span>
               </div>
             </div>
@@ -192,13 +201,13 @@ export default function CalendarPage() {
                         <div
                           key={h._id}
                           className="group relative"
-                          title={`${h.name} (${h.type === "regular" ? "Regular" : "Special"} holiday)`}
+                          title={`${h.name} (${h.type === "regular" ? "Regular" : h.type === "special" ? "Special non-working" : "Special working"} holiday)`}
                         >
                           <Badge
                             variant="secondary"
                             className={`
                               w-full justify-start truncate text-[10px] font-medium py-0.5 px-1.5 border-0
-                              ${h.type === "regular" ? "bg-rose-100 text-rose-800 hover:bg-rose-100" : "bg-amber-100 text-amber-800 hover:bg-amber-100"}
+                              ${h.type === "regular" ? "bg-rose-100 text-rose-800 hover:bg-rose-100" : h.type === "special" ? "bg-amber-100 text-amber-800 hover:bg-amber-100" : "bg-gray-100 text-gray-800 hover:bg-gray-100"}
                             `}
                           >
                             <span className="truncate block">{h.name}</span>

@@ -55,7 +55,7 @@ export function CreateAnnouncementModal({
   // Fetch departments and employees
   const settings = useQuery(
     (api as any).settings.getSettings,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   const employees = useQuery(
@@ -65,7 +65,7 @@ export function CreateAnnouncementModal({
           organizationId: currentOrganizationId,
           status: "active",
         }
-      : "skip"
+      : "skip",
   );
 
   const [formData, setFormData] = useState({
@@ -142,8 +142,8 @@ export function CreateAnnouncementModal({
         try {
           setFiles((prev) =>
             prev.map((f) =>
-              f.id === fileItem.id ? { ...f, uploading: true } : f
-            )
+              f.id === fileItem.id ? { ...f, uploading: true } : f,
+            ),
           );
 
           const uploadUrl = await generateUploadUrl();
@@ -170,8 +170,8 @@ export function CreateAnnouncementModal({
           uploadedFileIds.push(storageId);
           setFiles((prev) =>
             prev.map((f) =>
-              f.id === fileItem.id ? { ...f, storageId, uploading: false } : f
-            )
+              f.id === fileItem.id ? { ...f, storageId, uploading: false } : f,
+            ),
           );
         } catch (error: any) {
           console.error(`Error uploading ${fileItem.file.name}:`, error);
@@ -273,7 +273,9 @@ export function CreateAnnouncementModal({
         <form onSubmit={handleSubmit}>
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="title">Title <span className="text-red-500">*</span></Label>
+              <Label htmlFor="title">
+                Title <span className="text-red-500">*</span>
+              </Label>
               <Input
                 id="title"
                 value={formData.title}
@@ -285,7 +287,9 @@ export function CreateAnnouncementModal({
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="priority">Priority <span className="text-red-500">*</span></Label>
+                <Label htmlFor="priority">
+                  Priority <span className="text-red-500">*</span>
+                </Label>
                 <Select
                   value={formData.priority}
                   onValueChange={(value: any) =>
@@ -303,7 +307,9 @@ export function CreateAnnouncementModal({
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="targetAudience">Target Audience <span className="text-red-500">*</span></Label>
+                <Label htmlFor="targetAudience">
+                  Target Audience <span className="text-red-500">*</span>
+                </Label>
                 <Select
                   value={formData.targetAudience}
                   onValueChange={(value: any) =>
@@ -332,7 +338,9 @@ export function CreateAnnouncementModal({
             {/* Department Selection */}
             {formData.targetAudience === "department" && (
               <div className="space-y-2">
-                <Label>Select Departments <span className="text-red-500">*</span></Label>
+                <Label>
+                  Select Departments <span className="text-red-500">*</span>
+                </Label>
                 <div className="max-h-48 overflow-y-auto border rounded-md p-3 space-y-2">
                   {settings?.departments && settings.departments.length > 0 ? (
                     settings.departments.map((dept: string) => (
@@ -367,9 +375,11 @@ export function CreateAnnouncementModal({
             {/* Employee Selection */}
             {formData.targetAudience === "specific-employees" && (
               <div className="space-y-2">
-                <Label>Select Employees <span className="text-red-500">*</span></Label>
+                <Label>
+                  Select Employees <span className="text-red-500">*</span>
+                </Label>
                 <Input
-                  placeholder="Search employee..."
+                  placeholder="Search employees..."
                   value={employeeSearch}
                   onChange={(e) => setEmployeeSearch(e.target.value)}
                   className="mb-2"
@@ -395,7 +405,7 @@ export function CreateAnnouncementModal({
                               setFormData((prev) => ({
                                 ...prev,
                                 specificEmployees: filteredEmployees.map(
-                                  (e: any) => e._id
+                                  (e: any) => e._id,
                                 ),
                               }));
                             }
@@ -415,7 +425,7 @@ export function CreateAnnouncementModal({
                           <input
                             type="checkbox"
                             checked={formData.specificEmployees.includes(
-                              emp._id
+                              emp._id,
                             )}
                             onChange={() => toggleEmployee(emp._id)}
                             className="h-4 w-4 accent-purple-600"
@@ -445,7 +455,9 @@ export function CreateAnnouncementModal({
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="content">Content <span className="text-red-500">*</span></Label>
+              <Label htmlFor="content">
+                Content <span className="text-red-500">*</span>
+              </Label>
               <TiptapEditor
                 content={formData.content}
                 onChange={(content) => setFormData({ ...formData, content })}

@@ -81,6 +81,48 @@ function calculateWorkingDays(startDate: number, endDate: number): number {
   return days;
 }
 
+// Resolve credit type key for non-vacation/sick: customLeaveType when leaveType is "custom", else leaveType (e.g. "emergency")
+function getCreditType(
+  leaveType: string,
+  customLeaveType?: string
+): "vacation" | "sick" | string {
+  if (leaveType === "vacation" || leaveType === "sick") return leaveType;
+  return leaveType === "custom" ? customLeaveType || "" : leaveType;
+}
+
+function getBalanceForType(
+  leaveCredits: any,
+  creditType: string
+): number {
+  if (creditType === "vacation") return leaveCredits.vacation?.balance ?? 0;
+  if (creditType === "sick") return leaveCredits.sick?.balance ?? 0;
+  const custom = leaveCredits.custom?.find((c: any) => c.type === creditType);
+  return custom?.balance ?? 0;
+}
+
+function deductCreditsForType(
+  leaveCredits: any,
+  creditType: string,
+  numberOfDays: number
+): void {
+  if (creditType === "vacation") {
+    leaveCredits.vacation.used += numberOfDays;
+    leaveCredits.vacation.balance -= numberOfDays;
+    return;
+  }
+  if (creditType === "sick") {
+    leaveCredits.sick.used += numberOfDays;
+    leaveCredits.sick.balance -= numberOfDays;
+    return;
+  }
+  if (!leaveCredits.custom) leaveCredits.custom = [];
+  const idx = leaveCredits.custom.findIndex((c: any) => c.type === creditType);
+  if (idx >= 0) {
+    leaveCredits.custom[idx].used += numberOfDays;
+    leaveCredits.custom[idx].balance -= numberOfDays;
+  }
+}
+
 // Get leave requests
 export const getLeaveRequests = query({
   args: {
@@ -192,18 +234,31 @@ export const createLeaveRequest = mutation({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
+    if (args.endDate < args.startDate) {
+      throw new Error("End date must be on or after start date");
+    }
+
     // Calculate number of working days
     const numberOfDays = calculateWorkingDays(args.startDate, args.endDate);
+    if (numberOfDays <= 0) {
+      throw new Error("Leave period must include at least one working day");
+    }
 
-    // Check leave balance
-    if (args.leaveType === "vacation") {
-      if (employee.leaveCredits.vacation.balance < numberOfDays) {
-        throw new Error("Insufficient vacation leave credits");
-      }
-    } else if (args.leaveType === "sick") {
-      if (employee.leaveCredits.sick.balance < numberOfDays) {
-        throw new Error("Insufficient sick leave credits");
-      }
+    const creditType = getCreditType(args.leaveType, args.customLeaveType);
+    if (args.leaveType === "custom" && !args.customLeaveType) {
+      throw new Error("Custom leave type name is required");
+    }
+    const balance = getBalanceForType(employee.leaveCredits, creditType);
+    if (balance < numberOfDays) {
+      const typeLabel =
+        creditType === "vacation"
+          ? "vacation"
+          : creditType === "sick"
+            ? "sick"
+            : creditType || "this leave type";
+      throw new Error(
+        `Insufficient ${typeLabel} leave credits. Available: ${balance} days, Requested: ${numberOfDays} days`
+      );
     }
 
     const now = Date.now();
@@ -247,27 +302,26 @@ export const approveLeaveRequest = mutation({
     const employee = await ctx.db.get(request.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    const leaveCredits = { ...employee.leaveCredits };
+    const leaveCredits = JSON.parse(JSON.stringify(employee.leaveCredits));
+    const creditType = getCreditType(
+      request.leaveType,
+      request.customLeaveType
+    );
+    const balance = getBalanceForType(leaveCredits, creditType);
 
-    // Validate sufficient credits before approving
-    if (request.leaveType === "vacation") {
-      if (leaveCredits.vacation.balance < request.numberOfDays) {
-        throw new Error(
-          `Insufficient vacation leave credits. Available: ${leaveCredits.vacation.balance} days, Requested: ${request.numberOfDays} days`
-        );
-      }
-      leaveCredits.vacation.used += request.numberOfDays;
-      leaveCredits.vacation.balance -= request.numberOfDays;
-    } else if (request.leaveType === "sick") {
-      if (leaveCredits.sick.balance < request.numberOfDays) {
-        throw new Error(
-          `Insufficient sick leave credits. Available: ${leaveCredits.sick.balance} days, Requested: ${request.numberOfDays} days`
-        );
-      }
-      leaveCredits.sick.used += request.numberOfDays;
-      leaveCredits.sick.balance -= request.numberOfDays;
+    if (balance < request.numberOfDays) {
+      const typeLabel =
+        creditType === "vacation"
+          ? "vacation"
+          : creditType === "sick"
+            ? "sick"
+            : creditType || "this leave type";
+      throw new Error(
+        `Insufficient ${typeLabel} leave credits. Available: ${balance} days, Requested: ${request.numberOfDays} days`
+      );
     }
 
+    deductCreditsForType(leaveCredits, creditType, request.numberOfDays);
     await ctx.db.patch(request.employeeId, { leaveCredits });
 
     // Update leave request

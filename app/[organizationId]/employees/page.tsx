@@ -133,6 +133,7 @@ export default function EmployeesPage() {
   const [phoneFilter, setPhoneFilter] = useState("");
   const [createdDateFilter, setCreatedDateFilter] =
     useState<CreatedDateFilter | null>(null);
+  const [initializedFromUrl, setInitializedFromUrl] = useState(false);
 
   const settings = useQuery(
     (api as any).settings.getSettings,
@@ -169,6 +170,64 @@ export default function EmployeesPage() {
         }
       : "skip",
   );
+
+  // Initialize filters from URL query params on first mount
+  useEffect(() => {
+    if (typeof window === "undefined" || initializedFromUrl) return;
+
+    const params = new URLSearchParams(window.location.search);
+
+    const statusParam = params.get("status");
+    if (
+      statusParam === "active" ||
+      statusParam === "inactive" ||
+      statusParam === "resigned" ||
+      statusParam === "terminated"
+    ) {
+      setStatusFilter(statusParam);
+    }
+
+    const departmentParam = params.get("department");
+    if (departmentParam) {
+      setDepartmentFilter(departmentParam);
+    }
+
+    const nameParam = params.get("q");
+    if (nameParam) {
+      setNameFilter(nameParam);
+    }
+
+    const positionParam = params.get("position");
+    if (positionParam) {
+      setPositionFilter(positionParam);
+    }
+
+    const phoneParam = params.get("phone");
+    if (phoneParam) {
+      setPhoneFilter(phoneParam);
+    }
+
+    const createdValueParam = params.get("createdValue");
+    const createdUnitParam = params.get("createdUnit");
+    if (
+      createdValueParam &&
+      createdUnitParam &&
+      (createdUnitParam === "days" ||
+        createdUnitParam === "weeks" ||
+        createdUnitParam === "months")
+    ) {
+      const parsedValue = parseInt(createdValueParam, 10);
+      if (!Number.isNaN(parsedValue) && parsedValue > 0) {
+        setCreatedDateFilter({
+          mode: "inLast",
+          value: parsedValue,
+          unit: createdUnitParam,
+        });
+      }
+    }
+
+    setInitializedFromUrl(true);
+  }, [initializedFromUrl]);
 
   // Check which employees have user accounts
   const employeesUserAccounts: Record<string, boolean> | undefined = useQuery(
@@ -322,6 +381,77 @@ export default function EmployeesPage() {
     positionFilter,
     phoneFilter,
     createdDateFilter,
+  ]);
+
+  // Sync active filters to URL query params so they persist on refresh
+  useEffect(() => {
+    if (typeof window === "undefined" || !initializedFromUrl) return;
+
+    const params = new URLSearchParams(window.location.search);
+
+    // Status (default: active)
+    if (statusFilter && statusFilter !== "active") {
+      params.set("status", statusFilter);
+    } else {
+      params.delete("status");
+    }
+
+    // Department (default: all)
+    if (departmentFilter && departmentFilter !== "all") {
+      params.set("department", departmentFilter);
+    } else {
+      params.delete("department");
+    }
+
+    // Name search
+    if (nameFilter.trim()) {
+      params.set("q", nameFilter.trim());
+    } else {
+      params.delete("q");
+    }
+
+    // Position
+    if (positionFilter.trim()) {
+      params.set("position", positionFilter.trim());
+    } else {
+      params.delete("position");
+    }
+
+    // Phone
+    if (phoneFilter.trim()) {
+      params.set("phone", phoneFilter.trim());
+    } else {
+      params.delete("phone");
+    }
+
+    // Created date (in last X unit)
+    if (createdDateFilter) {
+      params.set("createdMode", createdDateFilter.mode);
+      params.set("createdValue", createdDateFilter.value.toString());
+      params.set("createdUnit", createdDateFilter.unit);
+    } else {
+      params.delete("createdMode");
+      params.delete("createdValue");
+      params.delete("createdUnit");
+    }
+
+    const newSearch = params.toString();
+    const basePath = window.location.pathname;
+    const newUrl = newSearch ? `${basePath}?${newSearch}` : basePath;
+    const currentUrl = basePath + window.location.search;
+
+    if (newUrl !== currentUrl) {
+      router.replace(newUrl, { scroll: false });
+    }
+  }, [
+    statusFilter,
+    departmentFilter,
+    nameFilter,
+    positionFilter,
+    phoneFilter,
+    createdDateFilter,
+    initializedFromUrl,
+    router,
   ]);
 
   useEffect(() => {
@@ -1019,7 +1149,7 @@ export default function EmployeesPage() {
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="specialHolidayRate">
-                            Special Holiday Rate (%)
+                            Special non-working holiday rate (%)
                           </Label>
                           <Input
                             id="specialHolidayRate"
@@ -1130,7 +1260,7 @@ export default function EmployeesPage() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label htmlFor="specialHolidayOtRate">
-                            Special Holiday OT Rate (%)
+                            Special non-working holiday OT rate (%)
                           </Label>
                           <Input
                             id="specialHolidayOtRate"
@@ -1425,34 +1555,34 @@ export default function EmployeesPage() {
 
         <Card>
           <CardHeader className="shrink-0 p-4 sm:p-4 md:p-5 pb-1.5">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-              <EmployeesFilters
-                departmentFilter={departmentFilter}
-                setDepartmentFilter={setDepartmentFilter}
-                statusFilter={statusFilter}
-                setStatusFilter={setStatusFilter}
-                settingsForDepartments={settings}
-                nameFilter={nameFilter}
-                setNameFilter={setNameFilter}
-                positionFilter={positionFilter}
-                setPositionFilter={setPositionFilter}
-                phoneFilter={phoneFilter}
-                setPhoneFilter={setPhoneFilter}
-                createdDateFilter={createdDateFilter}
-                setCreatedDateFilter={setCreatedDateFilter}
-              />
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 text-xs px-3 self-start"
-                  >
-                    <Columns2 className="h-3.5 w-3.5 mr-1.5" />
-                    Edit columns
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-64 p-3" align="end" sideOffset={8}>
+            <EmployeesFilters
+              departmentFilter={departmentFilter}
+              setDepartmentFilter={setDepartmentFilter}
+              statusFilter={statusFilter}
+              setStatusFilter={setStatusFilter}
+              settingsForDepartments={settings}
+              nameFilter={nameFilter}
+              setNameFilter={setNameFilter}
+              positionFilter={positionFilter}
+              setPositionFilter={setPositionFilter}
+              phoneFilter={phoneFilter}
+              setPhoneFilter={setPhoneFilter}
+              createdDateFilter={createdDateFilter}
+              setCreatedDateFilter={setCreatedDateFilter}
+              stackedLayout
+              extraAction={
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs px-3"
+                    >
+                      <Columns2 className="h-3.5 w-3.5 mr-1.5" />
+                      Edit columns
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64 p-3" align="end" sideOffset={8}>
                   <h4 className="text-xs font-semibold text-[rgb(64,64,64)] mb-2">
                     Columns
                   </h4>
@@ -1492,7 +1622,8 @@ export default function EmployeesPage() {
                   </div>
                 </PopoverContent>
               </Popover>
-            </div>
+              }
+            />
           </CardHeader>
           <CardContent className="relative p-3 sm:p-4 pt-0 sm:pt-0">
             {isCreatingEmployee && (

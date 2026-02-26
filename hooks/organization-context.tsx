@@ -14,6 +14,7 @@ type Organization = {
   joinedAt: number;
   firstPayDate?: number;
   secondPayDate?: number;
+  salaryPaymentFrequency?: "monthly" | "bimonthly";
 };
 
 type OrganizationContextType = {

@@ -1049,7 +1049,7 @@ export function EmployeeDetailModal({
                       </div>
                       <div className="space-y-0.5">
                         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                          Special Holiday Rate
+                          Special non-working holiday rate
                         </p>
                         <p className="text-sm">
                           {(
@@ -1109,7 +1109,7 @@ export function EmployeeDetailModal({
                       </div>
                       <div className="space-y-0.5">
                         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                          Special Holiday OT Rate
+                          Special non-working holiday OT rate
                         </p>
                         <p className="text-sm">
                           {(
@@ -1206,7 +1206,7 @@ export function EmployeeDetailModal({
                         htmlFor="edit-specialHolidayRate"
                         className="text-sm"
                       >
-                        Special Holiday Rate (%)
+                        Special non-working holiday rate (%)
                       </Label>
                       <Input
                         id="edit-specialHolidayRate"
@@ -1312,7 +1312,7 @@ export function EmployeeDetailModal({
                         htmlFor="edit-specialHolidayOtRate"
                         className="text-sm"
                       >
-                        Special Holiday OT Rate (%)
+                        Special non-working holiday OT rate (%)
                       </Label>
                       <Input
                         id="edit-specialHolidayOtRate"

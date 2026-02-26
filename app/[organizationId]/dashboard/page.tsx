@@ -13,7 +13,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  Users,
   Calendar,
   DollarSign,
   UserPlus,
@@ -51,12 +50,17 @@ function AccountingDashboard({
 }) {
   const costItems = useQuery(
     (api as any).accounting.getCostItems,
-    currentOrganizationId ? { organizationId: currentOrganizationId as any } : "skip"
+    currentOrganizationId
+      ? { organizationId: currentOrganizationId as any }
+      : "skip",
   );
   const items = costItems ?? [];
   const totalPending = items
     .filter((i: any) => i.status !== "paid")
-    .reduce((sum: number, i: any) => sum + (i.amount ?? 0) - (i.amountPaid ?? 0), 0);
+    .reduce(
+      (sum: number, i: any) => sum + (i.amount ?? 0) - (i.amountPaid ?? 0),
+      0,
+    );
 
   return (
     <div className="p-4 sm:p-6 lg:p-8">
@@ -74,7 +78,10 @@ function AccountingDashboard({
           secondary="View and manage payroll"
           exploreHref={getOrganizationPath(currentOrganizationId, "/payroll")}
           exploreLabel="Explore"
-          moreDetailsHref={getOrganizationPath(currentOrganizationId, "/payroll")}
+          moreDetailsHref={getOrganizationPath(
+            currentOrganizationId,
+            "/payroll",
+          )}
           moreDetailsLabel="More details"
         />
         <DashboardMetricCard
@@ -85,9 +92,15 @@ function AccountingDashboard({
               ? `₱${totalPending.toLocaleString()} pending`
               : "Manage expenses"
           }
-          exploreHref={getOrganizationPath(currentOrganizationId, "/accounting")}
+          exploreHref={getOrganizationPath(
+            currentOrganizationId,
+            "/accounting",
+          )}
           exploreLabel="Explore"
-          moreDetailsHref={getOrganizationPath(currentOrganizationId, "/accounting")}
+          moreDetailsHref={getOrganizationPath(
+            currentOrganizationId,
+            "/accounting",
+          )}
           moreDetailsLabel="More details"
         />
       </div>
@@ -111,7 +124,10 @@ function AccountingDashboard({
                 {recentPayrollRuns.map((run: any) => (
                   <Link
                     key={run._id}
-                    href={getOrganizationPath(currentOrganizationId, "/payroll")}
+                    href={getOrganizationPath(
+                      currentOrganizationId,
+                      "/payroll",
+                    )}
                     className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -172,19 +188,28 @@ function AccountingDashboard({
                 {recentAnnouncements.slice(0, 3).map((announcement: any) => (
                   <Link
                     key={announcement._id}
-                    href={getOrganizationPath(currentOrganizationId, "/announcements")}
+                    href={getOrganizationPath(
+                      currentOrganizationId,
+                      "/announcements",
+                    )}
                     className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
                   >
                     <p className="truncate text-sm font-medium text-[rgb(64,64,64)]">
                       {announcement.title}
                     </p>
                     <p className="mt-1 text-xs text-[rgb(133,133,133)]">
-                      {format(new Date(announcement.publishedDate), "MMM d, yyyy")}
+                      {format(
+                        new Date(announcement.publishedDate),
+                        "MMM d, yyyy",
+                      )}
                     </p>
                   </Link>
                 ))}
                 <Link
-                  href={getOrganizationPath(currentOrganizationId, "/announcements")}
+                  href={getOrganizationPath(
+                    currentOrganizationId,
+                    "/announcements",
+                  )}
                   className="mt-2 flex items-center gap-1 text-sm font-medium text-brand-purple hover:text-brand-purple-hover"
                 >
                   View all <ArrowRight className="h-3 w-3" />
@@ -221,20 +246,25 @@ export default function DashboardPage() {
       user.role &&
       allowedRolesForEmployees.includes(user.role)
       ? { organizationId: currentOrganizationId }
-      : "skip"
+      : "skip",
   );
 
   const leaveRequests = useQuery(
     (api as any).leave.getLeaveRequests,
     currentOrganizationId
       ? { organizationId: currentOrganizationId, status: "pending" }
-      : "skip"
+      : "skip",
   );
 
   // Get recent announcements
   const announcements = useQuery(
     (api as any).announcements.getAnnouncements,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
+
+  const evaluations = useQuery(
+    (api as any).evaluations.getEvaluations,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   // Only query payroll runs if user has HR/admin/accounting role
@@ -246,14 +276,14 @@ export default function DashboardPage() {
       user.role &&
       allowedRolesForPayroll.includes(user.role)
       ? { organizationId: currentOrganizationId }
-      : "skip"
+      : "skip",
   );
 
   // Redirect employees to announcements (accounting stays on dashboard with own view)
   useEffect(() => {
     if (user && currentOrganizationId && user.role === "employee") {
       router.replace(
-        getOrganizationPath(currentOrganizationId, "/announcements")
+        getOrganizationPath(currentOrganizationId, "/announcements"),
       );
     }
   }, [user, currentOrganizationId, router]);
@@ -273,6 +303,45 @@ export default function DashboardPage() {
     if (!leaveRequests) return [];
     return leaveRequests.slice(0, 5);
   }, [leaveRequests]);
+
+  type UpcomingEvalItem = {
+    employeeId: string;
+    employeeName: string;
+    date: number;
+    label: string;
+  };
+
+  const upcomingEvaluations = useMemo((): UpcomingEvalItem[] => {
+    if (!evaluations || !employees) return [];
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const monthEnd = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
+      0,
+    ).getTime();
+    const today = now.getTime();
+
+    return (evaluations || [])
+      .filter(
+        (e: any) =>
+          e.evaluationDate > today &&
+          e.evaluationDate >= monthStart &&
+          e.evaluationDate <= monthEnd,
+      )
+      .map((e: any) => {
+        const emp = employees?.find((em: any) => em._id === e.employeeId);
+        return {
+          employeeId: e.employeeId,
+          employeeName: emp
+            ? `${emp.personalInfo.firstName} ${emp.personalInfo.lastName}`
+            : "Unknown",
+          date: e.evaluationDate,
+          label: e.label,
+        };
+      })
+      .sort((a: UpcomingEvalItem, b: UpcomingEvalItem) => a.date - b.date);
+  }, [evaluations, employees]);
 
   const [dateRange, setDateRange] = useState<DateRangeOption>("7");
 
@@ -304,25 +373,6 @@ export default function DashboardPage() {
     );
   }
 
-  const stats = [
-    {
-      title: "Total Employees",
-      value: employees?.length || 0,
-      icon: Users,
-      color: "text-blue-600",
-      bgColor: "bg-blue-50",
-      link: getOrganizationPath(currentOrganizationId, "/employees"),
-    },
-    {
-      title: "Pending Leave Requests",
-      value: leaveRequests?.length || 0,
-      icon: Calendar,
-      color: "text-orange-600",
-      bgColor: "bg-orange-50",
-      link: getOrganizationPath(currentOrganizationId, "/leave"),
-    },
-  ];
-
   return (
     <MainLayout>
       <div className="p-4 sm:p-6 lg:p-8">
@@ -333,34 +383,106 @@ export default function DashboardPage() {
           compareLabel="Previous period"
           actions={
             <>
-              <Link href={getOrganizationPath(currentOrganizationId, "/employees")}>
-                <Button size="sm" className="bg-brand-purple hover:bg-brand-purple-hover text-white">
+              <Link
+                href={getOrganizationPath(currentOrganizationId, "/employees")}
+              >
+                <Button
+                  size="sm"
+                  className="bg-brand-purple hover:bg-brand-purple-hover text-white"
+                >
                   + Add
                 </Button>
               </Link>
-              <Button size="sm" variant="outline" className="border-[rgb(230,230,230)]">
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-[rgb(230,230,230)]"
+              >
                 Edit
               </Button>
             </>
           }
         />
 
+        {upcomingEvaluations.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center gap-2 sm:gap-3 rounded-xl border border-[rgb(230,230,230)] bg-[rgb(250,250,250)] px-4 py-3 shadow-sm">
+            <div className="flex items-center gap-2 shrink-0">
+              <Calendar className="h-4 w-4 text-[rgb(120,120,120)] shrink-0" />
+              <span className="font-semibold text-sm text-[rgb(64,64,64)]">
+                Upcoming evaluation
+              </span>
+            </div>
+            <p className="text-sm text-[rgb(64,64,64)] min-w-0 flex-1">
+              {upcomingEvaluations.length === 1
+                ? `${upcomingEvaluations[0].employeeName} – ${format(
+                    new Date(upcomingEvaluations[0].date),
+                    "MMM d, yyyy",
+                  )} (${upcomingEvaluations[0].label})`
+                : upcomingEvaluations.length <= 3
+                  ? upcomingEvaluations
+                      .map(
+                        (u) =>
+                          `${u.employeeName} (${format(
+                            new Date(u.date),
+                            "MMM d",
+                          )})`,
+                      )
+                      .join(", ")
+                  : `${upcomingEvaluations.length} evaluations due this month: ${upcomingEvaluations
+                      .slice(0, 2)
+                      .map(
+                        (u) =>
+                          `${u.employeeName} (${format(
+                            new Date(u.date),
+                            "MMM d",
+                          )})`,
+                      )
+                      .join(", ")} and ${upcomingEvaluations.length - 2} more`}
+            </p>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                className="text-sm font-medium text-[#695eff] hover:text-[#5547e8]"
+                onClick={() => {
+                  const first = upcomingEvaluations[0];
+                  if (!first) {
+                    router.push(
+                      getOrganizationPath(
+                        currentOrganizationId,
+                        "/evaluations",
+                      ),
+                    );
+                    return;
+                  }
+                  const base = getOrganizationPath(
+                    currentOrganizationId,
+                    "/evaluations",
+                  );
+                  const url = `${base}?employeeId=${encodeURIComponent(
+                    first.employeeId,
+                  )}&label=${encodeURIComponent(
+                    first.label,
+                  )}&evaluationDate=${first.date}`;
+                  router.push(url);
+                }}
+              >
+                View
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="mt-6 grid gap-4 sm:gap-6 md:grid-cols-2">
-          <DashboardMetricCard
-            title="Total Employees"
-            value={employees?.length ?? 0}
-            secondary="0 previous period"
-            asLink={getOrganizationPath(currentOrganizationId, "/employees")}
-            exploreHref={getOrganizationPath(currentOrganizationId, "/employees")}
-            moreDetailsHref={getOrganizationPath(currentOrganizationId, "/employees")}
-          />
           <DashboardMetricCard
             title="Pending Leave Requests"
             value={leaveRequests?.length ?? 0}
             secondary="0 previous period"
             asLink={getOrganizationPath(currentOrganizationId, "/leave")}
             exploreHref={getOrganizationPath(currentOrganizationId, "/leave")}
-            moreDetailsHref={getOrganizationPath(currentOrganizationId, "/leave")}
+            moreDetailsHref={getOrganizationPath(
+              currentOrganizationId,
+              "/leave",
+            )}
           />
         </div>
 
@@ -386,7 +508,7 @@ export default function DashboardPage() {
                       key={announcement._id}
                       href={getOrganizationPath(
                         currentOrganizationId,
-                        "/announcements"
+                        "/announcements",
                       )}
                       className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
                     >
@@ -398,12 +520,15 @@ export default function DashboardPage() {
                           <p className="mt-1 text-xs text-[rgb(133,133,133)]">
                             {format(
                               new Date(announcement.publishedDate),
-                              "MMM d, yyyy"
+                              "MMM d, yyyy",
                             )}
                           </p>
                         </div>
                         {announcement.priority === "urgent" && (
-                          <Badge variant="destructive" className="text-xs shrink-0">
+                          <Badge
+                            variant="destructive"
+                            className="text-xs shrink-0"
+                          >
                             Urgent
                           </Badge>
                         )}
@@ -418,7 +543,7 @@ export default function DashboardPage() {
                   <Link
                     href={getOrganizationPath(
                       currentOrganizationId,
-                      "/announcements"
+                      "/announcements",
                     )}
                     className="mt-2 flex items-center gap-1 text-sm font-medium text-brand-purple hover:text-brand-purple-hover"
                   >
@@ -451,14 +576,14 @@ export default function DashboardPage() {
                 <div className="space-y-3">
                   {recentLeaveRequests.map((request: any) => {
                     const employee = employees?.find(
-                      (emp: any) => emp._id === request.employeeId
+                      (emp: any) => emp._id === request.employeeId,
                     );
                     return (
                       <Link
                         key={request._id}
                         href={getOrganizationPath(
                           currentOrganizationId,
-                          "/leave"
+                          "/leave",
                         )}
                         className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
                       >
@@ -517,7 +642,7 @@ export default function DashboardPage() {
                       key={run._id}
                       href={getOrganizationPath(
                         currentOrganizationId,
-                        "/payroll"
+                        "/payroll",
                       )}
                       className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
                     >
@@ -549,7 +674,7 @@ export default function DashboardPage() {
                   <Link
                     href={getOrganizationPath(
                       currentOrganizationId,
-                      "/payroll"
+                      "/payroll",
                     )}
                     className="mt-2 flex items-center gap-1 text-sm font-medium text-brand-purple hover:text-brand-purple-hover"
                   >
@@ -612,7 +737,7 @@ export default function DashboardPage() {
               <Link
                 href={getOrganizationPath(
                   currentOrganizationId,
-                  "/announcements"
+                  "/announcements",
                 )}
               >
                 <Button

@@ -1,13 +1,17 @@
 /**
  * SSS (Social Security System) Philippines - Contribution calculator
- * Based on: SCHEDULE OF SSS CONTRIBUTIONS FOR BUSINESS EMPLOYERS AND EMPLOYEES
- * Effective January 2025. Uses monthly basic pay (excluding allowances).
+ *
+ * Uses the official Schedule of SSS Contributions (Range of Compensation →
+ * Monthly Salary Credit → EE/ER amounts). Input: employee's monthly basic salary
+ * (excluding allowances). Used for:
+ * - Payslip: employee deduction = getSSSContribution(basicPay).employeeShare (split per cutoff if bimonthly)
+ * - Accounting: employer contribution = getSSSContribution(basicPay).employerShare when creating records
  */
 
 export type SSSContribution = {
   /** Employee share (monthly) - amount to deduct from payslip */
   employeeShare: number;
-  /** Employer share (monthly) - employer's contribution */
+  /** Employer share (monthly) - use for accounting employer contribution records */
   employerShare: number;
   /** Total monthly contribution (employee + employer) for accounting */
   total: number;
@@ -24,68 +28,72 @@ type SSSBracket = {
   monthlySalaryCredit: number;
 };
 
-// Schedule of SSS Contributions - Effective January 2025 (monthly amounts in PHP)
-const SSS_TABLE_2025: SSSBracket[] = [
-  { min: 0, max: 5249.99, employeeShare: 250, employerShare: 510, total: 760, monthlySalaryCredit: 5000 },
-  { min: 5250, max: 5749.99, employeeShare: 275, employerShare: 560, total: 835, monthlySalaryCredit: 5500 },
-  { min: 5750, max: 6249.99, employeeShare: 300, employerShare: 610, total: 910, monthlySalaryCredit: 6000 },
-  { min: 6250, max: 6749.99, employeeShare: 325, employerShare: 660, total: 985, monthlySalaryCredit: 6500 },
-  { min: 6750, max: 7249.99, employeeShare: 350, employerShare: 710, total: 1060, monthlySalaryCredit: 7000 },
-  { min: 7250, max: 7749.99, employeeShare: 375, employerShare: 760, total: 1135, monthlySalaryCredit: 7500 },
-  { min: 7750, max: 8249.99, employeeShare: 400, employerShare: 810, total: 1210, monthlySalaryCredit: 8000 },
-  { min: 8250, max: 8749.99, employeeShare: 425, employerShare: 860, total: 1285, monthlySalaryCredit: 8500 },
-  { min: 8750, max: 9249.99, employeeShare: 450, employerShare: 910, total: 1360, monthlySalaryCredit: 9000 },
-  { min: 9250, max: 9749.99, employeeShare: 475, employerShare: 960, total: 1435, monthlySalaryCredit: 9500 },
-  { min: 9750, max: 10249.99, employeeShare: 500, employerShare: 1010, total: 1510, monthlySalaryCredit: 10000 },
-  { min: 10250, max: 10749.99, employeeShare: 525, employerShare: 1060, total: 1585, monthlySalaryCredit: 10500 },
-  { min: 10750, max: 11249.99, employeeShare: 550, employerShare: 1110, total: 1660, monthlySalaryCredit: 11000 },
-  { min: 11250, max: 11749.99, employeeShare: 575, employerShare: 1160, total: 1735, monthlySalaryCredit: 11500 },
-  { min: 11750, max: 12249.99, employeeShare: 600, employerShare: 1210, total: 1810, monthlySalaryCredit: 12000 },
-  { min: 12250, max: 12749.99, employeeShare: 625, employerShare: 1260, total: 1885, monthlySalaryCredit: 12500 },
-  { min: 12750, max: 13249.99, employeeShare: 650, employerShare: 1310, total: 1960, monthlySalaryCredit: 13000 },
-  { min: 13250, max: 13749.99, employeeShare: 675, employerShare: 1360, total: 2035, monthlySalaryCredit: 13500 },
-  { min: 13750, max: 14249.99, employeeShare: 700, employerShare: 1410, total: 2110, monthlySalaryCredit: 14000 },
-  { min: 14250, max: 14749.99, employeeShare: 725, employerShare: 1460, total: 2185, monthlySalaryCredit: 14500 },
-  { min: 14750, max: 15249.99, employeeShare: 750, employerShare: 1530, total: 2280, monthlySalaryCredit: 15000 },
-  { min: 15250, max: 15749.99, employeeShare: 775, employerShare: 1580, total: 2355, monthlySalaryCredit: 15500 },
-  { min: 15750, max: 16249.99, employeeShare: 800, employerShare: 1630, total: 2430, monthlySalaryCredit: 16000 },
-  { min: 16250, max: 16749.99, employeeShare: 825, employerShare: 1680, total: 2505, monthlySalaryCredit: 16500 },
-  { min: 16750, max: 17249.99, employeeShare: 850, employerShare: 1730, total: 2580, monthlySalaryCredit: 17000 },
-  { min: 17250, max: 17749.99, employeeShare: 875, employerShare: 1780, total: 2655, monthlySalaryCredit: 17500 },
-  { min: 17750, max: 18249.99, employeeShare: 900, employerShare: 1830, total: 2730, monthlySalaryCredit: 18000 },
-  { min: 18250, max: 18749.99, employeeShare: 925, employerShare: 1880, total: 2805, monthlySalaryCredit: 18500 },
-  { min: 18750, max: 19249.99, employeeShare: 950, employerShare: 1930, total: 2880, monthlySalaryCredit: 19000 },
-  { min: 19250, max: 19749.99, employeeShare: 975, employerShare: 1980, total: 2955, monthlySalaryCredit: 19500 },
-  { min: 19750, max: 20249.99, employeeShare: 1000, employerShare: 2030, total: 3030, monthlySalaryCredit: 20000 },
-  { min: 20250, max: 20749.99, employeeShare: 1025, employerShare: 2080, total: 3105, monthlySalaryCredit: 20500 },
-  { min: 20750, max: 21249.99, employeeShare: 1050, employerShare: 2130, total: 3180, monthlySalaryCredit: 21000 },
-  { min: 21250, max: 21749.99, employeeShare: 1075, employerShare: 2180, total: 3255, monthlySalaryCredit: 21500 },
-  { min: 21750, max: 22249.99, employeeShare: 1100, employerShare: 2230, total: 3330, monthlySalaryCredit: 22000 },
-  { min: 22250, max: 22749.99, employeeShare: 1125, employerShare: 2280, total: 3405, monthlySalaryCredit: 22500 },
-  { min: 22750, max: 23249.99, employeeShare: 1150, employerShare: 2330, total: 3480, monthlySalaryCredit: 23000 },
-  { min: 23250, max: 23749.99, employeeShare: 1175, employerShare: 2380, total: 3555, monthlySalaryCredit: 23500 },
-  { min: 23750, max: 24249.99, employeeShare: 1200, employerShare: 2430, total: 3630, monthlySalaryCredit: 24000 },
-  { min: 24250, max: 24749.99, employeeShare: 1225, employerShare: 2480, total: 3705, monthlySalaryCredit: 24500 },
-  { min: 24750, max: 25249.99, employeeShare: 1250, employerShare: 2530, total: 3780, monthlySalaryCredit: 25000 },
-  { min: 25250, max: 25749.99, employeeShare: 1275, employerShare: 2580, total: 3855, monthlySalaryCredit: 25500 },
-  { min: 25750, max: 26249.99, employeeShare: 1300, employerShare: 2630, total: 3930, monthlySalaryCredit: 26000 },
-  { min: 26250, max: 26749.99, employeeShare: 1325, employerShare: 2680, total: 4005, monthlySalaryCredit: 26500 },
-  { min: 26750, max: 27249.99, employeeShare: 1350, employerShare: 2730, total: 4080, monthlySalaryCredit: 27000 },
-  { min: 27250, max: 27749.99, employeeShare: 1375, employerShare: 2780, total: 4155, monthlySalaryCredit: 27500 },
-  { min: 27750, max: 28249.99, employeeShare: 1400, employerShare: 2830, total: 4230, monthlySalaryCredit: 28000 },
-  { min: 28250, max: 28749.99, employeeShare: 1425, employerShare: 2880, total: 4305, monthlySalaryCredit: 28500 },
-  { min: 28750, max: 29249.99, employeeShare: 1450, employerShare: 2930, total: 4380, monthlySalaryCredit: 29000 },
-  { min: 29250, max: 29749.99, employeeShare: 1475, employerShare: 2980, total: 4455, monthlySalaryCredit: 29500 },
-  { min: 29750, max: null, employeeShare: 1500, employerShare: 3030, total: 4530, monthlySalaryCredit: 30000 },
+// Official SSS schedule: Range of Compensation → MSC → EE total, ER total (incl. EC)
+// Covers from Below 4,250 through 29,750-Over (ref: official contribution table)
+const SSS_TABLE: SSSBracket[] = [
+  { min: 0, max: 4249.99, employeeShare: 180, employerShare: 410, total: 590, monthlySalaryCredit: 4000 },
+  { min: 4250, max: 4749.99, employeeShare: 202.5, employerShare: 452.5, total: 655, monthlySalaryCredit: 4500 },
+  { min: 4750, max: 5249.99, employeeShare: 225, employerShare: 495, total: 720, monthlySalaryCredit: 5000 },
+  { min: 5250, max: 5749.99, employeeShare: 247.5, employerShare: 537.5, total: 785, monthlySalaryCredit: 5500 },
+  { min: 5750, max: 6249.99, employeeShare: 270, employerShare: 580, total: 850, monthlySalaryCredit: 6000 },
+  { min: 6250, max: 6749.99, employeeShare: 292.5, employerShare: 622.5, total: 915, monthlySalaryCredit: 6500 },
+  { min: 6750, max: 7249.99, employeeShare: 315, employerShare: 665, total: 980, monthlySalaryCredit: 7000 },
+  { min: 7250, max: 7749.99, employeeShare: 337.5, employerShare: 707.5, total: 1045, monthlySalaryCredit: 7500 },
+  { min: 7750, max: 8249.99, employeeShare: 360, employerShare: 750, total: 1110, monthlySalaryCredit: 8000 },
+  { min: 8250, max: 8749.99, employeeShare: 382.5, employerShare: 792.5, total: 1175, monthlySalaryCredit: 8500 },
+  { min: 8750, max: 9249.99, employeeShare: 405, employerShare: 835, total: 1240, monthlySalaryCredit: 9000 },
+  { min: 9250, max: 9749.99, employeeShare: 427.5, employerShare: 877.5, total: 1305, monthlySalaryCredit: 9500 },
+  { min: 9750, max: 10249.99, employeeShare: 450, employerShare: 920, total: 1370, monthlySalaryCredit: 10000 },
+  { min: 10250, max: 10749.99, employeeShare: 472.5, employerShare: 962.5, total: 1435, monthlySalaryCredit: 10500 },
+  { min: 10750, max: 11249.99, employeeShare: 495, employerShare: 1005, total: 1500, monthlySalaryCredit: 11000 },
+  { min: 11250, max: 11749.99, employeeShare: 517.5, employerShare: 1047.5, total: 1565, monthlySalaryCredit: 11500 },
+  { min: 11750, max: 12249.99, employeeShare: 540, employerShare: 1090, total: 1630, monthlySalaryCredit: 12000 },
+  { min: 12250, max: 12749.99, employeeShare: 562.5, employerShare: 1132.5, total: 1695, monthlySalaryCredit: 12500 },
+  { min: 12750, max: 13249.99, employeeShare: 585, employerShare: 1175, total: 1760, monthlySalaryCredit: 13000 },
+  { min: 13250, max: 13749.99, employeeShare: 607.5, employerShare: 1217.5, total: 1825, monthlySalaryCredit: 13500 },
+  { min: 13750, max: 14249.99, employeeShare: 630, employerShare: 1260, total: 1890, monthlySalaryCredit: 14000 },
+  { min: 14250, max: 14749.99, employeeShare: 652.5, employerShare: 1302.5, total: 1955, monthlySalaryCredit: 14500 },
+  { min: 14750, max: 15249.99, employeeShare: 675, employerShare: 1365, total: 2040, monthlySalaryCredit: 15000 },
+  { min: 15250, max: 15749.99, employeeShare: 697.5, employerShare: 1407.5, total: 2105, monthlySalaryCredit: 15500 },
+  { min: 15750, max: 16249.99, employeeShare: 720, employerShare: 1450, total: 2170, monthlySalaryCredit: 16000 },
+  { min: 16250, max: 16749.99, employeeShare: 742.5, employerShare: 1492.5, total: 2235, monthlySalaryCredit: 16500 },
+  { min: 16750, max: 17249.99, employeeShare: 765, employerShare: 1535, total: 2300, monthlySalaryCredit: 17000 },
+  { min: 17250, max: 17749.99, employeeShare: 787.5, employerShare: 1577.5, total: 2365, monthlySalaryCredit: 17500 },
+  { min: 17750, max: 18249.99, employeeShare: 810, employerShare: 1620, total: 2430, monthlySalaryCredit: 18000 },
+  { min: 18250, max: 18749.99, employeeShare: 832.5, employerShare: 1662.5, total: 2495, monthlySalaryCredit: 18500 },
+  { min: 18750, max: 19249.99, employeeShare: 855, employerShare: 1705, total: 2560, monthlySalaryCredit: 19000 },
+  { min: 19250, max: 19749.99, employeeShare: 877.5, employerShare: 1747.5, total: 2625, monthlySalaryCredit: 19500 },
+  { min: 19750, max: 20249.99, employeeShare: 900, employerShare: 1790, total: 2690, monthlySalaryCredit: 20000 },
+  { min: 20250, max: 20749.99, employeeShare: 922.5, employerShare: 1977.5, total: 2900, monthlySalaryCredit: 20500 },
+  { min: 20750, max: 21249.99, employeeShare: 945, employerShare: 2020, total: 2965, monthlySalaryCredit: 21000 },
+  { min: 21250, max: 21749.99, employeeShare: 967.5, employerShare: 2062.5, total: 3030, monthlySalaryCredit: 21500 },
+  { min: 21750, max: 22249.99, employeeShare: 990, employerShare: 2105, total: 3095, monthlySalaryCredit: 22000 },
+  { min: 22250, max: 22749.99, employeeShare: 1012.5, employerShare: 2147.5, total: 3160, monthlySalaryCredit: 22500 },
+  { min: 22750, max: 23249.99, employeeShare: 1035, employerShare: 2190, total: 3225, monthlySalaryCredit: 23000 },
+  { min: 23250, max: 23749.99, employeeShare: 1057.5, employerShare: 2232.5, total: 3290, monthlySalaryCredit: 23500 },
+  { min: 23750, max: 24249.99, employeeShare: 1080, employerShare: 2275, total: 3355, monthlySalaryCredit: 24000 },
+  { min: 24250, max: 24749.99, employeeShare: 1102.5, employerShare: 2317.5, total: 3420, monthlySalaryCredit: 24500 },
+  { min: 24750, max: 25249.99, employeeShare: 1125, employerShare: 2360, total: 3485, monthlySalaryCredit: 25000 },
+  { min: 25250, max: 25749.99, employeeShare: 1147.5, employerShare: 2402.5, total: 3550, monthlySalaryCredit: 25500 },
+  { min: 25750, max: 26249.99, employeeShare: 1170, employerShare: 2445, total: 3615, monthlySalaryCredit: 26000 },
+  { min: 26250, max: 26749.99, employeeShare: 1192.5, employerShare: 2487.5, total: 3680, monthlySalaryCredit: 26500 },
+  { min: 26750, max: 27249.99, employeeShare: 1215, employerShare: 2530, total: 3745, monthlySalaryCredit: 27000 },
+  { min: 27250, max: 27749.99, employeeShare: 1237.5, employerShare: 2572.5, total: 3810, monthlySalaryCredit: 27500 },
+  { min: 27750, max: 28249.99, employeeShare: 1260, employerShare: 2615, total: 3875, monthlySalaryCredit: 28000 },
+  { min: 28250, max: 28749.99, employeeShare: 1282.5, employerShare: 2657.5, total: 3940, monthlySalaryCredit: 28500 },
+  { min: 28750, max: 29249.99, employeeShare: 1305, employerShare: 2700, total: 4005, monthlySalaryCredit: 29000 },
+  { min: 29250, max: 29749.99, employeeShare: 1327.5, employerShare: 2742.5, total: 4070, monthlySalaryCredit: 29500 },
+  { min: 29750, max: null, employeeShare: 1350, employerShare: 2880, total: 4230, monthlySalaryCredit: 30000 },
 ];
 
 /**
- * Get SSS contribution for a given monthly basic pay (excluding allowances).
- * For semi-monthly payroll use employeeShare/2 per cutoff; employer share same.
+ * Get SSS contribution for a given monthly basic pay (salary only, excluding allowances).
+ * Finds the bracket by range of compensation and returns EE/ER amounts.
+ * For semi-monthly payroll use employeeShare/2 per cutoff; employer share split the same way.
  */
 export function getSSSContribution(monthlyBasicPay: number): SSSContribution {
   const pay = Math.max(0, monthlyBasicPay);
-  for (const bracket of SSS_TABLE_2025) {
+  for (const bracket of SSS_TABLE) {
     if (bracket.max === null) {
       if (pay >= bracket.min) {
         return {
@@ -106,7 +114,7 @@ export function getSSSContribution(monthlyBasicPay: number): SSSContribution {
       }
     }
   }
-  const last = SSS_TABLE_2025[SSS_TABLE_2025.length - 1];
+  const last = SSS_TABLE[SSS_TABLE.length - 1];
   return {
     employeeShare: last.employeeShare,
     employerShare: last.employerShare,

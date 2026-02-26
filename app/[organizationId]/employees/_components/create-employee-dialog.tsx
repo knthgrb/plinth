@@ -544,7 +544,7 @@ export function CreateEmployeeDialog({
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="ce-specialHolidayRate">
-                    Special Holiday Rate (%)
+                    Special non-working holiday rate (%)
                   </Label>
                   <Input
                     id="ce-specialHolidayRate"
@@ -663,7 +663,7 @@ export function CreateEmployeeDialog({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="ce-specialHolidayOtRate">
-                    Special Holiday OT Rate (%)
+                    Special non-working holiday OT rate (%)
                   </Label>
                   <Input
                     id="ce-specialHolidayOtRate"

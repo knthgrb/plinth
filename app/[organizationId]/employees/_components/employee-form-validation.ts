@@ -61,7 +61,7 @@ export const employeeFormSchema = z.object({
     .optional()
     .refine(
       (value) => !value || !Number.isNaN(Number(value)),
-      { message: "Special holiday rate must be a valid number" }
+      { message: "Special non-working holiday rate must be a valid number" }
     ),
   nightDiffPercent: z
     .string()
@@ -101,7 +101,7 @@ export const employeeFormSchema = z.object({
     .optional()
     .refine(
       (value) => !value || !Number.isNaN(Number(value)),
-      { message: "Special holiday OT rate must be a valid number" }
+      { message: "Special non-working holiday OT rate must be a valid number" }
     ),
   salaryType: z
     .string()

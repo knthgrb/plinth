@@ -41,7 +41,7 @@ import {
   Plus,
   ChevronDown,
 } from "lucide-react";
-import { format, startOfMonth } from "date-fns";
+import { format, startOfMonth, endOfMonth } from "date-fns";
 import { createEvaluation, updateEvaluation } from "@/actions/evaluations";
 import { updateEvaluationColumns } from "@/actions/settings";
 import { cn } from "@/utils/utils";
@@ -132,6 +132,7 @@ export function EvaluationsContent() {
   const [attachmentUrl, setAttachmentUrl] = useState("");
   const [notes, setNotes] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [initializedFromUrl, setInitializedFromUrl] = useState(false);
 
   type UpcomingItem = {
     employeeId: string;
@@ -140,9 +141,17 @@ export function EvaluationsContent() {
     label: string;
   };
   const upcomingEvaluations = useMemo((): UpcomingItem[] => {
-    const monthStart = startOfMonth(new Date()).getTime();
+    const now = new Date();
+    const monthStart = startOfMonth(now).getTime();
+    const monthEnd = endOfMonth(now).getTime();
+    const today = now.getTime();
     return (evaluations || [])
-      .filter((e: any) => e.evaluationDate >= monthStart)
+      .filter(
+        (e: any) =>
+          e.evaluationDate > today &&
+          e.evaluationDate >= monthStart &&
+          e.evaluationDate <= monthEnd,
+      )
       .map((e: any) => {
         const emp = employees?.find((em: any) => em._id === e.employeeId);
         return {
@@ -187,6 +196,51 @@ export function EvaluationsContent() {
     user?.role === "admin" ||
     user?.role === "hr" ||
     user?.role === "accounting";
+  useEffect(() => {
+    if (initializedFromUrl) return;
+    if (typeof window === "undefined") return;
+    if (!employees || !evaluations || evaluationColumns.length === 0) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const employeeId = params.get("employeeId");
+    const labelParam = params.get("label");
+    const evalDateParam = params.get("evaluationDate");
+
+    if (!employeeId || !labelParam) return;
+
+    const column = evaluationColumns.find((c) => c.label === labelParam);
+    if (!column) return;
+
+    const existing = evaluations.find(
+      (e: any) =>
+        e.employeeId === employeeId &&
+        e.label === labelParam &&
+        (!evalDateParam || String(e.evaluationDate) === evalDateParam),
+    );
+
+    handleCellClick(employeeId, column, existing);
+    setInitializedFromUrl(true);
+  }, [employees, evaluations, evaluationColumns, initializedFromUrl]);
+
+  // When a modal that was opened from URL params is closed, clean the URL
+  // so that refreshing the page does not auto-open the modal again.
+  useEffect(() => {
+    if (!initializedFromUrl) return;
+    if (isViewModalOpen || isEditDialogOpen) return;
+    if (typeof window === "undefined") return;
+
+    const params = new URLSearchParams(window.location.search);
+    params.delete("employeeId");
+    params.delete("label");
+    params.delete("evaluationDate");
+
+    const basePath = window.location.pathname;
+    const newSearch = params.toString();
+    const newUrl = newSearch ? `${basePath}?${newSearch}` : basePath;
+
+    window.history.replaceState(null, "", newUrl);
+    setInitializedFromUrl(false);
+  }, [isViewModalOpen, isEditDialogOpen, initializedFromUrl]);
 
   if (!currentOrganizationId) {
     return (
@@ -464,20 +518,9 @@ export function EvaluationsContent() {
   return (
     <MainLayout>
       <div className="p-3 sm:p-4 md:p-6 lg:p-8 space-y-4 sm:space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
-            Evaluations
-          </h1>
-          <Button
-            variant="outline"
-            onClick={() => setIsManageColumnsModalOpen(true)}
-            className="shrink-0 h-8 text-xs rounded-lg border-[#DDDDDD] hover:border-[rgb(120,120,120)] bg-white text-[rgb(64,64,64)] font-semibold [&_svg]:text-current"
-            style={{ color: "rgb(64,64,64)" }}
-          >
-            <Columns className="h-3.5 w-3.5 mr-1.5 shrink-0" />
-            Manage Columns
-          </Button>
-        </div>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+          Evaluations
+        </h1>
 
         {evaluations === undefined ? (
           <div
@@ -500,12 +543,12 @@ export function EvaluationsContent() {
           <div
             className="flex flex-wrap items-center gap-2 sm:gap-3 rounded-xl border border-[rgb(230,230,230)] bg-[rgb(250,250,250)] px-4 py-3 shadow-sm"
             role="region"
-            aria-label="Upcoming evaluations"
+            aria-label="Upcoming evaluation"
           >
             <div className="flex items-center gap-2 shrink-0">
               <Calendar className="h-4 w-4 text-[rgb(120,120,120)] shrink-0" />
               <span className="font-semibold text-sm text-[rgb(64,64,64)]">
-                Upcoming evaluations
+                Upcoming evaluation
               </span>
             </div>
             <p className="text-sm text-[rgb(64,64,64)] min-w-0 flex-1">
@@ -529,17 +572,25 @@ export function EvaluationsContent() {
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
-                onClick={() => {
-                  const el = document.querySelector(
-                    '[class*="overflow-x-auto"]',
-                  );
-                  el?.scrollIntoView({ behavior: "smooth" });
-                }}
                 className="text-sm font-medium text-[#695eff] hover:text-[#5547e8]"
+                onClick={() => {
+                  const first = upcomingEvaluations[0];
+                  if (!first) return;
+                  const column = evaluationColumns.find(
+                    (c) => c.label === first.label,
+                  );
+                  if (!column) return;
+                  const existing = (evaluations || []).find(
+                    (e: any) =>
+                      e.employeeId === first.employeeId &&
+                      e.label === first.label &&
+                      e.evaluationDate === first.date,
+                  );
+                  handleCellClick(first.employeeId, column, existing);
+                }}
               >
                 View
               </button>
-              <span className="h-4 w-px bg-[rgb(220,220,220)]" aria-hidden />
               <button
                 type="button"
                 onClick={handleDismissUpcomingBanner}
@@ -553,150 +604,164 @@ export function EvaluationsContent() {
         ) : null}
 
         <Card className="flex flex-col max-h-[calc(100vh-180px)] sm:max-h-[calc(100vh-200px)]">
-          <div className="shrink-0 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 flex-wrap p-4 sm:p-5 md:p-6 border-b border-[#DDDDDD]">
-            <div className="relative w-full sm:w-[200px] sm:max-w-[240px]">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[rgb(64,64,64)] pointer-events-none" />
-              <Input
-                placeholder="Search employees..."
-                value={employeeSearch}
-                onChange={(e) => setEmployeeSearch(e.target.value)}
-                className="h-8 pl-8 rounded-lg border border-[#DDDDDD] hover:border-[rgb(120,120,120)] bg-[rgb(250,250,250)] text-xs font-semibold text-[rgb(64,64,64)] placeholder:text-[rgb(133,133,133)] shadow-sm focus-visible:outline-none"
-              />
+          <div className="shrink-0 flex flex-col gap-3 p-4 sm:p-5 md:p-6 pb-1.5 border-b border-[#DDDDDD]">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="relative w-full max-w-[200px]">
+                <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[rgb(133,133,133)] pointer-events-none" />
+                <Input
+                  placeholder="Search employees..."
+                  value={employeeSearch}
+                  onChange={(e) => setEmployeeSearch(e.target.value)}
+                  className="h-8 pl-7 pr-2 rounded-lg text-[11px] font-semibold text-[rgb(64,64,64)] bg-white border border-solid border-[#DDDDDD] shadow-sm focus-visible:ring-[#695eff] focus-visible:ring-offset-0 placeholder:text-[rgb(133,133,133)]"
+                />
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsManageColumnsModalOpen(true)}
+                className="h-8 text-xs px-3 rounded-lg border-[#DDDDDD] hover:border-[rgb(120,120,120)] bg-white text-[rgb(64,64,64)] font-semibold [&_svg]:text-current shrink-0"
+                style={{ color: "rgb(64,64,64)" }}
+              >
+                <Columns className="h-3.5 w-3.5 mr-1.5 shrink-0" />
+                Manage Columns
+              </Button>
             </div>
-            <Popover
-              open={departmentPopoverOpen}
-              onOpenChange={setDepartmentPopoverOpen}
-            >
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  className={cn(
-                    "inline-flex items-center gap-1.5 h-8 px-2.5 rounded-2xl text-xs font-semibold text-[rgb(64,64,64)] bg-white transition-colors hover:bg-[rgb(250,250,250)]",
-                    departmentFilter !== "all"
-                      ? "border border-[#DDDDDD] border-solid"
-                      : "border border-dashed border-[#DDDDDD]",
-                  )}
-                >
-                  {departmentFilter !== "all" ? (
-                    <>
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDepartmentFilter("all");
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setDepartmentFilter("all");
-                          }
-                        }}
-                        className="flex items-center justify-center w-4 h-4 rounded-full hover:bg-[rgb(230,230,230)] text-[rgb(100,100,100)] cursor-pointer"
-                        aria-label="Clear department"
-                      >
-                        <X className="h-2.5 w-2.5" />
-                      </span>
-                      <span className="text-[rgb(133,133,133)] font-semibold">
-                        Department
-                      </span>
-                      <span className="font-semibold">
-                        {evaluationDepartments.find(
-                          (d) => d.name === departmentFilter,
-                        )?.name ?? "All"}
-                      </span>
-                      <div
-                        className="h-2.5 w-2.5 rounded-full shrink-0"
-                        style={{
-                          backgroundColor:
-                            evaluationDepartments.find(
-                              (d) => d.name === departmentFilter,
-                            )?.color ?? "#9CA3AF",
-                        }}
-                      />
-                      <ChevronDown className="h-3 w-3 shrink-0 text-[rgb(133,133,133)]" />
-                    </>
-                  ) : (
-                    <>
-                      <span className="flex items-center justify-center w-4 h-4 rounded-full border border-[rgb(180,180,180)] text-[rgb(120,120,120)]">
-                        <Plus className="h-2.5 w-2.5" />
-                      </span>
-                      <span className="font-semibold">Department</span>
-                      <ChevronDown className="h-3 w-3 shrink-0 text-[rgb(133,133,133)]" />
-                    </>
-                  )}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent className="w-64 p-3" align="start">
-                <h4 className="font-semibold text-xs text-[rgb(64,64,64)] mb-3">
-                  Filter by: Department
-                </h4>
-                <div className="space-y-0.5 max-h-[280px] overflow-y-auto">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+              <Popover
+                open={departmentPopoverOpen}
+                onOpenChange={setDepartmentPopoverOpen}
+              >
+                <PopoverTrigger asChild>
                   <button
                     type="button"
-                    onClick={() => {
-                      setDepartmentFilter("all");
-                      setDepartmentPopoverOpen(false);
-                    }}
                     className={cn(
-                      "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold",
-                      departmentFilter === "all"
-                        ? "bg-[rgb(245,245,245)]"
-                        : "hover:bg-[rgb(250,250,250)]",
+                      "inline-flex items-center gap-1 h-7 px-2 rounded-xl text-[11px] font-semibold text-[rgb(64,64,64)] bg-white transition-colors hover:bg-[rgb(250,250,250)]",
+                      departmentFilter !== "all"
+                        ? "border border-[#DDDDDD] border-solid"
+                        : "border border-dashed border-[#DDDDDD]",
                     )}
                   >
-                    <div className="h-2.5 w-2.5 rounded-full shrink-0 bg-[#9CA3AF]" />
-                    <span>All</span>
+                    {departmentFilter !== "all" ? (
+                      <>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDepartmentFilter("all");
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setDepartmentFilter("all");
+                            }
+                          }}
+                          className="flex items-center justify-center w-3.5 h-3.5 rounded-full hover:bg-[rgb(230,230,230)] text-[rgb(100,100,100)] cursor-pointer"
+                          aria-label="Clear department"
+                        >
+                          <X className="h-2 w-2" />
+                        </span>
+                        <span className="text-[rgb(133,133,133)] font-semibold">
+                          Department
+                        </span>
+                        <span className="font-semibold">
+                          {evaluationDepartments.find(
+                            (d) => d.name === departmentFilter,
+                          )?.name ?? "All"}
+                        </span>
+                        <div
+                          className="h-2 w-2 rounded-full shrink-0"
+                          style={{
+                            backgroundColor:
+                              evaluationDepartments.find(
+                                (d) => d.name === departmentFilter,
+                              )?.color ?? "#9CA3AF",
+                          }}
+                        />
+                        <ChevronDown className="h-2.5 w-2.5 shrink-0 text-[rgb(133,133,133)]" />
+                      </>
+                    ) : (
+                      <>
+                        <span className="flex items-center justify-center w-3.5 h-3.5 rounded-full border border-[rgb(180,180,180)] text-[rgb(120,120,120)]">
+                          <Plus className="h-2 w-2" />
+                        </span>
+                        <span className="font-semibold">Department</span>
+                        <ChevronDown className="h-2.5 w-2.5 shrink-0 text-[rgb(133,133,133)]" />
+                      </>
+                    )}
                   </button>
-                  {evaluationDepartments.map((dept) => (
+                </PopoverTrigger>
+                <PopoverContent className="w-64 p-3" align="start">
+                  <h4 className="font-semibold text-[11px] text-[rgb(64,64,64)] mb-2">
+                    Filter by: Department
+                  </h4>
+                  <div className="space-y-0.5 max-h-[280px] overflow-y-auto">
                     <button
-                      key={dept.name}
                       type="button"
                       onClick={() => {
-                        setDepartmentFilter(dept.name);
+                        setDepartmentFilter("all");
                         setDepartmentPopoverOpen(false);
                       }}
                       className={cn(
                         "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold",
-                        departmentFilter === dept.name
+                        departmentFilter === "all"
                           ? "bg-[rgb(245,245,245)]"
                           : "hover:bg-[rgb(250,250,250)]",
                       )}
                     >
-                      <div
-                        className="h-2.5 w-2.5 rounded-full shrink-0"
-                        style={{ backgroundColor: dept.color }}
-                      />
-                      <span>{dept.name}</span>
+                      <div className="h-2.5 w-2.5 rounded-full shrink-0 bg-[#9CA3AF]" />
+                      <span>All</span>
                     </button>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
-            {(employeeSearch?.trim() ?? "") !== "" ||
-            (departmentFilter !== "all" && departmentFilter !== "") ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setEmployeeSearch("");
-                  setDepartmentFilter("all");
-                }}
-                className="text-xs font-semibold text-[#695eff] hover:text-[#5547e8] shrink-0"
-              >
-                Clear filters
-              </button>
-            ) : null}
+                    {evaluationDepartments.map((dept) => (
+                      <button
+                        key={dept.name}
+                        type="button"
+                        onClick={() => {
+                          setDepartmentFilter(dept.name);
+                          setDepartmentPopoverOpen(false);
+                        }}
+                        className={cn(
+                          "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold",
+                          departmentFilter === dept.name
+                            ? "bg-[rgb(245,245,245)]"
+                            : "hover:bg-[rgb(250,250,250)]",
+                        )}
+                      >
+                        <div
+                          className="h-2.5 w-2.5 rounded-full shrink-0"
+                          style={{ backgroundColor: dept.color }}
+                        />
+                        <span>{dept.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+              {(employeeSearch?.trim() ?? "") !== "" ||
+              (departmentFilter !== "all" && departmentFilter !== "") ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmployeeSearch("");
+                    setDepartmentFilter("all");
+                  }}
+                  className="text-[11px] font-semibold text-[#695eff] hover:text-[#5547e8] shrink-0"
+                >
+                  Clear filters
+                </button>
+              ) : null}
+            </div>
           </div>
           <CardContent className="flex-1 overflow-auto p-0">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-white z-10">
-                  <tr className="border-b border-[#DDDDDD]">
+                  <tr className="border-b border-[rgb(230,230,230)] h-8">
                     {defaultColumns.map((col) => (
                       <th
                         key={col.id}
-                        className="py-2.5 px-3 text-left font-medium text-[rgb(64,64,64)] border-r border-[#DDDDDD] last:border-r-0"
+                        className="py-1.5 px-3 text-left font-medium text-[11px] text-[rgb(64,64,64)]"
                       >
                         {col.label}
                       </th>
@@ -714,7 +779,7 @@ export function EvaluationsContent() {
                       .map((col) => (
                         <th
                           key={col.id}
-                          className="py-2.5 px-3 text-left font-medium text-[rgb(64,64,64)] border-r border-[#DDDDDD] last:border-r-0"
+                          className="py-1.5 px-3 text-left font-medium text-[11px] text-[rgb(64,64,64)]"
                         >
                           {col.label}
                         </th>
@@ -726,16 +791,13 @@ export function EvaluationsContent() {
                     displayedEmployees.map((emp: any) => (
                       <tr
                         key={emp._id}
-                        className="border-b border-[#DDDDDD] transition-colors hover:bg-[rgb(250,250,250)]"
+                        className="border-b border-[rgb(230,230,230)] transition-colors hover:bg-[rgb(250,250,250)] text-sm"
                       >
                         {/* Default columns */}
                         {defaultColumns.map((col) => {
                           if (col.id === "employee") {
                             return (
-                              <td
-                                key={col.id}
-                                className="py-2 px-3 border-r border-[#DDDDDD] last:border-r-0"
-                              >
+                              <td key={col.id} className="py-1.5 px-3">
                                 {emp.personalInfo.firstName}{" "}
                                 {emp.personalInfo.lastName}
                               </td>
@@ -743,20 +805,14 @@ export function EvaluationsContent() {
                           }
                           if (col.id === "position") {
                             return (
-                              <td
-                                key={col.id}
-                                className="py-2 px-3 border-r border-[#DDDDDD] last:border-r-0"
-                              >
+                              <td key={col.id} className="py-1.5 px-3">
                                 {emp.employment.position}
                               </td>
                             );
                           }
                           if (col.id === "hiredDate") {
                             return (
-                              <td
-                                key={col.id}
-                                className="py-2 px-3 border-r border-[#DDDDDD] last:border-r-0"
-                              >
+                              <td key={col.id} className="py-1.5 px-3">
                                 {emp.employment.hireDate
                                   ? format(
                                       new Date(emp.employment.hireDate),
@@ -786,6 +842,19 @@ export function EvaluationsContent() {
                                 e.label === col.label,
                             );
                             const display = getCellDisplay(emp._id, col);
+                            const isDueThisMonth = (() => {
+                              if (!ev) return false;
+                              const now = new Date();
+                              const d = new Date(ev.evaluationDate);
+                              const sameMonth =
+                                d.getFullYear() === now.getFullYear() &&
+                                d.getMonth() === now.getMonth();
+                              const isPastOrToday =
+                                ev.evaluationDate <= now.getTime();
+                              const hasRating = ev.rating != null;
+                              // Due = in current month, date is today/past, and no rating yet.
+                              return sameMonth && isPastOrToday && !hasRating;
+                            })();
                             const showRating =
                               col.type === "date" &&
                               col.hasRatingColumn &&
@@ -797,7 +866,11 @@ export function EvaluationsContent() {
                                 onClick={() =>
                                   handleCellClick(emp._id, col, ev || undefined)
                                 }
-                                className="py-2 px-3 text-xs cursor-pointer border-r border-[#DDDDDD] last:border-r-0 transition-colors align-middle"
+                                className={cn(
+                                  "py-1.5 px-3 text-xs cursor-pointer transition-colors align-middle",
+                                  isDueThisMonth &&
+                                    "border border-rose-200 bg-rose-50/70",
+                                )}
                                 title="Click to view"
                               >
                                 {display ? (
@@ -822,7 +895,7 @@ export function EvaluationsContent() {
                       </tr>
                     ))
                   ) : (
-                    <tr className="border-b border-[#DDDDDD]">
+                    <tr className="border-b border-[rgb(230,230,230)]">
                       <td
                         colSpan={
                           defaultColumns.length +
@@ -836,7 +909,7 @@ export function EvaluationsContent() {
                               ].includes(col.id),
                           ).length
                         }
-                        className="py-8 text-center text-gray-500"
+                        className="py-6 text-center text-gray-500 text-sm"
                       >
                         No employees found.
                       </td>

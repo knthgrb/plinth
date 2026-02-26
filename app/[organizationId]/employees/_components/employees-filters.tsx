@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Plus, ChevronDown, ChevronLeft, X } from "lucide-react";
+import { Plus, ChevronDown, ChevronLeft, X, Search } from "lucide-react";
 import { cn } from "@/utils/utils";
 
 type CreatedDateFilter = {
@@ -40,6 +40,10 @@ interface EmployeesFiltersProps {
   setPhoneFilter: Dispatch<SetStateAction<string>>;
   createdDateFilter: CreatedDateFilter | null;
   setCreatedDateFilter: Dispatch<SetStateAction<CreatedDateFilter | null>>;
+  /** When true, search is on its own row (full width) and filter chips on a row below */
+  stackedLayout?: boolean;
+  /** Optional node (e.g. Edit columns button) rendered on the same row as filter chips when stackedLayout */
+  extraAction?: React.ReactNode;
 }
 
 // Status color mappings
@@ -71,16 +75,16 @@ export function EmployeesFilters({
   setPhoneFilter,
   createdDateFilter,
   setCreatedDateFilter,
+  stackedLayout = false,
+  extraAction,
 }: EmployeesFiltersProps) {
   const [departmentPopoverOpen, setDepartmentPopoverOpen] = useState(false);
   const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
-  const [namePopoverOpen, setNamePopoverOpen] = useState(false);
   const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
   const [moreFilterSelected, setMoreFilterSelected] = useState<
     null | "position" | "phone" | "createdDate"
   >(null);
 
-  const [draftName, setDraftName] = useState(nameFilter);
   const [draftPosition, setDraftPosition] = useState(positionFilter);
   const [draftPhone, setDraftPhone] = useState(phoneFilter);
   const [draftCreatedValue, setDraftCreatedValue] = useState(
@@ -102,6 +106,25 @@ export function EmployeesFilters({
     if (departmentFilter === "all") return null;
     return departments.find((d) => d.name === departmentFilter);
   }, [departmentFilter, departments]);
+
+  const createdDateSummary = useMemo(() => {
+    if (!createdDateFilter) return "";
+
+    const unit =
+      createdDateFilter.unit === "days"
+        ? createdDateFilter.value === 1
+          ? "day"
+          : "days"
+        : createdDateFilter.unit === "weeks"
+          ? createdDateFilter.value === 1
+            ? "week"
+            : "weeks"
+          : createdDateFilter.value === 1
+            ? "month"
+            : "months";
+
+    return `Last ${createdDateFilter.value} ${unit}`;
+  }, [createdDateFilter]);
 
   const isDepartmentActive =
     departmentFilter !== "all" && departmentFilter !== "";
@@ -125,93 +148,25 @@ export function EmployeesFilters({
     setCreatedDateFilter(null);
   };
 
-  return (
-    <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 flex-wrap">
-      {/* Name filter chip */}
-      <Popover open={namePopoverOpen} onOpenChange={setNamePopoverOpen}>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            className={cn(
-              "inline-flex items-center gap-1 h-7 px-2 rounded-xl text-[11px] font-semibold text-[rgb(64,64,64)] bg-white transition-colors hover:bg-[rgb(250,250,250)]",
-              isNameActive
-                ? "border border-[#DDDDDD] border-solid"
-                : "border border-dashed border-[#DDDDDD]",
-            )}
-            onClick={() => {
-              setDraftName(nameFilter);
-            }}
-          >
-            {isNameActive ? (
-              <>
-                <span
-                  role="button"
-                  tabIndex={0}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setNameFilter("");
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setNameFilter("");
-                    }
-                  }}
-                  className="flex items-center justify-center w-3.5 h-3.5 rounded-full hover:bg-[rgb(230,230,230)] text-[rgb(100,100,100)] cursor-pointer"
-                  aria-label="Clear name filter"
-                >
-                  <X className="h-2 w-2" />
-                </span>
-                <span className="text-[rgb(133,133,133)] font-semibold">
-                  Name
-                </span>
-                <span className="font-semibold max-w-[120px] truncate">
-                  contains “{nameFilter}”
-                </span>
-                <ChevronDown className="h-3 w-3 shrink-0 text-[rgb(133,133,133)]" />
-              </>
-            ) : (
-              <>
-                <span className="flex items-center justify-center w-3.5 h-3.5 rounded-full border border-[rgb(180,180,180)] text-[rgb(120,120,120)]">
-                  <Plus className="h-2 w-2" />
-                </span>
-                <span className="font-semibold">Name</span>
-                <ChevronDown className="h-2.5 w-2.5 shrink-0 text-[rgb(133,133,133)]" />
-              </>
-            )}
-          </button>
-        </PopoverTrigger>
-        <PopoverContent className="w-64 p-2.5" align="start">
-          <h4 className="font-semibold text-[11px] text-[rgb(64,64,64)] mb-2">
-            Filter by: name
-          </h4>
-          <div className="space-y-2">
-            <p className="text-xs text-[rgb(100,100,100)] font-medium">
-              contains
-            </p>
-            <Input
-              placeholder="Type a name"
-              value={draftName}
-              onChange={(e) => setDraftName(e.target.value)}
-              className="h-8 text-xs"
-            />
-            <div className="flex justify-end pt-1">
-              <Button
-                size="sm"
-                className="h-7 px-2.5 text-[11px] bg-[#695eff] hover:bg-[#5547e8]"
-                onClick={() => {
-                  setNameFilter(draftName.trim());
-                  setNamePopoverOpen(false);
-                }}
-              >
-                Apply
-              </Button>
-            </div>
-          </div>
-        </PopoverContent>
-      </Popover>
+  const searchInput = (
+    <div
+      className={cn(
+        "relative",
+        stackedLayout ? "w-full max-w-[260px]" : "min-w-[140px] w-40",
+      )}
+    >
+      <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-[rgb(133,133,133)] pointer-events-none" />
+      <Input
+        placeholder="Search"
+        value={nameFilter}
+        onChange={(e) => setNameFilter(e.target.value)}
+        className="h-8 pl-7 pr-2 rounded-lg text-[11px] font-semibold text-[rgb(64,64,64)] bg-white border border-solid border-[#DDDDDD] shadow-sm focus-visible:ring-[#695eff] focus-visible:ring-offset-0"
+      />
+    </div>
+  );
 
+  const filterChips = (
+    <>
       {/* Department filter chip */}
       <Popover
         open={departmentPopoverOpen}
@@ -224,7 +179,7 @@ export function EmployeesFilters({
               "inline-flex items-center gap-1 h-7 px-2 rounded-xl text-[11px] font-semibold text-[rgb(64,64,64)] bg-white transition-colors hover:bg-[rgb(250,250,250)]",
               isDepartmentActive
                 ? "border border-[#DDDDDD] border-solid"
-                : "border border-dashed border-[#DDDDDD]"
+                : "border border-dashed border-[#DDDDDD]",
             )}
           >
             {isDepartmentActive ? (
@@ -288,7 +243,7 @@ export function EmployeesFilters({
                 "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold",
                 departmentFilter === "all"
                   ? "bg-[rgb(245,245,245)]"
-                  : "hover:bg-[rgb(250,250,250)]"
+                  : "hover:bg-[rgb(250,250,250)]",
               )}
             >
               <div className="h-2.5 w-2.5 rounded-full shrink-0 bg-[#9CA3AF]" />
@@ -306,7 +261,7 @@ export function EmployeesFilters({
                   "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold",
                   departmentFilter === dept.name
                     ? "bg-[rgb(245,245,245)]"
-                    : "hover:bg-[rgb(250,250,250)]"
+                    : "hover:bg-[rgb(250,250,250)]",
                 )}
               >
                 <div
@@ -329,7 +284,7 @@ export function EmployeesFilters({
               "inline-flex items-center gap-1 h-7 px-2 rounded-xl text-[11px] font-semibold text-[rgb(64,64,64)] bg-white transition-colors hover:bg-[rgb(250,250,250)]",
               isStatusActive
                 ? "border border-[#DDDDDD] border-solid"
-                : "border border-dashed border-[#DDDDDD]"
+                : "border border-dashed border-[#DDDDDD]",
             )}
           >
             {isStatusActive ? (
@@ -387,7 +342,7 @@ export function EmployeesFilters({
                 type="button"
                 onClick={() => {
                   setStatusFilter(
-                    value as "active" | "inactive" | "resigned" | "terminated"
+                    value as "active" | "inactive" | "resigned" | "terminated",
                   );
                   setStatusPopoverOpen(false);
                 }}
@@ -395,7 +350,7 @@ export function EmployeesFilters({
                   "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold",
                   statusFilter === value
                     ? "bg-[rgb(245,245,245)]"
-                    : "hover:bg-[rgb(250,250,250)]"
+                    : "hover:bg-[rgb(250,250,250)]",
                 )}
               >
                 <div
@@ -430,9 +385,7 @@ export function EmployeesFilters({
               setMoreFilterSelected(null);
               setDraftPosition(positionFilter);
               setDraftPhone(phoneFilter);
-              setDraftCreatedValue(
-                createdDateFilter?.value?.toString() ?? "",
-              );
+              setDraftCreatedValue(createdDateFilter?.value?.toString() ?? "");
               setDraftCreatedUnit(createdDateFilter?.unit ?? "days");
             }}
           >
@@ -628,6 +581,120 @@ export function EmployeesFilters({
         </PopoverContent>
       </Popover>
 
+      {/* Active "More filters" chips (position, phone, created date) */}
+      {positionFilter.trim() !== "" && (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 h-7 px-2 rounded-xl text-[11px] font-semibold text-[rgb(64,64,64)] bg-white border border-[#DDDDDD] border-solid transition-colors hover:bg-[rgb(250,250,250)]"
+          onClick={() => {
+            setMoreFiltersOpen(true);
+            setMoreFilterSelected("position");
+            setDraftPosition(positionFilter);
+          }}
+        >
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              setPositionFilter("");
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                setPositionFilter("");
+              }
+            }}
+            className="flex items-center justify-center w-3.5 h-3.5 rounded-full hover:bg-[rgb(230,230,230)] text-[rgb(100,100,100)] cursor-pointer"
+            aria-label="Clear position filter"
+          >
+            <X className="h-2 w-2" />
+          </span>
+          <span className="text-[rgb(133,133,133)] font-semibold">Position</span>
+          <span className="font-semibold max-w-[140px] truncate">
+            {positionFilter}
+          </span>
+        </button>
+      )}
+
+      {phoneFilter.trim() !== "" && (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 h-7 px-2 rounded-xl text-[11px] font-semibold text-[rgb(64,64,64)] bg-white border border-[#DDDDDD] border-solid transition-colors hover:bg-[rgb(250,250,250)]"
+          onClick={() => {
+            setMoreFiltersOpen(true);
+            setMoreFilterSelected("phone");
+            setDraftPhone(phoneFilter);
+          }}
+        >
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              setPhoneFilter("");
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                setPhoneFilter("");
+              }
+            }}
+            className="flex items-center justify-center w-3.5 h-3.5 rounded-full hover:bg-[rgb(230,230,230)] text-[rgb(100,100,100)] cursor-pointer"
+            aria-label="Clear phone filter"
+          >
+            <X className="h-2 w-2" />
+          </span>
+          <span className="text-[rgb(133,133,133)] font-semibold">
+            Phone number
+          </span>
+          <span className="font-semibold max-w-[140px] truncate">
+            {phoneFilter}
+          </span>
+        </button>
+      )}
+
+      {createdDateFilter && (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 h-7 px-2 rounded-xl text-[11px] font-semibold text-[rgb(64,64,64)] bg-white border border-[#DDDDDD] border-solid transition-colors hover:bg-[rgb(250,250,250)]"
+          onClick={() => {
+            setMoreFiltersOpen(true);
+            setMoreFilterSelected("createdDate");
+            setDraftCreatedValue(createdDateFilter.value.toString());
+            setDraftCreatedUnit(createdDateFilter.unit);
+          }}
+        >
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              setCreatedDateFilter(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                setCreatedDateFilter(null);
+              }
+            }}
+            className="flex items-center justify-center w-3.5 h-3.5 rounded-full hover:bg-[rgb(230,230,230)] text-[rgb(100,100,100)] cursor-pointer"
+            aria-label="Clear created date filter"
+          >
+            <X className="h-2 w-2" />
+          </span>
+          <span className="text-[rgb(133,133,133)] font-semibold">
+            Created date
+          </span>
+          <span className="font-semibold max-w-[140px] truncate">
+            {createdDateSummary}
+          </span>
+        </button>
+      )}
+
       {hasActiveFilters ? (
         <button
           type="button"
@@ -637,6 +704,27 @@ export function EmployeesFilters({
           Clear filters
         </button>
       ) : null}
+    </>
+  );
+
+  if (stackedLayout) {
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {searchInput}
+          {extraAction}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+          {filterChips}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 flex-wrap">
+      {searchInput}
+      {filterChips}
     </div>
   );
 }

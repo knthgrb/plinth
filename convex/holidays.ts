@@ -83,9 +83,21 @@ export const getHolidays = query({
 
     // Filter by year if specified
     if (args.year) {
-      holidays = holidays.filter(
-        (h: any) => h.isRecurring || h.year === args.year
-      );
+      holidays = holidays.filter((h: any) => {
+        if (h.isRecurring) return true;
+
+        // Exact year match when explicitly stored
+        if (h.year != null) return h.year === args.year;
+
+        // Backwards compatibility: derive year from date when year field is missing
+        try {
+          const d = new Date(h.date);
+          const derivedYear = d.getFullYear();
+          return derivedYear === args.year;
+        } catch {
+          return false;
+        }
+      });
     }
 
     // Sort by date
@@ -101,21 +113,31 @@ export const createHoliday = mutation({
     organizationId: v.id("organizations"),
     name: v.string(),
     date: v.number(),
-    type: v.union(v.literal("regular"), v.literal("special")),
+    type: v.union(
+      v.literal("regular"),
+      v.literal("special"),
+      v.literal("special_working")
+    ),
     isRecurring: v.boolean(),
     year: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
+    await checkAuth(ctx, args.organizationId, "hr");
 
     const now = Date.now();
+    const dateObj = new Date(args.date);
+    const effectiveYear =
+      args.isRecurring || Number.isNaN(dateObj.getTime())
+        ? undefined
+        : dateObj.getFullYear();
+
     const holidayId = await ctx.db.insert("holidays", {
       organizationId: args.organizationId,
       name: args.name,
       date: args.date,
       type: args.type,
       isRecurring: args.isRecurring,
-      year: args.year,
+      year: effectiveYear,
       createdAt: now,
       updatedAt: now,
     });
@@ -130,26 +152,41 @@ export const updateHoliday = mutation({
     holidayId: v.id("holidays"),
     name: v.optional(v.string()),
     date: v.optional(v.number()),
-    type: v.optional(v.union(v.literal("regular"), v.literal("special"))),
+    type: v.optional(
+      v.union(
+        v.literal("regular"),
+        v.literal("special"),
+        v.literal("special_working")
+      )
+    ),
     isRecurring: v.optional(v.boolean()),
     year: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, "hr");
-
     const holiday = await ctx.db.get(args.holidayId);
     if (!holiday) throw new Error("Holiday not found");
 
-    if (holiday.organizationId !== userRecord.organizationId) {
-      throw new Error("Not authorized");
-    }
+    // Authorize within the holiday's organization
+    await checkAuth(ctx, holiday.organizationId, "hr");
+
+    // Determine effective values after update for year/isRecurring/date consistency
+    const nextDate = args.date ?? holiday.date;
+    const nextIsRecurring =
+      args.isRecurring !== undefined ? args.isRecurring : holiday.isRecurring;
+
+    const dateObj = new Date(nextDate);
+    const nextYear =
+      nextIsRecurring || Number.isNaN(dateObj.getTime())
+        ? undefined
+        : dateObj.getFullYear();
 
     const updates: any = { updatedAt: Date.now() };
     if (args.name !== undefined) updates.name = args.name;
     if (args.date !== undefined) updates.date = args.date;
     if (args.type !== undefined) updates.type = args.type;
     if (args.isRecurring !== undefined) updates.isRecurring = args.isRecurring;
-    if (args.year !== undefined) updates.year = args.year;
+    // Always keep year in sync with date/isRecurring, ignoring any manual year arg
+    updates.year = nextYear;
 
     await ctx.db.patch(args.holidayId, updates);
     return { success: true };
@@ -162,14 +199,11 @@ export const deleteHoliday = mutation({
     holidayId: v.id("holidays"),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, "hr");
-
     const holiday = await ctx.db.get(args.holidayId);
     if (!holiday) throw new Error("Holiday not found");
 
-    if (holiday.organizationId !== userRecord.organizationId) {
-      throw new Error("Not authorized");
-    }
+    // Authorize within the holiday's organization
+    await checkAuth(ctx, holiday.organizationId, "hr");
 
     await ctx.db.delete(args.holidayId);
     return { success: true };
@@ -184,7 +218,11 @@ export const bulkCreateHolidays = mutation({
       v.object({
         name: v.string(),
         date: v.number(),
-        type: v.union(v.literal("regular"), v.literal("special")),
+        type: v.union(
+          v.literal("regular"),
+          v.literal("special"),
+          v.literal("special_working")
+        ),
         isRecurring: v.boolean(),
         year: v.optional(v.number()),
       })
