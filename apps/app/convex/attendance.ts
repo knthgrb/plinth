@@ -115,6 +115,53 @@ async function checkAuth(
   return { ...userRecord, role: userRole, organizationId };
 }
 
+// Helper to get the employee's scheduled in/out time for a specific date,
+// taking into account defaultSchedule and any scheduleOverrides.
+function getScheduledTimesForDate(
+  date: number,
+  employeeSchedule: any,
+): { scheduleIn: string | null; scheduleOut: string | null } {
+  if (!employeeSchedule?.defaultSchedule) {
+    return { scheduleIn: null, scheduleOut: null };
+  }
+
+  const dayNames = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+  ] as const;
+
+  const dateObj = new Date(date);
+
+  // First check for an explicit override on this date
+  if (employeeSchedule.scheduleOverrides && Array.isArray(employeeSchedule.scheduleOverrides)) {
+    const override = employeeSchedule.scheduleOverrides.find(
+      (o: any) =>
+        new Date(o.date).toDateString() === dateObj.toDateString(),
+    );
+    if (override && override.in && override.out) {
+      return { scheduleIn: override.in, scheduleOut: override.out };
+    }
+  }
+
+  // Fall back to defaultSchedule based on day of week
+  const dayName = dayNames[dateObj.getDay()];
+  const daySchedule =
+    employeeSchedule.defaultSchedule[
+      dayName as keyof typeof employeeSchedule.defaultSchedule
+    ];
+
+  if (!daySchedule || !daySchedule.in || !daySchedule.out) {
+    return { scheduleIn: null, scheduleOut: null };
+  }
+
+  return { scheduleIn: daySchedule.in, scheduleOut: daySchedule.out };
+}
+
 // Get attendance for employee
 export const getEmployeeAttendance = query({
   args: {
@@ -533,5 +580,114 @@ export const bulkCreateAttendance = mutation({
     }
 
     return results;
+  },
+});
+
+// Recalculate attendance for an employee after schedule changes.
+// This recomputes scheduleIn/scheduleOut and late/undertime for all
+// matching attendance records so summaries stay in sync.
+export const recalculateEmployeeAttendance = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    startDate: v.optional(v.number()),
+    endDate: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    // HR/admin/owner only
+    await checkAuth(ctx, args.organizationId, "hr");
+
+    const employee = await ctx.db.get(args.employeeId);
+    if (!employee) throw new Error("Employee not found");
+    if (employee.organizationId !== args.organizationId) {
+      throw new Error("Employee does not belong to this organization");
+    }
+
+    let records = await (ctx.db.query("attendance") as any)
+      .withIndex("by_employee", (q: any) =>
+        q.eq("employeeId", args.employeeId),
+      )
+      .collect();
+
+    if (records.length === 0) {
+      return { updated: 0 };
+    }
+
+    // Determine effective date range if not provided
+    const minDate =
+      args.startDate ??
+      records.reduce(
+        (min: number, r: any) => (r.date < min ? r.date : min),
+        records[0].date,
+      );
+    const maxDate =
+      args.endDate ??
+      records.reduce(
+        (max: number, r: any) => (r.date > max ? r.date : max),
+        records[0].date,
+      );
+
+    records = records.filter(
+      (r: any) => r.date >= minDate && r.date <= maxDate,
+    );
+
+    if (records.length === 0) {
+      return { updated: 0 };
+    }
+
+    const schedule = (employee as any).schedule;
+    const now = Date.now();
+    let updatedCount = 0;
+
+    for (const record of records) {
+      const { scheduleIn, scheduleOut } = getScheduledTimesForDate(
+        record.date,
+        schedule,
+      );
+
+      // If we can't determine a schedule, leave record unchanged
+      if (!scheduleIn || !scheduleOut) continue;
+
+      const actualIn = record.actualIn as string | undefined;
+      const actualOut = record.actualOut as string | undefined;
+      const status = record.status as
+        | "present"
+        | "absent"
+        | "half-day"
+        | "leave";
+
+      let newUndertime: number | undefined;
+      let newLate: number | undefined;
+
+      if (status === "present" && actualIn && actualOut) {
+        const undertime = calculateUndertime(
+          scheduleIn,
+          scheduleOut,
+          actualIn,
+          actualOut,
+        );
+        newUndertime = undertime > 0 ? undertime : undefined;
+
+        const late =
+          undertime === 0
+            ? calculateLate(scheduleIn, actualIn, false)
+            : 0;
+        newLate = late > 0 ? late : undefined;
+      } else {
+        newUndertime = undefined;
+        newLate = undefined;
+      }
+
+      await ctx.db.patch(record._id, {
+        scheduleIn,
+        scheduleOut,
+        undertime: newUndertime,
+        late: newLate,
+        updatedAt: now,
+      });
+      updatedCount++;
+    }
+
+    return { updated: updatedCount };
   },
 });

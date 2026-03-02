@@ -93,4 +93,22 @@ export class AttendanceService {
       },
     );
   }
+
+  static async recalculateEmployeeAttendance(data: {
+    organizationId: string;
+    employeeId: string;
+    startDate?: number;
+    endDate?: number;
+  }) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.mutation as any)(
+      (api as any).attendance.recalculateEmployeeAttendance,
+      {
+        organizationId: data.organizationId as Id<"organizations">,
+        employeeId: data.employeeId as Id<"employees">,
+        startDate: data.startDate,
+        endDate: data.endDate,
+      },
+    );
+  }
 }

@@ -18,7 +18,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Mail, Calendar, CreditCard, Gift, TrendingDown, Pencil } from "lucide-react";
+import {
+  Mail,
+  Calendar,
+  CreditCard,
+  Gift,
+  TrendingDown,
+  Pencil,
+  Loader2,
+} from "lucide-react";
 import { format } from "date-fns";
 import { updateEmployee } from "@/actions/employees";
 import { updateEmployeeLeaveCredits } from "@/actions/leave";
@@ -42,6 +50,7 @@ import {
   type EmployeeFormValues,
 } from "./employee-form-validation";
 import { cn } from "@/utils/utils";
+import { recalculateEmployeeAttendance } from "@/actions/attendance";
 
 interface EmployeeDetailModalProps {
   employeeId: string | null;
@@ -130,6 +139,8 @@ export function EmployeeDetailModal({
     saturday: { start: "09:00", end: "18:00", workday: false },
     sunday: { start: "09:00", end: "18:00", workday: false },
   });
+
+  const [isSaving, setIsSaving] = useState(false);
 
   // Use pre-fetched data if available, otherwise fetch
   const fetchedEmployee = useQuery(
@@ -316,6 +327,7 @@ export function EmployeeDetailModal({
     if (!employeeId || !employee) return;
 
     try {
+      setIsSaving(true);
       const orgRegularRateDecimal =
         settings?.payrollSettings?.regularHolidayRate ?? 1.0;
       const orgSpecialRateDecimal =
@@ -500,11 +512,21 @@ export function EmployeeDetailModal({
           });
         }
       }
+
+      // Recalculate attendance records based on the updated schedule
+      if (currentOrganizationId) {
+        await recalculateEmployeeAttendance({
+          organizationId: currentOrganizationId,
+          employeeId,
+        });
+      }
       onModeChange?.("view");
       router.refresh();
     } catch (error) {
       console.error("Error updating employee:", error);
       alert("Failed to update employee. Please try again.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -1796,11 +1818,24 @@ export function EmployeeDetailModal({
                   variant="outline"
                   onClick={handleCancel}
                   className="flex-1"
+                  disabled={isSaving}
                 >
                   Cancel
                 </Button>
-                <Button type="button" onClick={() => editFormHandleSubmit(onValidSave)()} className="flex-1">
-                  Save Changes
+                <Button
+                  type="button"
+                  onClick={() => editFormHandleSubmit(onValidSave)()}
+                  className="flex-1"
+                  disabled={isSaving}
+                >
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    "Save Changes"
+                  )}
                 </Button>
               </div>
             )}

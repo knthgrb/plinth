@@ -64,3 +64,12 @@ export async function bulkCreateAttendance(
 ) {
   return AttendanceService.bulkCreateAttendance(entries);
 }
+
+export async function recalculateEmployeeAttendance(data: {
+  organizationId: string;
+  employeeId: string;
+  startDate?: number;
+  endDate?: number;
+}) {
+  return AttendanceService.recalculateEmployeeAttendance(data);
+}

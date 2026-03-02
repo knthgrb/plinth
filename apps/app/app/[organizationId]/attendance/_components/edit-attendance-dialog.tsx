@@ -68,12 +68,21 @@ export function EditAttendanceDialog({
       setEditOvertime(record.overtime ? record.overtime.toString() : "");
       setEditStatus(record.status);
       setEditRemarks(record.remarks || "");
-      // Set manual values if they exist, otherwise use calculated
-      setManualLate(record.late ? record.late.toString() : "");
-      setManualUndertime(record.undertime ? record.undertime.toString() : "");
-      // If record has late/undertime, assume they were manually set (enable override)
-      setUseManualLate(!!record.late);
-      setUseManualUndertime(!!record.undertime);
+      // Seed manual fields with existing values (if any), but
+      // default to automatic calculation unless the user explicitly
+      // turns on "Manual override" in the UI.
+      setManualLate(
+        record.late !== undefined && record.late !== null
+          ? record.late.toString()
+          : "",
+      );
+      setManualUndertime(
+        record.undertime !== undefined && record.undertime !== null
+          ? record.undertime.toString()
+          : "",
+      );
+      setUseManualLate(false);
+      setUseManualUndertime(false);
     }
   }, [record]);
 
