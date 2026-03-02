@@ -11,7 +11,7 @@ const openSans = Open_Sans({
   display: "swap",
 });
 
-const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+const mainAppUrl = process.env.NEXT_PUBLIC_MAIN_APP_URL ?? "";
 
 export const metadata: Metadata = {
   title: "Plinth – HR & Payroll for the Philippines",
@@ -37,13 +37,13 @@ export default function RootLayout({
               <MarketingNav />
               <div className="flex items-center gap-3">
                 <Link
-                  href={appUrl ? `${appUrl}/login` : "/login"}
+                  href={mainAppUrl ? `${mainAppUrl}/login` : "/login"}
                   className="text-sm font-medium text-gray-600 hover:text-gray-900"
                 >
                   Log in
                 </Link>
                 <Link
-                  href={appUrl ? `${appUrl}/signup` : "/signup"}
+                  href={mainAppUrl ? `${mainAppUrl}/signup` : "/signup"}
                   className="inline-flex items-center justify-center rounded-lg bg-brand-purple px-4 py-2 text-sm font-medium text-white hover:bg-brand-purple-hover transition-colors"
                 >
                   Get Started
@@ -57,4 +57,3 @@ export default function RootLayout({
     </html>
   );
 }
-
