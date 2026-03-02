@@ -73,12 +73,23 @@ A comprehensive HR management application for Philippine businesses with payroll
 - **State Management**: Zustand (ready for use)
 - **Icons**: Lucide React
 
-## Getting Started
+## Monorepo structure
+
+Plinth is a **pnpm workspace** monorepo with two deployable apps:
+
+```
+apps/
+  marketing/   # Marketing site (landing, features, pricing) — deploy e.g. to plinth.com
+  app/         # Main HRIS app (dashboard, org routes, auth) — deploy e.g. to app.plinth.com
+```
+
+- **Marketing** is a standalone Next.js app (no Convex). “Log in” and “Get Started” link to the app URL via `NEXT_PUBLIC_APP_URL`.
+- **App** contains Convex, Better Auth, and all product features. Each app has its own `package.json`, build, and deploy.
 
 ### Prerequisites
 
 - Node.js 18+
-- npm or yarn
+- **pnpm** (recommended for the monorepo): `npm install -g pnpm`
 - Convex account (sign up at [convex.dev](https://convex.dev))
 
 ### Installation
@@ -87,42 +98,57 @@ A comprehensive HR management application for Philippine businesses with payroll
 
 ```bash
 git clone <repository-url>
-cd purple-pay
+cd plinth
 ```
 
-2. Install dependencies:
+2. Install dependencies (from repo root):
 
 ```bash
-npm install
+pnpm install
 ```
 
-3. Set up environment variables:
-   Create a `.env.local` file in the root directory:
+3. Environment variables:
 
-```env
-NEXT_PUBLIC_CONVEX_URL=your_convex_url
-SITE_URL=http://localhost:3000
-```
+   - **App** (`apps/app/.env.local`):
 
-4. Set up Convex:
+   ```env
+   NEXT_PUBLIC_CONVEX_URL=your_convex_url
+   SITE_URL=http://localhost:3001
+   ```
+
+   - **Marketing** (optional, for “Log in” / “Get Started” links to the app):
+
+   ```env
+   NEXT_PUBLIC_APP_URL=http://localhost:3001
+   ```
+
+   In production, set `NEXT_PUBLIC_APP_URL` to your app origin (e.g. `https://app.plinth.com`).
+
+4. Set up Convex (from the app directory):
 
 ```bash
-npx convex dev
+cd apps/app && npx convex dev
 ```
 
-This will:
+5. Run the development servers:
 
-- Create a new Convex project (if needed)
-- Generate the Convex schema
-- Set up the database tables
-
-5. Run the development server:
+- From repo root (both apps):
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
-6. Open [http://localhost:3000](http://localhost:3000) in your browser.
+- Or run one app:
+
+```bash
+pnpm dev:marketing   # Marketing on http://localhost:3000
+pnpm dev:app         # App on http://localhost:3001
+```
+
+6. Open in your browser:
+
+   - Marketing: [http://localhost:3000](http://localhost:3000)
+   - App: [http://localhost:3001](http://localhost:3001)
 
 ### First Time Setup
 
