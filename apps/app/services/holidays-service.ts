@@ -28,6 +28,7 @@ export class HolidaysService {
     organizationId: string;
     name: string;
     date: number;
+    offsetDate?: number;
     type: "regular" | "special";
     isRecurring: boolean;
     year?: number;
@@ -51,6 +52,8 @@ export class HolidaysService {
     data: {
       name?: string;
       date?: number;
+      offsetDate?: number;
+      clearOffsetDate?: boolean;
       type?: "regular" | "special";
       isRecurring?: boolean;
       year?: number;

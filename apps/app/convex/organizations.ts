@@ -697,7 +697,11 @@ export const removeUserFromOrganization = mutation({
       const employeeId = (targetUserOrg as any).employeeId;
       if (employeeId) {
         const employee = await ctx.db.get(employeeId);
-        if (employee && employee.organizationId === args.organizationId) {
+        if (
+          employee &&
+          "organizationId" in employee &&
+          employee.organizationId === args.organizationId
+        ) {
           await ctx.db.delete(employeeId);
         }
       }

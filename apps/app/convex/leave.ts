@@ -210,6 +210,60 @@ export const getLeaveRequest = query({
   },
 });
 
+// Get approval eligibility for a pending leave request (admin/hr: why Approve may be disabled)
+export const getLeaveRequestApprovalInfo = query({
+  args: {
+    leaveRequestId: v.id("leaveRequests"),
+  },
+  handler: async (ctx, args) => {
+    const request = await ctx.db.get(args.leaveRequestId);
+    if (!request) return { canApprove: false, blockReason: "Leave request not found" };
+
+    const userRecord = await checkAuth(ctx, request.organizationId);
+    if (
+      userRecord.role === "employee" &&
+      userRecord.employeeId !== request.employeeId
+    ) {
+      return { canApprove: false, blockReason: "Not authorized" };
+    }
+    if (request.organizationId !== userRecord.organizationId) {
+      return { canApprove: false, blockReason: "Not authorized" };
+    }
+
+    if (request.status !== "pending") {
+      return { canApprove: false, blockReason: "Request is no longer pending" };
+    }
+
+    const employee = await ctx.db.get(request.employeeId);
+    if (!employee) return { canApprove: false, blockReason: "Employee not found" };
+
+    const leaveCredits = JSON.parse(JSON.stringify(employee.leaveCredits || {}));
+    const creditType = getCreditType(
+      request.leaveType,
+      request.customLeaveType,
+    );
+    const trackedCredit = hasTrackedCreditType(leaveCredits, creditType);
+    const balance = trackedCredit
+      ? getBalanceForType(leaveCredits, creditType)
+      : Number.POSITIVE_INFINITY;
+
+    if (trackedCredit && balance < request.numberOfDays) {
+      const typeLabel =
+        creditType === "vacation"
+          ? "vacation"
+          : creditType === "sick"
+            ? "sick"
+            : creditType || "this leave type";
+      return {
+        canApprove: false,
+        blockReason: `Insufficient ${typeLabel} leave balance. Available: ${balance} days, Requested: ${request.numberOfDays} days.`,
+      };
+    }
+
+    return { canApprove: true };
+  },
+});
+
 // Create leave request
 export const createLeaveRequest = mutation({
   args: {

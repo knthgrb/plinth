@@ -113,6 +113,7 @@ export const createHoliday = mutation({
     organizationId: v.id("organizations"),
     name: v.string(),
     date: v.number(),
+    offsetDate: v.optional(v.number()),
     type: v.union(
       v.literal("regular"),
       v.literal("special"),
@@ -131,7 +132,7 @@ export const createHoliday = mutation({
         ? undefined
         : dateObj.getFullYear();
 
-    const holidayId = await ctx.db.insert("holidays", {
+    const doc: any = {
       organizationId: args.organizationId,
       name: args.name,
       date: args.date,
@@ -140,7 +141,9 @@ export const createHoliday = mutation({
       year: effectiveYear,
       createdAt: now,
       updatedAt: now,
-    });
+    };
+    if (args.offsetDate !== undefined) doc.offsetDate = args.offsetDate;
+    const holidayId = await ctx.db.insert("holidays", doc);
 
     return holidayId;
   },
@@ -152,6 +155,8 @@ export const updateHoliday = mutation({
     holidayId: v.id("holidays"),
     name: v.optional(v.string()),
     date: v.optional(v.number()),
+    offsetDate: v.optional(v.number()),
+    clearOffsetDate: v.optional(v.boolean()),
     type: v.optional(
       v.union(
         v.literal("regular"),
@@ -183,6 +188,11 @@ export const updateHoliday = mutation({
     const updates: any = { updatedAt: Date.now() };
     if (args.name !== undefined) updates.name = args.name;
     if (args.date !== undefined) updates.date = args.date;
+    if (args.clearOffsetDate) {
+      updates.offsetDate = undefined;
+    } else if (args.offsetDate !== undefined) {
+      updates.offsetDate = args.offsetDate;
+    }
     if (args.type !== undefined) updates.type = args.type;
     if (args.isRecurring !== undefined) updates.isRecurring = args.isRecurring;
     // Always keep year in sync with date/isRecurring, ignoring any manual year arg
@@ -218,6 +228,7 @@ export const bulkCreateHolidays = mutation({
       v.object({
         name: v.string(),
         date: v.number(),
+        offsetDate: v.optional(v.number()),
         type: v.union(
           v.literal("regular"),
           v.literal("special"),
@@ -249,7 +260,7 @@ export const bulkCreateHolidays = mutation({
       );
 
       if (!duplicate) {
-        const holidayId = await ctx.db.insert("holidays", {
+        const doc: any = {
           organizationId: args.organizationId,
           name: holiday.name,
           date: holiday.date,
@@ -258,7 +269,9 @@ export const bulkCreateHolidays = mutation({
           year: holiday.year,
           createdAt: now,
           updatedAt: now,
-        });
+        };
+        if (holiday.offsetDate !== undefined) doc.offsetDate = holiday.offsetDate;
+        const holidayId = await ctx.db.insert("holidays", doc);
         results.push({ id: holidayId, name: holiday.name, action: "created" });
       } else {
         results.push({

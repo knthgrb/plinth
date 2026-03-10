@@ -117,7 +117,7 @@ export function PayrollStep3GovernmentDeductions({
                               e.target.checked
                             )
                           }
-                          className="h-4 w-4 accent-purple-600 disabled:opacity-50"
+                          className="h-4 w-4 accent-brand-purple disabled:opacity-50"
                         />
                         <Label className="font-medium w-32">{label}</Label>
                       </div>

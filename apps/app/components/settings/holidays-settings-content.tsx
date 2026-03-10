@@ -59,6 +59,7 @@ export function HolidaysSettingsContent() {
   const [formData, setFormData] = useState({
     name: "",
     date: "",
+    offsetDate: "" as string,
     type: "regular" as "regular" | "special" | "special_working",
     isRecurring: false,
   });
@@ -70,8 +71,9 @@ export function HolidaysSettingsContent() {
     setFormData({
       name: "",
       date: "",
+      offsetDate: "",
       type: "regular",
-    isRecurring: false,
+      isRecurring: false,
     });
     setIsDialogOpen(true);
   };
@@ -79,9 +81,13 @@ export function HolidaysSettingsContent() {
   const handleEdit = (holiday: any) => {
     setEditingHoliday(holiday);
     const date = new Date(holiday.date);
+    const offsetDate = holiday.offsetDate
+      ? new Date(holiday.offsetDate).toISOString().split("T")[0]
+      : "";
     setFormData({
       name: holiday.name,
       date: date.toISOString().split("T")[0],
+      offsetDate,
       type: holiday.type,
       isRecurring: holiday.isRecurring,
     });
@@ -94,12 +100,21 @@ export function HolidaysSettingsContent() {
     try {
       const date = new Date(formData.date);
       const dateTimestamp = date.getTime();
+      const offsetTimestamp = formData.offsetDate
+        ? new Date(formData.offsetDate).getTime()
+        : undefined;
+      const hasValidOffset = formData.offsetDate && Number.isFinite(offsetTimestamp);
 
       if (editingHoliday) {
         await updateHoliday({
           holidayId: editingHoliday._id,
           name: formData.name,
           date: dateTimestamp,
+          ...(hasValidOffset
+            ? { offsetDate: offsetTimestamp }
+            : editingHoliday.offsetDate != null
+              ? { clearOffsetDate: true }
+              : {}),
           type: formData.type,
           isRecurring: formData.isRecurring,
         });
@@ -112,6 +127,7 @@ export function HolidaysSettingsContent() {
           organizationId: currentOrganizationId,
           name: formData.name,
           date: dateTimestamp,
+          offsetDate: hasValidOffset ? offsetTimestamp : undefined,
           type: formData.type,
           isRecurring: formData.isRecurring,
         });
@@ -325,6 +341,19 @@ export function HolidaysSettingsContent() {
                     }
                     placeholder="Select holiday date"
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label>Offset date (optional)</Label>
+                  <DatePicker
+                    value={formData.offsetDate}
+                    onValueChange={(value) =>
+                      setFormData((prev) => ({ ...prev, offsetDate: value ?? "" }))
+                    }
+                    placeholder="Select offset date for payroll"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    When set, payroll uses this date as the holiday; attendance and calendar show both dates.
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <Label>Type</Label>

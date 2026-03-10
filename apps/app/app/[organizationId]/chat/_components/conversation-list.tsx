@@ -16,6 +16,7 @@ import {
   ListFilter,
   CheckCheck,
 } from "lucide-react";
+import { cn } from "@/utils/utils";
 import { Id } from "@/convex/_generated/dataModel";
 import { useOrganization } from "@/hooks/organization-context";
 import { ConversationSkeleton, ConversationListSkeleton } from "./skeletons";
@@ -248,53 +249,56 @@ export function ConversationList({
             onSelectConversation(conv._id);
           }
         }}
-        className={`w-full p-4 text-left hover:bg-gray-50 transition-colors relative cursor-pointer ${
-          isSelected ? "bg-gray-100" : ""
+        className={`w-full flex items-center gap-2 rounded-lg pl-3 pr-2 py-2 text-sm text-left transition-colors relative cursor-pointer ${
+          isSelected ? "bg-gray-100" : "hover:bg-[rgb(250,250,250)]"
         }`}
+        style={{
+          color: "rgb(64, 64, 64)",
+          lineHeight: "normal",
+        }}
       >
-        <div className="flex items-center gap-3">
-          <Avatar>
-            <AvatarFallback>
-              {conv.type === "channel" ? (
-                <Hash className="h-4 w-4" />
-              ) : conv.type === "group" ? (
-                <Users className="h-4 w-4" />
-              ) : (
-                getInitials(conv)
-              )}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <div className="font-medium text-gray-900 truncate">
-                {conv.type === "channel"
-                  ? `# ${getDisplayName(conv)}`
-                  : getDisplayName(conv)}
-              </div>
-              {unreadCounts && (unreadCounts[conv._id] || 0) > 0 && (
-                <span
-                  className="rounded-full bg-brand-purple text-white text-xs font-semibold min-w-[1.25rem] h-5 px-1.5 flex items-center justify-center tabular-nums"
-                  aria-label={`${unreadCounts[conv._id]} unread`}
-                >
-                  {unreadCounts[conv._id]}
-                </span>
-              )}
-            </div>
-            {conv.lastMessage && (
-              <div className="text-sm text-gray-500 truncate">
-                {conv.lastMessage.content}
-              </div>
+        <Avatar className="h-8 w-8 shrink-0">
+          <AvatarFallback className="text-xs">
+            {conv.type === "channel" ? (
+              <Hash className="h-4 w-4" />
+            ) : conv.type === "group" ? (
+              <Users className="h-4 w-4" />
+            ) : (
+              getInitials(conv)
+            )}
+          </AvatarFallback>
+        </Avatar>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className={cn("truncate", isSelected && "font-semibold")}>
+              {conv.type === "channel"
+                ? `# ${getDisplayName(conv)}`
+                : getDisplayName(conv)}
+            </span>
+            {unreadCounts && (unreadCounts[conv._id] || 0) > 0 && (
+              <span
+                className="rounded-full bg-brand-purple text-white text-xs font-semibold min-w-[1.25rem] h-5 px-1.5 flex items-center justify-center tabular-nums shrink-0"
+                aria-label={`${unreadCounts[conv._id]} unread`}
+              >
+                {unreadCounts[conv._id]}
+              </span>
             )}
           </div>
-          <div
-            className="flex items-center gap-2"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {conv.lastMessage && (
-              <div className="text-xs text-gray-400">
-                {format(new Date(conv.lastMessage.createdAt), "MMM d")}
-              </div>
-            )}
+          {conv.lastMessage && (
+            <div className="text-xs truncate" style={{ color: "rgb(133, 133, 133)" }}>
+              {conv.lastMessage.content}
+            </div>
+          )}
+        </div>
+        <div
+          className="flex items-center gap-1.5 shrink-0"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {conv.lastMessage && (
+            <div className="text-xs" style={{ color: "rgb(133, 133, 133)" }}>
+              {format(new Date(conv.lastMessage.createdAt), "MMM d")}
+            </div>
+          )}
             <Button
               variant="ghost"
               size="sm"
@@ -309,17 +313,16 @@ export function ConversationList({
                 }`}
               />
             </Button>
-          </div>
         </div>
       </div>
     );
   };
 
   return (
-    <div className="w-full lg:w-80 bg-white flex flex-col h-full shrink-0 min-w-0">
-      <div className="flex items-center min-h-[4.5rem] h-[4.5rem] px-4 border-b border-gray-200 shrink-0">
+    <div className="w-full lg:w-80 bg-white flex flex-col h-full shrink-0 min-w-0 font-sans">
+      <div className="flex items-center min-h-16 py-4 px-4 border-b border-[rgb(230,230,230)] shrink-0">
         <div className="flex items-center justify-between gap-2 w-full min-w-0">
-          <h1 className="text-xl font-bold text-gray-900 truncate">Chat</h1>
+          <h1 className="text-2xl font-bold text-gray-900 truncate">Chat</h1>
           <div className="flex items-center gap-1 shrink-0">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -376,12 +379,12 @@ export function ConversationList({
       </div>
       <div className="flex-1 overflow-y-auto min-h-0">
         {conversations === undefined ? (
-          <div className="p-4 text-center text-gray-500 text-sm">
+          <div className="p-3 text-center text-sm" style={{ color: "rgb(133, 133, 133)" }}>
             Loading...
           </div>
         ) : (showUnreadOnly ? filteredConversations : conversations)?.length ===
           0 ? (
-          <div className="p-4 text-center text-gray-500 text-sm">
+          <div className="p-3 text-center text-sm" style={{ color: "rgb(133, 133, 133)" }}>
             {showUnreadOnly
               ? "No unread conversations"
               : "No conversations yet"}
@@ -392,13 +395,13 @@ export function ConversationList({
             {pinned.length > 0 && (
               <>
                 {pinned.map((conv: any) => (
-                  <div key={conv._id} className="border-t border-gray-200">
+                  <div key={conv._id} className="border-t border-[rgb(230,230,230)]">
                     {renderConversation(conv)}
                   </div>
                 ))}
                 {unpinned.length > 0 && (
-                  <div className="border-t border-gray-200">
-                    <div className="px-4 py-2 text-xs font-medium text-gray-500 uppercase">
+                  <div className="border-t border-[rgb(230,230,230)]">
+                    <div className="px-3 py-2 text-xs font-medium uppercase" style={{ color: "rgb(133, 133, 133)" }}>
                       All Conversations
                     </div>
                   </div>
@@ -407,13 +410,13 @@ export function ConversationList({
             )}
             {/* Unpinned Conversations */}
             {unpinned.map((conv: any) => (
-              <div key={conv._id} className="border-t border-gray-200">
+              <div key={conv._id} className="border-t border-[rgb(230,230,230)]">
                 {renderConversation(conv)}
               </div>
             ))}
             {/* Intersection Observer target for infinite scroll */}
             {hasMore && (
-              <div ref={loadMoreRef} className="border-t border-gray-200 p-4">
+              <div ref={loadMoreRef} className="border-t border-[rgb(230,230,230)] p-3">
                 <ConversationSkeleton />
               </div>
             )}

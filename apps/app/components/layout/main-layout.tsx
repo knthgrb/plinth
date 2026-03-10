@@ -5,7 +5,7 @@ import { EmployeeSidebar } from "./employee-sidebar";
 import { Header } from "./header";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useOrganization } from "@/hooks/organization-context";
 import { SettingsModalProvider } from "@/hooks/settings-modal-context";
@@ -14,6 +14,7 @@ import { MainLoader } from "@/components/main-loader";
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const { currentOrganizationId, isLoggingOut } = useOrganization();
   const user = useQuery(
     (api as any).organizations.getCurrentUser,
@@ -92,6 +93,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   // Only show employee sidebar if user role is explicitly "employee"
   // Default to admin sidebar for admin/hr/accounting or if role is undefined
   const isEmployee = user?.role === "employee";
+  const isChatPage = pathname?.includes("/chat");
 
   return (
     <SettingsModalProvider>
@@ -170,7 +172,11 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
         >
           <Header onMobileMenuOpen={() => setIsMobileMenuOpen(true)} />
           <div className="flex-1 overflow-y-auto">
-            <div className="max-w-[1400px] mx-auto w-full">{children}</div>
+            {isChatPage ? (
+              children
+            ) : (
+              <div className="max-w-[1400px] mx-auto w-full">{children}</div>
+            )}
           </div>
         </main>
       </div>

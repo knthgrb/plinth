@@ -87,13 +87,26 @@ type Holiday = {
   _id: string;
   name: string;
   date: number;
+  offsetDate?: number;
   type: "regular" | "special" | "special_working";
   isRecurring: boolean;
   year?: number;
 };
 
+/** Display entry: holiday on its main date or on its offset date (isOffset: true) */
+type HolidayDisplay = Holiday & { isOffset?: boolean };
+
 function holidayDateInYear(h: Holiday, year: number): Date {
   const d = new Date(h.date);
+  if (h.isRecurring) {
+    return new Date(year, d.getMonth(), d.getDate());
+  }
+  return d;
+}
+
+function offsetDateInYear(h: Holiday, year: number): Date | null {
+  if (h.offsetDate == null) return null;
+  const d = new Date(h.offsetDate);
   if (h.isRecurring) {
     return new Date(year, d.getMonth(), d.getDate());
   }
@@ -224,49 +237,90 @@ export default function AttendancePage() {
       : "skip",
   );
 
-  // Map of holidays by local start-of-day timestamp for selected month
-  const holidaysByDateForMonth: Record<number, Holiday[]> = useMemo(() => {
-    const map: Record<number, Holiday[]> = {};
+  // Map of holidays by local start-of-day timestamp for selected month.
+  // If a holiday has an offset date, only the offset day is shown (Holiday offset); otherwise the main date is shown (Holiday).
+  const holidaysByDateForMonth: Record<number, HolidayDisplay[]> = useMemo(() => {
+    const map: Record<number, HolidayDisplay[]> = {};
     if (!holidaysForMonth) return map;
 
     const viewMonth = selectedMonthDate.getMonth();
     holidaysForMonth.forEach((h: Holiday) => {
-      const d = holidayDateInYear(h, selectedYear);
-      if (d.getMonth() !== viewMonth) return;
-      const key = startOfDay(d).getTime();
-      if (!map[key]) map[key] = [];
-
-      // Avoid duplicates with same name/type on same day
-      if (
-        !map[key].some(
-          (existing) => existing.name === h.name && existing.type === h.type,
-        )
-      ) {
-        map[key].push(h);
+      if (h.offsetDate == null) {
+        const d = holidayDateInYear(h, selectedYear);
+        if (d.getMonth() === viewMonth) {
+          const key = startOfDay(d).getTime();
+          if (!map[key]) map[key] = [];
+          if (
+            !map[key].some(
+              (existing) =>
+                existing.name === h.name &&
+                existing.type === h.type &&
+                !(existing as HolidayDisplay).isOffset,
+            )
+          ) {
+            map[key].push(h);
+          }
+        }
+      }
+      const offsetD = offsetDateInYear(h, selectedYear);
+      if (offsetD && offsetD.getMonth() === viewMonth) {
+        const key = startOfDay(offsetD).getTime();
+        if (!map[key]) map[key] = [];
+        if (
+          !map[key].some(
+            (existing) =>
+              existing.name === h.name &&
+              existing.type === h.type &&
+              (existing as HolidayDisplay).isOffset,
+          )
+        ) {
+          map[key].push({ ...h, isOffset: true });
+        }
       }
     });
 
     return map;
   }, [holidaysForMonth, selectedMonthDate, selectedYear]);
 
-  // Map of holidays by local start-of-day timestamp for summary month
-  const holidaysByDateForSummary: Record<number, Holiday[]> = useMemo(() => {
-    const map: Record<number, Holiday[]> = {};
+  // Map of holidays by local start-of-day timestamp for summary month.
+  // If a holiday has an offset date, only the offset day is shown (Holiday offset); otherwise the main date is shown (Holiday).
+  const holidaysByDateForSummary: Record<number, HolidayDisplay[]> = useMemo(() => {
+    const map: Record<number, HolidayDisplay[]> = {};
     if (!holidaysForSummary) return map;
 
     const viewMonth = summaryMonthDate.getMonth();
     holidaysForSummary.forEach((h: Holiday) => {
-      const d = holidayDateInYear(h, summaryYear);
-      if (d.getMonth() !== viewMonth) return;
-      const key = startOfDay(d).getTime();
-      if (!map[key]) map[key] = [];
-
-      if (
-        !map[key].some(
-          (existing) => existing.name === h.name && existing.type === h.type,
-        )
-      ) {
-        map[key].push(h);
+      if (h.offsetDate == null) {
+        const d = holidayDateInYear(h, summaryYear);
+        if (d.getMonth() === viewMonth) {
+          const key = startOfDay(d).getTime();
+          if (!map[key]) map[key] = [];
+          if (
+            !map[key].some(
+              (existing) =>
+                existing.name === h.name &&
+                existing.type === h.type &&
+                !(existing as HolidayDisplay).isOffset,
+            )
+          ) {
+            map[key].push(h);
+          }
+        }
+      }
+      const offsetD = offsetDateInYear(h, summaryYear);
+      if (offsetD && offsetD.getMonth() === viewMonth) {
+        const key = startOfDay(offsetD).getTime();
+        if (!map[key]) map[key] = [];
+        if (
+          !map[key].some(
+            (existing) =>
+              existing.name === h.name &&
+              existing.type === h.type &&
+              (existing as HolidayDisplay).isOffset,
+          )
+        ) {
+          map[key].push({ ...h, isOffset: true });
+        }
       }
     });
 
@@ -999,7 +1053,7 @@ export default function AttendancePage() {
                                       <div className="flex flex-wrap gap-1">
                                         {dayHolidays.map((h) => (
                                           <Badge
-                                            key={h._id}
+                                            key={(h as HolidayDisplay).isOffset ? `${h._id}-offset` : h._id}
                                             variant="secondary"
                                             className={`text-[10px] font-medium px-1.5 py-0.5 border-0 ${
                                               h.type === "regular"
@@ -1009,7 +1063,7 @@ export default function AttendancePage() {
                                                   : "bg-gray-100 text-gray-800"
                                             }`}
                                           >
-                                            HOLIDAY
+                                            {(h as HolidayDisplay).isOffset ? "HOLIDAY OFFSET" : "HOLIDAY"}
                                           </Badge>
                                         ))}
                                       </div>
@@ -1059,7 +1113,7 @@ export default function AttendancePage() {
                                       <div className="flex flex-wrap gap-1">
                                         {dayHolidays.map((h) => (
                                           <Badge
-                                            key={h._id}
+                                            key={(h as HolidayDisplay).isOffset ? `${h._id}-offset` : h._id}
                                             variant="outline"
                                             className={`text-[10px] px-1.5 py-0.5 ${
                                               h.type === "regular"
@@ -1069,7 +1123,7 @@ export default function AttendancePage() {
                                                   : "border-gray-200 text-gray-700"
                                             }`}
                                           >
-                                            Holiday
+                                            {(h as HolidayDisplay).isOffset ? "Holiday offset" : "Holiday"}
                                           </Badge>
                                         ))}
                                       </div>
@@ -1571,7 +1625,7 @@ export default function AttendancePage() {
                                               <div className="mt-0.5 flex flex-wrap gap-0.5 justify-center">
                                                 {dayHolidays.map((h) => (
                                                   <Badge
-                                                    key={h._id}
+                                                    key={(h as HolidayDisplay).isOffset ? `${h._id}-offset` : h._id}
                                                     variant="secondary"
                                                     className={`text-[9px] px-1 py-0 ${
                                                       h.type === "regular"
@@ -1581,7 +1635,7 @@ export default function AttendancePage() {
                                                           : "bg-gray-100 text-gray-800"
                                                     }`}
                                                   >
-                                                    HOLIDAY
+                                                    {(h as HolidayDisplay).isOffset ? "HOLIDAY OFFSET" : "HOLIDAY"}
                                                   </Badge>
                                                 ))}
                                               </div>
@@ -1613,13 +1667,16 @@ export default function AttendancePage() {
                                             ) : null}
                                           </>
                                         ) : dayHolidays.length > 0 ? (
-                                          <div className="flex items-center justify-center h-full">
-                                            <Badge
-                                              variant="outline"
-                                              className="text-[10px] px-1.5 py-0.5 border-rose-200 text-rose-700"
-                                            >
-                                              HOLIDAY
-                                            </Badge>
+                                          <div className="flex items-center justify-center h-full flex-wrap gap-0.5">
+                                            {dayHolidays.map((h) => (
+                                              <Badge
+                                                key={(h as HolidayDisplay).isOffset ? `${h._id}-offset` : h._id}
+                                                variant="outline"
+                                                className="text-[10px] px-1.5 py-0.5 border-rose-200 text-rose-700"
+                                              >
+                                                {(h as HolidayDisplay).isOffset ? "HOLIDAY OFFSET" : "HOLIDAY"}
+                                              </Badge>
+                                            ))}
                                           </div>
                                         ) : (
                                           <div className="grid grid-cols-2 gap-1 text-xs text-gray-300">

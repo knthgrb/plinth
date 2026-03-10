@@ -145,6 +145,13 @@ export function DynamicLeaveTable({
             </Badge>
           );
         }
+        if (status === "pending") {
+          return (
+            <Badge className="bg-amber-100 text-amber-800 border-amber-200 rounded-md focus:ring-0 focus:ring-offset-0 transition-none font-normal hover:bg-amber-100">
+              {String(value)}
+            </Badge>
+          );
+        }
         return (
           <Badge className="bg-gray-100 text-gray-800 hover:bg-gray-100 border-gray-200 rounded-md focus:ring-0 focus:ring-offset-0 transition-none font-normal">
             {String(value)}
@@ -374,6 +381,8 @@ export function DynamicLeaveTable({
                       value = request.status;
                     } else if (column.field === "reason") {
                       value = request.reason;
+                    } else if (column.field === "remarks") {
+                      value = request.remarks;
                     } else if (column.field === "filedDate") {
                       value = request.filedDate;
                     }

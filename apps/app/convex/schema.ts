@@ -307,6 +307,7 @@ export default defineSchema({
     organizationId: v.id("organizations"),
     name: v.string(),
     date: v.number(), // Unix timestamp
+    offsetDate: v.optional(v.number()), // Optional offset date; payroll uses this as the holiday date when set
     type: v.union(
       v.literal("regular"),
       v.literal("special"), // Special non-working holiday (has premium rate)

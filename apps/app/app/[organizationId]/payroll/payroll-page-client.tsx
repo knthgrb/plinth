@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, Suspense } from "react";
 import { useQuery } from "convex/react";
-import { useSearchParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
@@ -245,7 +245,12 @@ export default function PayrollPageClient({
   initialPayrollRuns,
 }: PayrollPageClientProps) {
   const { toast } = useToast();
+  const params = useParams();
+  const organizationIdFromUrl = params?.organizationId as string | undefined;
   const { currentOrganizationId, currentOrganization } = useOrganization();
+  /** Use URL org as fallback so employees load even when org context is not yet synced (e.g. dialog open early) */
+  const effectiveOrganizationId =
+    currentOrganizationId || organizationIdFromUrl;
   const user = useQuery((api as any).organizations.getCurrentUser, {
     organizationId: currentOrganizationId || undefined,
   });
@@ -255,7 +260,9 @@ export default function PayrollPageClient({
   );
   const employees = useQuery(
     (api as any).employees.getEmployees,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
   );
   /** Admin, HR, accounting, owner: can edit payslips and see payroll edit actions */
   const isAdminOrAccounting =
@@ -1505,11 +1512,12 @@ export default function PayrollPageClient({
               {currentStep === 2 && (
                 <Suspense fallback={<div className="py-4">Loading...</div>}>
                   <PayrollStep2Employees
-                    employees={employees || []}
+                    employees={employees ?? []}
                     selectedEmployees={selectedEmployees}
                     onEmployeeSelect={handleEmployeeSelect}
+                    isLoading={employees === undefined}
                     onSelectAll={() => {
-                      if (selectedEmployees.length === employees?.length) {
+                      if (selectedEmployees.length === (employees?.length ?? 0)) {
                         // Deselect all
                         setSelectedEmployees([]);
                         setGovernmentDeductionSettings([]);

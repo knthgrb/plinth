@@ -417,13 +417,16 @@ export function SettingsModal({
             <div className="p-2 border-t border-gray-200 shrink-0">
               <button
                 onClick={handleLogout}
-                className="w-full flex items-center justify-center lg:justify-start gap-2 sm:gap-3 px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm text-purple-600 hover:bg-purple-50 rounded-md transition-colors font-medium"
+                className={cn(
+                  "w-full flex items-center justify-center lg:justify-start gap-2 sm:gap-3 px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm rounded-md transition-colors whitespace-nowrap lg:w-full",
+                  "text-gray-700 hover:bg-gray-100 font-medium",
+                )}
                 style={{
                   fontFamily:
                     '-apple-system, "system-ui", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
                 }}
               >
-                <LogOut className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <LogOut className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
                 <span>Log out</span>
               </button>
             </div>

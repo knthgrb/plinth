@@ -19,6 +19,7 @@ export async function createHoliday(data: {
   organizationId: string;
   name: string;
   date: number;
+  offsetDate?: number;
   type: "regular" | "special";
   isRecurring: boolean;
   year?: number;
@@ -31,6 +32,8 @@ export async function updateHoliday(
   data: {
     name?: string;
     date?: number;
+    offsetDate?: number;
+    clearOffsetDate?: boolean;
     type?: "regular" | "special";
     isRecurring?: boolean;
     year?: number;

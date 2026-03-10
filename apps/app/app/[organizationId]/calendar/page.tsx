@@ -28,14 +28,27 @@ type Holiday = {
   _id: string;
   name: string;
   date: number;
+  offsetDate?: number;
   type: "regular" | "special" | "special_working";
   isRecurring: boolean;
   year?: number;
 };
 
+/** Display entry: holiday on its main date or on its offset date (isOffset: true) */
+type HolidayDisplay = Holiday & { isOffset?: boolean };
+
 /** Get display date for a holiday in a given year (recurring = same month/day in that year) */
 function holidayDateInYear(h: Holiday, year: number): Date {
   const d = new Date(h.date);
+  if (h.isRecurring) {
+    return new Date(year, d.getMonth(), d.getDate());
+  }
+  return d;
+}
+
+function offsetDateInYear(h: Holiday, year: number): Date | null {
+  if (h.offsetDate == null) return null;
+  const d = new Date(h.offsetDate);
   if (h.isRecurring) {
     return new Date(year, d.getMonth(), d.getDate());
   }
@@ -52,17 +65,26 @@ export default function CalendarPage() {
     currentOrganizationId ? { organizationId: currentOrganizationId, year } : "skip"
   );
 
-  // Map: "YYYY-MM-DD" -> list of holidays on that day (for viewed month, recurring projected to view year)
+  // Map: "YYYY-MM-DD" -> list of holidays on that day (includes offset days with isOffset: true)
   const holidaysByDay = useMemo(() => {
-    const map: Record<string, Holiday[]> = {};
+    const map: Record<string, HolidayDisplay[]> = {};
     if (!holidays) return map;
     const viewMonth = getMonth(viewDate);
     holidays.forEach((h: Holiday) => {
       const d = holidayDateInYear(h, year);
-      if (getMonth(d) !== viewMonth) return;
-      const key = format(d, "yyyy-MM-dd");
-      if (!map[key]) map[key] = [];
-      map[key].push(h);
+      if (getMonth(d) === viewMonth) {
+        const key = format(d, "yyyy-MM-dd");
+        if (!map[key]) map[key] = [];
+        map[key].push(h);
+      }
+      const offsetD = offsetDateInYear(h, year);
+      if (offsetD && getMonth(offsetD) === viewMonth) {
+        const key = format(offsetD, "yyyy-MM-dd");
+        if (!map[key]) map[key] = [];
+        if (!map[key].some((existing) => (existing as HolidayDisplay).isOffset && existing.name === h.name)) {
+          map[key].push({ ...h, isOffset: true });
+        }
+      }
     });
     return map;
   }, [holidays, viewDate, year]);
@@ -197,23 +219,27 @@ export default function CalendarPage() {
                       {format(day, "d")}
                     </div>
                     <div className="mt-1 space-y-1 overflow-hidden">
-                      {dayHolidays.map((h) => (
-                        <div
-                          key={h._id}
-                          className="group relative"
-                          title={`${h.name} (${h.type === "regular" ? "Regular" : h.type === "special" ? "Special non-working" : "Special working"} holiday)`}
-                        >
-                          <Badge
-                            variant="secondary"
-                            className={`
-                              w-full justify-start truncate text-[10px] font-medium py-0.5 px-1.5 border-0
-                              ${h.type === "regular" ? "bg-rose-100 text-rose-800 hover:bg-rose-100" : h.type === "special" ? "bg-amber-100 text-amber-800 hover:bg-amber-100" : "bg-gray-100 text-gray-800 hover:bg-gray-100"}
-                            `}
+                      {dayHolidays.map((h) => {
+                        const isOffset = (h as HolidayDisplay).isOffset;
+                        const displayName = isOffset ? `Offset - ${h.name}` : h.name;
+                        return (
+                          <div
+                            key={isOffset ? `${h._id}-offset` : h._id}
+                            className="group relative"
+                            title={`${displayName} (${h.type === "regular" ? "Regular" : h.type === "special" ? "Special non-working" : "Special working"} holiday)`}
                           >
-                            <span className="truncate block">{h.name}</span>
-                          </Badge>
-                        </div>
-                      ))}
+                            <Badge
+                              variant="secondary"
+                              className={`
+                                w-full justify-start truncate text-[10px] font-medium py-0.5 px-1.5 border-0
+                                ${h.type === "regular" ? "bg-rose-100 text-rose-800 hover:bg-rose-100" : h.type === "special" ? "bg-amber-100 text-amber-800 hover:bg-amber-100" : "bg-gray-100 text-gray-800 hover:bg-gray-100"}
+                              `}
+                            >
+                              <span className="truncate block">{displayName}</span>
+                            </Badge>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 );

@@ -62,6 +62,7 @@ export function EditPayrollStep2Employees({
               className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded"
             >
               <input
+                className="h-4 w-4 accent-brand-purple"
                 type="checkbox"
                 checked={selectedEmployees.includes(emp._id)}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => {

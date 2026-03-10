@@ -148,15 +148,15 @@ export default function ChatPage() {
   return (
     <MainLayout>
       {/* relative so absolute sidebar is contained below the main app header */}
-      <div className="relative flex h-[calc(100vh-4rem)] min-h-0 overflow-hidden bg-gray-50">
-        {/* Conversation list: full width on small screen when visible, sidebar on large */}
+      <div className="relative flex h-[calc(100vh-4rem)] min-h-0 overflow-hidden w-full bg-gray-50">
+        {/* Conversation list: full width on small screen when visible, sticks to sidebar on large (no margin) */}
         <aside
           className={`
             ${showList ? "flex" : "hidden"} lg:flex
             flex-col h-full shrink-0
             w-full lg:w-80
             absolute lg:relative inset-0 z-10 lg:z-auto
-            bg-white
+            bg-white border-r border-[rgb(230,230,230)]
           `}
         >
           <ConversationList

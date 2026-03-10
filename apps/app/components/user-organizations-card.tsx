@@ -9,7 +9,7 @@ import { Plus, Building2 } from "lucide-react";
 import { CreateOrganizationDialog } from "@/components/create-organization-dialog";
 
 export function UserOrganizationsCard(): React.ReactElement {
-  const { organizations, currentOrganizationId } = useOrganization();
+  const { organizations, currentOrganizationId, switchOrganization } = useOrganization();
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 
   // Helper function to get display role name
@@ -33,17 +33,23 @@ export function UserOrganizationsCard(): React.ReactElement {
               </div>
             ) : (
               organizations.map((org) => (
-                <div
+                <button
+                  type="button"
                   key={org._id}
-                  className={`flex items-center justify-between p-4 border rounded-lg transition-colors ${
+                  onClick={() => {
+                    if (org._id !== currentOrganizationId) {
+                      switchOrganization(org._id);
+                    }
+                  }}
+                  className={`w-full text-left flex items-center justify-between p-4 border rounded-lg transition-colors ${
                     org._id === currentOrganizationId
-                      ? "border-purple-600 bg-purple-50"
-                      : "border-gray-200 hover:border-gray-300"
+                      ? "border-brand-purple bg-brand-purple/10"
+                      : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
                   }`}
                 >
                   <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className="h-10 w-10 rounded-lg bg-purple-100 flex items-center justify-center shrink-0">
-                      <Building2 className="h-5 w-5 text-purple-600" />
+                    <div className="h-10 w-10 rounded-lg bg-brand-purple/15 flex items-center justify-center shrink-0">
+                      <Building2 className="h-5 w-5 text-brand-purple" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-gray-900 truncate">
@@ -62,7 +68,7 @@ export function UserOrganizationsCard(): React.ReactElement {
                       Current
                     </Badge>
                   )}
-                </div>
+                </button>
               ))
             )}
           </div>

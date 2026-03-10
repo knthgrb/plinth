@@ -1,6 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import {
   Dialog,
   DialogContent,
@@ -12,7 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Check, Download, Loader2, Save, X } from "lucide-react";
+import { Check, Download, Loader2, Save, X, AlertCircle } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/components/ui/use-toast";
 import { approveLeaveRequest, rejectLeaveRequest } from "@/actions/leave";
@@ -34,6 +36,7 @@ type LeaveRequestRecord = {
   endDate: number;
   numberOfDays: number;
   reason: string;
+  remarks?: string;
   filledFormContent?: string;
   signatureDataUrl?: string;
 };
@@ -68,6 +71,15 @@ export function ReviewLeaveDialog({
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isSavingToDocuments, setIsSavingToDocuments] = useState(false);
   const pdfContentRef = useRef<HTMLDivElement | null>(null);
+
+  const approvalInfo = useQuery(
+    (api as any).leave.getLeaveRequestApprovalInfo,
+    request?.status === "pending" && request?._id
+      ? { leaveRequestId: request._id }
+      : "skip",
+  );
+  const canApprove = approvalInfo?.canApprove !== false;
+  const blockReason = approvalInfo?.blockReason;
 
   const handleApprove = async () => {
     if (!request) return;
@@ -317,6 +329,11 @@ export function ReviewLeaveDialog({
               <p>
                 <strong>Reason:</strong> {request.reason}
               </p>
+              {request.status !== "pending" && request.remarks && (
+                <p>
+                  <strong>Review notes:</strong> {request.remarks}
+                </p>
+              )}
             </div>
           </DialogDescription>
         </DialogHeader>
@@ -343,13 +360,21 @@ export function ReviewLeaveDialog({
         )}
         {request.status === "pending" && (
           <div className="space-y-4 py-4">
+            {blockReason && (
+              <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                <p>
+                  {blockReason} You can reject the request and add a reason for the employee.
+                </p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="remarks">Remarks</Label>
               <Textarea
                 id="remarks"
                 value={reviewRemarks}
                 onChange={(e) => setReviewRemarks(e.target.value)}
-                placeholder="Add remarks (required for rejection)"
+                placeholder={canApprove ? "Optional remarks (required for rejection)" : "Reason for rejection (required when rejecting)"}
               />
             </div>
           </div>
@@ -402,7 +427,7 @@ export function ReviewLeaveDialog({
                 <X className="mr-2 h-4 w-4" />
                 Reject
               </Button>
-              <Button onClick={handleApprove}>
+              <Button onClick={handleApprove} disabled={!canApprove} title={!canApprove ? blockReason : undefined}>
                 <Check className="mr-2 h-4 w-4" />
                 Approve
               </Button>

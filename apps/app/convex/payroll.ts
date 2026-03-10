@@ -384,7 +384,9 @@ function isSameLocalDay(left: number, right: number): boolean {
 }
 
 function holidayMatchesDate(holiday: any, date: number): boolean {
-  const holidayDate = new Date(holiday.date);
+  // Payroll uses offset date as the holiday date when set
+  const effectiveTimestamp = holiday.offsetDate ?? holiday.date;
+  const holidayDate = new Date(effectiveTimestamp);
   const targetDate = new Date(date);
 
   if (holiday.isRecurring) {

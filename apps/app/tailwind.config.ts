@@ -9,6 +9,9 @@ const config: Config = {
           "purple-hover": "#5547e8",
         },
       },
+      accentColor: {
+        "brand-purple": "#695eff",
+      },
       fontFamily: {
         sans: [
           "var(--font-open-sans)",
