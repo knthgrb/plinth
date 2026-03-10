@@ -185,7 +185,6 @@ export function PayslipDetail({
       cutoffEnd,
       employee?.schedule,
     );
-    // Attendance deductions use the basic-only daily rate.
     dailyRate = monthlySalary * (12 / dailyRateWorkingDaysPerYear);
     hourlyRate = dailyRate / 8;
   } else if (salaryType === "daily") {
@@ -231,13 +230,31 @@ export function PayslipDetail({
         : sum;
     }, 0) || 0;
 
+  // Late and undertime use basic + allowance hourly rate (same as payroll backend).
+  const hourlyRateBasicPlusAllowance =
+    salaryType === "monthly"
+      ? (monthlySalary + (allowance ?? 0)) *
+        (12 / dailyRateWorkingDaysPerYear) /
+        8
+      : salaryType === "hourly"
+        ? monthlySalary
+        : hourlyRate;
+
   const calculatedAbsences = absences;
+  const storedLateDeduction = getAttendanceDeductionAmount((name) =>
+    name.includes("late"),
+  );
+  const storedUndertimeDeduction = getAttendanceDeductionAmount((name) =>
+    name.includes("undertime"),
+  );
   const lateDeduction =
-    getAttendanceDeductionAmount((name) => name.includes("late")) ||
-    lateHours * hourlyRate;
+    lateHours > 0
+      ? lateHours * hourlyRateBasicPlusAllowance
+      : storedLateDeduction || 0;
   const undertimeDeduction =
-    getAttendanceDeductionAmount((name) => name.includes("undertime")) ||
-    undertimeHours * hourlyRate;
+    undertimeHours > 0
+      ? undertimeHours * hourlyRateBasicPlusAllowance
+      : storedUndertimeDeduction || 0;
   const absentDeduction =
     getAttendanceDeductionAmount((name) => name.startsWith("absent")) ||
     (salaryType === "monthly" ? calculatedAbsences * dailyRate : 0);
@@ -323,10 +340,12 @@ export function PayslipDetail({
     (loanDeductionsWithAmount.reduce((s: number, d: any) => s + d.amount, 0) ||
       0);
 
-  // Net pay = total earnings minus only gov + loans (absent/late/undertime already deducted in earnings)
+  // Net pay: when we display recomputed late/undertime (basic+allowance), adjust so slip totals stay consistent
+  const attendanceAdjustment =
+    (lateDeduction - storedLateDeduction) + (undertimeDeduction - storedUndertimeDeduction);
   const netPay =
     typeof payslip.netPay === "number"
-      ? payslip.netPay
+      ? Math.max(0, payslip.netPay - attendanceAdjustment)
       : Math.max(0, totalEarnings - totalDeductionsRightColumn);
 
   // Get specific deduction amounts
