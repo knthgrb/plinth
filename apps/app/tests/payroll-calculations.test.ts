@@ -318,8 +318,10 @@ describe("payroll calculations", () => {
     expect(result.nightDiffPay).toBeCloseTo(110.34, 2);
   });
 
-  it("uses manual late overrides when present", () => {
+  it("uses manual late overrides when present (late = basic+allowance hourly rate)", () => {
     const date = localDate(2026, 1, 23);
+    // Employee: 24k basic + 6k allowance, dailyRateIncludesAllowance true → hourlyRate = (30k*12/261)/8 ≈ 172.41
+    // 20 min late → (20/60) * 172.41 ≈ 57.47
     const result = calculate({
       attendance: [
         {
@@ -329,7 +331,7 @@ describe("payroll calculations", () => {
           actualOut: "18:00",
           scheduleIn: "09:00",
           scheduleOut: "18:00",
-          late: 25,
+          late: 20,
           lateManualOverride: true,
         },
       ],
@@ -337,7 +339,7 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
 
-    expect(result.lateHours).toBeCloseTo(25 / 60, 5);
+    expect(result.lateHours).toBeCloseTo(20 / 60, 5);
     expect(result.lateDeduction).toBeCloseTo(57.47, 2);
   });
 });

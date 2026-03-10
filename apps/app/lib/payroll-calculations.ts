@@ -339,6 +339,11 @@ export function calculatePayrollBaseFromRecords(args: {
   });
   const hourlyRate = dailyRate / 8;
   const basicHourlyRate = basicDailyRate / 8;
+  // Late and undertime deductions always use basic + allowance hourly rate.
+  const hourlyRateBasicPlusAllowance = getDailyRateForEmployee(employee, {
+    includeAllowance: true,
+    workingDaysPerYear: payrollRates.dailyRateWorkingDaysPerYear,
+  }) / 8;
 
   let basicPay =
     salaryType === "monthly"
@@ -425,16 +430,17 @@ export function calculatePayrollBaseFromRecords(args: {
         }
       }
 
+      // Late and undertime deductions use basic + allowance hourly rate (not basic only).
       const dayLateHours = getLateHoursFromAttendance(att);
       if (dayLateHours > 0) {
         lateHours += dayLateHours;
-        lateDeduction += dayLateHours * basicHourlyRate;
+        lateDeduction += dayLateHours * hourlyRateBasicPlusAllowance;
       }
 
       const dayUndertimeHours = getUndertimeHoursFromAttendance(att);
       if (dayUndertimeHours > 0) {
         undertimeHours += dayUndertimeHours;
-        undertimeDeduction += dayUndertimeHours * basicHourlyRate;
+        undertimeDeduction += dayUndertimeHours * hourlyRateBasicPlusAllowance;
       }
 
       if (holidayType === "regular") {

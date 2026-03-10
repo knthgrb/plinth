@@ -629,7 +629,15 @@ export function PayslipDetail({
                     )}
                     {lateDeduction > 0 && (
                       <div className="flex justify-between">
-                        <span>Late</span>
+                        <span>
+                          Late
+                          {lateHours > 0 && (
+                            <span className="text-muted-foreground font-normal">
+                              {" "}
+                              ({Math.round(lateHours * 60)} min)
+                            </span>
+                          )}
+                        </span>
                         <span>
                           ₱
                           {lateDeduction.toLocaleString("en-US", {
