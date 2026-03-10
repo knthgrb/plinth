@@ -158,6 +158,7 @@ export function EmployeeDetailModal({
     sunday: { start: "09:00", end: "18:00", workday: false },
   });
 
+  const SHIFT_NONE = "__none__";
   const [editShiftId, setEditShiftId] = useState<string | null>(null);
 
   const [isSaving, setIsSaving] = useState(false);
@@ -233,7 +234,8 @@ export function EmployeeDetailModal({
   // Populate edit form when opening in edit mode
   useEffect(() => {
     if (!open || mode !== "edit" || !employee) return;
-    setEditShiftId((employee as any).shiftId ?? null);
+    const sid = (employee as any).shiftId;
+    setEditShiftId(sid != null && sid !== "" ? String(sid) : null);
     const daysOrder = [
       "monday",
       "tuesday",
@@ -547,7 +549,7 @@ export function EmployeeDetailModal({
           ...employee.schedule,
           defaultSchedule: newDefaultSchedule,
         },
-        shiftId: !editShiftId ? null : (editShiftId as Id<"shifts">),
+        shiftId: !editShiftId || editShiftId === SHIFT_NONE ? null : (editShiftId as Id<"shifts">),
       });
 
       // Optionally update leave credits totals if changed
@@ -1679,21 +1681,32 @@ export function EmployeeDetailModal({
                   <div className="space-y-2">
                     <Label className="text-sm">Shift (lunch window for late/undertime)</Label>
                     <Select
-                      value={editShiftId ?? ""}
-                      onValueChange={(v) => setEditShiftId(v === "" ? null : v)}
+                      value={editShiftId ?? SHIFT_NONE}
+                      onValueChange={(v) => setEditShiftId(v === SHIFT_NONE ? null : v)}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="None (use default lunch)" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">None (use default lunch)</SelectItem>
-                        {shifts?.map((s: any) => (
-                          <SelectItem key={s._id} value={s._id}>
+                        <SelectItem value={SHIFT_NONE}>None (use default lunch)</SelectItem>
+                        {(shifts ?? []).map((s: any) => (
+                          <SelectItem key={String(s._id)} value={String(s._id)}>
                             {s.name} ({s.scheduleIn}–{s.scheduleOut}, lunch {s.lunchStart}–{s.lunchEnd})
                           </SelectItem>
                         ))}
+                        {editShiftId && editShiftId !== SHIFT_NONE && !(shifts ?? []).some((s: any) => String(s._id) === editShiftId) && (
+                          <SelectItem value={editShiftId}>Unknown shift (no longer in list)</SelectItem>
+                        )}
                       </SelectContent>
                     </Select>
+                    {editShiftId && editShiftId !== SHIFT_NONE && (() => {
+                      const selected = (shifts ?? []).find((s: any) => String(s._id) === editShiftId);
+                      return selected ? (
+                        <p className="text-xs text-muted-foreground">
+                          Lunch: {selected.lunchStart} – {selected.lunchEnd}
+                        </p>
+                      ) : null;
+                    })()}
                   </div>
                   <div className="space-y-2">
                     <Label className="text-sm">Schedule Type</Label>
