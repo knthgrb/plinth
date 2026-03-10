@@ -36,13 +36,35 @@ interface EditAttendanceDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   record: any | null;
+  employee?: any | null; // When provided, scheduled times are pre-filled from employee's schedule for this date
   onSuccess?: () => void;
+}
+
+function getScheduledTimesForDate(
+  employee: any,
+  dateTs: number,
+): { scheduleIn: string; scheduleOut: string } | null {
+  if (!employee?.schedule?.defaultSchedule) return null;
+  const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
+  const dateObj = new Date(dateTs);
+  const dayName = dayNames[dateObj.getDay()];
+  const daySchedule = employee.schedule.defaultSchedule[dayName];
+  if (!daySchedule?.in || !daySchedule?.out) return null;
+  const scheduleOverrides = employee.schedule?.scheduleOverrides;
+  if (Array.isArray(scheduleOverrides)) {
+    const override = scheduleOverrides.find(
+      (o: any) => o.date != null && new Date(o.date).toDateString() === dateObj.toDateString(),
+    );
+    if (override?.in && override?.out) return { scheduleIn: override.in, scheduleOut: override.out };
+  }
+  return { scheduleIn: daySchedule.in, scheduleOut: daySchedule.out };
 }
 
 export function EditAttendanceDialog({
   isOpen,
   onOpenChange,
   record,
+  employee,
   onSuccess,
 }: EditAttendanceDialogProps) {
   const { toast } = useToast();
@@ -65,11 +87,17 @@ export function EditAttendanceDialog({
     (api as any).attendance.updateAttendance,
   );
 
-  // Re-sync from record whenever the dialog opens or record changes (so we always show latest, including override state)
+  // Re-sync from record whenever the dialog opens or record changes. Use employee's schedule for that date when available so wrong stored schedule (e.g. 9–6) is corrected.
   useEffect(() => {
     if (record && isOpen) {
-      setEditScheduleIn(record.scheduleIn || "");
-      setEditScheduleOut(record.scheduleOut || "");
+      const fromEmployee = employee && record.date && getScheduledTimesForDate(employee, record.date);
+      if (fromEmployee) {
+        setEditScheduleIn(fromEmployee.scheduleIn);
+        setEditScheduleOut(fromEmployee.scheduleOut);
+      } else {
+        setEditScheduleIn(record.scheduleIn || "");
+        setEditScheduleOut(record.scheduleOut || "");
+      }
       setEditTimeIn(record.actualIn || "");
       setEditTimeOut(record.actualOut || "");
       setEditOvertime(record.overtime ? record.overtime.toString() : "");
@@ -96,7 +124,7 @@ export function EditAttendanceDialog({
           (record.undertime !== undefined && record.undertime !== null),
       );
     }
-  }, [record, isOpen]);
+  }, [record, employee, isOpen]);
 
   // Calculate late and undertime automatically when times change
   const calculatedLate = useMemo(() => {
@@ -221,8 +249,8 @@ export function EditAttendanceDialog({
             Edit Attendance Record
           </DialogTitle>
           <DialogDescription className="text-sm">
-            Update attendance record details. Late and undertime are calculated
-            automatically, but you can override them manually.
+            Update attendance record details. Late and undertime are based on this
+            employee's scheduled time in/out; you can override them manually.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleUpdate}>
@@ -390,7 +418,7 @@ export function EditAttendanceDialog({
                       <p className="text-xs text-gray-500">
                         {useManualUndertime
                           ? "Manually enter undertime minutes (set to 0 to remove undertime)"
-                          : `Calculated: ${Math.round(calculatedUndertime * 60)} minutes (8 hours work = ${formatTime12Hour(editScheduleIn)} to ${formatTime12Hour(editScheduleOut)} with 1hr lunch)`}
+                          : `Calculated: ${Math.round(calculatedUndertime * 60)} min from scheduled time out (${formatTime12Hour(editScheduleOut)}). Update scheduled times above if they don't match this employee's work schedule.`}
                       </p>
                     </div>
                   </div>

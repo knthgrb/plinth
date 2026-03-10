@@ -452,7 +452,7 @@ export function AddAttendanceDialog({
                       <p className="text-xs text-gray-500">
                         {useManualUndertime
                           ? "Manually enter undertime minutes"
-                          : `Calculated: ${Math.round(calculatedUndertime * 60)} minutes (8 hours work = ${formatTime12Hour(employeeSchedule.in)} to ${formatTime12Hour(employeeSchedule.out)} with 1hr lunch)`}
+                          : `Calculated: ${Math.round(calculatedUndertime * 60)} min from this employee's scheduled time out (${formatTime12Hour(employeeSchedule.out)}).`}
                       </p>
                     </div>
                   </div>

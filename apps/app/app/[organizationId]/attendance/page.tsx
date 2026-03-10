@@ -614,6 +614,11 @@ export default function AttendancePage() {
                       : editingRecord)
                   : null
               }
+              employee={
+                editingRecord?.employeeId
+                  ? employees?.find((e: any) => e._id === editingRecord.employeeId)
+                  : undefined
+              }
               onSuccess={() => {
                 setEditingRecord(null);
               }}
