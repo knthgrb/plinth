@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
-import type { JSONContent } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -99,7 +98,7 @@ export function TiptapEditor({
       TableHeader,
       TableCell,
     ],
-    content: parsedContent as JSONContent,
+    content: parsedContent as Record<string, unknown>,
     immediatelyRender: false,
     onCreate: ({ editor }) => {
       if (editor.isEmpty) {
@@ -166,7 +165,7 @@ export function TiptapEditor({
     const next = JSON.stringify(parsedContent);
 
     if (current !== next) {
-      editor.commands.setContent(parsedContent as JSONContent, false);
+      editor.commands.setContent(parsedContent as Record<string, unknown>, false);
     }
   }, [editor, parsedContent]);
 
