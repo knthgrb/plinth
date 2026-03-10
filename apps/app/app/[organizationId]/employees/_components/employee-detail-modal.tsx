@@ -28,6 +28,13 @@ import {
   Loader2,
 } from "lucide-react";
 import { format } from "date-fns";
+
+/** Parse a value to a Date; return null if invalid (avoids "Invalid time value" in prod). */
+function safeDate(value: unknown): Date | null {
+  if (value == null) return null;
+  const d = new Date(value as string | number);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 import { updateEmployee } from "@/actions/employees";
 import {
   updateEmployeeLeaveCredits,
@@ -329,11 +336,11 @@ export function EmployeeDetailModal({
       employee.compensation.specialHolidayOtRate ??
       orgSpecialHolidayOtDecimal;
 
-    const hireDateStr = employee.employment.hireDate
-      ? new Date(employee.employment.hireDate).toISOString().slice(0, 10)
-      : "";
-    const regularizationDateStr = employee.employment.regularizationDate
-      ? new Date(employee.employment.regularizationDate).toISOString().slice(0, 10)
+    const hireDate = safeDate(employee.employment.hireDate);
+    const regularizationDate = safeDate(employee.employment.regularizationDate);
+    const hireDateStr = hireDate ? hireDate.toISOString().slice(0, 10) : "";
+    const regularizationDateStr = regularizationDate
+      ? regularizationDate.toISOString().slice(0, 10)
       : "";
 
     reset({
@@ -767,10 +774,12 @@ export function EmployeeDetailModal({
                                 Date of Birth
                               </p>
                               <p className="text-sm">
-                                {format(
-                                  new Date(employee.personalInfo.dateOfBirth),
-                                  "MMM dd, yyyy"
-                                )}
+                                {(() => {
+                                  const d = safeDate(employee.personalInfo.dateOfBirth);
+                                  return d
+                                    ? format(d, "MMM dd, yyyy")
+                                    : "—";
+                                })()}
                               </p>
                             </div>
                           </div>
@@ -954,10 +963,12 @@ export function EmployeeDetailModal({
                             Hire Date
                           </p>
                           <p className="text-sm">
-                            {format(
-                              new Date(employee.employment.hireDate),
-                              "MMM dd, yyyy"
-                            )}
+                            {(() => {
+                              const d = safeDate(employee.employment.hireDate);
+                              return d
+                                ? format(d, "MMM dd, yyyy")
+                                : "—";
+                            })()}
                           </p>
                         </div>
                       </div>
@@ -974,12 +985,14 @@ export function EmployeeDetailModal({
                               Regularization Date
                             </p>
                             <p className="text-sm">
-                              {format(
-                                new Date(
+                              {(() => {
+                                const d = safeDate(
                                   employee.employment.regularizationDate
-                                ),
-                                "MMM dd, yyyy"
-                              )}
+                                );
+                                return d
+                                  ? format(d, "MMM dd, yyyy")
+                                  : "—";
+                              })()}
                             </p>
                           </div>
                         </div>
@@ -1136,7 +1149,7 @@ export function EmployeeDetailModal({
                             (employee.compensation.regularHolidayRate ?? 1.0) *
                             100
                           ).toFixed(0)}
-                          %
+                          % additional
                         </p>
                       </div>
                       <div className="space-y-0.5">
@@ -1148,7 +1161,7 @@ export function EmployeeDetailModal({
                             (employee.compensation.specialHolidayRate ?? 0.3) *
                             100
                           ).toFixed(0)}
-                          %
+                          % additional
                         </p>
                       </div>
                       <div className="space-y-0.5">

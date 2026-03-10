@@ -203,9 +203,13 @@ export function EmployeesTable({
                       )}
                       {visibleColumns.includes("createdAt") && (
                         <TableCell className="hidden lg:table-cell py-1.5 px-3 text-xs text-gray-600">
-                          {employee.createdAt
-                            ? new Date(employee.createdAt).toLocaleDateString()
-                            : "—"}
+                          {(() => {
+                            if (employee.createdAt == null) return "—";
+                            const d = new Date(employee.createdAt);
+                            return Number.isNaN(d.getTime())
+                              ? "—"
+                              : d.toLocaleDateString();
+                          })()}
                         </TableCell>
                       )}
                       {visibleColumns.includes("status") && (
