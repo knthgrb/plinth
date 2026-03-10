@@ -12,7 +12,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, Edit } from "lucide-react";
 import { getEmployeeLeaveCredits } from "@/actions/leave";
-import { calculateAnniversaryLeave } from "@/utils/leave-calculations";
 
 const PAGE_SIZE = 20;
 
@@ -140,6 +139,8 @@ export function LeaveCreditsTable({
                 "—";
               const vacBalance = credits?.vacation?.balance ?? "—";
               const sickBalance = credits?.sick?.balance ?? "—";
+              const vacMax = credits?.maxCredits?.vacation;
+              const sickMax = credits?.maxCredits?.sick;
               return (
                 <TableRow
                   key={emp._id}
@@ -150,37 +151,34 @@ export function LeaveCreditsTable({
                   </TableCell>
                   <TableCell className="text-sm text-[rgb(64,64,64)]">
                     {typeof vacBalance === "number"
-                      ? `${vacBalance} days`
+                      ? vacMax != null
+                        ? `${vacBalance} / ${vacMax} days`
+                        : `${vacBalance} days`
                       : vacBalance}
                   </TableCell>
                   <TableCell className="text-sm text-[rgb(64,64,64)]">
                     {typeof sickBalance === "number"
-                      ? `${sickBalance} days`
+                      ? sickMax != null
+                        ? `${sickBalance} / ${sickMax} days`
+                        : `${sickBalance} days`
                       : sickBalance}
                   </TableCell>
                   {customTypes.map((type) => {
                     const custom = credits?.custom?.find(
                       (c: any) => c.type === type
                     );
-                    const used = custom?.used ?? 0;
-                    // Anniversary leave: total = +1 per year from hire/regularization, balance = total - used
-                    const isAnniversary = type === "anniversary";
-                    const anniversaryTotal = isAnniversary
-                      ? calculateAnniversaryLeave(
-                          emp.employment?.regularizationDate ??
-                            emp.employment?.hireDate
-                        )
-                      : null;
-                    const bal =
-                      isAnniversary && anniversaryTotal !== null
-                        ? Math.max(0, anniversaryTotal - used)
-                        : (custom?.balance ?? "—");
+                    const bal = custom?.balance ?? "—";
+                    const total = custom?.total;
                     return (
                       <TableCell
                         key={type}
                         className="text-sm text-[rgb(64,64,64)]"
                       >
-                        {typeof bal === "number" ? `${bal} days` : bal}
+                        {typeof bal === "number"
+                          ? total != null
+                            ? `${bal} / ${total} days`
+                            : `${bal} days`
+                          : bal}
                       </TableCell>
                     );
                   })}

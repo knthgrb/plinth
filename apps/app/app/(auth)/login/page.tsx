@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { useQuery } from "convex/react";
@@ -12,6 +12,8 @@ import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 
+const PENDING_SIGNOUT_KEY = "pendingSignOut";
+
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -20,6 +22,15 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Complete sign-out after navigating here (org tree is unmounted, so no Convex auth errors)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (sessionStorage.getItem(PENDING_SIGNOUT_KEY)) {
+      sessionStorage.removeItem(PENDING_SIGNOUT_KEY);
+      authClient.signOut();
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

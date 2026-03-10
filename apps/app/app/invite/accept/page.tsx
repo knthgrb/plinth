@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
@@ -27,7 +28,6 @@ export default function AcceptInvitationPage() {
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [name, setName] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState("");
   const [isExistingUser, setIsExistingUser] = useState<boolean | null>(null);
@@ -35,6 +35,7 @@ export default function AcceptInvitationPage() {
     null
   );
   const [showSwitchAccountDialog, setShowSwitchAccountDialog] = useState(false);
+  const [redirectingAfterAccept, setRedirectingAfterAccept] = useState(false);
 
   const invitation = useQuery(
     (api as any).invitations.getInvitationByToken,
@@ -50,8 +51,8 @@ export default function AcceptInvitationPage() {
     (api as any).invitations.acceptInvitation
   );
 
-  const ensureUserRecordMutation = useMutation(
-    (api as any).organizations.ensureUserRecord
+  const updateLastActiveOrganizationMutation = useMutation(
+    (api as any).organizations.updateLastActiveOrganization
   );
 
   // Check for existing session when invitation loads
@@ -66,9 +67,8 @@ export default function AcceptInvitationPage() {
 
         if (userEmail) {
           setCurrentSessionEmail(userEmail);
-
-          // If there's a session with a different email, show switch dialog
-          if (invitation?.email && userEmail !== invitation.email) {
+          // Only show switch dialog when logged in as a *different* email (not for same-email)
+          if (invitation?.email && userEmail.toLowerCase() !== invitation.email.toLowerCase()) {
             setShowSwitchAccountDialog(true);
           }
         }
@@ -98,18 +98,9 @@ export default function AcceptInvitationPage() {
       // Clear form
       setPassword("");
       setConfirmPassword("");
-      setName("");
     } catch (error: any) {
       setError(error.message || "Failed to sign out");
     }
-  };
-
-  const handleContinueWithCurrentAccount = () => {
-    setShowSwitchAccountDialog(false);
-    // User wants to continue with current account - they'll need to sign in with invitation email
-    setError(
-      "Please sign out first, then accept the invitation with the invited email address."
-    );
   };
 
   const handleAccept = async (e: React.FormEvent) => {
@@ -129,8 +120,32 @@ export default function AcceptInvitationPage() {
     setError("");
     setIsProcessing(true);
 
+    const isAlreadyLoggedInAsInvitee =
+      currentSessionEmail?.toLowerCase() === invitation.email?.toLowerCase();
+
     try {
-      // Validate password
+      // Already logged in as invitee: just add org and set as active, no password
+      if (isAlreadyLoggedInAsInvitee) {
+        const result = await acceptInvitationMutation({ token });
+        setRedirectingAfterAccept(true);
+        if (result?.organizationId) {
+          await updateLastActiveOrganizationMutation({
+            organizationId: result.organizationId,
+          });
+        }
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        const role = invitation.role;
+        let path = "/dashboard";
+        if (role === "accounting") path = "/accounting";
+        else if (role === "employee") path = "/announcements";
+        const redirectUrl = result?.organizationId
+          ? `/${result.organizationId}${path}`
+          : path;
+        window.location.href = redirectUrl;
+        return;
+      }
+
+      // Validate password (for not-logged-in or different-account flow)
       if (!password || password.length < 6) {
         setError("Password must be at least 6 characters");
         setIsProcessing(false);
@@ -146,12 +161,12 @@ export default function AcceptInvitationPage() {
         }
       }
 
-      // If user doesn't exist, create account first
+      // If user doesn't exist, create account first (name comes from employee record)
       if (!isExistingUser) {
         const signUpResult = await authClient.signUp.email({
           email: invitation.email,
           password,
-          name: name || invitation.email.split("@")[0],
+          name: (invitation as any).inviteeName ?? invitation.email.split("@")[0],
         });
 
         if (signUpResult.error) {
@@ -186,7 +201,7 @@ export default function AcceptInvitationPage() {
           const signUpResult = await authClient.signUp.email({
             email: invitation.email,
             password,
-            name: name || invitation.email.split("@")[0],
+            name: (invitation as any).inviteeName ?? invitation.email.split("@")[0],
           });
 
           if (signUpResult.error) {
@@ -214,22 +229,16 @@ export default function AcceptInvitationPage() {
         }
       }
 
-      // Wait a bit more to ensure session is fully established
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Wait for session to propagate (needed for acceptInvitation auth check when email matches)
+      await new Promise((resolve) => setTimeout(resolve, 800));
 
-      // Ensure user record exists in Convex (creates it if it doesn't exist)
-      try {
-        await ensureUserRecordMutation({});
-      } catch (err) {
-        // Ignore errors - user record might already exist
-        console.log("User record sync:", err);
-      }
-
-      // Accept invitation (this will add user to organization with the role from invitation)
+      // Accept invitation - creates user record in Convex if needed, adds to org (no ensureUserRecord needed)
       const result = await acceptInvitationMutation({
         token,
-        name: name || undefined,
       });
+
+      // Mark as redirecting so we don't show "already been accepted" when the query updates
+      setRedirectingAfterAccept(true);
 
       // Wait for organization context and replication so getCurrentUser/getUserOrganizations see the new org
       await new Promise((resolve) => setTimeout(resolve, 800));
@@ -268,7 +277,8 @@ export default function AcceptInvitationPage() {
     );
   }
 
-  if (invitation === undefined || isExistingUser === null) {
+  // Only wait for invitation query; isExistingUser can resolve after (we treat null as false for form)
+  if (invitation === undefined) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50">
         <Card className="w-full max-w-md">
@@ -281,6 +291,20 @@ export default function AcceptInvitationPage() {
   }
 
   if (!invitation || invitation.status !== "pending") {
+    // Just accepted and redirecting — don't show "already been accepted"
+    if (redirectingAfterAccept) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-gray-50">
+          <Card className="w-full max-w-md">
+            <CardContent className="p-6">
+              <p className="text-center text-gray-600">
+                Invitation accepted. Redirecting...
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      );
+    }
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50">
         <Card className="w-full max-w-md">
@@ -311,8 +335,9 @@ export default function AcceptInvitationPage() {
             <CardTitle className="text-2xl">Accept Invitation</CardTitle>
           </CardHeader>
           <CardContent>
+            {/* Only show "sign out first" when logged in as a *different* email */}
             {currentSessionEmail &&
-              currentSessionEmail !== invitation.email && (
+              currentSessionEmail.toLowerCase() !== invitation.email?.toLowerCase() && (
                 <div className="mb-4 rounded-lg bg-yellow-50 border border-yellow-200 p-3">
                   <p className="text-sm text-yellow-800">
                     You are currently signed in as{" "}
@@ -356,124 +381,117 @@ export default function AcceptInvitationPage() {
             </div>
 
             <form onSubmit={handleAccept} className="space-y-4">
-              {!isExistingUser && (
-                <div className="space-y-2">
-                  <Label htmlFor="name">Full Name <span className="text-red-500">*</span></Label>
-                  <Input
-                    id="name"
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="John Doe"
-                    required
-                    disabled={
-                      !!(
-                        currentSessionEmail &&
-                        currentSessionEmail !== invitation.email
-                      )
-                    }
-                  />
-                  <p className="text-xs text-gray-500">
-                    Please enter your full name to create your account
+              {currentSessionEmail?.toLowerCase() === invitation.email?.toLowerCase() ? (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    You're signed in as <strong>{invitation.email}</strong>. Click below to join this organization.
                   </p>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <Label htmlFor="password">
-                  {isExistingUser ? "Password *" : "Create Password *"}
-                </Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={6}
-                  placeholder={
-                    isExistingUser
-                      ? "Enter your password (or set a new one if first time)"
-                      : "Create a password (at least 6 characters)"
-                  }
-                  disabled={
-                    !!(
-                      currentSessionEmail &&
-                      currentSessionEmail !== invitation.email
-                    )
-                  }
-                />
-                {isExistingUser ? (
-                  <p className="text-xs text-gray-500">
-                    If this is your first time, the password you enter will be
-                    set as your account password. Otherwise, enter your existing
-                    password.
-                  </p>
-                ) : (
-                  <p className="text-xs text-gray-500">
-                    Password must be at least 6 characters long
-                  </p>
-                )}
-              </div>
-
-              {!isExistingUser && (
-                <div className="space-y-2">
-                  <Label htmlFor="confirmPassword">Confirm Password <span className="text-red-500">*</span></Label>
-                  <Input
-                    id="confirmPassword"
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    required
-                    minLength={6}
-                    placeholder="Confirm your password"
-                    disabled={
-                      !!(
-                        currentSessionEmail &&
-                        currentSessionEmail !== invitation.email
-                      )
-                    }
-                  />
-                </div>
-              )}
-
-              {error && (
-                <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
-                  {error}
-                </div>
-              )}
-
-              {currentSessionEmail &&
-                currentSessionEmail !== invitation.email && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleSwitchAccount}
-                    className="w-full"
-                  >
-                    <LogOut className="mr-2 h-4 w-4" />
-                    Sign Out & Continue
+                  {error && (
+                    <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
+                      {error}
+                    </div>
+                  )}
+                  <Button type="submit" className="w-full" disabled={isProcessing}>
+                    {isProcessing ? "Processing..." : "Accept invitation"}
                   </Button>
-                )}
+                </>
+              ) : !currentSessionEmail && isExistingUser === true ? (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    An account already exists for <strong>{invitation.email}</strong>. Please log in first to accept this invitation.
+                  </p>
+                  <Button asChild className="w-full">
+                    <Link href={token ? `/login?redirect=${encodeURIComponent(`/invite/accept?token=${token}`)}` : "/login"}>
+                      Log in to accept
+                    </Link>
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="password">
+                      {isExistingUser ? "Password *" : "Create Password *"}
+                    </Label>
+                    <Input
+                      id="password"
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      minLength={6}
+                      placeholder={
+                        isExistingUser
+                          ? "Enter your password (or set a new one if first time)"
+                          : "Create a password (at least 6 characters)"
+                      }
+                      disabled={
+                        !!(
+                          currentSessionEmail &&
+                          currentSessionEmail !== invitation.email
+                        )
+                      }
+                    />
+                    {isExistingUser ? (
+                      <p className="text-xs text-gray-500">
+                        If this is your first time, the password you enter will be
+                        set as your account password. Otherwise, enter your existing
+                        password.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-gray-500">
+                        Password must be at least 6 characters long
+                      </p>
+                    )}
+                  </div>
 
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={
-                  isProcessing ||
-                  !password ||
-                  (!isExistingUser && (!name || !confirmPassword)) ||
-                  !!(
-                    currentSessionEmail &&
-                    currentSessionEmail !== invitation.email
-                  )
-                }
-              >
-                {isProcessing
-                  ? "Processing..."
-                  : isExistingUser
-                    ? "Continue & Accept Invitation"
-                    : "Create Account & Accept Invitation"}
-              </Button>
+                  {!isExistingUser && (
+                    <div className="space-y-2">
+                      <Label htmlFor="confirmPassword">Confirm Password <span className="text-red-500">*</span></Label>
+                      <Input
+                        id="confirmPassword"
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        required
+                        minLength={6}
+                        placeholder="Confirm your password"
+                        disabled={
+                          !!(
+                            currentSessionEmail &&
+                            currentSessionEmail !== invitation.email
+                          )
+                        }
+                      />
+                    </div>
+                  )}
+
+                  {error && (
+                    <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
+                      {error}
+                    </div>
+                  )}
+
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={
+                      isProcessing ||
+                      !password ||
+                      (!isExistingUser && !confirmPassword) ||
+                      !!(
+                        currentSessionEmail &&
+                        currentSessionEmail !== invitation.email
+                      )
+                    }
+                  >
+                    {isProcessing
+                      ? "Processing..."
+                      : isExistingUser
+                        ? "Continue & Accept Invitation"
+                        : "Create Account & Accept Invitation"}
+                  </Button>
+                </>
+              )}
             </form>
           </CardContent>
         </Card>
@@ -503,7 +521,7 @@ export default function AcceptInvitationPage() {
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setShowSwitchAccountDialog(false)}
+              onClick={() => window.close()}
             >
               Cancel
             </Button>

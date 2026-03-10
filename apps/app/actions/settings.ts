@@ -40,6 +40,9 @@ export async function updateLeaveTypes(data: {
     isAnniversary?: boolean;
   }>;
   proratedLeave?: boolean;
+  annualSil?: number;
+  grantLeaveUponRegularization?: boolean;
+  leaveRequestFormTemplate?: string;
 }) {
   return SettingsService.updateLeaveTypes(data);
 }

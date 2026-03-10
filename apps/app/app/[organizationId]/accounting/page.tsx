@@ -39,8 +39,7 @@ import {
   Plus,
   Edit,
   Trash2,
-  Users,
-  Building2,
+  Eye,
   AlertCircle,
   Calendar,
   FileText,
@@ -81,6 +80,24 @@ const REQUIRED_CATEGORIES = [
 
 const PAGE_SIZE_OPTIONS = [30, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = 30;
+const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
+const ACCEPTED_ATTACHMENT_TYPES = [
+  "image/",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/csv",
+];
+const ACCEPTED_ATTACHMENT_EXTENSIONS = [
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".csv",
+];
 
 export default function AccountingPage() {
   const router = useRouter();
@@ -112,6 +129,14 @@ export default function AccountingPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteItemId, setDeleteItemId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [breakdownDialogOpen, setBreakdownDialogOpen] = useState(false);
+  const [selectedBreakdownItem, setSelectedBreakdownItem] = useState<any>(null);
+  const [detailAttachmentUrls, setDetailAttachmentUrls] = useState<
+    { url: string; id: string }[]
+  >([]);
+  const [detailImageLoadErrors, setDetailImageLoadErrors] = useState<
+    Record<string, boolean>
+  >({});
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [categoryPage, setCategoryPage] = useState<Record<string, number>>({});
   const [dateRange, setDateRange] = useState<DateRangeOption>("7");
@@ -280,7 +305,30 @@ export default function AccountingPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const files = Array.from(e.target.files);
-      setReceiptFiles((prev) => [...prev, ...files]);
+      const validFiles = files.filter((file) => {
+        if (!isAcceptedAttachment(file)) {
+          toast({
+            title: "Invalid attachment type",
+            description:
+              "Only images, document files, and spreadsheet files are allowed.",
+            variant: "destructive",
+          });
+          return false;
+        }
+
+        if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
+          toast({
+            title: "Attachment too large",
+            description: "Each attachment must be 10 MB or smaller.",
+            variant: "destructive",
+          });
+          return false;
+        }
+
+        return true;
+      });
+      setReceiptFiles((prev) => [...prev, ...validFiles]);
+      e.target.value = "";
     }
   };
 
@@ -336,6 +384,14 @@ export default function AccountingPage() {
       // Calculate status based on amountPaid
       const amount = parseFloat(itemFormData.amount);
       const amountPaid = parseFloat(itemFormData.amountPaid || "0");
+      if (amountPaid > amount) {
+        toast({
+          title: "Invalid amount paid",
+          description: "Amount paid cannot be greater than the total amount.",
+          variant: "destructive",
+        });
+        return;
+      }
       let status = itemFormData.status;
 
       if (amountPaid === 0) {
@@ -430,9 +486,75 @@ export default function AccountingPage() {
   // Using centralized color system from utils/colors
 
   const formatDate = (timestamp?: number) => {
-    if (!timestamp) return "-";
+    if (!timestamp) return "--";
     return new Date(timestamp).toLocaleDateString();
   };
+
+  const isAcceptedAttachment = (file: File) =>
+    ACCEPTED_ATTACHMENT_TYPES.some((type) =>
+      type.endsWith("/") ? file.type.startsWith(type) : file.type === type,
+    ) ||
+    ACCEPTED_ATTACHMENT_EXTENSIONS.some((ext) =>
+      file.name.toLowerCase().endsWith(ext),
+    );
+
+  const isImageAttachment = (value: File | string) => {
+    if (typeof value !== "string") {
+      return value.type.startsWith("image/");
+    }
+    return /\.(png|jpe?g|gif|webp|bmp|svg)(\?|$)/i.test(value);
+  };
+
+  const openDetailsDialog = async (item: any) => {
+    setSelectedBreakdownItem(item);
+    setBreakdownDialogOpen(true);
+    setDetailImageLoadErrors({});
+
+    if (item.receipts?.length) {
+      const attachments = await Promise.all(
+        item.receipts.map(async (id: string) => ({
+          id,
+          url: await getFileUrl(id),
+        })),
+      );
+      setDetailAttachmentUrls(attachments);
+      return;
+    }
+
+    setDetailAttachmentUrls([]);
+  };
+
+  const isPayrollGeneratedCostItem = (item: any) =>
+    [
+      "Payroll - ",
+      "SSS - ",
+      "Pag-IBIG - ",
+      "PhilHealth - ",
+      "Tax Employee Deductions - ",
+    ].some((prefix) => item.name?.startsWith(prefix));
+
+  const isEditingLockedCostItem =
+    editingItem && isPayrollGeneratedCostItem(editingItem);
+  const isTaxBreakdownItem =
+    selectedBreakdownItem?.name?.startsWith("Tax Employee Deductions - ");
+  const receiptFilePreviews = useMemo(
+    () =>
+      receiptFiles.map((file) => ({
+        file,
+        previewUrl: isImageAttachment(file) ? URL.createObjectURL(file) : null,
+      })),
+    [receiptFiles],
+  );
+
+  useEffect(() => {
+    return () => {
+      receiptFilePreviews.forEach((item) => {
+        if (item.previewUrl) {
+          URL.revokeObjectURL(item.previewUrl);
+        }
+      });
+    };
+  }, [receiptFilePreviews]);
 
   // Show loading or forbidden
   if (user === undefined || loading) {
@@ -628,12 +750,19 @@ export default function AccountingPage() {
                                       )}
                                     </TableCell>
                                     <TableCell>
-                                      <div className="flex items-center gap-1">
-                                        <Calendar className="h-3 w-3 text-gray-400" />
-                                        <span className="text-sm">
-                                          {formatDate(item.dueDate)}
+                                      {isPayrollGeneratedCostItem(item) ||
+                                      !item.dueDate ? (
+                                        <span className="text-sm text-gray-500">
+                                          --
                                         </span>
-                                      </div>
+                                      ) : (
+                                        <div className="flex items-center gap-1">
+                                          <Calendar className="h-3 w-3 text-gray-400" />
+                                          <span className="text-sm">
+                                            {formatDate(item.dueDate)}
+                                          </span>
+                                        </div>
+                                      )}
                                     </TableCell>
                                     <TableCell>
                                       <Badge
@@ -650,6 +779,15 @@ export default function AccountingPage() {
                                     </TableCell>
                                     <TableCell className="text-right">
                                       <div className="flex justify-end gap-2">
+                                        {isPayrollGeneratedCostItem(item) && item.breakdown && (
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => void openDetailsDialog(item)}
+                                          >
+                                            <Eye className="h-4 w-4" />
+                                          </Button>
+                                        )}
                                         <Button
                                           variant="ghost"
                                           size="sm"
@@ -662,16 +800,18 @@ export default function AccountingPage() {
                                         >
                                           <Edit className="h-4 w-4" />
                                         </Button>
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          onClick={() => {
-                                            setDeleteItemId(item._id);
-                                            setDeleteDialogOpen(true);
-                                          }}
-                                        >
-                                          <Trash2 className="h-4 w-4 text-red-600" />
-                                        </Button>
+                                        {!isPayrollGeneratedCostItem(item) && (
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => {
+                                              setDeleteItemId(item._id);
+                                              setDeleteDialogOpen(true);
+                                            }}
+                                          >
+                                            <Trash2 className="h-4 w-4 text-red-600" />
+                                          </Button>
+                                        )}
                                       </div>
                                     </TableCell>
                                   </TableRow>
@@ -818,13 +958,34 @@ export default function AccountingPage() {
                             amount: e.target.value,
                           })
                         }
+                        disabled={Boolean(isEditingLockedCostItem)}
                         required
                         placeholder="0.00"
                       />
+                      {isEditingLockedCostItem && (
+                        <p className="text-xs text-gray-500">
+                          Amount is locked for payroll-generated cost records.
+                        </p>
+                      )}
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="amountPaid">Amount Paid (₱)</Label>
+                      <div className="flex items-center justify-between gap-2">
+                        <Label htmlFor="amountPaid">Amount Paid (₱)</Label>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setItemFormData({
+                              ...itemFormData,
+                              amountPaid: itemFormData.amount || "0",
+                            })
+                          }
+                        >
+                          Full
+                        </Button>
+                      </div>
                       <Input
                         id="amountPaid"
                         type="number"
@@ -880,27 +1041,41 @@ export default function AccountingPage() {
                         ref={fileInputRef}
                         type="file"
                         multiple
-                        accept="image/*,.pdf"
+                        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv"
                         onChange={handleFileChange}
                         className="cursor-pointer"
                       />
                       <p className="text-xs text-gray-500">
-                        Upload receipts, invoices, or other supporting documents
+                        Upload images, documents, or spreadsheet files. Max 10 MB
+                        per attachment.
                       </p>
 
                       {/* Display uploaded files */}
-                      {receiptFiles.length > 0 && (
+                      {receiptFilePreviews.length > 0 && (
                         <div className="space-y-1">
-                          {receiptFiles.map((file, index) => (
+                          {receiptFilePreviews.map(({ file, previewUrl }, index) => (
                             <div
                               key={index}
-                              className="flex items-center justify-between p-2 bg-gray-50 rounded text-sm"
+                              className="flex items-center justify-between gap-3 p-2 bg-gray-50 rounded text-sm"
                             >
-                              <div className="flex items-center gap-2">
-                                <FileText className="h-4 w-4 text-gray-400" />
-                                <span className="truncate max-w-xs">
-                                  {file.name}
-                                </span>
+                              <div className="flex items-center gap-2 min-w-0">
+                                {previewUrl ? (
+                                  <img
+                                    src={previewUrl}
+                                    alt={file.name}
+                                    className="h-12 w-12 rounded object-cover border"
+                                  />
+                                ) : (
+                                  <FileText className="h-4 w-4 text-gray-400" />
+                                )}
+                                <div className="min-w-0">
+                                  <div className="truncate max-w-xs">
+                                    {file.name}
+                                  </div>
+                                  <div className="text-xs text-gray-500">
+                                    {(file.size / (1024 * 1024)).toFixed(2)} MB
+                                  </div>
+                                </div>
                               </div>
                               <Button
                                 type="button"
@@ -924,16 +1099,26 @@ export default function AccountingPage() {
                           {receiptUrls.map((receipt, index) => (
                             <div
                               key={receipt.id}
-                              className="flex items-center justify-between p-2 bg-gray-50 rounded text-sm"
+                              className="flex items-center justify-between gap-3 p-2 bg-gray-50 rounded text-sm"
                             >
                               <a
                                 href={receipt.url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="flex items-center gap-2 text-blue-600 hover:underline"
+                                className="flex items-center gap-2 text-blue-600 hover:underline min-w-0"
                               >
-                                <Download className="h-4 w-4" />
-                                <span>Receipt {index + 1}</span>
+                                {isImageAttachment(receipt.url) ? (
+                                  <img
+                                    src={receipt.url}
+                                    alt={`Attachment ${index + 1}`}
+                                    className="h-12 w-12 rounded object-cover border"
+                                  />
+                                ) : (
+                                  <Download className="h-4 w-4" />
+                                )}
+                                <span className="truncate">
+                                  Attachment {index + 1}
+                                </span>
                               </a>
                               <Button
                                 type="button"
@@ -1006,6 +1191,217 @@ export default function AccountingPage() {
               disabled={deleting}
             >
               {deleting ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={breakdownDialogOpen}
+        onOpenChange={(open) => {
+          setBreakdownDialogOpen(open);
+          if (!open) {
+            setSelectedBreakdownItem(null);
+            setDetailAttachmentUrls([]);
+            setDetailImageLoadErrors({});
+          }
+        }}
+      >
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Details</DialogTitle>
+            <DialogDescription>
+              {selectedBreakdownItem?.name || "Expense breakdown"}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedBreakdownItem?.breakdown?.kind === "payroll" && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Employee</TableHead>
+                  <TableHead className="text-right">Gross Pay</TableHead>
+                  <TableHead className="text-right">Allowance</TableHead>
+                  <TableHead className="text-right">Incentives</TableHead>
+                  <TableHead className="text-right">Deductions</TableHead>
+                  <TableHead className="text-right">Net Pay</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {selectedBreakdownItem.breakdown.rows.map((row: any) => (
+                  <TableRow key={row.employeeId}>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <div>{row.employeeName}</div>
+                        {Array.isArray(row.incentiveItems) &&
+                          row.incentiveItems.length > 0 && (
+                            <div className="text-xs text-gray-500">
+                              Incentives:{" "}
+                              {row.incentiveItems
+                                .map(
+                                  (item: any) =>
+                                    `${item.name} (₱${(item.amount ?? 0).toLocaleString("en-US", {
+                                      minimumFractionDigits: 2,
+                                      maximumFractionDigits: 2,
+                                    })})`,
+                                )
+                                .join(", ")}
+                            </div>
+                          )}
+                        {Array.isArray(row.deductionItems) &&
+                          row.deductionItems.length > 0 && (
+                            <div className="text-xs text-gray-500">
+                              Deductions:{" "}
+                              {row.deductionItems
+                                .map(
+                                  (item: any) =>
+                                    `${item.name} (₱${(item.amount ?? 0).toLocaleString("en-US", {
+                                      minimumFractionDigits: 2,
+                                      maximumFractionDigits: 2,
+                                    })})`,
+                                )
+                                .join(", ")}
+                            </div>
+                          )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      ₱
+                      {(row.grossPay ?? 0).toLocaleString("en-US", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      ₱
+                      {(row.nonTaxableAllowance ?? 0).toLocaleString("en-US", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      ₱
+                      {(row.totalIncentives ?? 0).toLocaleString("en-US", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      ₱
+                      {(row.totalDeductions ?? 0).toLocaleString("en-US", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </TableCell>
+                    <TableCell className="text-right font-medium">
+                      ₱
+                      {(row.netPay ?? 0).toLocaleString("en-US", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+
+          {selectedBreakdownItem?.breakdown?.kind === "contributions" && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Employee</TableHead>
+                  <TableHead className="text-right">
+                    {isTaxBreakdownItem ? "Amount" : "Employee"}
+                  </TableHead>
+                  {!isTaxBreakdownItem && (
+                    <TableHead className="text-right">Company</TableHead>
+                  )}
+                  {!isTaxBreakdownItem && (
+                    <TableHead className="text-right">Total</TableHead>
+                  )}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {selectedBreakdownItem.breakdown.rows.map((row: any) => (
+                  <TableRow key={row.employeeId}>
+                    <TableCell>{row.employeeName}</TableCell>
+                    <TableCell className="text-right">
+                      ₱
+                      {(row.employeeAmount ?? 0).toLocaleString("en-US", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </TableCell>
+                    {!isTaxBreakdownItem && (
+                      <TableCell className="text-right">
+                        ₱
+                        {(row.companyAmount ?? 0).toLocaleString("en-US", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </TableCell>
+                    )}
+                    {!isTaxBreakdownItem && (
+                      <TableCell className="text-right font-medium">
+                        ₱
+                        {(
+                          (row.employeeAmount ?? 0) + (row.companyAmount ?? 0)
+                        ).toLocaleString("en-US", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </TableCell>
+                    )}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+
+          {detailAttachmentUrls.length > 0 && (
+            <div className="space-y-3">
+              <div className="text-sm font-medium">Attachments</div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {detailAttachmentUrls.map((attachment, index) => (
+                  <a
+                    key={attachment.id}
+                    href={attachment.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded border p-3 hover:bg-gray-50"
+                  >
+                    {!detailImageLoadErrors[attachment.id] ? (
+                      <img
+                        src={attachment.url}
+                        alt={`Attachment ${index + 1}`}
+                        className="mb-2 h-40 w-full rounded object-cover"
+                        onError={() =>
+                          setDetailImageLoadErrors((prev) => ({
+                            ...prev,
+                            [attachment.id]: true,
+                          }))
+                        }
+                      />
+                    ) : (
+                      <div className="mb-2 flex items-center gap-2 text-sm text-gray-600">
+                        <FileText className="h-4 w-4" />
+                        Attachment {index + 1}
+                      </div>
+                    )}
+                    <div className="text-sm text-blue-600">Open attachment</div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setBreakdownDialogOpen(false)}
+            >
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

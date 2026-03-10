@@ -224,6 +224,10 @@ export const acceptInvitation = mutation({
 
     const now = Date.now();
 
+    // Use name from invitation (employee record) when available, else from form
+    const nameToSet =
+      (invitation as any).inviteeName ?? args.name ?? undefined;
+
     // Get or create user record in Convex
     let user = await (ctx.db.query("users") as any)
       .withIndex("by_email", (q: any) => q.eq("email", invitation.email))
@@ -235,16 +239,16 @@ export const acceptInvitation = mutation({
       // Create user record if it doesn't exist
       userId = await ctx.db.insert("users", {
         email: invitation.email,
-        name: args.name,
+        name: nameToSet,
         createdAt: now,
         updatedAt: now,
       });
     } else {
       userId = user._id;
-      if (args.name) {
-        // Update user name if provided
+      if (nameToSet) {
+        // Update user name if provided (from invitation or form)
         await ctx.db.patch(user._id, {
-          name: args.name,
+          name: nameToSet,
           updatedAt: now,
         });
       }
@@ -383,6 +387,12 @@ export const createUserForEmployee = mutation({
       throw new Error("Employee not found");
     }
 
+    // Cannot invite yourself (employee email matches current user)
+    const inviterEmail = (userRecord as any).email;
+    if (inviterEmail && (employee.personalInfo as any).email?.toLowerCase() === inviterEmail.toLowerCase()) {
+      throw new Error("You cannot send an invitation to your own email address.");
+    }
+
     // Check if employee already has a user account
     const existingUserOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_organization", (q: any) =>
@@ -421,6 +431,17 @@ export const createUserForEmployee = mutation({
       }
     }
 
+    // Build invitee name from employee record so we can set it on accept without asking
+    const p = employee.personalInfo as {
+      firstName: string;
+      lastName: string;
+      middleName?: string;
+    };
+    const inviteeName = [p.firstName, p.middleName, p.lastName]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+
     // Create invitation for the employee
     const token = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
     const now = Date.now();
@@ -435,6 +456,7 @@ export const createUserForEmployee = mutation({
       status: "pending",
       expiresAt,
       employeeId: args.employeeId,
+      inviteeName: inviteeName || undefined,
       createdAt: now,
     });
 

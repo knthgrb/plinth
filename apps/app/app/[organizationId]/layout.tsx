@@ -33,12 +33,12 @@ export default function OrganizationLayout({
   );
   const user = useQuery(
     (api as any).organizations.getCurrentUser,
-    organizationId ? { organizationId } : "skip",
+    organizationId && !isLoggingOut ? { organizationId } : "skip",
   );
 
   // Validate organizationId from URL and sync with context (do not override when user just switched)
   useEffect(() => {
-    if (isLoading || !organizations.length) return;
+    if (isLoggingOut || isLoading || !organizations.length) return;
     if (!organizationId) return;
 
     const orgId = organizationId as Id<"organizations">;
@@ -62,6 +62,7 @@ export default function OrganizationLayout({
       console.error("Failed to update last active organization:", err);
     });
   }, [
+    isLoggingOut,
     organizationId,
     organizations,
     currentOrganizationId,
@@ -75,7 +76,7 @@ export default function OrganizationLayout({
 
   // Role-based access: redirect to forbidden only when we have a resolved user and they lack access
   useEffect(() => {
-    if (isLoading || !organizationId) return;
+    if (isLoggingOut || isLoading || !organizationId) return;
     // Wait for user query to resolve (undefined = loading)
     if (user === undefined) return;
     // Don't redirect to forbidden when user is null (e.g. brief unauthenticated state after login); let query refetch
@@ -98,6 +99,15 @@ export default function OrganizationLayout({
   const switchingOrg = isSwitching
     ? organizations.find((o) => o._id === switchingToOrganizationId)
     : null;
+
+  // When logging out, unmount children immediately so no auth-dependent Convex queries run after token is cleared
+  if (isLoggingOut) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-white">
+        <p className="text-gray-500">Signing out...</p>
+      </div>
+    );
+  }
 
   if (isLoading) {
     if (isSwitching) {

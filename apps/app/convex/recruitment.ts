@@ -2,15 +2,15 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import {
-  calculateTotalLeaveEntitlement,
   calculateProratedLeave,
+  calculateAnniversaryLeaveFromHire,
 } from "./leaveCalculations";
 
 // Helper to check authorization with organization context
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "owner" | "admin" | "hr"
+  requiredRole?: "owner" | "admin" | "hr",
 ) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -29,7 +29,7 @@ async function checkAuth(
   // Check user's role in the specific organization
   const userOrg = await (ctx.db.query("userOrganizations") as any)
     .withIndex("by_user_organization", (q: any) =>
-      q.eq("userId", userRecord._id).eq("organizationId", organizationId)
+      q.eq("userId", userRecord._id).eq("organizationId", organizationId),
     )
     .first();
 
@@ -70,7 +70,7 @@ export const getJobs = query({
   args: {
     organizationId: v.id("organizations"),
     status: v.optional(
-      v.union(v.literal("open"), v.literal("closed"), v.literal("on-hold"))
+      v.union(v.literal("open"), v.literal("closed"), v.literal("on-hold")),
     ),
   },
   handler: async (ctx, args) => {
@@ -78,7 +78,7 @@ export const getJobs = query({
 
     let jobs = await (ctx.db.query("jobs") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .collect();
 
@@ -122,7 +122,7 @@ export const createJob = mutation({
       v.object({
         min: v.number(),
         max: v.number(),
-      })
+      }),
     ),
     closingDate: v.optional(v.number()),
   },
@@ -168,10 +168,10 @@ export const updateJob = mutation({
       v.object({
         min: v.number(),
         max: v.number(),
-      })
+      }),
     ),
     status: v.optional(
-      v.union(v.literal("open"), v.literal("closed"), v.literal("on-hold"))
+      v.union(v.literal("open"), v.literal("closed"), v.literal("on-hold")),
     ),
     closingDate: v.optional(v.number()),
   },
@@ -232,8 +232,8 @@ export const getApplicants = query({
         v.literal("assessment"),
         v.literal("offer"),
         v.literal("hired"),
-        v.literal("rejected")
-      )
+        v.literal("rejected"),
+      ),
     ),
   },
   handler: async (ctx, args) => {
@@ -241,7 +241,7 @@ export const getApplicants = query({
 
     let applicants = await (ctx.db.query("applicants") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .collect();
 
@@ -426,7 +426,7 @@ export const updateApplicantStatus = mutation({
       v.literal("assessment"),
       v.literal("offer"),
       v.literal("hired"),
-      v.literal("rejected")
+      v.literal("rejected"),
     ),
   },
   handler: async (ctx, args) => {
@@ -533,14 +533,14 @@ export const convertApplicantToEmployee = mutation({
         v.literal("regular"),
         v.literal("probationary"),
         v.literal("contractual"),
-        v.literal("part-time")
+        v.literal("part-time"),
       ),
       hireDate: v.number(),
       basicSalary: v.number(),
       salaryType: v.union(
         v.literal("monthly"),
         v.literal("daily"),
-        v.literal("hourly")
+        v.literal("hourly"),
       ),
     }),
   },
@@ -556,7 +556,7 @@ export const convertApplicantToEmployee = mutation({
     // Get organization settings for default leave credits
     const settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", applicant.organizationId)
+        q.eq("organizationId", applicant.organizationId),
       )
       .first();
 
@@ -593,38 +593,58 @@ export const convertApplicantToEmployee = mutation({
       },
     ];
 
-    const vacationConfig = leaveTypes.find((t: any) => t.type === "vacation");
-    const sickConfig = leaveTypes.find((t: any) => t.type === "sick");
-    const hasAnniversaryType = leaveTypes.some(
-      (t: any) => t.isAnniversary === true || t.type === "anniversary"
-    );
     const proratedLeave = settings?.proratedLeave === true;
+    const grantLeaveUponRegularization =
+      settings?.grantLeaveUponRegularization === true;
     const hireDate = args.employeeData.hireDate;
-
-    const vacationAnnual = vacationConfig?.defaultCredits ?? 15;
-    const sickAnnual = sickConfig?.defaultCredits ?? 15;
-    const vacationTotal = proratedLeave
-      ? Math.round(
-          calculateProratedLeave(vacationAnnual, hireDate, now) * 100
-        ) / 100
-      : vacationAnnual;
-    const sickTotal = proratedLeave
-      ? Math.round(calculateProratedLeave(sickAnnual, hireDate, now) * 100) /
-        100
-      : sickAnnual;
+    const regularizationDate = (args.employeeData as any).regularizationDate;
+    const prorationStartDate =
+      grantLeaveUponRegularization && regularizationDate
+        ? regularizationDate
+        : hireDate;
 
     const leaveCredits: any = {
-      vacation: {
-        total: vacationTotal,
-        used: 0,
-        balance: vacationTotal,
-      },
-      sick: { total: sickTotal, used: 0, balance: sickTotal },
+      vacation: { total: 0, used: 0, balance: 0 },
+      sick: { total: 0, used: 0, balance: 0 },
     };
-    if (hasAnniversaryType) {
-      leaveCredits.custom = [
-        { type: "anniversary", total: 0, used: 0, balance: 0 },
-      ];
+    const customCredits: Array<{
+      type: string;
+      total: number;
+      used: number;
+      balance: number;
+    }> = [];
+
+    for (const lt of leaveTypes) {
+      const type = (lt as any).type;
+      const defaultCredits = (lt as any).defaultCredits ?? 0;
+      const isAnniversary =
+        (lt as any).isAnniversary === true || type === "anniversary";
+
+      let total: number;
+      if (isAnniversary) {
+        total = calculateAnniversaryLeaveFromHire(hireDate, now);
+      } else if (proratedLeave) {
+        total =
+          Math.round(
+            calculateProratedLeave(defaultCredits, prorationStartDate, now) *
+              100,
+          ) / 100;
+      } else {
+        total = defaultCredits;
+      }
+
+      const entry = { total, used: 0, balance: total };
+      if (type === "vacation") {
+        leaveCredits.vacation = entry;
+      } else if (type === "sick") {
+        leaveCredits.sick = entry;
+      } else {
+        customCredits.push({ ...entry, type });
+      }
+    }
+
+    if (customCredits.length > 0) {
+      leaveCredits.custom = customCredits;
     }
 
     const employeeId = await ctx.db.insert("employees", {

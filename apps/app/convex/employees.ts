@@ -2,15 +2,15 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import {
-  calculateTotalLeaveEntitlement,
   calculateProratedLeave,
+  calculateAnniversaryLeaveFromHire,
 } from "./leaveCalculations";
 
 // Helper to check authorization with organization context
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "owner" | "admin" | "hr"
+  requiredRole?: "owner" | "admin" | "hr",
 ) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -25,7 +25,7 @@ async function checkAuth(
   // This can happen right after signup before ensureUserRecord is called
   if (!userRecord) {
     throw new Error(
-      "User record not found. Please complete your account setup."
+      "User record not found. Please complete your account setup.",
     );
   }
 
@@ -36,7 +36,7 @@ async function checkAuth(
   // Check user's role in the specific organization
   const userOrg = await (ctx.db.query("userOrganizations") as any)
     .withIndex("by_user_organization", (q: any) =>
-      q.eq("userId", userRecord._id).eq("organizationId", organizationId)
+      q.eq("userId", userRecord._id).eq("organizationId", organizationId),
     )
     .first();
 
@@ -57,7 +57,9 @@ async function checkAuth(
 
   // HR routes: no access for accounting role (employees list is HR-only)
   if (userRole === "accounting") {
-    throw new Error("Not authorized - HR routes are not available for accounting role");
+    throw new Error(
+      "Not authorized - HR routes are not available for accounting role",
+    );
   }
 
   // Owner has all admin privileges - treat owner the same as admin
@@ -69,11 +71,7 @@ async function checkAuth(
     }
   } else {
     // Read access: hr, admin, owner, employee (not accounting)
-    if (
-      !isOwnerOrAdmin &&
-      userRole !== "hr" &&
-      userRole !== "employee"
-    ) {
+    if (!isOwnerOrAdmin && userRole !== "hr" && userRole !== "employee") {
       throw new Error("Not authorized");
     }
   }
@@ -112,21 +110,21 @@ export const getEmployees = query({
 
     let employees = await (ctx.db.query("employees") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .collect();
 
     // Filter by status
     if (args.status) {
       employees = employees.filter(
-        (e: any) => e.employment.status === args.status
+        (e: any) => e.employment.status === args.status,
       );
     }
 
     // Filter by department
     if (args.department) {
       employees = employees.filter(
-        (e: any) => e.employment.department === args.department
+        (e: any) => e.employment.department === args.department,
       );
     }
 
@@ -138,7 +136,7 @@ export const getEmployees = query({
           e.personalInfo.firstName.toLowerCase().includes(searchLower) ||
           e.personalInfo.lastName.toLowerCase().includes(searchLower) ||
           e.personalInfo.email.toLowerCase().includes(searchLower) ||
-          e.employment.employeeId.toLowerCase().includes(searchLower)
+          e.employment.employeeId.toLowerCase().includes(searchLower),
       );
     }
 
@@ -180,7 +178,7 @@ export const getPayslipPinHash = query({
       .withIndex("by_user_organization", (q: any) =>
         q
           .eq("userId", userRecord._id)
-          .eq("organizationId", employee.organizationId)
+          .eq("organizationId", employee.organizationId),
       )
       .first();
     const currentEmployeeId = userOrg?.employeeId ?? userRecord.employeeId;
@@ -209,7 +207,7 @@ export const setPayslipPinHash = mutation({
       .withIndex("by_user_organization", (q: any) =>
         q
           .eq("userId", userRecord._id)
-          .eq("organizationId", employee.organizationId)
+          .eq("organizationId", employee.organizationId),
       )
       .first();
     const isSameEmployee =
@@ -242,7 +240,7 @@ export const employeeHasUserAccount = query({
     // Check if there's a user linked to this employee via userOrganizations
     const userOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
       .first();
@@ -256,7 +254,7 @@ export const employeeHasUserAccount = query({
     if (employee) {
       const user = await (ctx.db.query("users") as any)
         .withIndex("by_email", (q: any) =>
-          q.eq("email", employee.personalInfo.email)
+          q.eq("email", employee.personalInfo.email),
         )
         .first();
 
@@ -282,7 +280,7 @@ export const checkEmployeesUserAccounts = query({
     // Get all userOrganizations for these employees in this organization
     const userOrgs = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .collect();
 
@@ -296,11 +294,11 @@ export const checkEmployeesUserAccounts = query({
 
     // Also check by email for employees that don't have userOrg entries
     const employeesWithoutUserOrg = args.employeeIds.filter(
-      (id) => !employeeUserMap.has(id)
+      (id) => !employeeUserMap.has(id),
     );
 
     const employees = await Promise.all(
-      employeesWithoutUserOrg.map((id) => ctx.db.get(id))
+      employeesWithoutUserOrg.map((id) => ctx.db.get(id)),
     );
 
     const emailToEmployeeMap = new Map<string, string>();
@@ -354,7 +352,7 @@ export const createEmployee = mutation({
           name: v.string(),
           relationship: v.string(),
           phone: v.string(),
-        })
+        }),
       ),
     }),
     employment: v.object({
@@ -365,7 +363,7 @@ export const createEmployee = mutation({
         v.literal("regular"),
         v.literal("probationary"),
         v.literal("contractual"),
-        v.literal("part-time")
+        v.literal("part-time"),
       ),
       hireDate: v.number(),
       regularizationDate: v.optional(v.number()),
@@ -373,7 +371,7 @@ export const createEmployee = mutation({
         v.literal("active"),
         v.literal("inactive"),
         v.literal("resigned"),
-        v.literal("terminated")
+        v.literal("terminated"),
       ),
     }),
     compensation: v.object({
@@ -382,14 +380,14 @@ export const createEmployee = mutation({
       salaryType: v.union(
         v.literal("monthly"),
         v.literal("daily"),
-        v.literal("hourly")
+        v.literal("hourly"),
       ),
       bankDetails: v.optional(
         v.object({
           bankName: v.string(),
           accountNumber: v.string(),
           accountName: v.string(),
-        })
+        }),
       ),
       regularHolidayRate: v.optional(v.number()),
       specialHolidayRate: v.optional(v.number()),
@@ -444,8 +442,8 @@ export const createEmployee = mutation({
             in: v.string(),
             out: v.string(),
             reason: v.string(),
-          })
-        )
+          }),
+        ),
       ),
     }),
   },
@@ -467,7 +465,7 @@ export const createEmployee = mutation({
     // Get organization settings for default leave credits
     const settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -504,39 +502,58 @@ export const createEmployee = mutation({
       },
     ];
 
-    const vacationConfig = leaveTypes.find((t: any) => t.type === "vacation");
-    const sickConfig = leaveTypes.find((t: any) => t.type === "sick");
-    const hasAnniversaryType = leaveTypes.some(
-      (t: any) => t.isAnniversary === true || t.type === "anniversary"
-    );
     const proratedLeave = settings?.proratedLeave === true;
+    const grantLeaveUponRegularization =
+      settings?.grantLeaveUponRegularization === true;
     const hireDate = args.employment.hireDate;
-
-    // Use defaultCredits from organization settings; apply proration if enabled
-    const vacationAnnual = vacationConfig?.defaultCredits ?? 15;
-    const sickAnnual = sickConfig?.defaultCredits ?? 15;
-    const vacationTotal = proratedLeave
-      ? Math.round(
-          calculateProratedLeave(vacationAnnual, hireDate, now) * 100
-        ) / 100
-      : vacationAnnual;
-    const sickTotal = proratedLeave
-      ? Math.round(calculateProratedLeave(sickAnnual, hireDate, now) * 100) /
-        100
-      : sickAnnual;
+    const regularizationDate = args.employment.regularizationDate;
+    const prorationStartDate =
+      grantLeaveUponRegularization && regularizationDate
+        ? regularizationDate
+        : hireDate;
 
     const leaveCredits: any = {
-      vacation: {
-        total: vacationTotal,
-        used: 0,
-        balance: vacationTotal,
-      },
-      sick: { total: sickTotal, used: 0, balance: sickTotal },
+      vacation: { total: 0, used: 0, balance: 0 },
+      sick: { total: 0, used: 0, balance: 0 },
     };
-    if (hasAnniversaryType) {
-      leaveCredits.custom = [
-        { type: "anniversary", total: 0, used: 0, balance: 0 },
-      ];
+    const customCredits: Array<{
+      type: string;
+      total: number;
+      used: number;
+      balance: number;
+    }> = [];
+
+    for (const lt of leaveTypes) {
+      const type = (lt as any).type;
+      const defaultCredits = (lt as any).defaultCredits ?? 0;
+      const isAnniversary =
+        (lt as any).isAnniversary === true || type === "anniversary";
+
+      let total: number;
+      if (isAnniversary) {
+        total = calculateAnniversaryLeaveFromHire(hireDate, now);
+      } else if (proratedLeave) {
+        total =
+          Math.round(
+            calculateProratedLeave(defaultCredits, prorationStartDate, now) *
+              100,
+          ) / 100;
+      } else {
+        total = defaultCredits;
+      }
+
+      const entry = { total, used: 0, balance: total };
+      if (type === "vacation") {
+        leaveCredits.vacation = entry;
+      } else if (type === "sick") {
+        leaveCredits.sick = entry;
+      } else {
+        customCredits.push({ ...entry, type });
+      }
+    }
+
+    if (customCredits.length > 0) {
+      leaveCredits.custom = customCredits;
     }
 
     const insertedId = await ctx.db.insert("employees", {
@@ -585,9 +602,9 @@ export const updateEmployee = mutation({
             name: v.string(),
             relationship: v.string(),
             phone: v.string(),
-          })
+          }),
         ),
-      })
+      }),
     ),
     employment: v.optional(
       v.object({
@@ -598,17 +615,17 @@ export const updateEmployee = mutation({
           v.literal("regular"),
           v.literal("probationary"),
           v.literal("contractual"),
-          v.literal("part-time")
+          v.literal("part-time"),
         ),
         hireDate: v.number(),
-        regularizationDate: v.optional(v.number()),
+        regularizationDate: v.optional(v.union(v.number(), v.null())),
         status: v.union(
           v.literal("active"),
           v.literal("inactive"),
           v.literal("resigned"),
-          v.literal("terminated")
+          v.literal("terminated"),
         ),
-      })
+      }),
     ),
     compensation: v.optional(
       v.object({
@@ -617,14 +634,14 @@ export const updateEmployee = mutation({
         salaryType: v.union(
           v.literal("monthly"),
           v.literal("daily"),
-          v.literal("hourly")
+          v.literal("hourly"),
         ),
         bankDetails: v.optional(
           v.object({
             bankName: v.string(),
             accountNumber: v.string(),
             accountName: v.string(),
-          })
+          }),
         ),
         regularHolidayRate: v.optional(v.number()),
         specialHolidayRate: v.optional(v.number()),
@@ -633,7 +650,7 @@ export const updateEmployee = mutation({
         overtimeRestDayRate: v.optional(v.number()),
         regularHolidayOtRate: v.optional(v.number()),
         specialHolidayOtRate: v.optional(v.number()),
-      })
+      }),
     ),
     schedule: v.optional(
       v.object({
@@ -681,10 +698,10 @@ export const updateEmployee = mutation({
               in: v.string(),
               out: v.string(),
               reason: v.string(),
-            })
-          )
+            }),
+          ),
         ),
-      })
+      }),
     ),
     customFields: v.optional(v.any()), // Flexible object for custom fields
   },
@@ -695,7 +712,29 @@ export const updateEmployee = mutation({
     const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
 
     const updates: any = { updatedAt: Date.now() };
-    if (args.personalInfo) updates.personalInfo = args.personalInfo;
+    if (args.personalInfo) {
+      // If employee has a linked user account, email cannot be changed (auth is tied to it)
+      const existingPersonal = (employee as any).personalInfo || {};
+      let personalInfoUpdate = { ...existingPersonal, ...args.personalInfo };
+      let linkedUser = await (ctx.db.query("users") as any)
+        .withIndex("by_employee", (q: any) =>
+          q.eq("employeeId", args.employeeId),
+        )
+        .first();
+      if (!linkedUser) {
+        const userOrg = await (ctx.db.query("userOrganizations") as any)
+          .withIndex("by_organization", (q: any) =>
+            q.eq("organizationId", employee.organizationId),
+          )
+          .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
+          .first();
+        if (userOrg) linkedUser = await ctx.db.get(userOrg.userId);
+      }
+      if (linkedUser) {
+        personalInfoUpdate.email = existingPersonal.email;
+      }
+      updates.personalInfo = personalInfoUpdate;
+    }
     if (args.employment) updates.employment = args.employment;
     if (args.compensation) updates.compensation = args.compensation;
     if (args.schedule) updates.schedule = args.schedule;
@@ -709,6 +748,33 @@ export const updateEmployee = mutation({
     }
 
     await ctx.db.patch(args.employeeId, updates);
+
+    // When employment status changes, sync linked user account: non-active = account can't be used
+    if (args.employment?.status) {
+      const newStatus = args.employment.status;
+      let linkedUser = await (ctx.db.query("users") as any)
+        .withIndex("by_employee", (q: any) =>
+          q.eq("employeeId", args.employeeId),
+        )
+        .first();
+      if (!linkedUser) {
+        const userOrg = await (ctx.db.query("userOrganizations") as any)
+          .withIndex("by_organization", (q: any) =>
+            q.eq("organizationId", employee.organizationId),
+          )
+          .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
+          .first();
+        if (userOrg) linkedUser = await ctx.db.get(userOrg.userId);
+      }
+      if (linkedUser) {
+        const isActive = newStatus === "active";
+        await ctx.db.patch(linkedUser._id, {
+          isActive,
+          updatedAt: Date.now(),
+        });
+      }
+    }
+
     return { success: true };
   },
 });
@@ -735,8 +801,8 @@ export const updateLeaveCredits = mutation({
             total: v.number(),
             used: v.number(),
             balance: v.number(),
-          })
-        )
+          }),
+        ),
       ),
     }),
   },
@@ -764,7 +830,7 @@ export const addRequirement = mutation({
       status: v.union(
         v.literal("pending"),
         v.literal("submitted"),
-        v.literal("verified")
+        v.literal("verified"),
       ),
       file: v.optional(v.id("_storage")),
       submittedDate: v.optional(v.number()),
@@ -817,7 +883,7 @@ export const removeRequirement = mutation({
       return { success: true };
     } else {
       throw new Error(
-        "Cannot remove default requirements. Disable them in organization settings instead."
+        "Cannot remove default requirements. Disable them in organization settings instead.",
       );
     }
   },
@@ -831,7 +897,7 @@ export const updateRequirementStatus = mutation({
     status: v.union(
       v.literal("pending"),
       v.literal("submitted"),
-      v.literal("verified")
+      v.literal("verified"),
     ),
   },
   handler: async (ctx, args) => {
@@ -938,7 +1004,7 @@ export const addDeduction = mutation({
       type: v.union(
         v.literal("government"),
         v.literal("loan"),
-        v.literal("other")
+        v.literal("other"),
       ),
       name: v.string(),
       amount: v.number(),
@@ -977,7 +1043,7 @@ export const addIncentive = mutation({
       frequency: v.union(
         v.literal("monthly"),
         v.literal("quarterly"),
-        v.literal("one-time")
+        v.literal("one-time"),
       ),
       isActive: v.boolean(),
     }),
@@ -1000,7 +1066,7 @@ export const addIncentive = mutation({
   },
 });
 
-// Delete employee
+// Delete employee (and linked user account if any)
 export const deleteEmployee = mutation({
   args: {
     employeeId: v.id("employees"),
@@ -1010,6 +1076,27 @@ export const deleteEmployee = mutation({
     if (!employee) throw new Error("Employee not found");
 
     const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
+
+    // Find and delete linked user account so login becomes invalid
+    let linkedUser = await (ctx.db.query("users") as any)
+      .withIndex("by_employee", (q: any) => q.eq("employeeId", args.employeeId))
+      .first();
+    if (!linkedUser) {
+      const userOrg = await (ctx.db.query("userOrganizations") as any)
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", employee.organizationId),
+        )
+        .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
+        .first();
+      if (userOrg) linkedUser = await ctx.db.get(userOrg.userId);
+    }
+    if (linkedUser) {
+      const userOrgs = await (ctx.db.query("userOrganizations") as any)
+        .withIndex("by_user", (q: any) => q.eq("userId", linkedUser._id))
+        .collect();
+      for (const uo of userOrgs) await ctx.db.delete(uo._id);
+      await ctx.db.delete(linkedUser._id);
+    }
 
     // Delete the employee record
     await ctx.db.delete(args.employeeId);

@@ -9,13 +9,10 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Calendar, Edit } from "lucide-react";
+import { Plus, Calendar } from "lucide-react";
 import { getEmployeeLeaveCredits } from "@/actions/leave";
 import { useOrganization } from "@/hooks/organization-context";
-import { useToast } from "@/components/ui/use-toast";
-import { DynamicLeaveTable } from "./_components/dynamic-leave-table";
 import { LeaveColumnManagementModal } from "./_components/leave-column-management-modal";
-import { LeaveCreditsTable } from "./_components/leave-credits-table";
 
 // Lazy load modals and tabs
 const RequestLeaveDialog = dynamic(
@@ -30,14 +27,6 @@ const ReviewLeaveDialog = dynamic(
   () =>
     import("./_components/review-leave-dialog").then(
       (mod) => mod.ReviewLeaveDialog
-    ),
-  { ssr: false }
-);
-
-const AdjustCreditsDialog = dynamic(
-  () =>
-    import("./_components/adjust-credits-dialog").then(
-      (mod) => mod.AdjustCreditsDialog
     ),
   { ssr: false }
 );
@@ -66,6 +55,14 @@ const AdminLeaveHistoryTab = dynamic(
   { ssr: false }
 );
 
+const LeaveTrackerTab = dynamic(
+  () =>
+    import("./_components/leave-tracker-tab").then(
+      (mod) => mod.LeaveTrackerTab
+    ),
+  { ssr: false }
+);
+
 interface Column {
   id: string;
   label: string;
@@ -79,14 +76,13 @@ interface Column {
 }
 
 const EMPLOYEE_TABS = ["credits", "history"] as const;
-const ADMIN_TABS = ["requests", "history", "credits"] as const;
+const ADMIN_TABS = ["tracker", "requests", "history"] as const;
 
 export default function LeavePage() {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { currentOrganizationId, currentOrganization } = useOrganization();
-  const { toast } = useToast();
 
   const setTabParam = useCallback(
     (tab: string) => {
@@ -146,19 +142,15 @@ export default function LeavePage() {
   const [employeeLeaveCredits, setEmployeeLeaveCredits] = useState<any>(null);
   const [employeeLeaveHistory, setEmployeeLeaveHistory] = useState<any[]>([]);
 
-  // Admin/HR view states
-  const [selectedEmployeeForCredits, setSelectedEmployeeForCredits] =
-    useState<string>("");
-  const [isAdjustCreditsOpen, setIsAdjustCreditsOpen] = useState(false);
-
   // Leave request dialog states
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   // Review dialog states
   const [isReviewDialogOpen, setIsReviewDialogOpen] = useState(false);
   const [reviewingRequest, setReviewingRequest] = useState<any>(null);
-
-  const [creditsTableRefreshKey, setCreditsTableRefreshKey] = useState(0);
+  const requestingEmployee = useMemo(() => {
+    return (employees ?? []).find((employee: any) => employee._id === userEmployeeId) ?? null;
+  }, [employees, userEmployeeId]);
 
   // Initialize columns from settings
   useEffect(() => {
@@ -360,8 +352,9 @@ export default function LeavePage() {
                 onOpenChange={setIsDialogOpen}
                 organizationId={currentOrganizationId || ""}
                 employeeId={userEmployeeId || ""}
-                leaveTypes={settings?.leaveTypes ?? []}
                 leaveCredits={employeeLeaveCredits}
+                employee={requestingEmployee}
+                leaveRequestFormTemplate={settings?.leaveRequestFormTemplate}
                 onSuccess={() => {
                   if (canRequestLeave && userEmployeeId) {
                     loadEmployeeData();
@@ -468,6 +461,11 @@ export default function LeavePage() {
                           <div className="flex justify-between">
                             <span className="text-[rgb(133,133,133)]">
                               Total
+                              {employeeLeaveCredits.maxCredits?.vacation != null && (
+                                <span className="ml-1 font-normal text-[rgb(133,133,133)]">
+                                  (max {employeeLeaveCredits.maxCredits.vacation} days)
+                                </span>
+                              )}
                             </span>
                             <span className="font-medium">
                               {employeeLeaveCredits.vacation.total} days
@@ -484,7 +482,13 @@ export default function LeavePage() {
                           <div className="flex justify-between border-t border-[rgb(230,230,230)] pt-3">
                             <span className="font-medium">Balance</span>
                             <span className="font-semibold text-brand-purple">
-                              {employeeLeaveCredits.vacation.balance} days
+                              {employeeLeaveCredits.vacation.balance}
+                              {employeeLeaveCredits.maxCredits?.vacation != null && (
+                                <span className="ml-1 font-normal text-[rgb(133,133,133)]">
+                                  / {employeeLeaveCredits.maxCredits.vacation}
+                                </span>
+                              )}{" "}
+                              days
                             </span>
                           </div>
                         </CardContent>
@@ -503,6 +507,11 @@ export default function LeavePage() {
                           <div className="flex justify-between">
                             <span className="text-[rgb(133,133,133)]">
                               Total
+                              {employeeLeaveCredits.maxCredits?.sick != null && (
+                                <span className="ml-1 font-normal text-[rgb(133,133,133)]">
+                                  (max {employeeLeaveCredits.maxCredits.sick} days)
+                                </span>
+                              )}
                             </span>
                             <span className="font-medium">
                               {employeeLeaveCredits.sick.total} days
@@ -519,7 +528,13 @@ export default function LeavePage() {
                           <div className="flex justify-between border-t border-[rgb(230,230,230)] pt-3">
                             <span className="font-medium">Balance</span>
                             <span className="font-semibold text-brand-purple">
-                              {employeeLeaveCredits.sick.balance} days
+                              {employeeLeaveCredits.sick.balance}
+                              {employeeLeaveCredits.maxCredits?.sick != null && (
+                                <span className="ml-1 font-normal text-[rgb(133,133,133)]">
+                                  / {employeeLeaveCredits.maxCredits.sick}
+                                </span>
+                              )}{" "}
+                              days
                             </span>
                           </div>
                         </CardContent>
@@ -616,8 +631,9 @@ export default function LeavePage() {
                 onOpenChange={setIsDialogOpen}
                 organizationId={currentOrganizationId || ""}
                 employeeId={userEmployeeId || ""}
-                leaveTypes={settings?.leaveTypes ?? []}
                 leaveCredits={employeeLeaveCredits}
+                employee={requestingEmployee}
+                leaveRequestFormTemplate={settings?.leaveRequestFormTemplate}
                 onSuccess={() => {
                   if (canRequestLeave && userEmployeeId) {
                     loadEmployeeData();
@@ -641,14 +657,20 @@ export default function LeavePage() {
             ADMIN_TABS.includes(
               searchParams?.get("tab") as (typeof ADMIN_TABS)[number]
             )
-              ? (searchParams?.get("tab") ?? "requests")
-              : "requests"
+              ? (searchParams?.get("tab") ?? "tracker")
+              : "tracker"
           }
           onValueChange={setTabParam}
           className="space-y-0"
         >
           <div className="flex items-end gap-6 border-b border-[rgb(230,230,230)]">
             <TabsList className="h-auto w-auto rounded-none bg-transparent p-0 gap-6 border-0 shadow-none">
+              <TabsTrigger
+                value="tracker"
+                className="rounded-none border-b-2 border-transparent bg-transparent px-0 pb-3 pt-0 text-sm font-semibold text-[rgb(133,133,133)] data-[state=active]:border-brand-purple data-[state=active]:text-brand-purple data-[state=active]:shadow-none data-[state=active]:bg-transparent -mb-px"
+              >
+                Tracker
+              </TabsTrigger>
               <TabsTrigger
                 value="requests"
                 className="rounded-none border-b-2 border-transparent bg-transparent px-0 pb-3 pt-0 text-sm font-semibold text-[rgb(133,133,133)] data-[state=active]:border-brand-purple data-[state=active]:text-brand-purple data-[state=active]:shadow-none data-[state=active]:bg-transparent -mb-px"
@@ -660,12 +682,6 @@ export default function LeavePage() {
                 className="rounded-none border-b-2 border-transparent bg-transparent px-0 pb-3 pt-0 text-sm font-semibold text-[rgb(133,133,133)] data-[state=active]:border-brand-purple data-[state=active]:text-brand-purple data-[state=active]:shadow-none data-[state=active]:bg-transparent -mb-px"
               >
                 Leave history
-              </TabsTrigger>
-              <TabsTrigger
-                value="credits"
-                className="rounded-none border-b-2 border-transparent bg-transparent px-0 pb-3 pt-0 text-sm font-semibold text-[rgb(133,133,133)] data-[state=active]:border-brand-purple data-[state=active]:text-brand-purple data-[state=active]:shadow-none data-[state=active]:bg-transparent -mb-px"
-              >
-                Leave credits
               </TabsTrigger>
             </TabsList>
           </div>
@@ -719,26 +735,27 @@ export default function LeavePage() {
             </Suspense>
           </TabsContent>
 
-          <TabsContent value="credits" className="mt-0">
+          <TabsContent value="tracker" className="mt-0">
             <Card className="border-[rgb(230,230,230)] shadow-sm">
               <CardHeader className="pb-4">
                 <CardTitle className="text-base font-semibold text-[rgb(64,64,64)]">
-                  Leave credits
+                  Leave tracker
                 </CardTitle>
                 <p className="text-sm text-[rgb(133,133,133)] mt-1">
-                  View and edit leave balances by employee. Use Edit on a row to
-                  adjust credits.
+                  Spreadsheet-style tracker for SIL accrual, anniversary leave,
+                  availed credits, and balance.
                 </p>
               </CardHeader>
               <CardContent className="pt-0">
-                <LeaveCreditsTable
-                  key={creditsTableRefreshKey}
-                  employees={activeEmployees}
+                <LeaveTrackerTab
                   organizationId={currentOrganizationId || ""}
-                  onEdit={(employeeId) => {
-                    setSelectedEmployeeForCredits(employeeId);
-                    setIsAdjustCreditsOpen(true);
-                  }}
+                  employees={activeEmployees}
+                  proratedLeave={settings?.proratedLeave ?? true}
+                  annualSil={settings?.annualSil ?? 8}
+                  grantLeaveUponRegularization={
+                    settings?.grantLeaveUponRegularization ?? true
+                  }
+                  savedRows={settings?.leaveTrackerRows ?? []}
                 />
               </CardContent>
             </Card>
@@ -750,6 +767,7 @@ export default function LeavePage() {
           <ReviewLeaveDialog
             isOpen={isReviewDialogOpen}
             onOpenChange={setIsReviewDialogOpen}
+            organizationId={currentOrganizationId || ""}
             request={reviewingRequest}
             employees={employees}
             onSuccess={() => {
@@ -757,20 +775,6 @@ export default function LeavePage() {
               if (canRequestLeave && userEmployeeId) {
                 loadEmployeeData();
               }
-            }}
-          />
-        </Suspense>
-
-        {/* Adjust Credits Dialog */}
-        <Suspense fallback={null}>
-          <AdjustCreditsDialog
-            isOpen={isAdjustCreditsOpen}
-            onOpenChange={setIsAdjustCreditsOpen}
-            organizationId={currentOrganizationId || ""}
-            employeeId={selectedEmployeeForCredits}
-            leaveTypes={settings?.leaveTypes ?? []}
-            onSuccess={() => {
-              setCreditsTableRefreshKey((k) => k + 1);
             }}
           />
         </Suspense>

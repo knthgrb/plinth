@@ -6,7 +6,7 @@ import { authComponent } from "./auth";
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "owner" | "admin" | "hr"
+  requiredRole?: "owner" | "admin" | "hr",
 ) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -25,7 +25,7 @@ async function checkAuth(
   // Check user's role in the specific organization
   const userOrg = await (ctx.db.query("userOrganizations") as any)
     .withIndex("by_user_organization", (q: any) =>
-      q.eq("userId", userRecord._id).eq("organizationId", organizationId)
+      q.eq("userId", userRecord._id).eq("organizationId", organizationId),
     )
     .first();
 
@@ -74,7 +74,7 @@ export const getSettings = query({
 
     let settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -99,7 +99,7 @@ export const getSettings = query({
           (name, index) => ({
             name,
             color: PRESET_COLORS[index % PRESET_COLORS.length],
-          })
+          }),
         );
 
         // Return migrated format (but don't save - that happens in updateDepartments)
@@ -116,6 +116,10 @@ export const getSettings = query({
         _id: null,
         organizationId: args.organizationId,
         proratedLeave: true,
+        annualSil: 8,
+        grantLeaveUponRegularization: true,
+        leaveRequestFormTemplate: undefined,
+        leaveTrackerRows: [],
         payrollSettings: {
           nightDiffPercent: 0.1, // 10% per hour from 10 PM
           regularHolidayRate: 1.0, // 100% of daily pay additional (regular holiday)
@@ -161,6 +165,13 @@ export const getSettings = query({
       };
     }
 
+    if (settings.annualSil === undefined) {
+      settings = {
+        ...settings,
+        annualSil: 8,
+      };
+    }
+
     return settings;
   },
 });
@@ -186,7 +197,7 @@ export const updatePayrollSettings = mutation({
 
     let settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -229,16 +240,19 @@ export const updateLeaveTypes = mutation({
         carryOver: v.optional(v.boolean()),
         maxCarryOver: v.optional(v.number()),
         isAnniversary: v.optional(v.boolean()),
-      })
+      }),
     ),
     proratedLeave: v.optional(v.boolean()),
+    annualSil: v.optional(v.number()),
+    grantLeaveUponRegularization: v.optional(v.boolean()),
+    leaveRequestFormTemplate: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
 
     let settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -247,17 +261,71 @@ export const updateLeaveTypes = mutation({
     if (args.proratedLeave !== undefined) {
       patch.proratedLeave = args.proratedLeave;
     }
+    if (args.annualSil !== undefined) {
+      patch.annualSil = args.annualSil;
+    }
+    if (args.grantLeaveUponRegularization !== undefined) {
+      patch.grantLeaveUponRegularization = args.grantLeaveUponRegularization;
+    }
+    if (args.leaveRequestFormTemplate !== undefined) {
+      patch.leaveRequestFormTemplate = args.leaveRequestFormTemplate;
+    }
 
     if (!settings) {
       await ctx.db.insert("settings", {
         organizationId: args.organizationId,
         leaveTypes: args.leaveTypes,
         proratedLeave: args.proratedLeave ?? true,
+        annualSil: args.annualSil ?? 8,
+        grantLeaveUponRegularization:
+          args.grantLeaveUponRegularization ?? true,
+        leaveRequestFormTemplate: args.leaveRequestFormTemplate,
         createdAt: now,
         updatedAt: now,
       });
     } else {
       await ctx.db.patch(settings._id, patch);
+    }
+
+    return { success: true };
+  },
+});
+
+export const updateLeaveTracker = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    rows: v.array(
+      v.object({
+        employeeId: v.id("employees"),
+        annualSilOverride: v.optional(v.number()),
+        availed: v.optional(v.number()),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    await checkAuth(ctx, args.organizationId, "hr");
+
+    const settings = await (ctx.db.query("settings") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .first();
+
+    const now = Date.now();
+
+    if (!settings) {
+      await ctx.db.insert("settings", {
+        organizationId: args.organizationId,
+        annualSil: 8,
+        leaveTrackerRows: args.rows,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.patch(settings._id, {
+        leaveTrackerRows: args.rows,
+        updatedAt: now,
+      });
     }
 
     return { success: true };
@@ -272,7 +340,7 @@ export const updateDepartments = mutation({
       v.object({
         name: v.string(),
         color: v.string(),
-      })
+      }),
     ),
   },
   handler: async (ctx, args) => {
@@ -280,7 +348,7 @@ export const updateDepartments = mutation({
 
     let settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -327,12 +395,12 @@ export const updateRecruitmentTableColumns = mutation({
           v.literal("number"),
           v.literal("date"),
           v.literal("badge"),
-          v.literal("link")
+          v.literal("link"),
         ),
         sortable: v.optional(v.boolean()),
         width: v.optional(v.string()),
         customField: v.optional(v.boolean()),
-      })
+      }),
     ),
   },
   handler: async (ctx, args) => {
@@ -340,7 +408,7 @@ export const updateRecruitmentTableColumns = mutation({
 
     let settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -377,12 +445,12 @@ export const updateRequirementsTableColumns = mutation({
           v.literal("number"),
           v.literal("date"),
           v.literal("badge"),
-          v.literal("link")
+          v.literal("link"),
         ),
         sortable: v.optional(v.boolean()),
         width: v.optional(v.string()),
         customField: v.optional(v.boolean()),
-      })
+      }),
     ),
   },
   handler: async (ctx, args) => {
@@ -390,7 +458,7 @@ export const updateRequirementsTableColumns = mutation({
 
     let settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -425,12 +493,12 @@ export const updateEvaluationColumns = mutation({
           v.literal("date"),
           v.literal("number"),
           v.literal("text"),
-          v.literal("rating")
+          v.literal("rating"),
         ),
         hidden: v.optional(v.boolean()),
         hasRatingColumn: v.optional(v.boolean()),
         hasNotesColumn: v.optional(v.boolean()),
-      })
+      }),
     ),
   },
   handler: async (ctx, args) => {
@@ -438,7 +506,7 @@ export const updateEvaluationColumns = mutation({
 
     let settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -475,12 +543,12 @@ export const updateLeaveTableColumns = mutation({
           v.literal("number"),
           v.literal("date"),
           v.literal("badge"),
-          v.literal("link")
+          v.literal("link"),
         ),
         sortable: v.optional(v.boolean()),
         width: v.optional(v.string()),
         customField: v.optional(v.boolean()),
-      })
+      }),
     ),
   },
   handler: async (ctx, args) => {
@@ -488,7 +556,7 @@ export const updateLeaveTableColumns = mutation({
 
     let settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .first();
 

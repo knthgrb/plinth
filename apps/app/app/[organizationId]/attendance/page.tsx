@@ -309,12 +309,12 @@ export default function AttendancePage() {
   };
 
   const formatTime = (minutes: number | null): string => {
-    if (minutes === null) return "-";
+    if (minutes === null || minutes === 0) return "-";
     if (timeFormat === "hours") {
       const hours = (minutes / 60).toFixed(2);
       return `${hours} hrs`;
     }
-    return `${minutes} mins`;
+    return minutes === 1 ? "1 min" : `${minutes} mins`;
   };
 
   const deleteAttendanceMutation = useMutation(
@@ -451,17 +451,21 @@ export default function AttendancePage() {
 
       if (!isAbsentOrLeave) {
         const late =
-          record.late != null
-            ? record.late
-            : calculateLate(record.scheduleIn, record.actualIn);
+          record.lateManualOverride === true
+            ? (record.late ?? 0)
+            : record.late != null
+              ? record.late
+              : calculateLate(record.scheduleIn, record.actualIn);
         if (late && late > 0) {
           lates.push({ date: record.date, minutes: late });
         }
 
         const undertimeMinutes =
-          record.undertime != null
-            ? Math.round(record.undertime * 60)
-            : calculateUndertime(record.scheduleOut, record.actualOut);
+          record.undertimeManualOverride === true
+            ? Math.round((record.undertime ?? 0) * 60)
+            : record.undertime != null
+              ? Math.round(record.undertime * 60)
+              : calculateUndertime(record.scheduleOut, record.actualOut);
         if (undertimeMinutes && undertimeMinutes > 0) {
           undertimes.push({ date: record.date, minutes: undertimeMinutes });
         }
@@ -540,7 +544,15 @@ export default function AttendancePage() {
             <EditAttendanceDialog
               isOpen={isEditDialogOpen}
               onOpenChange={setIsEditDialogOpen}
-              record={editingRecord}
+              record={
+                editingRecord
+                  ? (Array.isArray(individualAttendance)
+                      ? individualAttendance.find(
+                          (r: any) => r._id === editingRecord._id,
+                        ) ?? editingRecord
+                      : editingRecord)
+                  : null
+              }
               onSuccess={() => {
                 setEditingRecord(null);
               }}
@@ -922,23 +934,27 @@ export default function AttendancePage() {
                             const isAbsentOrLeave =
                               effectiveStatus === "absent" ||
                               effectiveStatus === "leave";
-                            // Late and undertime: use stored value or auto-calculate (only these are auto-calculated)
+                            // Late and undertime: use stored value when manually overridden (including 0), else auto-calculate
                             const late = isAbsentOrLeave
                               ? null
-                              : record.late != null
-                                ? record.late
-                                : calculateLate(
-                                    record.scheduleIn,
-                                    record.actualIn,
-                                  );
+                              : record.lateManualOverride === true
+                                ? (record.late ?? 0)
+                                : record.late != null
+                                  ? record.late
+                                  : calculateLate(
+                                      record.scheduleIn,
+                                      record.actualIn,
+                                    );
                             const undertime = isAbsentOrLeave
                               ? null
-                              : record.undertime != null
-                                ? Math.round(record.undertime * 60) // stored in hours, display in mins
-                                : calculateUndertime(
-                                    record.scheduleOut,
-                                    record.actualOut,
-                                  );
+                              : record.undertimeManualOverride === true
+                                ? Math.round((record.undertime ?? 0) * 60)
+                                : record.undertime != null
+                                  ? Math.round(record.undertime * 60) // stored in hours, display in mins
+                                  : calculateUndertime(
+                                      record.scheduleOut,
+                                      record.actualOut,
+                                    );
                             const hasLate = late !== null && late > 0;
                             const hasUndertime =
                               undertime !== null && undertime > 0;
@@ -1075,12 +1091,12 @@ export default function AttendancePage() {
                                 >
                                   {isAbsentOrLeave
                                     ? "-"
-                                    : record.overtime != null &&
-                                        record.overtime > 0
-                                      ? timeFormat === "hours"
-                                        ? `${record.overtime.toFixed(2)} hrs`
-                                        : `${Math.round(record.overtime * 60)} mins`
-                                      : "-"}
+                                    : formatTime(
+                                        record.overtime != null &&
+                                          record.overtime > 0
+                                          ? Math.round(record.overtime * 60)
+                                          : null,
+                                      )}
                                 </TableCell>
                                 <TableCell className="py-1.5 px-3">
                                   {!isReadOnly && (
@@ -1116,47 +1132,7 @@ export default function AttendancePage() {
                     </Table>
                   </div>
                 </div>
-                {sortedIndividualAttendance.length > 0 && (
-                  <div className="flex items-center justify-between border-t border-[#DDDDDD] p-4 shrink-0">
-                    <div className="text-sm text-gray-600">
-                      Showing {(individualPage - 1) * individualPageSize + 1} to{" "}
-                      {Math.min(
-                        individualPage * individualPageSize,
-                        sortedIndividualAttendance.length,
-                      )}{" "}
-                      of {sortedIndividualAttendance.length} records
-                    </div>
-                    {totalIndividualPages > 1 && (
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            setIndividualPage((p) => Math.max(1, p - 1))
-                          }
-                          disabled={individualPage === 1}
-                        >
-                          Previous
-                        </Button>
-                        <div className="text-sm text-gray-600">
-                          Page {individualPage} of {totalIndividualPages}
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            setIndividualPage((p) =>
-                              Math.min(totalIndividualPages, p + 1),
-                            )
-                          }
-                          disabled={individualPage === totalIndividualPages}
-                        >
-                          Next
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* No footer count or pagination controls for attendance list */}
               </>
             )}
           </CardContent>
@@ -1460,19 +1436,23 @@ export default function AttendancePage() {
                                     record.status === "leave";
                                   if (!isAbsentOrLeave) {
                                     const late =
-                                      record.late != null
-                                        ? record.late
-                                        : calculateLate(
-                                            record.scheduleIn,
-                                            record.actualIn,
-                                          );
+                                      record.lateManualOverride === true
+                                        ? (record.late ?? 0)
+                                        : record.late != null
+                                          ? record.late
+                                          : calculateLate(
+                                              record.scheduleIn,
+                                              record.actualIn,
+                                            );
                                     const undertime =
-                                      record.undertime != null
-                                        ? Math.round(record.undertime * 60)
-                                        : calculateUndertime(
-                                            record.scheduleOut,
-                                            record.actualOut,
-                                          );
+                                      record.undertimeManualOverride === true
+                                        ? Math.round((record.undertime ?? 0) * 60)
+                                        : record.undertime != null
+                                          ? Math.round(record.undertime * 60)
+                                          : calculateUndertime(
+                                              record.scheduleOut,
+                                              record.actualOut,
+                                            );
                                     if (late) {
                                       totalLate += late;
                                       frequencyLates += 1;
@@ -1514,23 +1494,27 @@ export default function AttendancePage() {
                                       record &&
                                       record.status !== "absent" &&
                                       record.status !== "leave"
-                                        ? record.late != null
-                                          ? record.late
-                                          : calculateLate(
-                                              record.scheduleIn,
-                                              record.actualIn,
-                                            )
+                                        ? record.lateManualOverride === true
+                                          ? (record.late ?? 0)
+                                          : record.late != null
+                                            ? record.late
+                                            : calculateLate(
+                                                record.scheduleIn,
+                                                record.actualIn,
+                                              )
                                         : null;
                                     const dayUndertime =
                                       record &&
                                       record.status !== "absent" &&
                                       record.status !== "leave"
-                                        ? record.undertime != null
-                                          ? Math.round(record.undertime * 60)
-                                          : calculateUndertime(
-                                              record.scheduleOut,
-                                              record.actualOut,
-                                            )
+                                        ? record.undertimeManualOverride === true
+                                          ? Math.round((record.undertime ?? 0) * 60)
+                                          : record.undertime != null
+                                            ? Math.round(record.undertime * 60)
+                                            : calculateUndertime(
+                                                record.scheduleOut,
+                                                record.actualOut,
+                                              )
                                         : null;
                                     const hasDayLate =
                                       dayLate != null && dayLate > 0;

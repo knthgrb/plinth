@@ -10,7 +10,8 @@ import {
 } from "@/components/error-boundary";
 
 const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL!, {
-  expectAuth: true,
+  // expectAuth: false allows invite/accept and login/signup to run queries when unauthenticated
+  expectAuth: false,
 });
 
 export function ConvexClientProvider({ children }: { children: ReactNode }) {

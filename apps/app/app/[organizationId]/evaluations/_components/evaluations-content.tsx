@@ -190,6 +190,16 @@ export function EvaluationsContent() {
       (emp: any) => emp.employment?.department === departmentFilter,
     );
   }, [employees, employeeSearch, departmentFilter]);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
+  const totalEmployees = displayedEmployees.length;
+  const totalPages = Math.max(1, Math.ceil(totalEmployees / pageSize));
+  const startIndex = (page - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalEmployees);
+  const paginatedEmployees = useMemo(
+    () => displayedEmployees.slice(startIndex, endIndex),
+    [displayedEmployees, startIndex, endIndex],
+  );
 
   const isOwnerOrAdminOrHr =
     user?.role === "owner" ||
@@ -604,7 +614,7 @@ export function EvaluationsContent() {
         ) : null}
 
         <Card className="flex flex-col max-h-[calc(100vh-180px)] sm:max-h-[calc(100vh-200px)]">
-          <div className="shrink-0 flex flex-col gap-3 p-4 sm:p-5 md:p-6 pb-1.5 border-b border-[#DDDDDD]">
+          <div className="shrink-0 flex flex-col gap-3 p-4 sm:p-5 md:p-6 pb-1.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="relative w-full max-w-[200px]">
                 <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[rgb(133,133,133)] pointer-events-none" />
@@ -753,15 +763,15 @@ export function EvaluationsContent() {
               ) : null}
             </div>
           </div>
-          <CardContent className="flex-1 overflow-auto p-0">
-            <div className="overflow-x-auto">
+          <CardContent className="flex-1 overflow-auto relative p-3 sm:p-4 pt-0 sm:pt-0">
+            <div className="overflow-x-auto -mx-3 sm:mx-0">
               <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-white z-10">
-                  <tr className="border-b border-[rgb(230,230,230)] h-8">
+                <thead className="bg-white">
+                  <tr className="border-b border-[rgb(230,230,230)] h-9">
                     {defaultColumns.map((col) => (
                       <th
                         key={col.id}
-                        className="py-1.5 px-3 text-left font-medium text-[11px] text-[rgb(64,64,64)]"
+                        className="py-2 px-3 text-left align-middle text-xs font-semibold text-[rgb(64,64,64)]"
                       >
                         {col.label}
                       </th>
@@ -779,7 +789,7 @@ export function EvaluationsContent() {
                       .map((col) => (
                         <th
                           key={col.id}
-                          className="py-1.5 px-3 text-left font-medium text-[11px] text-[rgb(64,64,64)]"
+                          className="py-2 px-3 text-left align-middle text-xs font-semibold text-[rgb(64,64,64)]"
                         >
                           {col.label}
                         </th>
@@ -787,17 +797,17 @@ export function EvaluationsContent() {
                   </tr>
                 </thead>
                 <tbody>
-                  {displayedEmployees.length > 0 ? (
-                    displayedEmployees.map((emp: any) => (
+                  {paginatedEmployees.length > 0 ? (
+                    paginatedEmployees.map((emp: any) => (
                       <tr
                         key={emp._id}
-                        className="border-b border-[rgb(230,230,230)] transition-colors hover:bg-[rgb(250,250,250)] text-sm"
+                        className="border-b last:border-b-0 border-[rgb(230,230,230)] transition-colors hover:bg-[rgb(250,250,250)] text-sm h-9"
                       >
                         {/* Default columns */}
                         {defaultColumns.map((col) => {
                           if (col.id === "employee") {
                             return (
-                              <td key={col.id} className="py-1.5 px-3">
+                              <td key={col.id} className="py-2 px-3">
                                 {emp.personalInfo.firstName}{" "}
                                 {emp.personalInfo.lastName}
                               </td>
@@ -805,14 +815,14 @@ export function EvaluationsContent() {
                           }
                           if (col.id === "position") {
                             return (
-                              <td key={col.id} className="py-1.5 px-3">
+                              <td key={col.id} className="py-2 px-3">
                                 {emp.employment.position}
                               </td>
                             );
                           }
                           if (col.id === "hiredDate") {
                             return (
-                              <td key={col.id} className="py-1.5 px-3">
+                              <td key={col.id} className="py-2 px-3">
                                 {emp.employment.hireDate
                                   ? format(
                                       new Date(emp.employment.hireDate),
@@ -867,7 +877,7 @@ export function EvaluationsContent() {
                                   handleCellClick(emp._id, col, ev || undefined)
                                 }
                                 className={cn(
-                                  "py-1.5 px-3 text-xs cursor-pointer transition-colors align-middle",
+                                  "py-2 px-3 text-xs cursor-pointer transition-colors align-middle",
                                   isDueThisMonth &&
                                     "border border-rose-200 bg-rose-50/70",
                                 )}
@@ -887,7 +897,9 @@ export function EvaluationsContent() {
                                     )}
                                   </span>
                                 ) : (
-                                  "—"
+                                  <span className="text-[11px] text-gray-400">
+                                    Click to add evaluation
+                                  </span>
                                 )}
                               </td>
                             );
@@ -919,6 +931,39 @@ export function EvaluationsContent() {
               </table>
             </div>
           </CardContent>
+          {totalEmployees > pageSize && (
+            <div className="flex flex-col sm:flex-row items-center justify-between border-t border-[#DDDDDD] p-3 sm:p-4 text-sm text-gray-600">
+              <div className="text-center sm:text-left">
+                Showing {totalEmployees === 0 ? 0 : startIndex + 1}–
+                {endIndex} of {totalEmployees} employees
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  className="text-xs sm:text-sm"
+                >
+                  Previous
+                </Button>
+                <span className="text-xs sm:text-sm">
+                  Page {page} of {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setPage((p) => Math.min(totalPages, p + 1))
+                  }
+                  disabled={page >= totalPages}
+                  className="text-xs sm:text-sm"
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
         </Card>
 
         {/* View evaluation details (read-only) – Edit opens the edit dialog */}

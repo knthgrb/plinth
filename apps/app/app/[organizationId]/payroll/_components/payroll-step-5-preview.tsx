@@ -91,7 +91,36 @@ export function PayrollStep5Preview({
             const mockPayslip = {
               period,
               grossPay: preview.grossPay,
-              deductions: preview.deductions,
+              deductions: [
+                ...(preview.deductions || []),
+                ...(preview.absentDeduction > 0
+                  ? [
+                      {
+                        name: `Absent (${preview.absences || 0} ${(preview.absences || 0) === 1 ? "day" : "days"})`,
+                        amount: preview.absentDeduction,
+                        type: "attendance",
+                      },
+                    ]
+                  : []),
+                ...(preview.lateDeduction > 0
+                  ? [
+                      {
+                        name: "Late",
+                        amount: preview.lateDeduction,
+                        type: "attendance",
+                      },
+                    ]
+                  : []),
+                ...(preview.undertimeDeduction > 0
+                  ? [
+                      {
+                        name: "Undertime",
+                        amount: preview.undertimeDeduction,
+                        type: "attendance",
+                      },
+                    ]
+                  : []),
+              ],
               incentives: preview.incentives,
               nonTaxableAllowance: preview.nonTaxableAllowance,
               netPay: preview.netPay,
@@ -102,6 +131,16 @@ export function PayrollStep5Preview({
               overtimeHours: preview.overtimeHours || 0,
               holidayPay: preview.holidayPay || 0,
               restDayPay: preview.restDayPay || 0,
+              nightDiffPay: preview.nightDiffPay || 0,
+              overtimeRegular: preview.overtimeRegular || 0,
+              overtimeRestDay: preview.overtimeRestDay || 0,
+              overtimeRestDayExcess: preview.overtimeRestDayExcess || 0,
+              overtimeSpecialHoliday: preview.overtimeSpecialHoliday || 0,
+              overtimeSpecialHolidayExcess:
+                preview.overtimeSpecialHolidayExcess || 0,
+              overtimeLegalHoliday: preview.overtimeLegalHoliday || 0,
+              overtimeLegalHolidayExcess:
+                preview.overtimeLegalHolidayExcess || 0,
               createdAt: Date.now(),
             };
 

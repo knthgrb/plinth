@@ -51,10 +51,9 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
 
   const [userPopoverOpen, setUserPopoverOpen] = useState(false);
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
     clearOrganization();
-    await authClient.signOut();
-    // Client-side navigation avoids browser "Leave site?" dialog on logout
+    sessionStorage.setItem("pendingSignOut", "1");
     router.replace("/login");
   };
 

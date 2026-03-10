@@ -1,9 +1,14 @@
 "use client";
 
+import { useEffect, useMemo } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
+import Table from "@tiptap/extension-table";
+import TableCell from "@tiptap/extension-table-cell";
+import TableHeader from "@tiptap/extension-table-header";
+import TableRow from "@tiptap/extension-table-row";
 import { TextSelection } from "@tiptap/pm/state";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,14 +20,19 @@ import {
   Undo,
   Redo,
   Link as LinkIcon,
+  Table2,
+  Rows3,
+  Columns3,
+  Trash2,
 } from "lucide-react";
-import { useEffect } from "react";
 
 type TiptapDoc = {
   type: string;
   content?: unknown[];
   [key: string]: unknown;
 };
+
+const EMPTY_DOC: TiptapDoc = { type: "doc", content: [] };
 
 interface TiptapEditorProps {
   content: string | TiptapDoc | null | undefined;
@@ -35,40 +45,34 @@ export function TiptapEditor({
   onChange,
   placeholder = "Start typing...",
 }: TiptapEditorProps) {
-  // Parse content - handle both JSON string and object
-  const getParsedContent = () => {
+  const parsedContent = useMemo(() => {
     if (typeof content === "string") {
-      if (
-        !content ||
-        content.trim() === "" ||
-        content === '{"type":"doc","content":[]}'
-      ) {
-        return ""; // Empty string for truly empty editor
+      if (!content || content.trim() === "" || content === JSON.stringify(EMPTY_DOC)) {
+        return EMPTY_DOC;
       }
+
       try {
-        const parsed = JSON.parse(content);
-        // Check if content is actually empty
+        const parsed = JSON.parse(content) as TiptapDoc;
         if (parsed?.content && parsed.content.length === 0) {
-          return "";
+          return EMPTY_DOC;
         }
         return parsed;
       } catch {
-        return "";
+        return EMPTY_DOC;
       }
     }
 
-    // If it's an object, check if it has content
     if (
       content &&
       typeof content === "object" &&
       "content" in content &&
-      Array.isArray((content as any).content) &&
-      (content as any).content.length > 0
+      Array.isArray(content.content)
     ) {
-      return content as TiptapDoc;
+      return content.content.length > 0 ? content : EMPTY_DOC;
     }
-    return "";
-  };
+
+    return EMPTY_DOC;
+  }, [content]);
 
   const editor = useEditor({
     extensions: [
@@ -87,21 +91,26 @@ export function TiptapEditor({
         placeholder: placeholder,
         emptyEditorClass: "is-editor-empty",
       }),
+      Table.configure({
+        resizable: true,
+      }),
+      TableRow,
+      TableHeader,
+      TableCell,
     ],
-    content: getParsedContent(),
+    content: parsedContent,
+    immediatelyRender: false,
     onCreate: ({ editor }) => {
-      // When editor is created and empty, set cursor to position 0
       if (editor.isEmpty) {
         editor.commands.setTextSelection(0);
       }
     },
     onUpdate: ({ editor }) => {
       const json = editor.getJSON();
-      // Only save if there's actual content
       if (json.content && json.content.length > 0) {
         onChange(JSON.stringify(json));
       } else {
-        onChange(JSON.stringify({ type: "doc", content: [] }));
+        onChange(JSON.stringify(EMPTY_DOC));
       }
     },
     editorProps: {
@@ -111,13 +120,12 @@ export function TiptapEditor({
         "data-placeholder": placeholder,
       },
       handleDOMEvents: {
-        focus: (view, event) => {
-          // When editor is focused and empty, ensure cursor is at position 0
+        focus: (view) => {
           if (view.state.doc.content.size === 0) {
             setTimeout(() => {
               const pos = Math.min(1, view.state.doc.content.size);
               const tr = view.state.tr.setSelection(
-                TextSelection.create(view.state.doc, pos)
+                TextSelection.create(view.state.doc, pos),
               );
               view.dispatch(tr);
             }, 0);
@@ -128,25 +136,20 @@ export function TiptapEditor({
     },
   });
 
-  // Ensure cursor is at the start when editor is empty
   useEffect(() => {
     if (editor) {
-      // When editor is empty and focused, ensure cursor is at position 0
       const handleFocus = () => {
         if (editor.isEmpty) {
-          // Use setTimeout to ensure this runs after Tiptap's internal focus handling
           setTimeout(() => {
             editor.commands.setTextSelection(0);
           }, 0);
         }
       };
 
-      // Also set cursor position on mount if editor is empty
       if (editor.isEmpty) {
         editor.commands.setTextSelection(0);
       }
 
-      // Add focus event listener
       editor.on("focus", handleFocus);
 
       return () => {
@@ -154,6 +157,17 @@ export function TiptapEditor({
       };
     }
   }, [editor]);
+
+  useEffect(() => {
+    if (!editor) return;
+
+    const current = JSON.stringify(editor.getJSON());
+    const next = JSON.stringify(parsedContent);
+
+    if (current !== next) {
+      editor.commands.setContent(parsedContent, false);
+    }
+  }, [editor, parsedContent]);
 
   if (!editor) {
     return null;
@@ -176,8 +190,8 @@ export function TiptapEditor({
   };
 
   return (
-    <div className="border border-gray-300 rounded-md">
-      <div className="flex flex-wrap gap-1 p-2 border-b border-gray-300 bg-gray-50">
+    <div className="rounded-md border border-gray-300">
+      <div className="flex flex-wrap gap-1 border-b border-gray-300 bg-gray-50 p-2">
         <Button
           type="button"
           variant="ghost"
@@ -198,7 +212,7 @@ export function TiptapEditor({
         >
           <Italic className="h-4 w-4" />
         </Button>
-        <div className="w-px h-6 bg-gray-300 mx-1" />
+        <div className="mx-1 h-6 w-px bg-gray-300" />
         <Button
           type="button"
           variant="ghost"
@@ -238,7 +252,7 @@ export function TiptapEditor({
         >
           H3
         </Button>
-        <div className="w-px h-6 bg-gray-300 mx-1" />
+        <div className="mx-1 h-6 w-px bg-gray-300" />
         <Button
           type="button"
           variant="ghost"
@@ -266,7 +280,7 @@ export function TiptapEditor({
         >
           <Quote className="h-4 w-4" />
         </Button>
-        <div className="w-px h-6 bg-gray-300 mx-1" />
+        <div className="mx-1 h-6 w-px bg-gray-300" />
         <Button
           type="button"
           variant="ghost"
@@ -276,7 +290,49 @@ export function TiptapEditor({
         >
           <LinkIcon className="h-4 w-4" />
         </Button>
-        <div className="w-px h-6 bg-gray-300 mx-1" />
+        <div className="mx-1 h-6 w-px bg-gray-300" />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            editor
+              .chain()
+              .focus()
+              .insertTable({ rows: 3, cols: 2, withHeaderRow: true })
+              .run()
+          }
+        >
+          <Table2 className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => editor.chain().focus().addRowAfter().run()}
+          disabled={!editor.isActive("table")}
+        >
+          <Rows3 className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => editor.chain().focus().addColumnAfter().run()}
+          disabled={!editor.isActive("table")}
+        >
+          <Columns3 className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => editor.chain().focus().deleteTable().run()}
+          disabled={!editor.isActive("table")}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+        <div className="mx-1 h-6 w-px bg-gray-300" />
         <Button
           type="button"
           variant="ghost"
@@ -298,7 +354,7 @@ export function TiptapEditor({
       </div>
       <EditorContent
         editor={editor}
-        className="min-h-[200px] max-h-[500px] overflow-y-auto"
+        className="max-h-[500px] min-h-[200px] overflow-y-auto [&_table]:w-full [&_table]:border-collapse [&_table]:border [&_table]:border-[rgb(210,210,210)] [&_th]:border [&_th]:border-[rgb(210,210,210)] [&_th]:bg-[rgb(245,245,245)] [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_td]:border [&_td]:border-[rgb(220,220,220)] [&_td]:px-3 [&_td]:py-2"
       />
     </div>
   );

@@ -25,6 +25,15 @@ type SSSBracket = {
   monthlySalaryCredit: number;
 };
 
+function toContribution(bracket: SSSBracket): SSSContribution {
+  return {
+    employeeShare: bracket.employeeShare,
+    employerShare: bracket.employerShare,
+    total: bracket.total,
+    monthlySalaryCredit: bracket.monthlySalaryCredit,
+  };
+}
+
 // Schedule of SSS Contributions - Effective January 2025 (monthly amounts in PHP)
 const SSS_TABLE_2025: SSSBracket[] = [
   { min: 0, max: 5249.99, employeeShare: 250, employerShare: 510, total: 760, monthlySalaryCredit: 5000 },
@@ -90,30 +99,53 @@ export function getSSSContribution(monthlyBasicPay: number): SSSContribution {
   for (const bracket of SSS_TABLE_2025) {
     if (bracket.max === null) {
       if (pay >= bracket.min) {
-        return {
-          employeeShare: bracket.employeeShare,
-          employerShare: bracket.employerShare,
-          total: bracket.total,
-          monthlySalaryCredit: bracket.monthlySalaryCredit,
-        };
+        return toContribution(bracket);
       }
     } else {
       if (pay >= bracket.min && pay <= bracket.max) {
-        return {
-          employeeShare: bracket.employeeShare,
-          employerShare: bracket.employerShare,
-          total: bracket.total,
-          monthlySalaryCredit: bracket.monthlySalaryCredit,
-        };
+        return toContribution(bracket);
       }
     }
   }
   // Fallback to last bracket (above 29,750)
   const last = SSS_TABLE_2025[SSS_TABLE_2025.length - 1];
-  return {
-    employeeShare: last.employeeShare,
-    employerShare: last.employerShare,
-    total: last.total,
-    monthlySalaryCredit: last.monthlySalaryCredit,
-  };
+  return toContribution(last);
+}
+
+export function getSSSContributionByEmployeeDeduction(
+  employeeDeduction: number,
+): SSSContribution {
+  const deduction = Math.max(0, Math.round(employeeDeduction * 100) / 100);
+  if (deduction === 0) {
+    return {
+      employeeShare: 0,
+      employerShare: 0,
+      total: 0,
+      monthlySalaryCredit: 0,
+    };
+  }
+
+  const match = SSS_TABLE_2025.find(
+    (bracket) => Math.abs(bracket.employeeShare - deduction) < 0.001,
+  );
+  if (match) {
+    return toContribution(match);
+  }
+
+  const nearest = SSS_TABLE_2025.reduce((closest, bracket) => {
+    if (!closest) return bracket;
+    return Math.abs(bracket.employeeShare - deduction) <
+      Math.abs(closest.employeeShare - deduction)
+      ? bracket
+      : closest;
+  }, null as SSSBracket | null);
+
+  return nearest
+    ? toContribution(nearest)
+    : {
+        employeeShare: 0,
+        employerShare: 0,
+        total: 0,
+        monthlySalaryCredit: 0,
+      };
 }

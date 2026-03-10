@@ -7,7 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
@@ -57,17 +61,17 @@ export function PayrollSettingsContent() {
   const { toast } = useToast();
   const settings = useQuery(
     (api as any).settings.getSettings,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
   const organization = useQuery(
     (api as any).organizations.getOrganization,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
   const updatePayrollSettings = useMutation(
-    (api as any).settings.updatePayrollSettings
+    (api as any).settings.updatePayrollSettings,
   );
   const updateOrganization = useMutation(
-    (api as any).organizations.updateOrganization
+    (api as any).organizations.updateOrganization,
   );
 
   const [formData, setFormData] = useState({
@@ -201,7 +205,7 @@ export function PayrollSettingsContent() {
             <LabelWithHelp
               id="regularHoliday"
               label="Regular Holiday Rate (%)"
-              tooltip="If &quot;Include allowance in daily rate&quot; is checked → Pay = daily rate + (100% × daily rate). Otherwise → Pay = daily rate + (100% × basic daily pay)."
+              tooltip='If "Include allowance in daily rate" is checked → Pay = daily rate + (100% × daily rate). Otherwise → Pay = daily rate + (100% × basic daily pay).'
             />
             <Input
               id="regularHoliday"
@@ -220,7 +224,7 @@ export function PayrollSettingsContent() {
             <LabelWithHelp
               id="specialHoliday"
               label="Special non-working holiday rate (%)"
-              tooltip="If &quot;Include allowance in daily rate&quot; is checked → Pay = daily rate + (30% × daily rate). Otherwise → Pay = daily rate + (30% × basic daily pay)."
+              tooltip='If "Include allowance in daily rate" is checked → Pay = daily rate + (30% × daily rate). Otherwise → Pay = daily rate + (30% × basic daily pay).'
             />
             <Input
               id="specialHoliday"
@@ -315,7 +319,8 @@ export function PayrollSettingsContent() {
         <div className="space-y-4 rounded-lg border p-4">
           <h4 className="font-medium">Daily rate (monthly employees)</h4>
           <p className="text-sm text-muted-foreground">
-            Daily rate = (basic + allowance if enabled) × (12 ÷ working days per year). E.g. 24k + 6k with 261 days → 30,000 × (12/261).
+            Daily rate = (basic + allowance if enabled) × (12 ÷ working days per
+            year). E.g. 24k + 6k with 261 days → 30,000 × (12/261).
           </p>
           <div className="flex flex-wrap items-center gap-6">
             <div className="flex items-center space-x-2">
@@ -337,7 +342,10 @@ export function PayrollSettingsContent() {
               </Label>
             </div>
             <div className="flex items-center gap-2">
-              <Label htmlFor="dailyRateWorkingDaysPerYear" className="whitespace-nowrap">
+              <Label
+                htmlFor="dailyRateWorkingDaysPerYear"
+                className="whitespace-nowrap"
+              >
                 Working days per year
               </Label>
               <Input
@@ -370,7 +378,8 @@ export function PayrollSettingsContent() {
                 setFormData({
                   ...formData,
                   salaryPaymentFrequency: value,
-                  secondPayDate: value === "bimonthly" ? formData.secondPayDate : 30,
+                  secondPayDate:
+                    value === "bimonthly" ? formData.secondPayDate : 30,
                 })
               }
             >

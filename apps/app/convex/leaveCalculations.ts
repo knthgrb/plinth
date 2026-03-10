@@ -8,7 +8,7 @@
  */
 export function calculateMonthsWorked(
   startDate: number,
-  endDate: number
+  endDate: number,
 ): number {
   const start = new Date(startDate);
   const end = new Date(endDate);
@@ -24,7 +24,7 @@ export function calculateMonthsWorked(
     const daysInMonth = new Date(
       end.getFullYear(),
       end.getMonth() + 1,
-      0
+      0,
     ).getDate();
     const partialMonth = daysDiff / daysInMonth;
     totalMonths += partialMonth;
@@ -33,7 +33,7 @@ export function calculateMonthsWorked(
     const daysInMonth = new Date(
       end.getFullYear(),
       end.getMonth() + 1,
-      0
+      0,
     ).getDate();
     const partialMonth = Math.abs(daysDiff) / daysInMonth;
     totalMonths -= partialMonth;
@@ -49,7 +49,7 @@ export function calculateMonthsWorked(
 export function calculateProratedLeave(
   totalAnnualLeave: number,
   startDate: number,
-  referenceDate: number = Date.now()
+  referenceDate: number = Date.now(),
 ): number {
   const monthsWorked = calculateMonthsWorked(startDate, referenceDate);
   const proratedLeave = (totalAnnualLeave / 12) * monthsWorked;
@@ -62,7 +62,7 @@ export function calculateProratedLeave(
  */
 export function calculateYearsSince(
   startDate: number,
-  endDate: number
+  endDate: number,
 ): number {
   const start = new Date(startDate);
   const end = new Date(endDate);
@@ -98,20 +98,30 @@ function isLeapYear(year: number): boolean {
 }
 
 /**
- * Calculate anniversary leave
- * Grants 1 additional leave per year from regularization date
+ * Calculate anniversary leave from regularization date (legacy / when grant upon regularization).
+ * Grants 1 additional leave per full year since regularization.
  */
 export function calculateAnniversaryLeave(
   regularizationDate: number | undefined,
-  referenceDate: number = Date.now()
+  referenceDate: number = Date.now(),
 ): number {
   if (!regularizationDate) {
     return 0;
   }
+  const yearsSince = calculateYearsSince(regularizationDate, referenceDate);
+  return Math.floor(yearsSince);
+}
 
-  const yearsSinceReg = calculateYearsSince(regularizationDate, referenceDate);
-  // Grant 1 leave per full year (rounded down)
-  return Math.floor(yearsSinceReg);
+/**
+ * Calculate anniversary leave from hire date.
+ * Grants 1 additional leave per full year since hire (auto-calculated for anniversary leave type).
+ */
+export function calculateAnniversaryLeaveFromHire(
+  hireDate: number,
+  referenceDate: number = Date.now(),
+): number {
+  const yearsSince = calculateYearsSince(hireDate, referenceDate);
+  return Math.floor(yearsSince);
 }
 
 /**
@@ -123,26 +133,34 @@ export function getConvertibleLeaveDays(totalLeave: number): number {
 }
 
 /**
- * Calculate total leave entitlement including proration and anniversary leave
+ * Calculate total leave entitlement including proration and anniversary leave.
+ * When grantLeaveUponRegularization is true, proration is based on months since
+ * regularization date (or hire date if no regularization date). Otherwise proration
+ * is from hire date.
  */
 export function calculateTotalLeaveEntitlement(
   annualLeave: number,
   hireDate: number,
   regularizationDate: number | undefined,
-  referenceDate: number = Date.now()
+  referenceDate: number = Date.now(),
+  grantLeaveUponRegularization: boolean = false,
 ): {
   proratedLeave: number;
   anniversaryLeave: number;
   totalEntitlement: number;
 } {
+  const prorationStartDate =
+    grantLeaveUponRegularization && regularizationDate
+      ? regularizationDate
+      : hireDate;
   const proratedLeave = calculateProratedLeave(
     annualLeave,
-    hireDate,
-    referenceDate
+    prorationStartDate,
+    referenceDate,
   );
   const anniversaryLeave = calculateAnniversaryLeave(
     regularizationDate,
-    referenceDate
+    referenceDate,
   );
   const totalEntitlement = proratedLeave + anniversaryLeave;
 

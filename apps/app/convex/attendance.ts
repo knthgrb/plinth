@@ -340,6 +340,8 @@ export const updateAttendance = mutation({
     overtime: v.optional(v.number()),
     late: v.optional(v.union(v.number(), v.null())), // Manual override (minutes), or null to recalculate
     undertime: v.optional(v.union(v.number(), v.null())), // Manual override (hours), or null to recalculate
+    lateManualOverride: v.optional(v.boolean()), // true = use stored late (e.g. 0) instead of calculating from time in
+    undertimeManualOverride: v.optional(v.boolean()), // true = use stored undertime (e.g. 0) instead of calculating from time out
     isHoliday: v.optional(v.boolean()),
     holidayType: v.optional(
       v.union(
@@ -382,9 +384,11 @@ export const updateAttendance = mutation({
     const currentActualOut = args.actualOut ?? attendance.actualOut;
     const currentStatus = args.status ?? attendance.status;
 
-    // Calculate undertime if not manually provided and status is present
-    if (args.undertime === null) {
-      // null means recalculate
+    // Undertime: use explicit override flag so "override to 0" is never lost
+    if (args.undertimeManualOverride === true) {
+      updates.undertime = args.undertime ?? 0;
+      updates.undertimeManualOverride = true;
+    } else if (args.undertime === null) {
       const calculatedUndertime =
         currentStatus === "present" && currentActualIn && currentActualOut
           ? calculateUndertime(
@@ -396,14 +400,17 @@ export const updateAttendance = mutation({
           : 0;
       updates.undertime =
         calculatedUndertime > 0 ? calculatedUndertime : undefined;
-    } else if (args.undertime !== undefined) {
-      // Manual override provided - 0 means explicitly remove, > 0 means set value
-      updates.undertime = args.undertime > 0 ? args.undertime : undefined;
+      updates.undertimeManualOverride = undefined;
+    } else if (args.undertime !== undefined && args.undertime !== null) {
+      updates.undertime = args.undertime;
+      updates.undertimeManualOverride = true;
     }
 
-    // Calculate late if not manually provided and status is present
-    if (args.late === null) {
-      // null means recalculate
+    // Late: use explicit override flag so "override to 0" is never lost
+    if (args.lateManualOverride === true) {
+      updates.late = args.late ?? 0;
+      updates.lateManualOverride = true;
+    } else if (args.late === null) {
       const calculatedUndertime =
         updates.undertime ??
         (currentStatus === "present" && currentActualIn && currentActualOut
@@ -421,9 +428,10 @@ export const updateAttendance = mutation({
           ? calculateLate(currentScheduleIn, currentActualIn, false)
           : 0;
       updates.late = calculatedLate > 0 ? calculatedLate : undefined;
-    } else if (args.late !== undefined) {
-      // Manual override provided - 0 means explicitly remove, > 0 means set value
-      updates.late = args.late > 0 ? args.late : undefined;
+      updates.lateManualOverride = undefined;
+    } else if (args.late !== undefined && args.late !== null) {
+      updates.late = args.late;
+      updates.lateManualOverride = true;
     }
 
     await ctx.db.patch(args.attendanceId, updates);

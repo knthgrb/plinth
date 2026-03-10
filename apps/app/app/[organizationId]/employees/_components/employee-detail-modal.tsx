@@ -29,7 +29,10 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { updateEmployee } from "@/actions/employees";
-import { updateEmployeeLeaveCredits } from "@/actions/leave";
+import {
+  updateEmployeeLeaveCredits,
+  getEmployeeLeaveCredits,
+} from "@/actions/leave";
 import { Id } from "@/convex/_generated/dataModel";
 import { useOrganization } from "@/hooks/organization-context";
 import { EmploymentTypeSelect } from "@/components/ui/employment-type-select";
@@ -60,6 +63,7 @@ interface EmployeeDetailModalProps {
   onModeChange?: (mode: "view" | "edit") => void;
   onMessageClick: (employeeId: string) => void;
   employeeData?: any; // Optional pre-fetched employee data to avoid refetching
+  hasUserAccount?: boolean; // When true, email cannot be edited (tied to auth account)
 }
 
 export function EmployeeDetailModal({
@@ -70,6 +74,7 @@ export function EmployeeDetailModal({
   onModeChange,
   onMessageClick,
   employeeData,
+  hasUserAccount = false,
 }: EmployeeDetailModalProps) {
   const router = useRouter();
   const { currentOrganizationId } = useOrganization();
@@ -85,6 +90,7 @@ export function EmployeeDetailModal({
     department: "",
     employmentType: "probationary",
     hireDate: "",
+    regularizationDate: "",
     basicSalary: "",
     allowance: "",
     regularHolidayRate: "",
@@ -111,6 +117,11 @@ export function EmployeeDetailModal({
 
   const [vacationTotal, setVacationTotal] = useState("");
   const [sickTotal, setSickTotal] = useState("");
+  const [effectiveLeaveCredits, setEffectiveLeaveCredits] = useState<{
+    vacation?: { balance: number; total: number };
+    sick?: { balance: number; total: number };
+    custom?: Array<{ type: string; balance: number; total: number }>;
+  } | null>(null);
 
   const [scheduleType, setScheduleType] = useState<"one-time" | "regular">(
     "one-time",
@@ -178,6 +189,30 @@ export function EmployeeDetailModal({
           }))
         : (settings.departments as { name: string; color: string }[])
       : [];
+
+  // Fetch effective leave credits (computed anniversary, proration) when viewing employee
+  useEffect(() => {
+    if (!open || !employeeId || !currentOrganizationId) {
+      setEffectiveLeaveCredits(null);
+      return;
+    }
+    let cancelled = false;
+    getEmployeeLeaveCredits(currentOrganizationId, employeeId)
+      .then((credits) => {
+        if (cancelled) return;
+        setEffectiveLeaveCredits({
+          vacation: credits?.vacation,
+          sick: credits?.sick,
+          custom: credits?.custom,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setEffectiveLeaveCredits(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, employeeId, currentOrganizationId]);
 
   // Populate edit form when opening in edit mode
   useEffect(() => {
@@ -297,6 +332,9 @@ export function EmployeeDetailModal({
     const hireDateStr = employee.employment.hireDate
       ? new Date(employee.employment.hireDate).toISOString().slice(0, 10)
       : "";
+    const regularizationDateStr = employee.employment.regularizationDate
+      ? new Date(employee.employment.regularizationDate).toISOString().slice(0, 10)
+      : "";
 
     reset({
       firstName: employee.personalInfo.firstName,
@@ -308,6 +346,7 @@ export function EmployeeDetailModal({
       department: employee.employment.department,
       employmentType: employee.employment.employmentType,
       hireDate: hireDateStr,
+      regularizationDate: regularizationDateStr,
       basicSalary: employee.compensation.basicSalary.toString(),
       allowance: (employee.compensation.allowance || 0).toString(),
       salaryType: employee.compensation.salaryType,
@@ -468,6 +507,9 @@ export function EmployeeDetailModal({
           hireDate: data.hireDate
             ? new Date(data.hireDate).getTime()
             : employee.employment.hireDate,
+          regularizationDate: data.regularizationDate
+            ? new Date(data.regularizationDate).getTime()
+            : null,
         },
         compensation: {
           ...employee.compensation,
@@ -810,8 +852,17 @@ export function EmployeeDetailModal({
                         id="edit-email"
                         type="email"
                         {...register("email")}
-                        className={cn(errors.email && "border-red-500 focus-visible:ring-red-500")}
+                        disabled={hasUserAccount}
+                        className={cn(
+                          errors.email && "border-red-500 focus-visible:ring-red-500",
+                          hasUserAccount && "bg-muted cursor-not-allowed"
+                        )}
                       />
+                      {hasUserAccount && (
+                        <p className="text-xs text-muted-foreground">
+                          Email cannot be changed because a user account is linked to this employee.
+                        </p>
+                      )}
                       {errors.email?.message && (
                         <p className="text-xs text-red-600">{errors.email.message}</p>
                       )}
@@ -1009,6 +1060,25 @@ export function EmployeeDetailModal({
                       {errors.hireDate?.message && (
                         <p className="text-xs text-red-600">{errors.hireDate.message}</p>
                       )}
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-regularizationDate" className="text-sm">
+                        Date of regularization
+                      </Label>
+                      <Controller
+                        name="regularizationDate"
+                        control={control}
+                        render={({ field }) => (
+                          <DatePicker
+                            value={field.value}
+                            onValueChange={field.onChange}
+                            placeholder="Optional"
+                          />
+                        )}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Optional. Affects leave proration when enabled in Leave settings.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -1397,7 +1467,7 @@ export function EmployeeDetailModal({
             )}
 
             {/* Leave Credits */}
-            {employee.leaveCredits && (
+            {(employee.leaveCredits || effectiveLeaveCredits) && (
               <div>
                 {!isEditing ? (
                   <Card className="border-gray-100">
@@ -1409,24 +1479,58 @@ export function EmployeeDetailModal({
                     </CardHeader>
                     <CardContent className="pt-0 px-3 sm:px-4 pb-3 sm:pb-4">
                       <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="rounded-lg border border-gray-100 bg-gray-50/50 p-2.5 space-y-0.5">
-                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                            Vacation Leave
-                          </p>
-                          <p className="text-sm font-semibold">
-                            {employee.leaveCredits.vacation?.balance ?? 0} /{" "}
-                            {employee.leaveCredits.vacation?.total ?? 0} days
-                          </p>
-                        </div>
-                        <div className="rounded-lg border border-gray-100 bg-gray-50/50 p-2.5 space-y-0.5">
-                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                            Sick Leave
-                          </p>
-                          <p className="text-sm font-semibold">
-                            {employee.leaveCredits.sick?.balance ?? 0} /{" "}
-                            {employee.leaveCredits.sick?.total ?? 0} days
-                          </p>
-                        </div>
+                        {(effectiveLeaveCredits ?? employee.leaveCredits)
+                          ?.vacation != null && (
+                          <div className="rounded-lg border border-gray-100 bg-gray-50/50 p-2.5 space-y-0.5">
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                              Vacation Leave
+                            </p>
+                            <p className="text-sm font-semibold">
+                              {(effectiveLeaveCredits ?? employee.leaveCredits)
+                                .vacation?.balance ?? 0}{" "}
+                              /{" "}
+                              {(effectiveLeaveCredits ?? employee.leaveCredits)
+                                .vacation?.total ?? 0}{" "}
+                              days
+                            </p>
+                          </div>
+                        )}
+                        {(effectiveLeaveCredits ?? employee.leaveCredits)
+                          ?.sick != null && (
+                          <div className="rounded-lg border border-gray-100 bg-gray-50/50 p-2.5 space-y-0.5">
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                              Sick Leave
+                            </p>
+                            <p className="text-sm font-semibold">
+                              {(effectiveLeaveCredits ?? employee.leaveCredits)
+                                .sick?.balance ?? 0}{" "}
+                              /{" "}
+                              {(effectiveLeaveCredits ?? employee.leaveCredits)
+                                .sick?.total ?? 0}{" "}
+                              days
+                            </p>
+                          </div>
+                        )}
+                        {(effectiveLeaveCredits?.custom ??
+                          employee.leaveCredits?.custom)?.map((c: any) => {
+                          const name =
+                            (settings?.leaveTypes as any[])?.find(
+                              (lt: any) => lt.type === c.type
+                            )?.name ?? c.type;
+                          return (
+                            <div
+                              key={c.type}
+                              className="rounded-lg border border-gray-100 bg-gray-50/50 p-2.5 space-y-0.5"
+                            >
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                                {name}
+                              </p>
+                              <p className="text-sm font-semibold">
+                                {c.balance ?? 0} / {c.total ?? 0} days
+                              </p>
+                            </div>
+                          );
+                        })}
                       </div>
                     </CardContent>
                   </Card>

@@ -43,7 +43,7 @@ const navigationCategories: NavCategory[] = [
     title: "",
     items: [
       { name: "Announcements", href: "/announcements", icon: Bell },
-      { name: "Chat", href: "/chat", icon: MessageCircle, badge: "Soon" },
+      { name: "Chat", href: "/chat", icon: MessageCircle },
     ],
   },
   {
@@ -97,7 +97,7 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
               <ChevronDown
                 className={cn(
                   "h-4 w-4 shrink-0 text-[rgb(133,133,133)] transition-transform duration-200",
-                  orgPopoverOpen && "rotate-180"
+                  orgPopoverOpen && "rotate-180",
                 )}
               />
             </button>
@@ -141,7 +141,7 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
                           "flex items-center gap-2.5 w-full rounded-lg px-3 py-2 text-sm transition-colors",
                           isSelected
                             ? "bg-[rgb(245,245,245)] font-semibold"
-                            : "hover:bg-[rgb(250,250,250)] font-normal"
+                            : "hover:bg-[rgb(250,250,250)] font-normal",
                         )}
                         style={{
                           color: isSelected
@@ -185,7 +185,10 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
 
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
         {navigationCategories.map((category, index) => (
-          <div key={category.title ? `cat-${category.title}` : `cat-${index}`} className="space-y-1">
+          <div
+            key={category.title ? `cat-${category.title}` : `cat-${index}`}
+            className="space-y-1"
+          >
             {category.title ? (
               <h2
                 className="px-3 text-xs font-medium"
@@ -201,7 +204,7 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
               {category.items.map((item) => {
                 const orgHref = getOrganizationPath(
                   currentOrganizationId,
-                  item.href
+                  item.href,
                 );
                 const isActive =
                   cleanPathname === item.href ||
@@ -215,7 +218,7 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
                       "flex w-full items-center gap-2 rounded-lg pl-3 pr-2 py-2 text-sm transition-colors",
                       isActive
                         ? "bg-purple-50 text-brand-purple font-semibold"
-                        : "hover:bg-[rgb(250,250,250)] font-normal"
+                        : "hover:bg-[rgb(250,250,250)] font-normal",
                     )}
                     style={{
                       color: isActive ? "rgb(105, 94, 255)" : "rgb(64, 64, 64)",
@@ -230,7 +233,7 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
                           "ml-auto shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
                           item.badge === "Soon"
                             ? "bg-green-100 text-green-800"
-                            : "bg-amber-100 text-amber-800"
+                            : "bg-amber-100 text-amber-800",
                         )}
                       >
                         {item.badge}

@@ -64,9 +64,10 @@ export default function SignupPage() {
             // Wait for organizations query to determine if we should stay or redirect
             if (userOrganizations !== undefined) {
               if (userOrganizations && userOrganizations.length > 0) {
-                // User already has organizations, redirect to dashboard with organizationId
+                // User already has organizations, redirect based on role in last active org
                 const firstOrg = userOrganizations[0];
-                router.push(`/${firstOrg._id}/dashboard`);
+                const path = firstOrg.role === "employee" || firstOrg.role === "accounting" ? "/announcements" : "/dashboard";
+                router.push(`/${firstOrg._id}${path}`);
                 return;
               } else {
                 // Ensure Convex user record exists before showing step 2
@@ -107,9 +108,10 @@ export default function SignupPage() {
                   "Please provide your organization details to continue",
               });
             } else {
-              // User has organizations, redirect to dashboard with organizationId
+              // User has organizations, redirect based on role in last active org
               const firstOrg = userOrganizations[0];
-              router.push(`/${firstOrg._id}/dashboard`);
+              const path = firstOrg.role === "employee" || firstOrg.role === "accounting" ? "/announcements" : "/dashboard";
+              router.push(`/${firstOrg._id}${path}`);
               return;
             }
             setCheckingSession(false);

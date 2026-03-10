@@ -324,12 +324,14 @@ export function OrganizationManagement(): React.ReactElement {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {members?.map((member: any) => {
+                  {members?.map((member: any, index: number) => {
                     const isCurrentUser = member._id === currentUserId;
                     const canEditThisRole =
                       canEditMemberRoles && !isCurrentUser;
                     return (
-                      <TableRow key={member._id}>
+                      <TableRow
+                        key={member._id ?? member.email ?? `member-${index}`}
+                      >
                         <TableCell>{member.name || "-"}</TableCell>
                         <TableCell>{member.email}</TableCell>
                         <TableCell>

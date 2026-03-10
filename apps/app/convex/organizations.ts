@@ -43,6 +43,10 @@ async function getUserRecord(ctx: any) {
     );
   }
 
+  if ((userRecord as any).isActive === false) {
+    throw new Error("Account is inactive. Please contact your administrator.");
+  }
+
   return userRecord;
 }
 
@@ -79,6 +83,8 @@ async function getUserRecordOrNull(ctx: any) {
       .withIndex("by_email", (q: any) => q.eq("email", user.email))
       .first();
 
+    // Inactive accounts (e.g. archived employee) cannot use the app
+    if (userRecord && (userRecord as any).isActive === false) return null;
     return userRecord ?? null;
   } catch {
     return null;
@@ -207,6 +213,7 @@ export const getCurrentUser = query({
   handler: async (ctx, args) => {
     const userRecord = await getUserRecordOrNull(ctx);
     if (!userRecord) return null;
+    if ((userRecord as any).isActive === false) return null;
 
     let currentOrg = null;
     let userOrg = null;
@@ -678,7 +685,7 @@ export const removeUserFromOrganization = mutation({
       throw new Error("Cannot remove yourself from organization");
     }
 
-    // Remove user-organization relationship
+    // Remove user-organization relationship and linked employee record
     const targetUserOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
         q.eq("userId", args.userId).eq("organizationId", args.organizationId)
@@ -686,6 +693,14 @@ export const removeUserFromOrganization = mutation({
       .first();
 
     if (targetUserOrg) {
+      // If this user was linked to an employee in this org, delete the employee record too
+      const employeeId = (targetUserOrg as any).employeeId;
+      if (employeeId) {
+        const employee = await ctx.db.get(employeeId);
+        if (employee && employee.organizationId === args.organizationId) {
+          await ctx.db.delete(employeeId);
+        }
+      }
       await ctx.db.delete(targetUserOrg._id);
     }
 

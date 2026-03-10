@@ -54,9 +54,11 @@ export function AdjustCreditsDialog({
       const first = leaveTypes[0].type;
       setAdjustmentData((prev) => ({
         ...prev,
-        selectedType: prev.selectedType && leaveTypes.some((lt) => lt.type === prev.selectedType)
-          ? prev.selectedType
-          : first,
+        selectedType:
+          prev.selectedType &&
+          leaveTypes.some((lt) => lt.type === prev.selectedType)
+            ? prev.selectedType
+            : first,
       }));
     }
   }, [isOpen, leaveTypes]);
@@ -177,7 +179,9 @@ export function AdjustCreditsDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="adjustReason">Reason <span className="text-red-500">*</span></Label>
+            <Label htmlFor="adjustReason">
+              Reason <span className="text-red-500">*</span>
+            </Label>
             <Textarea
               id="adjustReason"
               value={adjustmentData.reason}

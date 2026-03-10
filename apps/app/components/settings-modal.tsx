@@ -6,25 +6,21 @@ import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  Settings,
   User,
   Building2,
   Wallet,
   Calendar as CalendarIcon,
   Briefcase,
   LogOut,
-  X,
   Mail,
   Shield,
 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
-import { authClient } from "@/lib/auth-client";
 import { UserOrganizationsCard } from "@/components/user-organizations-card";
 import { OrganizationManagement } from "@/components/organization-management";
 import { PayrollSettingsContent } from "@/components/settings/payroll-settings-content";
@@ -62,6 +58,8 @@ type SettingsSection =
   | "departments"
   | "holidays";
 
+type OrganizationRole = "owner" | "admin" | "hr" | "accounting" | "employee";
+
 interface SettingsModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -87,15 +85,14 @@ export function SettingsModal({
   }, [propInitialSection, open]);
 
   const user = useQuery(
-    (api as any).organizations.getCurrentUser,
+    api.organizations.getCurrentUser,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
-  const handleLogout = async () => {
-    clearOrganization();
+  const handleLogout = () => {
     onOpenChange(false);
-    await authClient.signOut();
-    // Client-side navigation avoids browser "Leave site?" dialog on logout
+    clearOrganization();
+    sessionStorage.setItem("pendingSignOut", "1");
     router.replace("/login");
   };
 
@@ -108,11 +105,6 @@ export function SettingsModal({
       .slice(0, 2) ||
     user?.email?.[0].toUpperCase() ||
     "U";
-
-  const isAdmin =
-    user?.role === "admin" ||
-    user?.role === "hr" ||
-    user?.role === "accounting";
 
   // Helper function to get display role name
   const getDisplayRole = (role: string | undefined) => {
@@ -133,13 +125,13 @@ export function SettingsModal({
     },
     {
       id: "payroll" as SettingsSection,
-      name: "Payroll Settings",
+      name: "Payroll",
       icon: Wallet,
       roles: ["admin", "hr", "accounting"],
     },
     {
       id: "leave-types" as SettingsSection,
-      name: "Leave Types",
+      name: "Leave",
       icon: CalendarIcon,
       roles: ["admin", "hr", "accounting"],
     },
@@ -237,10 +229,10 @@ export function SettingsModal({
           <div className="space-y-4 sm:space-y-6">
             <div>
               <h2 className="text-xl sm:text-2xl font-semibold mb-1 sm:mb-2">
-                Payroll Settings
+                Payroll
               </h2>
               <p className="text-sm sm:text-base text-gray-600">
-                Configure payroll settings
+                Configure payroll
               </p>
             </div>
             <PayrollSettingsContent />
@@ -251,10 +243,10 @@ export function SettingsModal({
           <div className="space-y-4 sm:space-y-6">
             <div>
               <h2 className="text-xl sm:text-2xl font-semibold mb-1 sm:mb-2">
-                Leave Types
+                Leave
               </h2>
               <p className="text-sm sm:text-base text-gray-600">
-                Manage leave types and configurations
+                Configure proration rules used by the leave tracker.
               </p>
             </div>
             <LeaveTypesSettingsContent />
@@ -361,11 +353,12 @@ export function SettingsModal({
               </div>
 
               {(() => {
-                const effectiveRole =
-                  user?.role === "owner" ? "admin" : user?.role;
+                const effectiveRole: OrganizationRole | undefined =
+                  user?.role === "owner"
+                    ? "admin"
+                    : (user?.role as OrganizationRole | undefined);
                 const visibleOrgItems = organizationSettingsItems.filter(
-                  (item) =>
-                    !item.roles || item.roles.includes(effectiveRole as any),
+                  (item) => !item.roles || !!effectiveRole && item.roles.includes(effectiveRole),
                 );
                 if (visibleOrgItems.length === 0) return null;
                 return (
@@ -386,7 +379,7 @@ export function SettingsModal({
                           const Icon = item.icon;
                           const hasAccess =
                             !item.roles ||
-                            item.roles.includes(effectiveRole as any);
+                            (!!effectiveRole && item.roles.includes(effectiveRole));
                           if (!hasAccess) return null;
                           return (
                             <button

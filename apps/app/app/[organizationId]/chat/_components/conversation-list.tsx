@@ -6,7 +6,16 @@ import { api } from "@/convex/_generated/api";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
-import { Pin, Users, Plus, MessageSquare, Hash, MoreHorizontal, ListFilter, CheckCheck } from "lucide-react";
+import {
+  Pin,
+  Users,
+  Plus,
+  MessageSquare,
+  Hash,
+  MoreHorizontal,
+  ListFilter,
+  CheckCheck,
+} from "lucide-react";
 import { Id } from "@/convex/_generated/dataModel";
 import { useOrganization } from "@/hooks/organization-context";
 import { ConversationSkeleton, ConversationListSkeleton } from "./skeletons";
@@ -49,21 +58,21 @@ export function ConversationList({
           limit: 20,
           cursor: cursor || undefined,
         }
-      : "skip"
+      : "skip",
   );
 
   const pinnedConversations = useQuery(
     (api as any).chat.getPinnedConversations,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   const unreadCounts = useQuery(
     (api as any).chat.getUnreadCounts,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   const markAllReadMutation = useMutation(
-    (api as any).chat.markAllConversationsAsRead
+    (api as any).chat.markAllConversationsAsRead,
   );
 
   // Update allConversations when new data arrives
@@ -93,7 +102,7 @@ export function ConversationList({
   const hasMore = conversationsData?.hasMore || false;
 
   const togglePinMutation = useMutation(
-    (api as any).chat.togglePinConversation
+    (api as any).chat.togglePinConversation,
   );
 
   const pinnedSet = useMemo(() => {
@@ -132,7 +141,7 @@ export function ConversationList({
 
   const handleTogglePin = async (
     e: React.MouseEvent,
-    conversationId: string
+    conversationId: string,
   ) => {
     e.stopPropagation();
     if (!currentOrganizationId) return;
@@ -172,7 +181,7 @@ export function ConversationList({
         root: scrollContainerRef.current,
         rootMargin: "100px", // Start loading 100px before reaching the element
         threshold: 0.1,
-      }
+      },
     );
 
     observer.observe(observerTarget);
@@ -258,7 +267,9 @@ export function ConversationList({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <div className="font-medium text-gray-900 truncate">
-                {conv.type === "channel" ? `# ${getDisplayName(conv)}` : getDisplayName(conv)}
+                {conv.type === "channel"
+                  ? `# ${getDisplayName(conv)}`
+                  : getDisplayName(conv)}
               </div>
               {unreadCounts && (unreadCounts[conv._id] || 0) > 0 && (
                 <span
@@ -275,7 +286,10 @@ export function ConversationList({
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="flex items-center gap-2"
+            onClick={(e) => e.stopPropagation()}
+          >
             {conv.lastMessage && (
               <div className="text-xs text-gray-400">
                 {format(new Date(conv.lastMessage.createdAt), "MMM d")}
@@ -289,7 +303,9 @@ export function ConversationList({
             >
               <Pin
                 className={`h-4 w-4 ${
-                  isPinned ? "fill-brand-purple text-brand-purple" : "text-gray-400"
+                  isPinned
+                    ? "fill-brand-purple text-brand-purple"
+                    : "text-gray-400"
                 }`}
               />
             </Button>
@@ -303,11 +319,16 @@ export function ConversationList({
     <div className="w-full lg:w-80 bg-white flex flex-col h-full shrink-0 min-w-0">
       <div className="flex items-center min-h-[4.5rem] h-[4.5rem] px-4 border-b border-gray-200 shrink-0">
         <div className="flex items-center justify-between gap-2 w-full min-w-0">
-          <h1 className="text-xl font-bold text-gray-900 truncate">Conversations</h1>
+          <h1 className="text-xl font-bold text-gray-900 truncate">Chat</h1>
           <div className="flex items-center gap-1 shrink-0">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" aria-label="More options">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  aria-label="More options"
+                >
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -324,7 +345,12 @@ export function ConversationList({
             </DropdownMenu>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" aria-label="New conversation">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  aria-label="New conversation"
+                >
                   <Plus className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -353,9 +379,12 @@ export function ConversationList({
           <div className="p-4 text-center text-gray-500 text-sm">
             Loading...
           </div>
-        ) : (showUnreadOnly ? filteredConversations : conversations)?.length === 0 ? (
+        ) : (showUnreadOnly ? filteredConversations : conversations)?.length ===
+          0 ? (
           <div className="p-4 text-center text-gray-500 text-sm">
-            {showUnreadOnly ? "No unread conversations" : "No conversations yet"}
+            {showUnreadOnly
+              ? "No unread conversations"
+              : "No conversations yet"}
           </div>
         ) : (
           <div className="[&>:first-child]:border-t-0">

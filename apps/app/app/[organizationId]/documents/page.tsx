@@ -128,7 +128,13 @@ export default function DocumentsPage() {
       file: File;
       title: string;
       category: string;
-      type: "personal" | "employment" | "contract" | "certificate" | "other";
+      type:
+        | "personal"
+        | "employment"
+        | "contract"
+        | "certificate"
+        | "leave_form"
+        | "other";
       storageId?: string;
       uploading: boolean;
     }>
@@ -138,7 +144,13 @@ export default function DocumentsPage() {
   // Detect file type from file extension/MIME type
   const detectFileType = (
     file: File
-  ): "personal" | "employment" | "contract" | "certificate" | "other" => {
+  ):
+    | "personal"
+    | "employment"
+    | "contract"
+    | "certificate"
+    | "leave_form"
+    | "other" => {
     const fileName = file.name.toLowerCase();
     const mimeType = file.type.toLowerCase();
 
@@ -202,6 +214,11 @@ export default function DocumentsPage() {
     const matchesType = selectedType === "all" || doc.type === selectedType;
     return matchesSearch && matchesType;
   });
+
+  const formatDocumentType = (type: string) => {
+    if (type === "leave_form") return "Leave Form";
+    return type.replace(/_/g, " ");
+  };
 
   // Check if document is file-only (no content or empty content)
   const isFileOnly = (doc: any) => {
@@ -636,7 +653,10 @@ export default function DocumentsPage() {
               <Plus className="mr-2 h-4 w-4" />
               Create Document
             </Button>
-            <Button onClick={() => setIsUploadDialogOpen(true)}>
+            <Button
+              variant="secondary"
+              onClick={() => setIsUploadDialogOpen(true)}
+            >
               <Upload className="mr-2 h-4 w-4" />
               Upload Files
             </Button>
@@ -670,6 +690,7 @@ export default function DocumentsPage() {
                     <SelectItem value="employment">Employment</SelectItem>
                     <SelectItem value="contract">Contract</SelectItem>
                     <SelectItem value="certificate">Certificate</SelectItem>
+                    <SelectItem value="leave_form">Leave Form</SelectItem>
                     <SelectItem value="other">Other</SelectItem>
                   </SelectContent>
                 </Select>
@@ -725,7 +746,7 @@ export default function DocumentsPage() {
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <Badge variant="secondary" className="capitalize">
-                              {doc.type}
+                              {formatDocumentType(doc.type)}
                             </Badge>
                             {fileOnly && (
                               <Badge variant="outline" className="text-xs">
@@ -983,6 +1004,9 @@ export default function DocumentsPage() {
                                       <SelectItem value="certificate">
                                         Certificate
                                       </SelectItem>
+                                      <SelectItem value="leave_form">
+                                        Leave Form
+                                      </SelectItem>
                                       <SelectItem value="other">
                                         Other
                                       </SelectItem>
@@ -1073,7 +1097,7 @@ export default function DocumentsPage() {
                   </span>
                 )}
                 <span className="capitalize">
-                  Type: {previewDocument?.type}
+                  Type: {formatDocumentType(previewDocument?.type || "")}
                 </span>
               </DialogDescription>
             </DialogHeader>

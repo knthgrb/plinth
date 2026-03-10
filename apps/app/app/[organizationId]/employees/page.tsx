@@ -252,6 +252,9 @@ export default function EmployeesPage() {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const [sendingInvite, setSendingInvite] = useState<string | null>(null);
+  const [employeeToDelete, setEmployeeToDelete] = useState<any | null>(null);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
+  const [isDeletingEmployee, setIsDeletingEmployee] = useState(false);
   const defaultAddFormValues: EmployeeFormValues = {
     firstName: "",
     lastName: "",
@@ -262,6 +265,7 @@ export default function EmployeesPage() {
     department: "",
     employmentType: "probationary",
     hireDate: "",
+    regularizationDate: "",
     basicSalary: "",
     allowance: "",
     regularHolidayRate: "",
@@ -519,7 +523,7 @@ export default function EmployeesPage() {
 
     if (
       !confirm(
-        `Remove ${employee.personalInfo.firstName} ${employee.personalInfo.lastName} from this organization? They will no longer have access but their employee record will remain.`,
+        `Remove ${employee.personalInfo.firstName} ${employee.personalInfo.lastName} from this organization? They will lose access and their employee record will be removed.`,
       )
     )
       return;
@@ -550,40 +554,56 @@ export default function EmployeesPage() {
     }
   };
 
-  const handleDeleteEmployee = async (employee: any, e: React.MouseEvent) => {
+  const handleRemoveEmployee = async (employee: any, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!currentOrganizationId || !isAdmin) return;
 
     if (
       !confirm(
-        `Are you sure you want to permanently delete ${employee.personalInfo.firstName} ${employee.personalInfo.lastName}? This action cannot be undone and will remove all employee records.`,
+        `Remove ${employee.personalInfo.firstName} ${employee.personalInfo.lastName} from this organization? This will delete their employee record.`,
       )
     )
       return;
 
     try {
-      // First, try to remove user from organization if they have an account
-      try {
-        const employeeUser = await getUserByEmployeeId({
-          organizationId: currentOrganizationId,
-          employeeId: employee._id,
-        });
-
-        if (employeeUser) {
-          await removeUserFromOrganization(
-            currentOrganizationId,
-            employeeUser._id,
-          );
-        }
-      } catch (error) {
-        // User might not have an account, continue with deletion
-      }
-
       await deleteEmployee(employee._id);
       toast({
-        title: "Employee deleted",
-        description: "The employee has been permanently removed.",
+        title: "Employee removed",
+        description: "The employee has been removed from this organization.",
       });
+      router.refresh();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to remove employee",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteEmployee = (employee: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!currentOrganizationId || !isAdmin) return;
+    setEmployeeToDelete(employee);
+    setDeleteConfirmInput("");
+  };
+
+  const confirmDeleteEmployee = async () => {
+    if (!employeeToDelete || !currentOrganizationId) return;
+    const hasLinkedAccount = employeesUserAccounts?.[employeeToDelete._id];
+    if (hasLinkedAccount && deleteConfirmInput !== "CONFIRM") return;
+
+    setIsDeletingEmployee(true);
+    try {
+      await deleteEmployee(employeeToDelete._id);
+      toast({
+        title: "Employee deleted",
+        description: hasLinkedAccount
+          ? "The employee and their user account have been permanently removed."
+          : "The employee has been permanently removed.",
+      });
+      setEmployeeToDelete(null);
+      setDeleteConfirmInput("");
       router.refresh();
     } catch (error: any) {
       toast({
@@ -591,6 +611,8 @@ export default function EmployeesPage() {
         description: error.message || "Failed to delete employee",
         variant: "destructive",
       });
+    } finally {
+      setIsDeletingEmployee(false);
     }
   };
 
@@ -749,6 +771,9 @@ export default function EmployeesPage() {
           department: data.department,
           employmentType: data.employmentType as "regular" | "probationary" | "contractual" | "part-time",
           hireDate: new Date(data.hireDate).getTime(),
+          regularizationDate: data.regularizationDate
+            ? new Date(data.regularizationDate).getTime()
+            : undefined,
           status: "active",
         },
         compensation: {
@@ -1082,6 +1107,25 @@ export default function EmployeesPage() {
                               {addFormErrors.hireDate.message}
                             </p>
                           )}
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="regularizationDate">
+                            Date of regularization
+                          </Label>
+                          <Controller
+                            name="regularizationDate"
+                            control={addFormControl}
+                            render={({ field }) => (
+                              <DatePicker
+                                value={field.value}
+                                onValueChange={field.onChange}
+                                placeholder="Optional"
+                              />
+                            )}
+                          />
+                          <p className="text-xs text-gray-500">
+                            Optional. Affects leave proration when enabled in Leave settings.
+                          </p>
                         </div>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1654,7 +1698,7 @@ export default function EmployeesPage() {
               onUpdateStatus={handleUpdateStatus}
               onUpdateRole={handleUpdateRole}
               onRemoveFromOrganization={handleRemoveFromOrganization}
-              onDeleteEmployee={handleDeleteEmployee}
+              onRemoveEmployee={handleRemoveEmployee}
               onInvite={handleInvite}
               sendingInvite={sendingInvite}
               page={page}
@@ -1667,6 +1711,90 @@ export default function EmployeesPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Delete Employee Dialog */}
+      <Dialog
+        open={!!employeeToDelete}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEmployeeToDelete(null);
+            setDeleteConfirmInput("");
+          }
+        }}
+      >
+        <DialogContent
+          className="max-w-sm"
+          hideCloseIcon={isDeletingEmployee}
+          onPointerDownOutside={(e) => isDeletingEmployee && e.preventDefault()}
+          onEscapeKeyDown={(e) => isDeletingEmployee && e.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle>Delete employee</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  {employeeToDelete
+                    ? `Are you sure you want to permanently delete ${employeeToDelete.personalInfo?.firstName} ${employeeToDelete.personalInfo?.lastName}? This action cannot be undone and will remove all employee records.`
+                    : ""}
+                </p>
+                {employeeToDelete &&
+                  employeesUserAccounts?.[employeeToDelete._id] && (
+                    <>
+                      <p className="font-medium text-amber-700">
+                        The linked user account will also be permanently
+                        deleted. They will no longer be able to sign in.
+                      </p>
+                      <div className="pt-2">
+                        <Label
+                          htmlFor="delete-confirm"
+                          className="text-foreground text-sm"
+                        >
+                          Type CONFIRM to proceed
+                        </Label>
+                        <Input
+                          id="delete-confirm"
+                          className="mt-1"
+                          value={deleteConfirmInput}
+                          onChange={(e) =>
+                            setDeleteConfirmInput(e.target.value)}
+                          placeholder="CONFIRM"
+                          disabled={isDeletingEmployee}
+                          autoComplete="off"
+                        />
+                      </div>
+                    </>
+                  )}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEmployeeToDelete(null);
+                setDeleteConfirmInput("");
+              }}
+              disabled={isDeletingEmployee}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmDeleteEmployee}
+              disabled={
+                isDeletingEmployee ||
+                (!!(
+                  employeeToDelete &&
+                  employeesUserAccounts?.[employeeToDelete._id]
+                ) &&
+                  deleteConfirmInput !== "CONFIRM")
+              }
+            >
+              {isDeletingEmployee ? "Deleting..." : "Delete employee"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Quick Message Dialog */}
       <Dialog open={isMessageDialogOpen} onOpenChange={setIsMessageDialogOpen}>
@@ -1738,6 +1866,11 @@ export default function EmployeesPage() {
                   (emp: any) => emp._id === selectedEmployeeId,
                 )
               : undefined
+          }
+          hasUserAccount={
+            selectedEmployeeId
+              ? !!employeesUserAccounts?.[selectedEmployeeId]
+              : false
           }
         />
       )}

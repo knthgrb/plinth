@@ -856,12 +856,13 @@ export function BulkAddAttendanceDialog({
                 ? calculatedLateValue
                 : undefined;
 
+        // Undertime: UI stores minutes; API expects hours
         const finalUndertime =
           dayTimes.status === "leave" || dayTimes.status === "absent"
             ? undefined
             : dayTimes.useManualUndertime
               ? dayTimes.undertime
-                ? parseFloat(dayTimes.undertime)
+                ? parseFloat(dayTimes.undertime) / 60
                 : 0
               : calculatedUndertimeValue > 0
                 ? calculatedUndertimeValue
@@ -1302,7 +1303,7 @@ export function BulkAddAttendanceDialog({
                             </TableHead>
                             <TableHead
                               className="text-[10px] sm:text-xs px-2 sm:px-3 whitespace-nowrap w-[76px] min-w-[76px]"
-                              title="Undertime (hours)"
+                              title="Undertime (minutes)"
                             >
                               UT
                             </TableHead>
@@ -1370,14 +1371,14 @@ export function BulkAddAttendanceDialog({
                                   )
                                 : 0;
 
-                            // Use manual values if enabled, otherwise use calculated (late and undertime only). Overtime is user-set only.
+                            // Use manual values if enabled, otherwise use calculated (late and undertime in mins in UI). Overtime is user-set only.
                             const displayLate = dayTimes.useManualLate
                               ? dayTimes.late
                               : calculatedLate.toString();
 
                             const displayUndertime = dayTimes.useManualUndertime
                               ? dayTimes.undertime
-                              : calculatedUndertime.toFixed(2);
+                              : Math.round(calculatedUndertime * 60).toString();
 
                             const displayOvertime = dayTimes.useManualOvertime
                               ? dayTimes.overtime
@@ -1666,11 +1667,11 @@ export function BulkAddAttendanceDialog({
                                 <TableCell className="px-2 sm:px-4 py-2 sm:py-3 w-[76px] min-w-[76px]">
                                   {dayTimes.status === "present" &&
                                   daySchedule ? (
-                                    <div className="space-y-1">
+                                      <div className="space-y-1">
                                       <div className="flex items-center gap-1 min-w-0">
                                         <Input
                                           type="number"
-                                          step="0.01"
+                                          step="1"
                                           min="0"
                                           value={displayUndertime}
                                           onChange={(e) => {
@@ -1684,7 +1685,7 @@ export function BulkAddAttendanceDialog({
                                             }));
                                           }}
                                           className={`min-w-[3rem] w-14 flex-1 text-xs ${!dayTimes.useManualUndertime ? "bg-gray-50" : ""}`}
-                                          placeholder="0.00"
+                                          placeholder="0"
                                           disabled={isSubmittingBulk}
                                           readOnly={
                                             !dayTimes.useManualUndertime
@@ -1696,10 +1697,9 @@ export function BulkAddAttendanceDialog({
                                                 [dateInfo.timestamp]: {
                                                   ...prev[dateInfo.timestamp],
                                                   useManualUndertime: true,
-                                                  undertime:
-                                                    calculatedUndertime.toFixed(
-                                                      2,
-                                                    ),
+                                                  undertime: Math.round(
+                                                    calculatedUndertime * 60,
+                                                  ).toString(),
                                                 },
                                               }));
                                             }
@@ -1722,9 +1722,9 @@ export function BulkAddAttendanceDialog({
                                                   undertime: e.target.checked
                                                     ? prev[dateInfo.timestamp]
                                                         ?.undertime ||
-                                                      calculatedUndertime.toFixed(
-                                                        2,
-                                                      )
+                                                      Math.round(
+                                                        calculatedUndertime * 60,
+                                                      ).toString()
                                                     : "",
                                                 },
                                               }));
@@ -1739,7 +1739,7 @@ export function BulkAddAttendanceDialog({
                                       {!dayTimes.useManualUndertime &&
                                         calculatedUndertime > 0 && (
                                           <p className="text-[9px] text-gray-500">
-                                            {calculatedUndertime.toFixed(2)} hrs
+                                            {Math.round(calculatedUndertime * 60)} mins
                                           </p>
                                         )}
                                     </div>

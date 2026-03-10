@@ -75,8 +75,7 @@ export function calculateMonthsWorked(startDate: Date, endDate: Date): number {
 }
 
 /**
- * Calculate anniversary leave
- * Grants 1 additional leave per year from regularization date
+ * Calculate anniversary leave from regularization date (when grant upon regularization is used).
  *
  * @param regularizationDate - Date of regularization (timestamp)
  * @param referenceDate - Reference date for calculation (default: current date)
@@ -87,17 +86,24 @@ export function calculateAnniversaryLeave(
   referenceDate: number = Date.now()
 ): number {
   if (!regularizationDate) {
-    return 0; // No anniversary leave if not regularized
+    return 0;
   }
-
   const regDate = new Date(regularizationDate);
   const refDate = new Date(referenceDate);
+  return Math.floor(calculateYearsSince(regDate, refDate));
+}
 
-  // Calculate years since regularization
-  const yearsSinceReg = calculateYearsSince(regDate, refDate);
-
-  // Grant 1 leave per year (rounded down - only full years count)
-  return Math.floor(yearsSinceReg);
+/**
+ * Calculate anniversary leave from hire date (auto-calculated for anniversary leave type).
+ * Grants 1 leave per full year since hire.
+ */
+export function calculateAnniversaryLeaveFromHire(
+  hireDate: number,
+  referenceDate: number = Date.now()
+): number {
+  const start = new Date(hireDate);
+  const end = new Date(referenceDate);
+  return Math.floor(calculateYearsSince(start, end));
 }
 
 /**

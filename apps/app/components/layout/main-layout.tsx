@@ -14,10 +14,12 @@ import { MainLoader } from "@/components/main-loader";
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { currentOrganizationId } = useOrganization();
+  const { currentOrganizationId, isLoggingOut } = useOrganization();
   const user = useQuery(
     (api as any).organizations.getCurrentUser,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    !isLoggingOut && currentOrganizationId
+      ? { organizationId: currentOrganizationId }
+      : "skip",
   );
   const hasLoadedUser = useRef(false);
   const mainContentRef = useRef<HTMLElement>(null);

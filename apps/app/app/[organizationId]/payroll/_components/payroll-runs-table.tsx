@@ -70,7 +70,7 @@ export function PayrollRunsTable({
             const periodDisplay = hasCutoffs
               ? `${format(new Date(run.cutoffStart), "MMM. dd, yyyy")} - ${format(
                   new Date(run.cutoffEnd),
-                  "MMM. dd, yyyy"
+                  "MMM. dd, yyyy",
                 )}`
               : run.period;
 
@@ -137,12 +137,6 @@ export function PayrollRunsTable({
                               <Banknote className="h-4 w-4 mr-2" />
                               Mark as Paid
                             </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => onStatusChange(run, "draft")}
-                            >
-                              <Undo2 className="h-4 w-4 mr-2" />
-                              Revert to Draft
-                            </DropdownMenuItem>
                           </>
                         )}
                         {run.status === "paid" && (
@@ -162,7 +156,7 @@ export function PayrollRunsTable({
                           className="text-red-600"
                         >
                           <Trash2 className="h-4 w-4 mr-2" />
-                          Delete Payroll Run
+                          Delete Run
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>

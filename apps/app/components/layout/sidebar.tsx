@@ -183,14 +183,20 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     currentOrganization,
     switchOrganization,
     isLoading: orgsLoading,
+    isLoggingOut,
   } = useOrganization();
-  const user = useQuery((api as any).organizations.getCurrentUser, {
-    organizationId: currentOrganizationId || undefined,
-  });
+  const user = useQuery(
+    (api as any).organizations.getCurrentUser,
+    !isLoggingOut && currentOrganizationId
+      ? { organizationId: currentOrganizationId }
+      : "skip",
+  );
 
   const chatUnreadCounts = useQuery(
     (api as any).chat.getUnreadCounts,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    !isLoggingOut && currentOrganizationId
+      ? { organizationId: currentOrganizationId }
+      : "skip",
   );
   const chatUnreadTotal: number =
     chatUnreadCounts && typeof chatUnreadCounts === "object"
@@ -199,7 +205,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
 
   const announcementsUnreadCount = useQuery(
     (api as any).announcements.getUnreadAnnouncementsCount,
-    currentOrganizationId
+    !isLoggingOut && currentOrganizationId
       ? {
           organizationId: currentOrganizationId,
           employeeId: currentOrganization?.employeeId,

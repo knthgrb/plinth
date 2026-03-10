@@ -119,7 +119,9 @@ export default function EditDocumentPage() {
             <Button
               variant="outline"
               className="mt-4"
-              onClick={() => router.push("/documents")}
+              onClick={() =>
+                router.push(getOrganizationPath(currentOrganizationId, "/documents"))
+              }
             >
               Back to Documents
             </Button>
@@ -139,7 +141,9 @@ export default function EditDocumentPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => router.push("/documents")}
+                onClick={() =>
+                  router.push(getOrganizationPath(currentOrganizationId, "/documents"))
+                }
               >
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 Back
@@ -196,6 +200,7 @@ export default function EditDocumentPage() {
                           <SelectItem value="certificate">
                             Certificate
                           </SelectItem>
+                          <SelectItem value="leave_form">Leave Form</SelectItem>
                           <SelectItem value="other">Other</SelectItem>
                         </SelectContent>
                       </Select>

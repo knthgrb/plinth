@@ -53,6 +53,8 @@ export function HolidaysSettingsContent() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
+  const [holidayToDelete, setHolidayToDelete] = useState<any>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [editingHoliday, setEditingHoliday] = useState<any>(null);
   const [formData, setFormData] = useState({
     name: "",
@@ -128,20 +130,32 @@ export function HolidaysSettingsContent() {
     }
   };
 
-  const handleDelete = async (holidayId: string) => {
-    if (!confirm("Are you sure you want to delete this holiday?")) return;
+  const handleDeleteClick = (holiday: any) => {
+    setHolidayToDelete(holiday);
+  };
+
+  const handleDeleteCancel = () => {
+    if (!isDeleting) setHolidayToDelete(null);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!holidayToDelete) return;
+    setIsDeleting(true);
     try {
-      await deleteHoliday({ holidayId });
+      await deleteHoliday({ holidayId: holidayToDelete._id });
       toast({
         title: "Success",
         description: "Holiday deleted successfully",
       });
+      setHolidayToDelete(null);
     } catch (error: any) {
       toast({
         title: "Error",
         description: error.message || "Failed to delete holiday",
         variant: "destructive",
       });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -232,7 +246,7 @@ export function HolidaysSettingsContent() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleDelete(holiday._id)}
+                          onClick={() => handleDeleteClick(holiday)}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -243,6 +257,46 @@ export function HolidaysSettingsContent() {
               )}
             </TableBody>
           </Table>
+
+          {/* Delete holiday confirm dialog */}
+          <Dialog
+            open={!!holidayToDelete}
+            onOpenChange={(open) => {
+              if (!open) handleDeleteCancel();
+            }}
+          >
+            <DialogContent
+              className="max-w-sm"
+              hideCloseIcon={isDeleting}
+              onPointerDownOutside={(e) => isDeleting && e.preventDefault()}
+              onEscapeKeyDown={(e) => isDeleting && e.preventDefault()}
+            >
+              <DialogHeader>
+                <DialogTitle>Delete holiday?</DialogTitle>
+                <DialogDescription>
+                  {holidayToDelete
+                    ? `Are you sure you want to delete "${holidayToDelete.name}"? This cannot be undone.`
+                    : ""}
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter className="gap-2 sm:gap-0">
+                <Button
+                  variant="outline"
+                  onClick={handleDeleteCancel}
+                  disabled={isDeleting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={handleDeleteConfirm}
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? "Deleting..." : "Delete"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogContent>

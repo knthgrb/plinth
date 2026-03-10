@@ -8,7 +8,13 @@ export class DocumentsService {
     employeeId?: string;
     title: string;
     content: string;
-    type: "personal" | "employment" | "contract" | "certificate" | "other";
+    type:
+      | "personal"
+      | "employment"
+      | "contract"
+      | "certificate"
+      | "leave_form"
+      | "other";
     category?: string;
     attachments?: string[];
     isShared?: boolean;
@@ -32,7 +38,13 @@ export class DocumentsService {
     data: {
       title?: string;
       content?: string;
-      type?: "personal" | "employment" | "contract" | "certificate" | "other";
+      type?:
+        | "personal"
+        | "employment"
+        | "contract"
+        | "certificate"
+        | "leave_form"
+        | "other";
       category?: string;
       attachments?: string[];
       isShared?: boolean;

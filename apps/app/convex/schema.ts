@@ -14,13 +14,13 @@ export default defineSchema({
         v.object({
           type: v.string(),
           isRequired: v.optional(v.boolean()),
-        })
-      )
+        }),
+      ),
     ),
     firstPayDate: v.optional(v.number()), // Day of month for first payroll (default: 15)
     secondPayDate: v.optional(v.number()), // Day of month for second payroll (default: 30)
     salaryPaymentFrequency: v.optional(
-      v.union(v.literal("monthly"), v.literal("bimonthly"))
+      v.union(v.literal("monthly"), v.literal("bimonthly")),
     ), // "monthly" = once per month, "bimonthly" = twice per month (e.g. 15th & 30th)
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -37,10 +37,11 @@ export default defineSchema({
         v.literal("owner"),
         v.literal("hr"),
         v.literal("employee"),
-        v.literal("accounting")
-      )
+        v.literal("accounting"),
+      ),
     ), // Deprecated: kept for backward compatibility
     employeeId: v.optional(v.id("employees")), // Link to employee record if applicable
+    isActive: v.optional(v.boolean()), // false when linked employee is archived; account cannot be used
     lastActiveOrganizationId: v.optional(v.id("organizations")), // Track user's last active organization
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -58,7 +59,7 @@ export default defineSchema({
       v.literal("owner"),
       v.literal("hr"),
       v.literal("employee"),
-      v.literal("accounting")
+      v.literal("accounting"),
     ),
     employeeId: v.optional(v.id("employees")), // If user is also an employee in this org
     joinedAt: v.number(),
@@ -85,7 +86,7 @@ export default defineSchema({
           name: v.string(),
           relationship: v.string(),
           phone: v.string(),
-        })
+        }),
       ),
     }),
     employment: v.object({
@@ -96,15 +97,15 @@ export default defineSchema({
         v.literal("regular"),
         v.literal("probationary"),
         v.literal("contractual"),
-        v.literal("part-time")
+        v.literal("part-time"),
       ),
       hireDate: v.number(),
-      regularizationDate: v.optional(v.number()),
+      regularizationDate: v.optional(v.union(v.number(), v.null())),
       status: v.union(
         v.literal("active"),
         v.literal("inactive"),
         v.literal("resigned"),
-        v.literal("terminated")
+        v.literal("terminated"),
       ),
     }),
     compensation: v.object({
@@ -113,7 +114,7 @@ export default defineSchema({
       salaryType: v.union(
         v.literal("monthly"),
         v.literal("daily"),
-        v.literal("hourly")
+        v.literal("hourly"),
       ),
       paymentFrequency: v.optional(v.string()), // Deprecated: kept for backward compatibility, will be removed
       bankDetails: v.optional(
@@ -121,7 +122,7 @@ export default defineSchema({
           bankName: v.string(),
           accountNumber: v.string(),
           accountName: v.string(),
-        })
+        }),
       ),
       regularHolidayRate: v.optional(v.number()), // Additional % for regular holidays (default 1.0 = 100%)
       specialHolidayRate: v.optional(v.number()), // Additional % for special holidays (default 0.3 = 30%)
@@ -176,8 +177,8 @@ export default defineSchema({
             in: v.string(),
             out: v.string(),
             reason: v.string(),
-          })
-        )
+          }),
+        ),
       ),
     }),
     leaveCredits: v.object({
@@ -198,8 +199,8 @@ export default defineSchema({
             total: v.number(),
             used: v.number(),
             balance: v.number(),
-          })
-        )
+          }),
+        ),
       ),
     }),
     requirements: v.optional(
@@ -209,15 +210,15 @@ export default defineSchema({
           status: v.union(
             v.literal("pending"),
             v.literal("submitted"),
-            v.literal("verified")
+            v.literal("verified"),
           ),
           file: v.optional(v.id("_storage")),
           submittedDate: v.optional(v.number()),
           expiryDate: v.optional(v.number()),
           isDefault: v.optional(v.boolean()), // True if from organization defaults
           isCustom: v.optional(v.boolean()), // True if custom requirement for this employee
-        })
-      )
+        }),
+      ),
     ),
     deductions: v.optional(
       v.array(
@@ -226,7 +227,7 @@ export default defineSchema({
           type: v.union(
             v.literal("government"),
             v.literal("loan"),
-            v.literal("other")
+            v.literal("other"),
           ),
           name: v.string(),
           amount: v.number(),
@@ -234,8 +235,8 @@ export default defineSchema({
           startDate: v.number(),
           endDate: v.optional(v.number()),
           isActive: v.boolean(),
-        })
-      )
+        }),
+      ),
     ),
     incentives: v.optional(
       v.array(
@@ -247,11 +248,11 @@ export default defineSchema({
             v.literal("monthly"),
             v.literal("quarterly"),
             v.literal("one-time"),
-            v.literal("per-cutoff")
+            v.literal("per-cutoff"),
           ),
           isActive: v.boolean(),
-        })
-      )
+        }),
+      ),
     ),
     customFields: v.optional(v.any()), // Flexible object for custom fields
     /** Hashed PIN for accessing payslips page (e.g. SHA-256 of pin + salt). Set by employee or HR. */
@@ -274,22 +275,24 @@ export default defineSchema({
     actualIn: v.optional(v.string()),
     actualOut: v.optional(v.string()),
     overtime: v.optional(v.number()), // Hours
-    late: v.optional(v.number()), // Minutes late
-    undertime: v.optional(v.number()), // Hours undertime
+    late: v.optional(v.number()), // Minutes late (use when lateManualOverride is true)
+    undertime: v.optional(v.number()), // Hours undertime (use when undertimeManualOverride is true)
+    lateManualOverride: v.optional(v.boolean()), // true = use stored late (e.g. 0) instead of calculating
+    undertimeManualOverride: v.optional(v.boolean()), // true = use stored undertime (e.g. 0) instead of calculating
     isHoliday: v.optional(v.boolean()),
     holidayType: v.optional(
       v.union(
         v.literal("regular"),
         v.literal("special"),
-        v.literal("special_working")
-      )
+        v.literal("special_working"),
+      ),
     ),
     remarks: v.optional(v.string()),
     status: v.union(
       v.literal("present"),
       v.literal("absent"),
       v.literal("half-day"),
-      v.literal("leave")
+      v.literal("leave"),
     ),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -307,7 +310,7 @@ export default defineSchema({
     type: v.union(
       v.literal("regular"),
       v.literal("special"), // Special non-working holiday (has premium rate)
-      v.literal("special_working") // Special working holiday (no additional rate)
+      v.literal("special_working"), // Special working holiday (no additional rate)
     ),
     isRecurring: v.boolean(),
     year: v.optional(v.number()), // For non-recurring holidays
@@ -330,12 +333,68 @@ export default defineSchema({
       v.literal("finalized"),
       v.literal("paid"),
       v.literal("archived"),
-      v.literal("cancelled")
+      v.literal("cancelled"),
     ),
     processedBy: v.id("users"),
     processedAt: v.optional(v.number()),
     /** Set when run is saved as draft; indicates gov/attendance deductions were applied in payslips */
     deductionsEnabled: v.optional(v.boolean()),
+    draftConfig: v.optional(
+      v.object({
+        employeeIds: v.array(v.id("employees")),
+        manualDeductions: v.optional(
+          v.array(
+            v.object({
+              employeeId: v.id("employees"),
+              deductions: v.array(
+                v.object({
+                  name: v.string(),
+                  amount: v.number(),
+                  type: v.string(),
+                }),
+              ),
+            }),
+          ),
+        ),
+        incentives: v.optional(
+          v.array(
+            v.object({
+              employeeId: v.id("employees"),
+              incentives: v.array(
+                v.object({
+                  name: v.string(),
+                  amount: v.number(),
+                  type: v.string(),
+                }),
+              ),
+            }),
+          ),
+        ),
+        governmentDeductionSettings: v.optional(
+          v.array(
+            v.object({
+              employeeId: v.id("employees"),
+              sss: v.object({
+                enabled: v.boolean(),
+                frequency: v.union(v.literal("full"), v.literal("half")),
+              }),
+              pagibig: v.object({
+                enabled: v.boolean(),
+                frequency: v.union(v.literal("full"), v.literal("half")),
+              }),
+              philhealth: v.object({
+                enabled: v.boolean(),
+                frequency: v.union(v.literal("full"), v.literal("half")),
+              }),
+              tax: v.object({
+                enabled: v.boolean(),
+                frequency: v.union(v.literal("full"), v.literal("half")),
+              }),
+            }),
+          ),
+        ),
+      }),
+    ),
     notes: v.optional(
       v.array(
         v.object({
@@ -344,8 +403,8 @@ export default defineSchema({
           note: v.string(),
           addedBy: v.id("users"),
           addedAt: v.number(),
-        })
-      )
+        }),
+      ),
     ),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -365,7 +424,7 @@ export default defineSchema({
         name: v.string(),
         amount: v.number(),
         type: v.string(),
-      })
+      }),
     ),
     incentives: v.optional(
       v.array(
@@ -373,8 +432,8 @@ export default defineSchema({
           name: v.string(),
           amount: v.number(),
           type: v.string(),
-        })
-      )
+        }),
+      ),
     ),
     nonTaxableAllowance: v.optional(v.number()),
     netPay: v.number(),
@@ -401,7 +460,7 @@ export default defineSchema({
         sss: v.optional(v.number()),
         philhealth: v.optional(v.number()),
         pagibig: v.optional(v.number()),
-      })
+      }),
     ),
     pdfFile: v.optional(v.id("_storage")),
     editHistory: v.optional(
@@ -416,10 +475,10 @@ export default defineSchema({
               oldValue: v.optional(v.any()),
               newValue: v.optional(v.any()),
               details: v.optional(v.array(v.string())),
-            })
+            }),
           ),
-        })
-      )
+        }),
+      ),
     ),
     createdAt: v.number(),
   })
@@ -455,18 +514,21 @@ export default defineSchema({
       v.literal("emergency"),
       v.literal("maternity"),
       v.literal("paternity"),
-      v.literal("custom")
+      v.literal("custom"),
     ),
     customLeaveType: v.optional(v.string()),
     startDate: v.number(),
     endDate: v.number(),
     numberOfDays: v.number(),
     reason: v.string(),
+    formTemplateContent: v.optional(v.string()),
+    filledFormContent: v.optional(v.string()),
+    signatureDataUrl: v.optional(v.string()),
     status: v.union(
       v.literal("pending"),
       v.literal("approved"),
       v.literal("rejected"),
-      v.literal("cancelled")
+      v.literal("cancelled"),
     ),
     supportingDocuments: v.optional(v.array(v.id("_storage"))),
     filedDate: v.number(),
@@ -508,12 +570,12 @@ export default defineSchema({
       v.object({
         min: v.number(),
         max: v.number(),
-      })
+      }),
     ),
     status: v.union(
       v.literal("open"),
       v.literal("closed"),
-      v.literal("on-hold")
+      v.literal("on-hold"),
     ),
     postedDate: v.number(),
     closingDate: v.optional(v.number()),
@@ -540,7 +602,7 @@ export default defineSchema({
       v.literal("assessment"),
       v.literal("offer"),
       v.literal("hired"),
-      v.literal("rejected")
+      v.literal("rejected"),
     ),
     appliedDate: v.number(),
     notes: v.optional(
@@ -549,8 +611,8 @@ export default defineSchema({
           date: v.number(),
           author: v.id("users"),
           content: v.string(),
-        })
-      )
+        }),
+      ),
     ),
     interviewSchedules: v.optional(
       v.array(
@@ -559,8 +621,8 @@ export default defineSchema({
           type: v.string(),
           interviewer: v.id("users"),
           remarks: v.optional(v.string()),
-        })
-      )
+        }),
+      ),
     ),
     rating: v.optional(v.number()),
     googleMeetLink: v.optional(v.string()),
@@ -583,19 +645,19 @@ export default defineSchema({
     category: v.union(
       v.literal("disciplinary"),
       v.literal("holidays"),
-      v.literal("company-policies")
+      v.literal("company-policies"),
     ),
     type: v.union(
       v.literal("announcement"),
       v.literal("policy"),
       v.literal("directive"),
       v.literal("notice"),
-      v.literal("other")
+      v.literal("other"),
     ),
     priority: v.union(
       v.literal("normal"),
       v.literal("important"),
-      v.literal("urgent")
+      v.literal("urgent"),
     ),
     createdBy: v.id("users"),
     createdAt: v.number(),
@@ -613,26 +675,26 @@ export default defineSchema({
       v.union(
         v.literal("disciplinary"),
         v.literal("holidays"),
-        v.literal("company-policies")
-      )
+        v.literal("company-policies"),
+      ),
     ),
     type: v.union(
       v.literal("announcement"),
       v.literal("policy"),
       v.literal("directive"),
       v.literal("notice"),
-      v.literal("other")
+      v.literal("other"),
     ),
     priority: v.union(
       v.literal("normal"),
       v.literal("important"),
-      v.literal("urgent")
+      v.literal("urgent"),
     ),
     author: v.id("users"),
     targetAudience: v.union(
       v.literal("all"),
       v.literal("department"),
-      v.literal("specific-employees")
+      v.literal("specific-employees"),
     ),
     departments: v.optional(v.array(v.string())),
     specificEmployees: v.optional(v.array(v.id("employees"))),
@@ -648,8 +710,8 @@ export default defineSchema({
         v.object({
           employeeId: v.id("employees"),
           date: v.number(),
-        })
-      )
+        }),
+      ),
     ),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -686,14 +748,14 @@ export default defineSchema({
       v.object({
         firstCutoff: v.number(), // Day of month (1-15)
         secondCutoff: v.number(), // Day of month (16-31)
-      })
+      }),
     ),
     payrollFrequency: v.optional(
       v.union(
         v.literal("weekly"),
         v.literal("semi-monthly"),
-        v.literal("monthly")
-      )
+        v.literal("monthly"),
+      ),
     ),
     taxTable: v.optional(v.string()), // Reference to tax table version
     // Payroll configurations
@@ -709,7 +771,7 @@ export default defineSchema({
         // Daily rate from monthly: (basic + allowance?) × (12 / workingDaysPerYear)
         dailyRateIncludesAllowance: v.optional(v.boolean()), // If true, daily rate = (basic + allowance) × 12/261 (default false = basic only)
         dailyRateWorkingDaysPerYear: v.optional(v.number()), // Working days per year for daily rate (default 261)
-      })
+      }),
     ),
     // Leave type configurations
     leaveTypes: v.optional(
@@ -724,11 +786,27 @@ export default defineSchema({
           carryOver: v.optional(v.boolean()), // Whether unused credits can carry over
           maxCarryOver: v.optional(v.number()), // Maximum credits that can carry over
           isAnniversary: v.optional(v.boolean()), // When true, accrues +1 per year from hire/regularization date
-        })
-      )
+        }),
+      ),
     ),
     // Prorated leave: when true, annual leave is prorated by months worked (e.g. new hires get (annual/12)*months)
     proratedLeave: v.optional(v.boolean()),
+    // Base annual SIL used by leave tracker formulas
+    annualSil: v.optional(v.number()),
+    // When true, proration starts from regularization date; when false, from hire date
+    grantLeaveUponRegularization: v.optional(v.boolean()),
+    // Leave request form template (Tiptap JSON string)
+    leaveRequestFormTemplate: v.optional(v.string()),
+    // Leave tracker sheet overrides keyed by employee
+    leaveTrackerRows: v.optional(
+      v.array(
+        v.object({
+          employeeId: v.id("employees"),
+          annualSilOverride: v.optional(v.number()),
+          availed: v.optional(v.number()),
+        }),
+      ),
+    ),
     // Organization departments
     // Temporarily accept both old format (string[]) and new format (Department[])
     // Migration will happen automatically in queries/mutations
@@ -739,9 +817,9 @@ export default defineSchema({
           v.object({
             name: v.string(),
             color: v.string(), // HEX color code
-          })
-        )
-      )
+          }),
+        ),
+      ),
     ),
     // Evaluation columns configuration
     evaluationColumns: v.optional(
@@ -753,13 +831,13 @@ export default defineSchema({
             v.literal("date"),
             v.literal("number"),
             v.literal("text"),
-            v.literal("rating")
+            v.literal("rating"),
           ),
           hidden: v.optional(v.boolean()),
           hasRatingColumn: v.optional(v.boolean()),
           hasNotesColumn: v.optional(v.boolean()),
-        })
-      )
+        }),
+      ),
     ),
     // Recruitment table columns configuration
     recruitmentTableColumns: v.optional(
@@ -773,13 +851,13 @@ export default defineSchema({
             v.literal("number"),
             v.literal("date"),
             v.literal("badge"),
-            v.literal("link")
+            v.literal("link"),
           ),
           sortable: v.optional(v.boolean()),
           width: v.optional(v.string()),
           customField: v.optional(v.boolean()),
-        })
-      )
+        }),
+      ),
     ),
     // Requirements table columns configuration
     requirementsTableColumns: v.optional(
@@ -793,13 +871,13 @@ export default defineSchema({
             v.literal("number"),
             v.literal("date"),
             v.literal("badge"),
-            v.literal("link")
+            v.literal("link"),
           ),
           sortable: v.optional(v.boolean()),
           width: v.optional(v.string()),
           customField: v.optional(v.boolean()),
-        })
-      )
+        }),
+      ),
     ),
     // Leave table columns configuration
     leaveTableColumns: v.optional(
@@ -813,13 +891,13 @@ export default defineSchema({
             v.literal("number"),
             v.literal("date"),
             v.literal("badge"),
-            v.literal("link")
+            v.literal("link"),
           ),
           sortable: v.optional(v.boolean()),
           width: v.optional(v.string()),
           customField: v.optional(v.boolean()),
-        })
-      )
+        }),
+      ),
     ),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -832,12 +910,12 @@ export default defineSchema({
     type: v.union(
       v.literal("direct"),
       v.literal("group"),
-      v.literal("channel")
+      v.literal("channel"),
     ),
     name: v.optional(v.string()), // For group chats and channels
     createdBy: v.optional(v.id("users")), // User who created the group/channel
     channelScope: v.optional(
-      v.union(v.literal("organization"), v.literal("personal"))
+      v.union(v.literal("organization"), v.literal("personal")),
     ), // Only for type "channel"
     lastMessageAt: v.optional(v.number()),
     createdAt: v.number(),
@@ -855,7 +933,7 @@ export default defineSchema({
       v.literal("text"),
       v.literal("image"),
       v.literal("file"),
-      v.literal("system")
+      v.literal("system"),
     ),
     attachments: v.optional(v.array(v.id("_storage"))),
     payslipId: v.optional(v.id("payslips")), // Link message to payslip for appeals/comments
@@ -885,16 +963,17 @@ export default defineSchema({
       v.literal("owner"),
       v.literal("hr"),
       v.literal("employee"),
-      v.literal("accounting")
+      v.literal("accounting"),
     ),
     invitedBy: v.id("users"),
     employeeId: v.optional(v.id("employees")), // Link to employee if applicable
+    inviteeName: v.optional(v.string()), // Name from employee record for pre-filled user on accept
     token: v.string(), // Unique token for invitation acceptance
     status: v.union(
       v.literal("pending"),
       v.literal("accepted"),
       v.literal("expired"),
-      v.literal("cancelled")
+      v.literal("cancelled"),
     ),
     expiresAt: v.number(),
     acceptedAt: v.optional(v.number()),
@@ -916,7 +995,8 @@ export default defineSchema({
       v.literal("employment"),
       v.literal("contract"),
       v.literal("certificate"),
-      v.literal("other")
+      v.literal("leave_form"),
+      v.literal("other"),
     ),
     category: v.optional(v.string()),
     attachments: v.optional(v.array(v.id("_storage"))),
@@ -932,6 +1012,7 @@ export default defineSchema({
   // Accounting cost items (categoryName: "Employee Related Cost" | "Operational Cost")
   accountingCostItems: defineTable({
     organizationId: v.id("organizations"),
+    payrollRunId: v.optional(v.id("payrollRuns")), // When set, this cost is tied to a payroll run (e.g. payroll/SSS expense)
     categoryName: v.optional(v.string()), // "Employee Related Cost" | "Operational Cost"
     name: v.string(), // e.g., "Payroll", "Rent", "Utilities"
     description: v.optional(v.string()),
@@ -942,15 +1023,51 @@ export default defineSchema({
       v.literal("daily"),
       v.literal("weekly"),
       v.literal("monthly"),
-      v.literal("yearly")
+      v.literal("yearly"),
     ),
     status: v.union(
       v.literal("pending"),
       v.literal("partial"),
       v.literal("paid"),
-      v.literal("overdue")
+      v.literal("overdue"),
     ),
     dueDate: v.optional(v.number()), // Timestamp
+    breakdown: v.optional(
+      v.object({
+        kind: v.union(v.literal("payroll"), v.literal("contributions")),
+        rows: v.array(
+          v.object({
+            employeeId: v.id("employees"),
+            employeeName: v.string(),
+            employeeAmount: v.optional(v.number()),
+            companyAmount: v.optional(v.number()),
+            grossPay: v.optional(v.number()),
+            nonTaxableAllowance: v.optional(v.number()),
+            totalIncentives: v.optional(v.number()),
+            totalDeductions: v.optional(v.number()),
+            incentiveItems: v.optional(
+              v.array(
+                v.object({
+                  name: v.string(),
+                  amount: v.number(),
+                  type: v.optional(v.string()),
+                }),
+              ),
+            ),
+            deductionItems: v.optional(
+              v.array(
+                v.object({
+                  name: v.string(),
+                  amount: v.number(),
+                  type: v.optional(v.string()),
+                }),
+              ),
+            ),
+            netPay: v.optional(v.number()),
+          }),
+        ),
+      }),
+    ),
     notes: v.optional(v.string()),
     receipts: v.optional(v.array(v.id("_storage"))),
     createdAt: v.number(),
@@ -979,8 +1096,8 @@ export default defineSchema({
         v.literal("active"),
         v.literal("inactive"),
         v.literal("disposed"),
-        v.literal("maintenance")
-      )
+        v.literal("maintenance"),
+      ),
     ),
     notes: v.optional(v.string()),
     createdAt: v.number(),

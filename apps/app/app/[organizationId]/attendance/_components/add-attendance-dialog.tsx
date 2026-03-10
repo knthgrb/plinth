@@ -112,12 +112,12 @@ export function AddAttendanceDialog({
     );
   }, [employeeSchedule, timeIn, timeOut, status]);
 
-  // Use manual values if enabled, otherwise use calculated
+  // Use manual values if enabled, otherwise use calculated (undertime: UI in minutes, API in hours)
   const finalLate =
     useManualLate && manualLate ? parseFloat(manualLate) : calculatedLate;
   const finalUndertime =
-    useManualUndertime && manualUndertime
-      ? parseFloat(manualUndertime)
+    useManualUndertime
+      ? (parseFloat(manualUndertime) || 0) / 60
       : calculatedUndertime;
 
   // Set default schedule times when employee/date changes and status is present
@@ -410,7 +410,7 @@ export function AddAttendanceDialog({
                     </div>
                     <div className="space-y-2">
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                        <Label htmlFor="undertime">Undertime (hours)</Label>
+                        <Label htmlFor="undertime">Undertime (minutes)</Label>
                         <label className="flex items-center gap-2 text-xs text-gray-600">
                           <input
                             type="checkbox"
@@ -418,6 +418,10 @@ export function AddAttendanceDialog({
                             onChange={(e) => {
                               setUseManualUndertime(e.target.checked);
                               if (!e.target.checked) setManualUndertime("");
+                              else
+                                setManualUndertime(
+                                  Math.round(calculatedUndertime * 60).toString(),
+                                );
                             }}
                             className="h-3 w-3 rounded border-gray-300"
                           />
@@ -429,15 +433,15 @@ export function AddAttendanceDialog({
                       <Input
                         id="undertime"
                         type="number"
-                        step="0.01"
+                        step="1"
                         min="0"
                         value={
                           useManualUndertime
                             ? manualUndertime
-                            : calculatedUndertime.toFixed(2)
+                            : Math.round(calculatedUndertime * 60).toString()
                         }
                         onChange={(e) => setManualUndertime(e.target.value)}
-                        placeholder="0.00"
+                        placeholder="0"
                         disabled={
                           !useManualUndertime || isSubmitting
                         }
@@ -446,8 +450,8 @@ export function AddAttendanceDialog({
                       />
                       <p className="text-xs text-gray-500">
                         {useManualUndertime
-                          ? "Manually enter undertime hours"
-                          : `Calculated: ${calculatedUndertime.toFixed(2)} hours (8 hours work = ${formatTime12Hour(employeeSchedule.in)} to ${formatTime12Hour(employeeSchedule.out)} with 1hr lunch)`}
+                          ? "Manually enter undertime minutes"
+                          : `Calculated: ${Math.round(calculatedUndertime * 60)} minutes (8 hours work = ${formatTime12Hour(employeeSchedule.in)} to ${formatTime12Hour(employeeSchedule.out)} with 1hr lunch)`}
                       </p>
                     </div>
                   </div>

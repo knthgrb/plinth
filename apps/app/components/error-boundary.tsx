@@ -31,7 +31,8 @@ export class ConvexErrorBoundary extends Component<Props, State> {
       );
     if (isLogoutTransition && typeof window !== "undefined") {
       const pathname = window.location.pathname;
-      if (pathname !== "/login" && pathname !== "/signup") {
+      const isPublicRoute = pathname === "/login" || pathname === "/signup" || pathname.startsWith("/invite");
+      if (!isPublicRoute) {
         window.location.href = "/login";
         return;
       }
@@ -119,7 +120,8 @@ export function GlobalErrorHandler({ children }: { children: ReactNode }) {
         );
       if (isLogoutTransition && typeof window !== "undefined") {
         const pathname = window.location.pathname;
-        if (pathname !== "/login" && pathname !== "/signup") {
+        const isPublicRoute = pathname === "/login" || pathname === "/signup" || pathname.startsWith("/invite");
+        if (!isPublicRoute) {
           event.preventDefault();
           window.location.href = "/login";
         }
@@ -157,7 +159,8 @@ export function GlobalErrorHandler({ children }: { children: ReactNode }) {
         );
       if (isLogoutTransition && typeof window !== "undefined") {
         const pathname = window.location.pathname;
-        if (pathname !== "/login" && pathname !== "/signup") {
+        const isPublicRoute = pathname === "/login" || pathname === "/signup" || pathname.startsWith("/invite");
+        if (!isPublicRoute) {
           event.preventDefault();
           window.location.href = "/login";
         }

@@ -952,7 +952,7 @@ export default function JobDetailPage({
                         </div>
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-2">
-                            <Label htmlFor="email">Email (Optional)</Label>
+                            <Label htmlFor="email">Email</Label>
                             <Input
                               id="email"
                               type="email"
@@ -966,7 +966,7 @@ export default function JobDetailPage({
                             />
                           </div>
                           <div className="space-y-2">
-                            <Label htmlFor="phone">Phone (Optional)</Label>
+                            <Label htmlFor="phone">Phone</Label>
                             <Input
                               id="phone"
                               type="tel"
@@ -982,7 +982,7 @@ export default function JobDetailPage({
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="googleMeetLink">
-                            Google Meet Link (Optional)
+                            Google Meet Link
                           </Label>
                           <Input
                             id="googleMeetLink"
@@ -999,7 +999,7 @@ export default function JobDetailPage({
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="interviewVideoLink">
-                            Interview Video Link (Optional)
+                            Interview Video Link
                           </Label>
                           <Input
                             id="interviewVideoLink"
@@ -1016,7 +1016,7 @@ export default function JobDetailPage({
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="portfolioLink">
-                            Portfolio Link (Optional)
+                            Portfolio Link
                           </Label>
                           <Input
                             id="portfolioLink"

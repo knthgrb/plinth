@@ -83,15 +83,12 @@ export function PayslipDetail({
   // Use backend / caller-calculated values as the source of truth.
   const storedGrossPay = payslip.grossPay || 0;
 
-  const holidayPay = payslip.holidayPay || 0;
-
-  // Payroll settings for daily rate formula: (basic + allowance?) × 12/workingDaysPerYear
+  // Payroll settings are only used as a fallback when a payslip does not yet
+  // include explicit attendance deduction entries.
   const settings = useQuery(
     (api as any).settings.getSettings,
     organization?._id ? { organizationId: organization._id } : "skip"
   );
-  const dailyRateIncludesAllowance =
-    settings?.payrollSettings?.dailyRateIncludesAllowance ?? false;
   const dailyRateWorkingDaysPerYear =
     settings?.payrollSettings?.dailyRateWorkingDaysPerYear ?? 261;
 
@@ -188,10 +185,8 @@ export function PayslipDetail({
       cutoffEnd,
       employee?.schedule,
     );
-    // Daily rate = (basic + allowance?) × 12/workingDaysPerYear (matches backend)
-    const monthlyBase =
-      monthlySalary + (dailyRateIncludesAllowance ? allowance : 0);
-    dailyRate = monthlyBase * (12 / dailyRateWorkingDaysPerYear);
+    // Attendance deductions use the basic-only daily rate.
+    dailyRate = monthlySalary * (12 / dailyRateWorkingDaysPerYear);
     hourlyRate = dailyRate / 8;
   } else if (salaryType === "daily") {
     // For daily employees, daily rate is the basicSalary
@@ -224,42 +219,44 @@ export function PayslipDetail({
   } else if (salaryType === "monthly") {
     // Fallback if cutoff dates not provided
     fullBasicPay = monthlySalary / payDivisor;
-    const monthlyBase =
-      monthlySalary + (dailyRateIncludesAllowance ? allowance : 0);
-    dailyRate = monthlyBase * (12 / dailyRateWorkingDaysPerYear);
+    dailyRate = monthlySalary * (12 / dailyRateWorkingDaysPerYear);
     hourlyRate = dailyRate / 8;
   }
 
-  // Calculate deductions for lates, undertime, and absences
-  // These are based on the per-day rate and actual attendance
+  const getAttendanceDeductionAmount = (matcher: (name: string) => boolean) =>
+    payslip.deductions?.reduce((sum: number, deduction: any) => {
+      if (deduction.type !== "attendance") return sum;
+      return matcher(deduction.name.toLowerCase())
+        ? sum + (deduction.amount || 0)
+        : sum;
+    }, 0) || 0;
 
-  // For monthly employees we rely on the backend-computed absences, which
-  // already take into account rest days, holidays, and paid leaves. This keeps
-  // the payslip display consistent with the server-side computation.
   const calculatedAbsences = absences;
-
-  const lateDeduction = lateHours * hourlyRate;
-  const undertimeDeduction = undertimeHours * hourlyRate;
+  const lateDeduction =
+    getAttendanceDeductionAmount((name) => name.includes("late")) ||
+    lateHours * hourlyRate;
+  const undertimeDeduction =
+    getAttendanceDeductionAmount((name) => name.includes("undertime")) ||
+    undertimeHours * hourlyRate;
   const absentDeduction =
-    salaryType === "monthly" ? calculatedAbsences * dailyRate : 0;
+    getAttendanceDeductionAmount((name) => name.startsWith("absent")) ||
+    (salaryType === "monthly" ? calculatedAbsences * dailyRate : 0);
+  const holidayPayAmount = payslip.holidayPay ?? 0;
+  const holidayPayLabel =
+    holidayPayAmount > 0
+      ? holidayPayAmount >= dailyRate * 0.75
+        ? "Legal Holiday"
+        : "Special Holiday"
+      : "Holiday";
 
   // Basic pay shows the full amount (₱5,000 for bi-monthly)
   // Deductions are shown separately in the "Less" section
   const basicPay = fullBasicPay;
 
-  // Use actual overtime values from payslip
-  const overtimeRegular = payslip.overtimeRegular || 0;
-
-  // Taxable gross earnings = Basic Pay - Absent Deduction - Late Deduction - Undertime Deduction + Overtime + Incentives
-  // This is the final amount after all attendance-based deductions
+  // Gross pay is the taxable earnings before attendance deductions.
   const taxableGrossEarnings = Math.max(
     0,
-    basicPay -
-      absentDeduction -
-      lateDeduction -
-      undertimeDeduction +
-      overtimeRegular +
-      totalIncentives,
+    storedGrossPay - absentDeduction - lateDeduction - undertimeDeduction,
   );
 
   // Non-taxable items (allowances, transportation)
@@ -268,8 +265,7 @@ export function PayslipDetail({
   const transportation = 0; // Can be added later
 
   // Total earnings
-  const totalEarnings =
-    taxableGrossEarnings + nonTaxableAllowance + transportation;
+  const totalEarnings = taxableGrossEarnings + nonTaxableAllowance + transportation;
 
   // Only show sections when they have at least one line with value > 0
   const hasOtherEarnings =
@@ -328,7 +324,10 @@ export function PayslipDetail({
       0);
 
   // Net pay = total earnings minus only gov + loans (absent/late/undertime already deducted in earnings)
-  const netPay = Math.max(0, totalEarnings - totalDeductionsRightColumn);
+  const netPay =
+    typeof payslip.netPay === "number"
+      ? payslip.netPay
+      : Math.max(0, totalEarnings - totalDeductionsRightColumn);
 
   // Get specific deduction amounts
   const getDeductionAmount = (name: string) => {
@@ -433,7 +432,7 @@ export function PayslipDetail({
                     )}
                     {(payslip.holidayPay ?? 0) > 0 && (
                       <div className="flex justify-between">
-                        <span>Holiday Pay</span>
+                        <span>{holidayPayLabel}</span>
                         <span>
                           ₱
                           {payslip.holidayPay!.toLocaleString("en-US", {
@@ -484,7 +483,7 @@ export function PayslipDetail({
                       )}
                     {(payslip.overtimeSpecialHoliday ?? 0) > 0 && (
                         <div className="flex justify-between">
-                          <span>Overtime - Special non-working holiday</span>
+                          <span>Special Holiday</span>
                           <span>
                             ₱
                             {payslip.overtimeSpecialHoliday!.toLocaleString(
@@ -499,7 +498,7 @@ export function PayslipDetail({
                       )}
                     {(payslip.overtimeSpecialHolidayExcess ?? 0) > 0 && (
                         <div className="flex justify-between">
-                          <span>Overtime - SH excess of 8 hrs.</span>
+                          <span>Special Holiday excess of 8 hrs.</span>
                           <span>
                             ₱
                             {payslip.overtimeSpecialHolidayExcess!.toLocaleString(
@@ -514,7 +513,7 @@ export function PayslipDetail({
                       )}
                     {(payslip.overtimeLegalHoliday ?? 0) > 0 && (
                         <div className="flex justify-between">
-                          <span>Overtime - Legal Holiday</span>
+                          <span>Legal Holiday</span>
                           <span>
                             ₱
                             {payslip.overtimeLegalHoliday!.toLocaleString(
@@ -529,7 +528,7 @@ export function PayslipDetail({
                       )}
                     {(payslip.overtimeLegalHolidayExcess ?? 0) > 0 && (
                         <div className="flex justify-between">
-                          <span>Overtime - LH excess of 8 hrs.</span>
+                          <span>Legal Holiday excess of 8 hrs.</span>
                           <span>
                             ₱
                             {payslip.overtimeLegalHolidayExcess!.toLocaleString(

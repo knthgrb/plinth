@@ -100,6 +100,14 @@ export function EvaluationColumnManagementModal({
     );
   };
 
+  const handleUpdateLabel = (columnId: string, label: string) => {
+    setLocalColumns((cols) =>
+      cols.map((col) =>
+        col.id === columnId ? { ...col, label } : col,
+      ),
+    );
+  };
+
   const handleAddColumn = () => {
     if (!newColumnLabel.trim()) return;
 
@@ -209,8 +217,20 @@ export function EvaluationColumnManagementModal({
                       )}
                     </button>
                     <div className="flex-1">
-                      <div className="font-medium">{column.label}</div>
-                      <div className="text-xs text-gray-500">
+                      {isDefault ? (
+                        <div className="font-medium text-gray-700">
+                          {column.label}
+                        </div>
+                      ) : (
+                        <Input
+                          value={column.label}
+                          onChange={(e) =>
+                            handleUpdateLabel(column.id, e.target.value)
+                          }
+                          className="h-8 text-sm font-medium"
+                        />
+                      )}
+                      <div className="text-xs text-gray-500 mt-0.5">
                         {column.type}
                         {(column.hasRatingColumn || column.hasNotesColumn) &&
                           ` • ${[

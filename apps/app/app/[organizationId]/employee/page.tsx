@@ -95,7 +95,7 @@ export default function EmployeePage() {
       title: "Announcements",
       description: "View company announcements",
       icon: Bell,
-      href: "/documents",
+      href: "/announcements",
       color: "text-orange-600",
     },
     {

@@ -1,6 +1,9 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { useMutation } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,7 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { updateAttendance } from "@/actions/attendance";
 import { useToast } from "@/components/ui/use-toast";
 import { TimePicker } from "@/components/ui/time-picker";
 import { Textarea } from "@/components/ui/textarea";
@@ -59,8 +61,13 @@ export function EditAttendanceDialog({
   const [useManualLate, setUseManualLate] = useState(false);
   const [useManualUndertime, setUseManualUndertime] = useState(false);
 
+  const updateAttendanceMutation = useMutation(
+    (api as any).attendance.updateAttendance,
+  );
+
+  // Re-sync from record whenever the dialog opens or record changes (so we always show latest, including override state)
   useEffect(() => {
-    if (record) {
+    if (record && isOpen) {
       setEditScheduleIn(record.scheduleIn || "");
       setEditScheduleOut(record.scheduleOut || "");
       setEditTimeIn(record.actualIn || "");
@@ -68,9 +75,7 @@ export function EditAttendanceDialog({
       setEditOvertime(record.overtime ? record.overtime.toString() : "");
       setEditStatus(record.status);
       setEditRemarks(record.remarks || "");
-      // Seed manual fields with existing values (if any), but
-      // default to automatic calculation unless the user explicitly
-      // turns on "Manual override" in the UI.
+      // Seed manual fields from stored values (late in mins, undertime stored in hours → show as mins)
       setManualLate(
         record.late !== undefined && record.late !== null
           ? record.late.toString()
@@ -78,13 +83,20 @@ export function EditAttendanceDialog({
       );
       setManualUndertime(
         record.undertime !== undefined && record.undertime !== null
-          ? record.undertime.toString()
+          ? Math.round(record.undertime * 60).toString()
           : "",
       );
-      setUseManualLate(false);
-      setUseManualUndertime(false);
+      // Restore manual override state from explicit flags or stored values (including 0)
+      setUseManualLate(
+        record.lateManualOverride === true ||
+          (record.late !== undefined && record.late !== null),
+      );
+      setUseManualUndertime(
+        record.undertimeManualOverride === true ||
+          (record.undertime !== undefined && record.undertime !== null),
+      );
     }
-  }, [record]);
+  }, [record, isOpen]);
 
   // Calculate late and undertime automatically when times change
   const calculatedLate = useMemo(() => {
@@ -122,11 +134,11 @@ export function EditAttendanceDialog({
       ? parseFloat(manualLate)
       : 0
     : calculatedLate;
-  const finalUndertime = useManualUndertime
-    ? manualUndertime
-      ? parseFloat(manualUndertime)
-      : 0
-    : calculatedUndertime;
+  // finalUndertime for API is in hours (backend); UI state manualUndertime is in minutes
+  const finalUndertime =
+    useManualUndertime
+      ? (parseFloat(manualUndertime) || 0) / 60
+      : calculatedUndertime;
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -150,19 +162,29 @@ export function EditAttendanceDialog({
             ? parseFloat(editOvertime)
             : undefined;
 
-      await updateAttendance(record._id, {
+      // When manual override is used, append specific note(s): "Late manually overridden." and/or "Undertime manually overridden."
+      const overrideNotes: string[] = [];
+      if (useManualLate) overrideNotes.push("Late manually overridden.");
+      if (useManualUndertime) overrideNotes.push("Undertime manually overridden.");
+      let remarksToSave = editRemarks?.trim() || "";
+      for (const phrase of overrideNotes) {
+        if (!remarksToSave.includes(phrase)) {
+          remarksToSave = remarksToSave ? `${remarksToSave} ${phrase}` : phrase;
+        }
+      }
+
+      await updateAttendanceMutation({
+        attendanceId: record._id as Id<"attendance">,
         scheduleIn: editScheduleIn || undefined,
         scheduleOut: editScheduleOut || undefined,
         actualIn: finalTimeIn,
         actualOut: finalTimeOut,
         overtime: finalOvertime,
-        late: useManualLate ? (finalLate > 0 ? finalLate : 0) : null, // null means recalculate, 0 means explicitly set to 0
-        undertime: useManualUndertime
-          ? finalUndertime > 0
-            ? finalUndertime
-            : 0
-          : null, // null means recalculate, 0 means explicitly set to 0
-        remarks: editRemarks || undefined,
+        late: useManualLate ? finalLate : null,
+        undertime: useManualUndertime ? finalUndertime : null,
+        lateManualOverride: useManualLate ? true : undefined,
+        undertimeManualOverride: useManualUndertime ? true : undefined,
+        remarks: remarksToSave || undefined,
         status: editStatus,
       });
       onOpenChange(false);
@@ -327,7 +349,7 @@ export function EditAttendanceDialog({
                     </div>
                     <div className="space-y-2">
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                        <Label htmlFor="editUndertime">Undertime (hours)</Label>
+                        <Label htmlFor="editUndertime">Undertime (minutes)</Label>
                         <label className="flex items-center gap-2 text-xs text-gray-600">
                           <input
                             type="checkbox"
@@ -338,7 +360,7 @@ export function EditAttendanceDialog({
                                 setManualUndertime("");
                               } else {
                                 setManualUndertime(
-                                  calculatedUndertime.toFixed(2),
+                                  Math.round(calculatedUndertime * 60).toString(),
                                 );
                               }
                             }}
@@ -351,23 +373,23 @@ export function EditAttendanceDialog({
                       <Input
                         id="editUndertime"
                         type="number"
-                        step="0.01"
+                        step="1"
                         min="0"
                         value={
                           useManualUndertime
                             ? manualUndertime
-                            : calculatedUndertime.toFixed(2)
+                            : Math.round(calculatedUndertime * 60).toString()
                         }
                         onChange={(e) => setManualUndertime(e.target.value)}
-                        placeholder="0.00"
+                        placeholder="0"
                         disabled={!useManualUndertime || isUpdating}
                         readOnly={!useManualUndertime}
                         className={!useManualUndertime ? "bg-gray-50" : ""}
                       />
                       <p className="text-xs text-gray-500">
                         {useManualUndertime
-                          ? "Manually enter undertime hours (set to 0 to remove undertime)"
-                          : `Calculated: ${calculatedUndertime.toFixed(2)} hours (8 hours work = ${formatTime12Hour(editScheduleIn)} to ${formatTime12Hour(editScheduleOut)} with 1hr lunch)`}
+                          ? "Manually enter undertime minutes (set to 0 to remove undertime)"
+                          : `Calculated: ${Math.round(calculatedUndertime * 60)} minutes (8 hours work = ${formatTime12Hour(editScheduleIn)} to ${formatTime12Hour(editScheduleOut)} with 1hr lunch)`}
                       </p>
                     </div>
                   </div>

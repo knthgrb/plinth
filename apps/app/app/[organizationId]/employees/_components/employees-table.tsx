@@ -24,7 +24,6 @@ import {
   MessageSquare,
   MoreVertical,
   Pencil,
-  Trash2,
   UserCog,
   UserMinus,
   Mail,
@@ -59,7 +58,7 @@ interface EmployeesTableProps {
     e: MouseEvent
   ) => void;
   onRemoveFromOrganization: (employee: any, e: MouseEvent) => void;
-  onDeleteEmployee: (employee: any, e: MouseEvent) => void;
+  onRemoveEmployee: (employee: any, e: MouseEvent) => void;
   onInvite: (employee: any, e: MouseEvent) => void;
   sendingInvite: string | null;
   page: number;
@@ -82,7 +81,7 @@ export function EmployeesTable({
   onUpdateStatus,
   onUpdateRole,
   onRemoveFromOrganization,
-  onDeleteEmployee,
+  onRemoveEmployee,
   onInvite,
   sendingInvite,
   page,
@@ -344,30 +343,28 @@ export function EmployeesTable({
                                       </DropdownMenuItem>
                                     </>
                                   )}
-                                  {employeesUserAccounts[employee._id] && (
-                                    <>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        onClick={(e) =>
-                                          onRemoveFromOrganization(employee, e)
-                                        }
-                                        className="text-amber-600"
-                                      >
-                                        <UserMinus className="h-4 w-4 mr-2" />
-                                        Remove from Organization
-                                      </DropdownMenuItem>
-                                    </>
-                                  )}
                                   <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    onClick={(e) =>
-                                      onDeleteEmployee(employee, e)
-                                    }
-                                    className="text-red-600"
-                                  >
-                                    <Trash2 className="h-4 w-4 mr-2" />
-                                    Delete Employee
-                                  </DropdownMenuItem>
+                                  {employeesUserAccounts[employee._id] ? (
+                                    <DropdownMenuItem
+                                      onClick={(e) =>
+                                        onRemoveFromOrganization(employee, e)
+                                      }
+                                      className="text-amber-600"
+                                    >
+                                      <UserMinus className="h-4 w-4 mr-2" />
+                                      Remove from Organization
+                                    </DropdownMenuItem>
+                                  ) : (
+                                    <DropdownMenuItem
+                                      onClick={(e) =>
+                                        onRemoveEmployee(employee, e)
+                                      }
+                                      className="text-amber-600"
+                                    >
+                                      <UserMinus className="h-4 w-4 mr-2" />
+                                      Remove employee
+                                    </DropdownMenuItem>
+                                  )}
                                 </>
                               )}
                             </DropdownMenuContent>
@@ -383,35 +380,37 @@ export function EmployeesTable({
         </div>
       </div>
 
-      <div className="flex flex-col sm:flex-row items-center justify-between mt-4 gap-3 text-sm text-gray-600 px-4 sm:px-0">
-        <div className="text-center sm:text-left">
-          Showing {totalEmployees === 0 ? 0 : startIndex + 1}–{endIndex} of{" "}
-          {totalEmployees} employees
+      {totalEmployees > pageSize && (
+        <div className="flex flex-col sm:flex-row items-center justify-between mt-4 gap-3 text-sm text-gray-600 px-4 sm:px-0">
+          <div className="text-center sm:text-left">
+            Showing {totalEmployees === 0 ? 0 : startIndex + 1}–{endIndex} of{" "}
+            {totalEmployees} employees
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onPageChange(page - 1)}
+              disabled={page <= 1}
+              className="text-xs sm:text-sm"
+            >
+              Previous
+            </Button>
+            <span className="text-xs sm:text-sm">
+              Page {page} of {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onPageChange(page + 1)}
+              disabled={page >= totalPages}
+              className="text-xs sm:text-sm"
+            >
+              Next
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onPageChange(page - 1)}
-            disabled={page <= 1}
-            className="text-xs sm:text-sm"
-          >
-            Previous
-          </Button>
-          <span className="text-xs sm:text-sm">
-            Page {page} of {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onPageChange(page + 1)}
-            disabled={page >= totalPages}
-            className="text-xs sm:text-sm"
-          >
-            Next
-          </Button>
-        </div>
-      </div>
+      )}
     </>
   );
 }

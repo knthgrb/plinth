@@ -81,6 +81,7 @@ export const getDocuments = query({
         v.literal("employment"),
         v.literal("contract"),
         v.literal("certificate"),
+        v.literal("leave_form"),
         v.literal("other")
       )
     ),
@@ -134,6 +135,7 @@ export const createDocument = mutation({
       v.literal("employment"),
       v.literal("contract"),
       v.literal("certificate"),
+      v.literal("leave_form"),
       v.literal("other")
     ),
     category: v.optional(v.string()),
@@ -176,6 +178,7 @@ export const updateDocument = mutation({
         v.literal("employment"),
         v.literal("contract"),
         v.literal("certificate"),
+        v.literal("leave_form"),
         v.literal("other")
       )
     ),

@@ -270,6 +270,7 @@ export function OrganizationProvider({
     switchingToOrganizationIdRef.current = null;
     setSwitchingToOrganizationId(null);
     setCurrentOrganizationId(null);
+    setIsInitialized(false); // Allow init effect to run again after login so isLoggingOut gets cleared
     if (typeof window !== "undefined") {
       localStorage.removeItem(STORAGE_KEY);
     }

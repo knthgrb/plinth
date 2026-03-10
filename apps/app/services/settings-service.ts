@@ -26,7 +26,7 @@ export class SettingsService {
       {
         organizationId: data.organizationId as Id<"organizations">,
         payrollSettings: data.payrollSettings,
-      }
+      },
     );
   }
 
@@ -44,6 +44,9 @@ export class SettingsService {
       isAnniversary?: boolean;
     }>;
     proratedLeave?: boolean;
+    annualSil?: number;
+    grantLeaveUponRegularization?: boolean;
+    leaveRequestFormTemplate?: string;
   }) {
     const convex = await getAuthedConvexClient();
     const args: any = {
@@ -52,9 +55,18 @@ export class SettingsService {
     };
     if (data.proratedLeave !== undefined)
       args.proratedLeave = data.proratedLeave;
+    if (data.annualSil !== undefined) {
+      args.annualSil = data.annualSil;
+    }
+    if (data.grantLeaveUponRegularization !== undefined) {
+      args.grantLeaveUponRegularization = data.grantLeaveUponRegularization;
+    }
+    if (data.leaveRequestFormTemplate !== undefined) {
+      args.leaveRequestFormTemplate = data.leaveRequestFormTemplate;
+    }
     return await (convex.mutation as any)(
       (api as any).settings.updateLeaveTypes,
-      args
+      args,
     );
   }
 
@@ -66,7 +78,7 @@ export class SettingsService {
     const normalized = data.departments.map((d) =>
       typeof d === "string"
         ? { name: d, color: DEFAULT_COLOR }
-        : { name: d.name, color: d.color ?? DEFAULT_COLOR }
+        : { name: d.name, color: d.color ?? DEFAULT_COLOR },
     );
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(
@@ -74,7 +86,7 @@ export class SettingsService {
       {
         organizationId: data.organizationId as Id<"organizations">,
         departments: normalized,
-      }
+      },
     );
   }
 
@@ -95,7 +107,7 @@ export class SettingsService {
       {
         organizationId: data.organizationId as Id<"organizations">,
         columns: data.columns,
-      }
+      },
     );
   }
 }

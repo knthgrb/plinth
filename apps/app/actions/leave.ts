@@ -16,6 +16,9 @@ export async function createLeaveRequest(data: {
   startDate: number;
   endDate: number;
   reason: string;
+  formTemplateContent?: string;
+  filledFormContent?: string;
+  signatureDataUrl?: string;
   supportingDocuments?: string[];
 }) {
   return LeaveService.createLeaveRequest(data);
@@ -23,14 +26,14 @@ export async function createLeaveRequest(data: {
 
 export async function approveLeaveRequest(
   leaveRequestId: string,
-  remarks?: string
+  remarks?: string,
 ) {
   return LeaveService.approveLeaveRequest(leaveRequestId, remarks);
 }
 
 export async function rejectLeaveRequest(
   leaveRequestId: string,
-  remarks: string
+  remarks: string,
 ) {
   return LeaveService.rejectLeaveRequest(leaveRequestId, remarks);
 }
@@ -45,7 +48,7 @@ export async function getLeaveRequest(leaveRequestId: string) {
 
 export async function getEmployeeLeaveCredits(
   organizationId: string,
-  employeeId: string
+  employeeId: string,
 ) {
   return LeaveService.getEmployeeLeaveCredits(organizationId, employeeId);
 }

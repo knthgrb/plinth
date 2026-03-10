@@ -83,7 +83,7 @@ export function DynamicApplicantsTable({
   const formatCellValue = (
     value: any,
     column: Column,
-    applicant: any
+    applicant: any,
   ): React.ReactNode => {
     // Resume: show "Yes" / "—" (value is storage ID)
     if (column.field === "resume") {
@@ -356,7 +356,7 @@ export function DynamicApplicantsTable({
                       ) {
                         const customFieldKey = column.field.replace(
                           "custom.",
-                          ""
+                          "",
                         );
                         value =
                           applicant.customFields?.[customFieldKey] || null;

@@ -17,6 +17,9 @@ export class LeaveService {
     startDate: number;
     endDate: number;
     reason: string;
+    formTemplateContent?: string;
+    filledFormContent?: string;
+    signatureDataUrl?: string;
     supportingDocuments?: string[];
   }) {
     const convex = await getAuthedConvexClient();
@@ -29,7 +32,7 @@ export class LeaveService {
         supportingDocuments: data.supportingDocuments as
           | Id<"_storage">[]
           | undefined,
-      }
+      },
     );
   }
 
@@ -40,7 +43,7 @@ export class LeaveService {
       {
         leaveRequestId: leaveRequestId as Id<"leaveRequests">,
         remarks,
-      }
+      },
     );
   }
 
@@ -51,7 +54,7 @@ export class LeaveService {
       {
         leaveRequestId: leaveRequestId as Id<"leaveRequests">,
         remarks,
-      }
+      },
     );
   }
 
@@ -61,7 +64,7 @@ export class LeaveService {
       (api as any).leave.cancelLeaveRequest,
       {
         leaveRequestId: leaveRequestId as Id<"leaveRequests">,
-      }
+      },
     );
   }
 
@@ -74,7 +77,7 @@ export class LeaveService {
 
   static async getEmployeeLeaveCredits(
     organizationId: string,
-    employeeId: string
+    employeeId: string,
   ) {
     const convex = await getAuthedConvexClient();
     return await (convex.query as any)(
@@ -82,7 +85,7 @@ export class LeaveService {
       {
         organizationId: organizationId as Id<"organizations">,
         employeeId: employeeId as Id<"employees">,
-      }
+      },
     );
   }
 
@@ -110,7 +113,7 @@ export class LeaveService {
         balance: data.balance,
         adjustment: data.adjustment,
         reason: data.reason,
-      }
+      },
     );
   }
 
@@ -130,7 +133,7 @@ export class LeaveService {
         leaveType: data.leaveType,
         daysToConvert: data.daysToConvert,
         reason: data.reason,
-      }
+      },
     );
   }
 }

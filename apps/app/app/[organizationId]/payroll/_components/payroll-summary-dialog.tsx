@@ -51,6 +51,12 @@ export function PayrollSummaryDialog({
   onSaveDraft,
   onFinalize,
 }: PayrollSummaryDialogProps) {
+  const formatCurrency = (amount: number) =>
+    `P${amount.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -296,6 +302,115 @@ export function PayrollSummaryDialog({
                   })}
                 </TableBody>
               </Table>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="border rounded-lg overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Employee</TableHead>
+                      <TableHead className="text-right">Gross Pay</TableHead>
+                      <TableHead className="text-right">Allowance</TableHead>
+                      <TableHead className="text-right">Net Pay</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {summaryData.summary.map((empSummary: any) => (
+                      <TableRow key={`${empSummary.employee._id}-pay`}>
+                        <TableCell className="font-medium">
+                          {empSummary.employee.personalInfo.firstName}{" "}
+                          {empSummary.employee.personalInfo.lastName}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatCurrency(
+                            empSummary.payslipBreakdown?.grossPay ?? 0,
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatCurrency(
+                            empSummary.payslipBreakdown?.nonTaxableAllowance ?? 0,
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right font-semibold">
+                          {formatCurrency(
+                            empSummary.payslipBreakdown?.netPay ?? 0,
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="border rounded-lg overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Employee</TableHead>
+                      <TableHead className="text-right">Employee</TableHead>
+                      <TableHead className="text-right">Company</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {summaryData.summary.map((empSummary: any) => (
+                      <TableRow key={`${empSummary.employee._id}-contrib`}>
+                        <TableCell className="font-medium">
+                          <div>
+                            {empSummary.employee.personalInfo.firstName}{" "}
+                            {empSummary.employee.personalInfo.lastName}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            SSS {formatCurrency(
+                              empSummary.payslipBreakdown?.employeeContributions
+                                ?.sss ?? 0,
+                            )}{" "}
+                            / {formatCurrency(
+                              empSummary.payslipBreakdown?.companyContributions
+                                ?.sss ?? 0,
+                            )}
+                            , PhilHealth {formatCurrency(
+                              empSummary.payslipBreakdown?.employeeContributions
+                                ?.philhealth ?? 0,
+                            )}{" "}
+                            / {formatCurrency(
+                              empSummary.payslipBreakdown?.companyContributions
+                                ?.philhealth ?? 0,
+                            )}
+                            , Pag-IBIG {formatCurrency(
+                              empSummary.payslipBreakdown?.employeeContributions
+                                ?.pagibig ?? 0,
+                            )}{" "}
+                            / {formatCurrency(
+                              empSummary.payslipBreakdown?.companyContributions
+                                ?.pagibig ?? 0,
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatCurrency(
+                            empSummary.payslipBreakdown
+                              ?.totalEmployeeContribution ?? 0,
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatCurrency(
+                            empSummary.payslipBreakdown
+                              ?.totalCompanyContribution ?? 0,
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right font-semibold">
+                          {formatCurrency(
+                            (empSummary.payslipBreakdown
+                              ?.totalEmployeeContribution ?? 0) +
+                              (empSummary.payslipBreakdown
+                                ?.totalCompanyContribution ?? 0),
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           </div>
         ) : null}

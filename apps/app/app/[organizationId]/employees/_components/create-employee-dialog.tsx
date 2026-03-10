@@ -54,6 +54,7 @@ const defaultFormData = {
   department: "",
   employmentType: "probationary" as EmploymentType,
   hireDate: "",
+  regularizationDate: "",
   basicSalary: "",
   allowance: "",
   regularHolidayRate: "",
@@ -208,6 +209,9 @@ export function CreateEmployeeDialog({
           department: data.department,
           employmentType: data.employmentType as "regular" | "probationary" | "contractual" | "part-time",
           hireDate: new Date(data.hireDate).getTime(),
+          regularizationDate: data.regularizationDate
+            ? new Date(data.regularizationDate).getTime()
+            : undefined,
           status: "active",
         },
         compensation: {
@@ -481,6 +485,26 @@ export function CreateEmployeeDialog({
                       {errors.hireDate.message}
                     </p>
                   )}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ce-regularizationDate">
+                    Date of regularization
+                  </Label>
+                  <Controller
+                    name="regularizationDate"
+                    control={control}
+                    render={({ field }) => (
+                      <DatePicker
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        placeholder="Optional"
+                      />
+                    )}
+                  />
+                  <p className="text-xs text-gray-500">
+                    Optional. When set, leave proration can start from this date
+                    if enabled in Leave settings.
+                  </p>
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

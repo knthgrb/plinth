@@ -46,7 +46,7 @@ const PayrollStep1Dates = dynamic(
     import("./_components/payroll-step-1-dates").then((mod) => ({
       default: mod.PayrollStep1Dates,
     })),
-  { ssr: false }
+  { ssr: false },
 );
 
 const PayrollStep2Employees = dynamic(
@@ -54,23 +54,23 @@ const PayrollStep2Employees = dynamic(
     import("./_components/payroll-step-2-employees").then((mod) => ({
       default: mod.PayrollStep2Employees,
     })),
-  { ssr: false }
+  { ssr: false },
 );
 
 const PayrollStep3GovernmentDeductions = dynamic(
   () =>
     import("./_components/payroll-step-3-government-deductions").then(
-      (mod) => ({ default: mod.PayrollStep3GovernmentDeductions })
+      (mod) => ({ default: mod.PayrollStep3GovernmentDeductions }),
     ),
-  { ssr: false }
+  { ssr: false },
 );
 
 const PayrollStep4DeductionsIncentives = dynamic(
   () =>
     import("./_components/payroll-step-4-deductions-incentives").then(
-      (mod) => ({ default: mod.PayrollStep4DeductionsIncentives })
+      (mod) => ({ default: mod.PayrollStep4DeductionsIncentives }),
     ),
-  { ssr: false }
+  { ssr: false },
 );
 
 const PayrollStep5Preview = dynamic(
@@ -78,7 +78,7 @@ const PayrollStep5Preview = dynamic(
     import("./_components/payroll-step-5-preview").then((mod) => ({
       default: mod.PayrollStep5Preview,
     })),
-  { ssr: false }
+  { ssr: false },
 );
 
 // Lazy load edit payroll step components
@@ -87,7 +87,7 @@ const EditPayrollStep1Dates = dynamic(
     import("./_components/edit-payroll-step-1-dates").then((mod) => ({
       default: mod.EditPayrollStep1Dates,
     })),
-  { ssr: false }
+  { ssr: false },
 );
 
 const EditPayrollStep2Employees = dynamic(
@@ -95,7 +95,7 @@ const EditPayrollStep2Employees = dynamic(
     import("./_components/payroll-step-2-employees").then((mod) => ({
       default: mod.PayrollStep2Employees,
     })),
-  { ssr: false }
+  { ssr: false },
 );
 
 const EditPayrollStep3GovernmentDeductions = dynamic(
@@ -103,9 +103,9 @@ const EditPayrollStep3GovernmentDeductions = dynamic(
     import("./_components/payroll-step-3-government-deductions").then(
       (mod) => ({
         default: mod.PayrollStep3GovernmentDeductions,
-      })
+      }),
     ),
-  { ssr: false }
+  { ssr: false },
 );
 
 const EditPayrollStep4DeductionsIncentives = dynamic(
@@ -113,9 +113,9 @@ const EditPayrollStep4DeductionsIncentives = dynamic(
     import("./_components/payroll-step-4-deductions-incentives").then(
       (mod) => ({
         default: mod.PayrollStep4DeductionsIncentives,
-      })
+      }),
     ),
-  { ssr: false }
+  { ssr: false },
 );
 
 // Lazy load dialogs
@@ -124,7 +124,7 @@ const EditPayrollRunDialog = dynamic<any>(
     import("./_components/edit-payroll-run-dialog").then((mod) => ({
       default: mod.EditPayrollRunDialog,
     })),
-  { ssr: false }
+  { ssr: false },
 );
 
 const ViewPayslipsDialog = dynamic<any>(
@@ -132,7 +132,7 @@ const ViewPayslipsDialog = dynamic<any>(
     import("./_components/view-payslips-dialog").then((mod) => ({
       default: mod.ViewPayslipsDialog,
     })),
-  { ssr: false }
+  { ssr: false },
 );
 
 const EditPayslipDialog = dynamic<any>(
@@ -140,7 +140,7 @@ const EditPayslipDialog = dynamic<any>(
     import("./_components/edit-payslip-dialog").then((mod) => ({
       default: mod.EditPayslipDialog,
     })),
-  { ssr: false }
+  { ssr: false },
 );
 
 const PayrollSummaryDialog = dynamic<any>(
@@ -148,7 +148,7 @@ const PayrollSummaryDialog = dynamic<any>(
     import("./_components/payroll-summary-dialog").then((mod) => ({
       default: mod.PayrollSummaryDialog,
     })),
-  { ssr: false }
+  { ssr: false },
 );
 
 // Lazy load modals - placeholder components created, can be expanded later
@@ -218,7 +218,7 @@ function isRestDay(date: number, employeeSchedule: any): boolean {
   if (employeeSchedule?.scheduleOverrides) {
     const override = employeeSchedule.scheduleOverrides.find(
       (o: any) =>
-        new Date(o.date).toDateString() === new Date(date).toDateString()
+        new Date(o.date).toDateString() === new Date(date).toDateString(),
     );
     if (override) {
       // If there's an override, it's not a rest day (override means working)
@@ -231,28 +231,6 @@ function isRestDay(date: number, employeeSchedule: any): boolean {
 }
 
 // Helper to calculate working days in a specific cutoff range (inclusive)
-function calculateWorkingDaysInRange(
-  startDate: number,
-  endDate: number,
-  employeeSchedule: any
-): number {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-
-  let workingDays = 0;
-  const current = new Date(start);
-
-  while (current <= end) {
-    const ts = current.getTime();
-    if (!isRestDay(ts, employeeSchedule)) {
-      workingDays++;
-    }
-    current.setDate(current.getDate() + 1);
-  }
-
-  return workingDays;
-}
-
 // Parse "YYYY-MM-DD" as local midnight (not UTC) so cutoff aligns with attendance dates
 function dateStringToLocalMs(dateStr: string): number {
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -273,11 +251,11 @@ export default function PayrollPageClient({
   });
   const settings = useQuery(
     (api as any).settings.getSettings,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
   const employees = useQuery(
     (api as any).employees.getEmployees,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
   /** Admin, HR, accounting, owner: can edit payslips and see payroll edit actions */
   const isAdminOrAccounting =
@@ -287,16 +265,13 @@ export default function PayrollPageClient({
     user?.role === "owner";
   /** Admin, HR, owner can edit deductions in pay preview (Step 5) */
   const canEditPreviewDeductions =
-    user?.role === "admin" ||
-    user?.role === "hr" ||
-    user?.role === "owner";
+    user?.role === "admin" || user?.role === "hr" || user?.role === "owner";
   const [payrollRuns, setPayrollRuns] = useState<any[]>(
-    initialPayrollRuns ?? []
+    initialPayrollRuns ?? [],
   );
-  const [filterMonth, setFilterMonth] = useState(() => {
-    const n = new Date();
-    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}`;
-  });
+  const [filterMonth, setFilterMonth] = useState("");
+  const [payrollRunsPage, setPayrollRunsPage] = useState(1);
+  const payrollRunsPageSize = 10;
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isViewPayslipsOpen, setIsViewPayslipsOpen] = useState(false);
@@ -332,7 +307,7 @@ export default function PayrollPageClient({
   const [editNonTaxableAllowance, setEditNonTaxableAllowance] = useState(0);
   const [isSavingPayslip, setIsSavingPayslip] = useState(false);
   const [payslipConcerns, setPayslipConcerns] = useState<Record<string, any[]>>(
-    {}
+    {},
   );
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [summaryData, setSummaryData] = useState<any>(null);
@@ -343,7 +318,7 @@ export default function PayrollPageClient({
   const [editCutoffStart, setEditCutoffStart] = useState("");
   const [editCutoffEnd, setEditCutoffEnd] = useState("");
   const [editSelectedEmployees, setEditSelectedEmployees] = useState<string[]>(
-    []
+    [],
   );
   const [editDeductionsEnabled, setEditDeductionsEnabled] = useState(true);
   const [editGovernmentDeductionSettings, setEditGovernmentDeductionSettings] =
@@ -381,7 +356,7 @@ export default function PayrollPageClient({
             // Get the payroll run for this payslip
             const runs = await getPayrollRuns(currentOrganizationId);
             const payrollRun = runs.find(
-              (run: any) => run._id === payslip.payrollRunId
+              (run: any) => run._id === payslip.payrollRunId,
             );
             if (payrollRun) {
               await handleViewPayslips(payrollRun, payslipIdParam);
@@ -416,6 +391,26 @@ export default function PayrollPageClient({
       );
     });
   }, [filterMonth, payrollRuns]);
+
+  const totalPayrollRunPages = Math.max(
+    1,
+    Math.ceil(filteredPayrollRuns.length / payrollRunsPageSize),
+  );
+
+  const paginatedPayrollRuns = useMemo(() => {
+    const start = (payrollRunsPage - 1) * payrollRunsPageSize;
+    return filteredPayrollRuns.slice(start, start + payrollRunsPageSize);
+  }, [filteredPayrollRuns, payrollRunsPage]);
+
+  useEffect(() => {
+    setPayrollRunsPage(1);
+  }, [filterMonth]);
+
+  useEffect(() => {
+    if (payrollRunsPage > totalPayrollRunPages) {
+      setPayrollRunsPage(1);
+    }
+  }, [payrollRunsPage, totalPayrollRunPages]);
 
   const handleViewSummary = async (payrollRun: any) => {
     setSelectedPayrollRun(payrollRun);
@@ -495,7 +490,7 @@ export default function PayrollPageClient({
     link.setAttribute("href", url);
     link.setAttribute(
       "download",
-      `payroll-summary-${selectedPayrollRun?.period.replace(/\s+/g, "-")}.csv`
+      `payroll-summary-${selectedPayrollRun?.period.replace(/\s+/g, "-")}.csv`,
     );
     link.style.visibility = "hidden";
     document.body.appendChild(link);
@@ -510,7 +505,7 @@ export default function PayrollPageClient({
 
   const handleViewPayslips = async (
     payrollRun: any,
-    highlightPayslipId?: string
+    highlightPayslipId?: string,
   ) => {
     setSelectedPayrollRun(payrollRun);
     setIsViewPayslipsOpen(true);
@@ -528,7 +523,7 @@ export default function PayrollPageClient({
         } catch (error) {
           console.error(
             `Error loading concerns for payslip ${payslip._id}:`,
-            error
+            error,
           );
           concernsMap[payslip._id] = [];
         }
@@ -539,7 +534,7 @@ export default function PayrollPageClient({
       if (highlightPayslipId) {
         setTimeout(() => {
           const payslipElement = document.querySelector(
-            `[data-payslip-id="${highlightPayslipId}"]`
+            `[data-payslip-id="${highlightPayslipId}"]`,
           );
           if (payslipElement) {
             payslipElement.scrollIntoView({
@@ -550,13 +545,13 @@ export default function PayrollPageClient({
             payslipElement.classList.add(
               "ring-2",
               "ring-purple-500",
-              "ring-offset-2"
+              "ring-offset-2",
             );
             setTimeout(() => {
               payslipElement.classList.remove(
                 "ring-2",
                 "ring-purple-500",
-                "ring-offset-2"
+                "ring-offset-2",
               );
             }, 3000);
           }
@@ -693,7 +688,7 @@ export default function PayrollPageClient({
   const updateEditDeduction = (
     index: number,
     field: "name" | "amount" | "type",
-    value: string | number
+    value: string | number,
   ) => {
     const updated = [...editDeductions];
     updated[index] = { ...updated[index], [field]: value };
@@ -714,7 +709,7 @@ export default function PayrollPageClient({
   const updateEditIncentive = (
     index: number,
     field: "name" | "amount" | "type",
-    value: string | number
+    value: string | number,
   ) => {
     const updated = [...editIncentives];
     updated[index] = { ...updated[index], [field]: value };
@@ -756,13 +751,15 @@ export default function PayrollPageClient({
     } else {
       setSelectedEmployees(selectedEmployees.filter((id) => id !== employeeId));
       setGovernmentDeductionSettings(
-        governmentDeductionSettings.filter((gs) => gs.employeeId !== employeeId)
+        governmentDeductionSettings.filter(
+          (gs) => gs.employeeId !== employeeId,
+        ),
       );
       setEmployeeDeductions(
-        employeeDeductions.filter((ed) => ed.employeeId !== employeeId)
+        employeeDeductions.filter((ed) => ed.employeeId !== employeeId),
       );
       setEmployeeIncentives(
-        employeeIncentives.filter((ei) => ei.employeeId !== employeeId)
+        employeeIncentives.filter((ei) => ei.employeeId !== employeeId),
       );
     }
   };
@@ -771,7 +768,7 @@ export default function PayrollPageClient({
     employeeId: string,
     deductionType: "sss" | "pagibig" | "philhealth" | "tax",
     field: "enabled" | "frequency",
-    value: boolean | "full" | "half"
+    value: boolean | "full" | "half",
   ) => {
     const updated = governmentDeductionSettings.map((gs) => {
       if (gs.employeeId === employeeId) {
@@ -789,7 +786,9 @@ export default function PayrollPageClient({
   };
 
   const addDeduction = (employeeId: string) => {
-    const existing = employeeDeductions.find((ed) => ed.employeeId === employeeId);
+    const existing = employeeDeductions.find(
+      (ed) => ed.employeeId === employeeId,
+    );
     if (existing) {
       const updated = employeeDeductions.map((ed) => {
         if (ed.employeeId === employeeId) {
@@ -832,7 +831,7 @@ export default function PayrollPageClient({
     employeeId: string,
     index: number,
     field: "name" | "amount" | "type",
-    value: string | number
+    value: string | number,
   ) => {
     const updated = employeeDeductions.map((ed) => {
       if (ed.employeeId === employeeId) {
@@ -848,7 +847,7 @@ export default function PayrollPageClient({
   const setPreviewDeductionOverride = (
     employeeId: string,
     deductionName: string,
-    amount: number
+    amount: number,
   ) => {
     setPreviewDeductionOverrides((prev) => ({
       ...prev,
@@ -892,7 +891,7 @@ export default function PayrollPageClient({
     employeeId: string,
     index: number,
     field: "name" | "amount" | "type",
-    value: string | number
+    value: string | number,
   ) => {
     const updated = employeeIncentives.map((ei) => {
       if (ei.employeeId === employeeId) {
@@ -933,14 +932,14 @@ export default function PayrollPageClient({
         const deductions: Deduction[] = [];
 
         const govSettings = governmentDeductionSettings.find(
-          (gs) => gs.employeeId === employeeId
+          (gs) => gs.employeeId === employeeId,
         );
 
         // Helper to get effective government deduction amount based on settings
         const applyGovSetting = (
           enabled: boolean | undefined,
           frequency: "full" | "half" | undefined,
-          baseAmount: number | undefined
+          baseAmount: number | undefined,
         ): number => {
           if (!baseAmount || baseAmount <= 0) return 0;
           if (enabled === false) return 0;
@@ -951,7 +950,7 @@ export default function PayrollPageClient({
         const sssAmount = applyGovSetting(
           govSettings?.sss.enabled,
           govSettings?.sss.frequency,
-          payroll.deductions?.sss
+          payroll.deductions?.sss,
         );
         if (sssAmount > 0) {
           deductions.push({
@@ -964,7 +963,7 @@ export default function PayrollPageClient({
         const philhealthAmount = applyGovSetting(
           govSettings?.philhealth.enabled,
           govSettings?.philhealth.frequency,
-          payroll.deductions?.philhealth
+          payroll.deductions?.philhealth,
         );
         if (philhealthAmount > 0) {
           deductions.push({
@@ -977,7 +976,7 @@ export default function PayrollPageClient({
         const pagibigAmount = applyGovSetting(
           govSettings?.pagibig.enabled,
           govSettings?.pagibig.frequency,
-          payroll.deductions?.pagibig
+          payroll.deductions?.pagibig,
         );
         if (pagibigAmount > 0) {
           deductions.push({
@@ -1008,7 +1007,7 @@ export default function PayrollPageClient({
 
         // Add manual/custom deductions entered in the UI for preview purposes
         const empDeductions = employeeDeductions.find(
-          (ed) => ed.employeeId === employeeId
+          (ed) => ed.employeeId === employeeId,
         );
         if (empDeductions) {
           deductions.push(...empDeductions.deductions);
@@ -1024,22 +1023,20 @@ export default function PayrollPageClient({
           }
         }
 
-        // Represent incentives as a single line item based on backend total
-        const incentives =
-          payroll.incentiveTotal && payroll.incentiveTotal > 0
-            ? [
-                {
-                  name: "Incentives",
-                  amount: payroll.incentiveTotal,
-                  type: "incentive",
-                },
-              ]
-            : [];
-        const totalIncentives = payroll.incentiveTotal || 0;
+        const manualIncentives =
+          employeeIncentives.find((ei) => ei.employeeId === employeeId)
+            ?.incentives || [];
+        const totalIncentives = manualIncentives.reduce(
+          (sum, incentive) => sum + incentive.amount,
+          0,
+        );
+        const incentives = manualIncentives;
 
-        // Non-taxable allowance: half per semi-monthly cutoff
+        // Non-taxable allowance follows the organization's pay frequency
         const allowance = employee.compensation.allowance || 0;
-        const nonTaxableAllowance = allowance / 2;
+        const payDivisor =
+          currentOrganization?.salaryPaymentFrequency === "monthly" ? 1 : 2;
+        const nonTaxableAllowance = allowance / payDivisor;
 
         // Daily rate formula from settings: (basic + allowance?) × 12/workingDaysPerYear (matches backend)
         const dailyRateIncludesAllowance =
@@ -1055,37 +1052,31 @@ export default function PayrollPageClient({
         const lateHours = payroll.lateHours || 0;
         const undertimeHours = payroll.undertimeHours || 0;
 
-        // Calculate working days in cutoff period
-        const workingDaysInCutoff = calculateWorkingDaysInRange(
-          cutoffStartTs,
-          cutoffEndTs,
-          employee.schedule
-        );
-
-        let fullBasicPay = 0; // Full basic pay for the cutoff period (before prorating)
+        let fullBasicPay = payroll.basicPay || 0;
         let dailyRate = 0;
         let hourlyRate = 0;
+        let basicDailyRate = 0;
+        let basicHourlyRate = 0;
 
         if (salaryType === "monthly") {
-          // For bi-monthly cutoff, show the full bi-monthly amount
-          fullBasicPay = monthlySalary / 2;
+          fullBasicPay = monthlySalary / payDivisor;
           // Daily rate = (basic + allowance?) × 12/261 (matches backend)
           const monthlyBase =
             monthlySalary + (dailyRateIncludesAllowance ? allowance : 0);
           dailyRate = monthlyBase * (12 / dailyRateWorkingDaysPerYear);
           hourlyRate = dailyRate / 8;
+          basicDailyRate = monthlySalary * (12 / dailyRateWorkingDaysPerYear);
+          basicHourlyRate = basicDailyRate / 8;
         } else if (salaryType === "daily") {
-          // For daily employees, calculate based on expected working days
           dailyRate = monthlySalary;
           hourlyRate = dailyRate / 8;
-          // For daily employees, full basic pay = daily rate * working days in cutoff
-          fullBasicPay = dailyRate * workingDaysInCutoff;
+          basicDailyRate = dailyRate;
+          basicHourlyRate = hourlyRate;
         } else if (salaryType === "hourly") {
-          // For hourly employees
           dailyRate = monthlySalary * 8;
           hourlyRate = monthlySalary;
-          // For hourly employees, full basic pay = daily rate * working days in cutoff
-          fullBasicPay = dailyRate * workingDaysInCutoff;
+          basicDailyRate = dailyRate;
+          basicHourlyRate = hourlyRate;
         }
 
         // Calculate deductions for lates, undertime, and absences.
@@ -1094,10 +1085,11 @@ export default function PayrollPageClient({
         // so we don't recompute absences from the schedule here.
         const calculatedAbsences = absences;
 
-        const lateDeduction = lateHours * hourlyRate;
-        const undertimeDeduction = undertimeHours * hourlyRate;
+        // Attendance deductions should use the basic-only rate, excluding allowance.
+        const lateDeduction = lateHours * basicHourlyRate;
+        const undertimeDeduction = undertimeHours * basicHourlyRate;
         const absentDeduction =
-          salaryType === "monthly" ? calculatedAbsences * dailyRate : 0;
+          salaryType === "monthly" ? calculatedAbsences * basicDailyRate : 0;
 
         // Total deductions = government + custom + attendance deductions
         const governmentAndCustomDeductions =
@@ -1108,14 +1100,17 @@ export default function PayrollPageClient({
           undertimeDeduction +
           absentDeduction;
 
-        const grossPay = payroll.grossPay || 0;
+        const grossPay =
+          (payroll.grossPay || 0) -
+          (payroll.incentiveTotal || 0) +
+          totalIncentives;
 
         // Apply same rule as backend: deductions should not exceed available earnings
         // availableEarnings = gross pay + non-taxable allowance
         const availableEarnings = grossPay + nonTaxableAllowance;
         const totalDeductions = Math.min(
           rawTotalDeductions,
-          Math.max(0, availableEarnings)
+          Math.max(0, availableEarnings),
         );
 
         // Net pay cannot go below 0 in preview
@@ -1132,6 +1127,15 @@ export default function PayrollPageClient({
           overtimeHours: payroll.overtimeHours || 0,
           holidayPay: payroll.holidayPay || 0,
           restDayPay: payroll.restDayPay || 0,
+          nightDiffPay: payroll.nightDiffPay || 0,
+          overtimeRegular: payroll.overtimeRegular || 0,
+          overtimeRestDay: payroll.overtimeRestDay || 0,
+          overtimeRestDayExcess: payroll.overtimeRestDayExcess || 0,
+          overtimeSpecialHoliday: payroll.overtimeSpecialHoliday || 0,
+          overtimeSpecialHolidayExcess:
+            payroll.overtimeSpecialHolidayExcess || 0,
+          overtimeLegalHoliday: payroll.overtimeLegalHoliday || 0,
+          overtimeLegalHolidayExcess: payroll.overtimeLegalHolidayExcess || 0,
           lateDeduction,
           undertimeDeduction,
           absentDeduction,
@@ -1164,11 +1168,58 @@ export default function PayrollPageClient({
     setSubmitStatus(status);
     setIsProcessing(true);
     try {
-      const manualDeductions = employeeDeductions.filter(
-        (ed) => ed.deductions.length > 0
-      );
+      // Use preview data (including "Edit deductions" overrides) when available so saved amounts match what user saw
+      let manualDeductions: { employeeId: string; deductions: { name: string; amount: number; type: string }[] }[];
+      if (previewData.length > 0 && selectedEmployees.length > 0) {
+        manualDeductions = selectedEmployees.map((employeeId: string) => {
+          const p = previewData.find(
+            (x: any) => x.employee?._id === employeeId,
+          );
+          if (!p) return { employeeId, deductions: [] };
+          const deductions = [
+            ...(p.deductions || []).map((d: any) => ({
+              name: d.name,
+              amount: d.amount,
+              type: d.type || "government",
+            })),
+            ...(p.absentDeduction > 0
+              ? [
+                  {
+                    name: `Absent (${p.absences || 0} ${(p.absences || 0) === 1 ? "day" : "days"})`,
+                    amount: p.absentDeduction,
+                    type: "attendance",
+                  },
+                ]
+              : []),
+            ...(p.lateDeduction > 0
+              ? [
+                  {
+                    name: "Late",
+                    amount: p.lateDeduction,
+                    type: "attendance",
+                  },
+                ]
+              : []),
+            ...(p.undertimeDeduction > 0
+              ? [
+                  {
+                    name: "Undertime",
+                    amount: p.undertimeDeduction,
+                    type: "attendance",
+                  },
+                ]
+              : []),
+          ];
+          return { employeeId, deductions };
+        });
+      } else {
+        manualDeductions = employeeDeductions.filter(
+          (ed) => ed.deductions.length > 0,
+        );
+      }
+
       const incentives = employeeIncentives.filter(
-        (ei) => ei.incentives.length > 0
+        (ei) => ei.incentives.length > 0,
       );
 
       const payrollRunId = await createPayrollRun({
@@ -1257,54 +1308,101 @@ export default function PayrollPageClient({
     setIsEditPayrollRunOpen(true);
     setEditPayrollStep(1);
 
-    // Load existing payslips and populate deductions/incentives so user can edit them
+    const draftConfig = payrollRun.draftConfig;
+
+    // Always load from payslips when they exist so edited deductions are shown (source of truth).
     try {
       const payslipsData = await getPayslipsByPayrollRun(payrollRun._id);
-      const employeeIds = payslipsData.map((p: any) => p.employeeId);
-      setEditSelectedEmployees(employeeIds);
+      if (payslipsData?.length > 0) {
+        const employeeIds = payslipsData.map((p: any) => p.employeeId);
+        setEditSelectedEmployees(employeeIds);
 
-      const GOV_DEDUCTION_NAMES = new Set([
-        "SSS",
-        "PhilHealth",
-        "Pag-IBIG",
-        "Withholding Tax",
-        "Other Deductions",
-      ]);
+        const normalizedGovSettings: GovernmentDeductionSettings[] =
+          employeeIds.map((employeeId: string) => {
+            const saved = draftConfig?.governmentDeductionSettings?.find(
+              (gs: GovernmentDeductionSettings) => gs.employeeId === employeeId
+            );
+            return (
+              saved || {
+                employeeId,
+                sss: { enabled: true, frequency: "full" },
+                pagibig: { enabled: true, frequency: "full" },
+                philhealth: { enabled: true, frequency: "full" },
+                tax: { enabled: true, frequency: "full" },
+              }
+            );
+          });
+        setEditGovernmentDeductionSettings(normalizedGovSettings);
 
-      const allGovSettings: GovernmentDeductionSettings[] = employeeIds.map(
-        (employeeId: string) => ({
-          employeeId,
-          sss: { enabled: true, frequency: "full" },
-          pagibig: { enabled: true, frequency: "full" },
-          philhealth: { enabled: true, frequency: "full" },
-          tax: { enabled: true, frequency: "full" },
-        })
-      );
-      setEditGovernmentDeductionSettings(allGovSettings);
+        // Load full deductions from each payslip (including gov) so edits persist
+        const allDeductions: EmployeeDeduction[] = employeeIds.map(
+          (employeeId: string) => {
+            const slip = payslipsData.find(
+              (p: any) => p.employeeId === employeeId,
+            );
+            const deductions = slip?.deductions ?? [];
+            return { employeeId, deductions };
+          },
+        );
+        setEditEmployeeDeductions(allDeductions);
 
-      // Load manual/custom deductions from each payslip (exclude government lines)
-      const allDeductions: EmployeeDeduction[] = employeeIds.map(
-        (employeeId: string) => {
-          const slip = payslipsData.find((p: any) => p.employeeId === employeeId);
-          const deductions = (slip?.deductions ?? []).filter(
-            (d: any) => !GOV_DEDUCTION_NAMES.has(d.name)
-          );
-          return { employeeId, deductions };
-        }
-      );
-      setEditEmployeeDeductions(allDeductions);
-
-      // Load incentives from each payslip
-      const allIncentives: EmployeeIncentive[] = employeeIds.map(
-        (employeeId: string) => {
-          const slip = payslipsData.find((p: any) => p.employeeId === employeeId);
-          const incentives = slip?.incentives ?? [];
-          return { employeeId, incentives };
-        }
-      );
-      setEditEmployeeIncentives(allIncentives);
+        const allIncentives: EmployeeIncentive[] = employeeIds.map(
+          (employeeId: string) => {
+            const slip = payslipsData.find(
+              (p: any) => p.employeeId === employeeId,
+            );
+            const incentives = slip?.incentives ?? [];
+            return { employeeId, incentives };
+          },
+        );
+        setEditEmployeeIncentives(allIncentives);
+        return;
+      }
     } catch (error) {
-      console.error("Error loading payroll run data:", error);
+      console.error("Error loading payroll run payslips:", error);
+    }
+
+    // No payslips: use draftConfig (e.g. new draft or legacy run)
+    if (draftConfig?.employeeIds?.length) {
+      const selectedEmployeeIds = draftConfig.employeeIds;
+      setEditSelectedEmployees(selectedEmployeeIds);
+
+      const normalizedGovSettings: GovernmentDeductionSettings[] =
+        selectedEmployeeIds.map((employeeId: string) => {
+          const saved = draftConfig.governmentDeductionSettings?.find(
+            (gs: GovernmentDeductionSettings) => gs.employeeId === employeeId
+          );
+          return (
+            saved || {
+              employeeId,
+              sss: { enabled: true, frequency: "full" },
+              pagibig: { enabled: true, frequency: "full" },
+              philhealth: { enabled: true, frequency: "full" },
+              tax: { enabled: true, frequency: "full" },
+            }
+          );
+        });
+      setEditGovernmentDeductionSettings(normalizedGovSettings);
+
+      const normalizedDeductions: EmployeeDeduction[] = selectedEmployeeIds.map(
+        (employeeId: string) => {
+          const saved = draftConfig.manualDeductions?.find(
+            (ed: EmployeeDeduction) => ed.employeeId === employeeId
+          );
+          return { employeeId, deductions: saved?.deductions ?? [] };
+        }
+      );
+      setEditEmployeeDeductions(normalizedDeductions);
+
+      const normalizedIncentives: EmployeeIncentive[] = selectedEmployeeIds.map(
+        (employeeId: string) => {
+          const saved = draftConfig.incentives?.find(
+            (ei: EmployeeIncentive) => ei.employeeId === employeeId
+          );
+          return { employeeId, incentives: saved?.incentives ?? [] };
+        }
+      );
+      setEditEmployeeIncentives(normalizedIncentives);
     }
   };
 
@@ -1314,10 +1412,10 @@ export default function PayrollPageClient({
     setIsSavingPayrollRun(true);
     try {
       const manualDeductions = editEmployeeDeductions.filter(
-        (ed) => ed.deductions.length > 0
+        (ed) => ed.deductions.length > 0,
       );
       const incentives = editEmployeeIncentives.filter(
-        (ei) => ei.incentives.length > 0
+        (ei) => ei.incentives.length > 0,
       );
 
       await updatePayrollRun({
@@ -1598,17 +1696,57 @@ export default function PayrollPageClient({
               value={filterMonth}
               onChange={setFilterMonth}
               className="min-w-[220px]"
+              triggerClassName="w-full sm:w-[220px]"
             />
           </CardHeader>
           <CardContent>
             <PayrollRunsTable
-              payrollRuns={filteredPayrollRuns || []}
+              payrollRuns={paginatedPayrollRuns || []}
               onViewSummary={handleViewSummary}
               onViewPayslips={handleViewPayslips}
               onEdit={handleEditPayrollRun}
               onStatusChange={handleStatusChange}
               onDelete={handleDeletePayrollRun}
             />
+            {filteredPayrollRuns.length > payrollRunsPageSize && (
+              <div className="flex items-center justify-between gap-4 border-t pt-4 mt-4">
+                <p className="text-sm text-muted-foreground">
+                  {(payrollRunsPage - 1) * payrollRunsPageSize + 1}-
+                  {Math.min(
+                    payrollRunsPage * payrollRunsPageSize,
+                    filteredPayrollRuns.length,
+                  )}{" "}
+                  of {filteredPayrollRuns.length}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setPayrollRunsPage((page) => Math.max(1, page - 1))
+                    }
+                    disabled={payrollRunsPage <= 1}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-sm text-muted-foreground">
+                    Page {payrollRunsPage} of {totalPayrollRunPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setPayrollRunsPage((page) =>
+                        Math.min(totalPayrollRunPages, page + 1),
+                      )
+                    }
+                    disabled={payrollRunsPage >= totalPayrollRunPages}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -1684,7 +1822,7 @@ export default function PayrollPageClient({
                 try {
                   await updatePayrollRunStatus(
                     selectedPayrollRun._id,
-                    "finalized"
+                    "finalized",
                   );
                   await loadPayrollRuns();
                   toast({
@@ -1743,7 +1881,7 @@ export default function PayrollPageClient({
                 employeeId: string,
                 deductionType: "sss" | "pagibig" | "philhealth" | "tax",
                 field: "enabled" | "frequency",
-                value: boolean | "full" | "half"
+                value: boolean | "full" | "half",
               ) => {
                 const updated = editGovernmentDeductionSettings.map((gs) => {
                   if (gs.employeeId === employeeId) {
@@ -1784,7 +1922,7 @@ export default function PayrollPageClient({
         <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Delete Payroll Run</DialogTitle>
+              <DialogTitle>Delete Run</DialogTitle>
               <DialogDescription>
                 Are you sure you want to delete this payroll run? This action
                 will permanently remove the payroll run, associated payslips,

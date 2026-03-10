@@ -32,6 +32,7 @@ export const employeeFormSchema = z.object({
     .string()
     .trim()
     .min(1, "Hire date is required"),
+  regularizationDate: z.string().trim().optional(),
   basicSalary: z
     .string()
     .trim()

@@ -2,7 +2,8 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import {
-  calculateTotalLeaveEntitlement,
+  calculateProratedLeave,
+  calculateAnniversaryLeaveFromHire,
   getConvertibleLeaveDays,
 } from "./leaveCalculations";
 
@@ -10,7 +11,7 @@ import {
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "owner" | "admin" | "hr"
+  requiredRole?: "owner" | "admin" | "hr",
 ) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -25,7 +26,7 @@ async function checkAuth(
   // This can happen right after signup before ensureUserRecord is called
   if (!userRecord) {
     throw new Error(
-      "User record not found. Please complete your account setup."
+      "User record not found. Please complete your account setup.",
     );
   }
 
@@ -36,7 +37,7 @@ async function checkAuth(
   // Check user's role in the specific organization
   const userOrg = await (ctx.db.query("userOrganizations") as any)
     .withIndex("by_user_organization", (q: any) =>
-      q.eq("userId", userRecord._id).eq("organizationId", organizationId)
+      q.eq("userId", userRecord._id).eq("organizationId", organizationId),
     )
     .first();
 
@@ -56,7 +57,12 @@ async function checkAuth(
   }
 
   // Write operations (requiredRole set): admin, owner, or that role only
-  if (requiredRole && userRole !== requiredRole && userRole !== "admin" && userRole !== "owner") {
+  if (
+    requiredRole &&
+    userRole !== requiredRole &&
+    userRole !== "admin" &&
+    userRole !== "owner"
+  ) {
     throw new Error("Not authorized");
   }
   // Read operations (no requiredRole): all org members including accounting (for payroll/payslips)
@@ -84,26 +90,29 @@ function calculateWorkingDays(startDate: number, endDate: number): number {
 // Resolve credit type key for non-vacation/sick: customLeaveType when leaveType is "custom", else leaveType (e.g. "emergency")
 function getCreditType(
   leaveType: string,
-  customLeaveType?: string
+  customLeaveType?: string,
 ): "vacation" | "sick" | string {
   if (leaveType === "vacation" || leaveType === "sick") return leaveType;
   return leaveType === "custom" ? customLeaveType || "" : leaveType;
 }
 
-function getBalanceForType(
-  leaveCredits: any,
-  creditType: string
-): number {
+function getBalanceForType(leaveCredits: any, creditType: string): number {
   if (creditType === "vacation") return leaveCredits.vacation?.balance ?? 0;
   if (creditType === "sick") return leaveCredits.sick?.balance ?? 0;
   const custom = leaveCredits.custom?.find((c: any) => c.type === creditType);
   return custom?.balance ?? 0;
 }
 
+function hasTrackedCreditType(leaveCredits: any, creditType: string): boolean {
+  if (creditType === "vacation") return !!leaveCredits.vacation;
+  if (creditType === "sick") return !!leaveCredits.sick;
+  return Boolean(leaveCredits.custom?.some((c: any) => c.type === creditType));
+}
+
 function deductCreditsForType(
   leaveCredits: any,
   creditType: string,
-  numberOfDays: number
+  numberOfDays: number,
 ): void {
   if (creditType === "vacation") {
     leaveCredits.vacation.used += numberOfDays;
@@ -133,8 +142,8 @@ export const getLeaveRequests = query({
         v.literal("pending"),
         v.literal("approved"),
         v.literal("rejected"),
-        v.literal("cancelled")
-      )
+        v.literal("cancelled"),
+      ),
     ),
   },
   handler: async (ctx, args) => {
@@ -152,14 +161,14 @@ export const getLeaveRequests = query({
 
     let requests = await (ctx.db.query("leaveRequests") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .collect();
 
     // If employee role and no employeeId specified, filter to their own requests
     if (userRecord.role === "employee" && !args.employeeId) {
       requests = requests.filter(
-        (r: any) => r.employeeId === userRecord.employeeId
+        (r: any) => r.employeeId === userRecord.employeeId,
       );
     } else if (args.employeeId) {
       requests = requests.filter((r: any) => r.employeeId === args.employeeId);
@@ -212,12 +221,15 @@ export const createLeaveRequest = mutation({
       v.literal("emergency"),
       v.literal("maternity"),
       v.literal("paternity"),
-      v.literal("custom")
+      v.literal("custom"),
     ),
     customLeaveType: v.optional(v.string()),
     startDate: v.number(),
     endDate: v.number(),
     reason: v.string(),
+    formTemplateContent: v.optional(v.string()),
+    filledFormContent: v.optional(v.string()),
+    signatureDataUrl: v.optional(v.string()),
     supportingDocuments: v.optional(v.array(v.id("_storage"))),
   },
   handler: async (ctx, args) => {
@@ -248,8 +260,11 @@ export const createLeaveRequest = mutation({
     if (args.leaveType === "custom" && !args.customLeaveType) {
       throw new Error("Custom leave type name is required");
     }
-    const balance = getBalanceForType(employee.leaveCredits, creditType);
-    if (balance < numberOfDays) {
+    const trackedCredit = hasTrackedCreditType(employee.leaveCredits, creditType);
+    const balance = trackedCredit
+      ? getBalanceForType(employee.leaveCredits, creditType)
+      : Number.POSITIVE_INFINITY;
+    if (trackedCredit && balance < numberOfDays) {
       const typeLabel =
         creditType === "vacation"
           ? "vacation"
@@ -257,7 +272,7 @@ export const createLeaveRequest = mutation({
             ? "sick"
             : creditType || "this leave type";
       throw new Error(
-        `Insufficient ${typeLabel} leave credits. Available: ${balance} days, Requested: ${numberOfDays} days`
+        `Insufficient ${typeLabel} leave credits. Available: ${balance} days, Requested: ${numberOfDays} days`,
       );
     }
 
@@ -271,6 +286,9 @@ export const createLeaveRequest = mutation({
       endDate: args.endDate,
       numberOfDays,
       reason: args.reason,
+      formTemplateContent: args.formTemplateContent,
+      filledFormContent: args.filledFormContent,
+      signatureDataUrl: args.signatureDataUrl,
       status: "pending",
       supportingDocuments: args.supportingDocuments,
       filedDate: now,
@@ -305,11 +323,14 @@ export const approveLeaveRequest = mutation({
     const leaveCredits = JSON.parse(JSON.stringify(employee.leaveCredits));
     const creditType = getCreditType(
       request.leaveType,
-      request.customLeaveType
+      request.customLeaveType,
     );
-    const balance = getBalanceForType(leaveCredits, creditType);
+    const trackedCredit = hasTrackedCreditType(leaveCredits, creditType);
+    const balance = trackedCredit
+      ? getBalanceForType(leaveCredits, creditType)
+      : Number.POSITIVE_INFINITY;
 
-    if (balance < request.numberOfDays) {
+    if (trackedCredit && balance < request.numberOfDays) {
       const typeLabel =
         creditType === "vacation"
           ? "vacation"
@@ -317,12 +338,14 @@ export const approveLeaveRequest = mutation({
             ? "sick"
             : creditType || "this leave type";
       throw new Error(
-        `Insufficient ${typeLabel} leave credits. Available: ${balance} days, Requested: ${request.numberOfDays} days`
+        `Insufficient ${typeLabel} leave credits. Available: ${balance} days, Requested: ${request.numberOfDays} days`,
       );
     }
 
-    deductCreditsForType(leaveCredits, creditType, request.numberOfDays);
-    await ctx.db.patch(request.employeeId, { leaveCredits });
+    if (trackedCredit) {
+      deductCreditsForType(leaveCredits, creditType, request.numberOfDays);
+      await ctx.db.patch(request.employeeId, { leaveCredits });
+    }
 
     // Update leave request
     await ctx.db.patch(args.leaveRequestId, {
@@ -404,7 +427,7 @@ export const getLeaveTypes = query({
 
     const leaveTypes = await (ctx.db.query("leaveTypes") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .collect();
 
@@ -461,50 +484,102 @@ export const getEmployeeLeaveCredits = query({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    // Default annual leave entitlement (can be configured per organization)
-    const annualLeaveEntitlement = 8; // Default 8 days per year
-
-    // Calculate prorated and anniversary leave
-    const entitlement = calculateTotalLeaveEntitlement(
-      annualLeaveEntitlement,
-      employee.employment.hireDate,
-      employee.employment.regularizationDate,
-      Date.now()
+    const settings = await (ctx.db.query("settings") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .first();
+    const leaveTypesConfig = settings?.leaveTypes || [];
+    const vacationConfig = leaveTypesConfig.find(
+      (t: any) => t.type === "vacation",
     );
+    const sickConfig = leaveTypesConfig.find((t: any) => t.type === "sick");
+    const vacationMax = vacationConfig?.defaultCredits ?? 15;
+    const sickMax = sickConfig?.defaultCredits ?? 15;
+    const proratedLeave = settings?.proratedLeave === true;
+    const grantLeaveUponRegularization =
+      settings?.grantLeaveUponRegularization === true;
+    const hireDate = employee.employment.hireDate;
+    const regularizationDate = employee.employment.regularizationDate;
+    const prorationStartDate =
+      grantLeaveUponRegularization && regularizationDate
+        ? regularizationDate
+        : hireDate;
+    const now = Date.now();
 
-    // Get current leave credits
-    const leaveCredits = { ...employee.leaveCredits };
+    // Build effective leave credits: use stored values, but compute anniversary from hire date
+    const leaveCredits = JSON.parse(JSON.stringify(employee.leaveCredits));
+    const anniversaryTypes = new Set(
+      leaveTypesConfig
+        .filter(
+          (t: any) => t.isAnniversary === true || t.type === "anniversary",
+        )
+        .map((t: any) => t.type),
+    );
+    if (leaveCredits.custom && Array.isArray(leaveCredits.custom)) {
+      for (const c of leaveCredits.custom) {
+        if (anniversaryTypes.has(c.type)) {
+          const total = calculateAnniversaryLeaveFromHire(hireDate, now);
+          c.total = total;
+          c.balance = Math.max(0, total - (c.used || 0));
+        }
+      }
+    }
 
     // Calculate convertible leave days (first 5 are convertible)
     const vacationConvertible = getConvertibleLeaveDays(
-      leaveCredits.vacation.balance
+      leaveCredits.vacation?.balance ?? 0,
     );
-    const sickConvertible = getConvertibleLeaveDays(leaveCredits.sick.balance);
+    const sickConvertible = getConvertibleLeaveDays(
+      leaveCredits.sick?.balance ?? 0,
+    );
 
-    // Return enhanced leave credits with calculations
+    const vacationProrated = proratedLeave
+      ? calculateProratedLeave(vacationMax, prorationStartDate, now)
+      : vacationMax;
+    const sickProrated = proratedLeave
+      ? calculateProratedLeave(sickMax, prorationStartDate, now)
+      : sickMax;
+
+    const anniversaryTotal =
+      leaveCredits.custom?.reduce(
+        (sum: number, c: any) =>
+          anniversaryTypes.has(c.type) ? sum + (c.total ?? 0) : sum,
+        0,
+      ) ?? 0;
+    const totalEntitlement =
+      (leaveCredits.vacation?.total ?? 0) +
+      (leaveCredits.sick?.total ?? 0) +
+      (leaveCredits.custom?.reduce(
+        (sum: number, c: any) => sum + (c.total ?? 0),
+        0,
+      ) ?? 0);
+
     return {
       ...leaveCredits,
-      // Add calculated entitlements
+      maxCredits: { vacation: vacationMax, sick: sickMax },
       calculations: {
-        proratedLeave: entitlement.proratedLeave,
-        anniversaryLeave: entitlement.anniversaryLeave,
-        totalEntitlement: entitlement.totalEntitlement,
-        annualLeaveEntitlement,
+        vacationProrated,
+        sickProrated,
+        vacationMax,
+        sickMax,
+        proratedLeave: vacationProrated + sickProrated,
+        anniversaryLeave: anniversaryTotal,
+        totalEntitlement,
       },
-      // Add convertible leave information
       convertible: {
         vacation: {
           convertible: vacationConvertible,
           nonConvertible: Math.max(
             0,
-            leaveCredits.vacation.balance - vacationConvertible
+            (leaveCredits.vacation?.balance ?? 0) - vacationConvertible,
           ),
         },
         sick: {
           convertible: sickConvertible,
           nonConvertible: Math.max(
             0,
-            leaveCredits.sick.balance - sickConvertible
+            (leaveCredits.sick?.balance ?? 0) - sickConvertible,
           ),
         },
       },
@@ -520,7 +595,7 @@ export const updateEmployeeLeaveCredits = mutation({
     leaveType: v.union(
       v.literal("vacation"),
       v.literal("sick"),
-      v.literal("custom")
+      v.literal("custom"),
     ),
     customType: v.optional(v.string()),
     total: v.optional(v.number()),
@@ -570,7 +645,7 @@ export const updateEmployeeLeaveCredits = mutation({
         leaveCredits.custom = [];
       }
       const customIndex = leaveCredits.custom.findIndex(
-        (c: any) => c.type === args.customType
+        (c: any) => c.type === args.customType,
       );
       if (customIndex >= 0) {
         const custom = { ...leaveCredits.custom[customIndex] };
@@ -631,7 +706,7 @@ export const convertLeaveToCash = mutation({
     // Check if employee has enough balance
     if (targetLeave.balance < args.daysToConvert) {
       throw new Error(
-        `Insufficient ${args.leaveType} leave balance. Available: ${targetLeave.balance} days`
+        `Insufficient ${args.leaveType} leave balance. Available: ${targetLeave.balance} days`,
       );
     }
 
@@ -639,7 +714,7 @@ export const convertLeaveToCash = mutation({
     const convertibleDays = getConvertibleLeaveDays(targetLeave.balance);
     if (args.daysToConvert > convertibleDays) {
       throw new Error(
-        `Only the first 5 leave days are convertible to cash. Convertible: ${convertibleDays} days`
+        `Only the first 5 leave days are convertible to cash. Convertible: ${convertibleDays} days`,
       );
     }
 
