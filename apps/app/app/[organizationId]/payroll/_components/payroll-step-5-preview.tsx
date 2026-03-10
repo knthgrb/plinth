@@ -130,6 +130,7 @@ export function PayrollStep5Preview({
               undertimeHours: preview.undertimeHours || 0,
               overtimeHours: preview.overtimeHours || 0,
               holidayPay: preview.holidayPay || 0,
+              holidayPayType: preview.holidayPayType ?? preview.payroll?.holidayPayType,
               restDayPay: preview.restDayPay || 0,
               nightDiffPay: preview.nightDiffPay || 0,
               overtimeRegular: preview.overtimeRegular || 0,

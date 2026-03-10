@@ -29,6 +29,8 @@ export type PayrollBaseResult = {
   undertimeHours: number;
   overtimeHours: number;
   holidayPay: number;
+  /** When holidayPay > 0, which type produced it so the payslip can show "Legal" vs "Special Holiday". */
+  holidayPayType?: "regular" | "special";
   nightDiffPay: number;
   overtimeRegular: number;
   overtimeRestDay: number;
@@ -47,19 +49,25 @@ export type PayrollBaseResult = {
   payrollRates: ResolvedPayrollRates;
 };
 
-/** Use UTC so rest day / day-of-week is identical in local and production (Convex runs in UTC). */
+// Asia/Manila (UTC+8) — payroll dates and rest day use Manila so local and prod match
+const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+function getManilaDateParts(date: number): { y: number; m: number; d: number; dayOfWeek: number } {
+  const d = new Date(date + MANILA_OFFSET_MS);
+  return {
+    y: d.getUTCFullYear(),
+    m: d.getUTCMonth(),
+    d: d.getUTCDate(),
+    dayOfWeek: d.getUTCDay(),
+  };
+}
+
 function getDayName(date: number): string {
   const dayNames = [
-    "sunday",
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
+    "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
   ];
-  const dateObj = new Date(date);
-  return dayNames[dateObj.getUTCDay()];
+  const { dayOfWeek } = getManilaDateParts(date);
+  return dayNames[dayOfWeek];
 }
 
 function isRestDay(date: number, employeeSchedule: any): boolean {
@@ -72,17 +80,10 @@ function isRestDay(date: number, employeeSchedule: any): boolean {
   if (!daySchedule || typeof daySchedule.isWorkday !== "boolean") return false;
 
   if (employeeSchedule.scheduleOverrides) {
-    const d = new Date(date);
-    const dY = d.getUTCFullYear();
-    const dM = d.getUTCMonth();
-    const dD = d.getUTCDate();
+    const { y: dY, m: dM, d: dD } = getManilaDateParts(date);
     const override = employeeSchedule.scheduleOverrides.find((o: any) => {
-      const oD = new Date(o.date);
-      return (
-        oD.getUTCFullYear() === dY &&
-        oD.getUTCMonth() === dM &&
-        oD.getUTCDate() === dD
-      );
+      const oParts = getManilaDateParts(new Date(o.date).getTime());
+      return oParts.y === dY && oParts.m === dM && oParts.d === dD;
     });
     if (override) {
       return false;
@@ -124,36 +125,29 @@ function getPerCutoffAmount(
   return payFrequency === "bimonthly" ? monthlyAmount / 2 : monthlyAmount;
 }
 
-/** Normalize to UTC midnight so cutoff/attendance day grouping is identical in local and production. */
+/** Normalize to calendar day in Asia/Manila so local and production match. */
 function toLocalDayTimestamp(date: number): number {
-  const dateObj = new Date(date);
-  return Date.UTC(
-    dateObj.getUTCFullYear(),
-    dateObj.getUTCMonth(),
-    dateObj.getUTCDate(),
-  );
+  const { y, m, d } = getManilaDateParts(date);
+  return Date.UTC(y, m, d);
 }
 
 function holidayMatchesDate(holiday: any, date: number): boolean {
   const effectiveTimestamp = holiday.offsetDate ?? holiday.date;
-  const holidayDate = new Date(effectiveTimestamp);
-  const targetDate = new Date(date);
+  const targetParts = getManilaDateParts(date);
+  const holidayParts = getManilaDateParts(new Date(effectiveTimestamp).getTime());
 
   if (holiday.isRecurring) {
-    return (
-      holidayDate.getUTCMonth() === targetDate.getUTCMonth() &&
-      holidayDate.getUTCDate() === targetDate.getUTCDate()
-    );
+    return holidayParts.m === targetParts.m && holidayParts.d === targetParts.d;
   }
 
-  if (holiday.year != null && holiday.year !== targetDate.getUTCFullYear()) {
+  if (holiday.year != null && holiday.year !== targetParts.y) {
     return false;
   }
 
   return (
-    holidayDate.getUTCFullYear() === targetDate.getUTCFullYear() &&
-    holidayDate.getUTCMonth() === targetDate.getUTCMonth() &&
-    holidayDate.getUTCDate() === targetDate.getUTCDate()
+    holidayParts.y === targetParts.y &&
+    holidayParts.m === targetParts.m &&
+    holidayParts.d === targetParts.d
   );
 }
 
@@ -162,18 +156,19 @@ function getHolidayInfo(
   holidays: any[],
   attendanceRecord?: any,
 ): { isHoliday: boolean; holidayType?: HolidayType } {
-  if (attendanceRecord?.isHoliday && attendanceRecord?.holidayType) {
-    return {
-      isHoliday: true,
-      holidayType: attendanceRecord.holidayType,
-    };
-  }
-
+  // Prefer holiday list (source of truth) so prod and local match; use Manila date matching.
   const holiday = holidays.find((entry) => holidayMatchesDate(entry, date));
   if (holiday) {
     return {
       isHoliday: true,
       holidayType: holiday.type,
+    };
+  }
+  // No matching holiday by date — use attendance if marked as holiday (e.g. one-off).
+  if (attendanceRecord?.isHoliday && attendanceRecord?.holidayType) {
+    return {
+      isHoliday: true,
+      holidayType: attendanceRecord.holidayType,
     };
   }
 
@@ -240,12 +235,10 @@ function getUndertimeHoursFromAttendance(att: {
   undertime?: number;
   undertimeManualOverride?: boolean;
 }): number {
+  // Only use stored undertime when explicitly overridden (e.g. make-up). Otherwise always
+  // compute from scheduleOut/actualOut (early departure only) so we never double-count with late.
   if (att.undertimeManualOverride === true) {
     return att.undertime ?? 0;
-  }
-
-  if (att.undertime !== undefined && att.undertime !== null) {
-    return att.undertime;
   }
 
   const scheduleMinutes = timeStringToMinutes(att.scheduleOut);
@@ -378,6 +371,8 @@ export function calculatePayrollBaseFromRecords(args: {
   let lateDeduction = 0;
   let undertimeDeduction = 0;
   let absentDeduction = 0;
+  let holidayPayFromRegular = 0;
+  let holidayPayFromSpecial = 0;
 
   for (const att of periodAttendance) {
     if (att.status === "present" || att.status === "half-day") {
@@ -456,11 +451,15 @@ export function calculatePayrollBaseFromRecords(args: {
       }
 
       if (holidayType === "regular") {
-        holidayPay +=
+        const amount =
           basicDailyRate * payrollRates.regularHolidayRate * dayMultiplier;
+        holidayPay += amount;
+        holidayPayFromRegular += amount;
       } else if (holidayType === "special") {
-        holidayPay +=
+        const amount =
           basicDailyRate * payrollRates.specialHolidayRate * dayMultiplier;
+        holidayPay += amount;
+        holidayPayFromSpecial += amount;
       }
 
       const dayNightDiffHours = calculateNightDiffHours(
@@ -492,7 +491,9 @@ export function calculatePayrollBaseFromRecords(args: {
         if (salaryType !== "monthly") {
           basicPay += dailyRate;
         }
-        holidayPay += basicDailyRate * payrollRates.regularHolidayRate;
+        const amount = basicDailyRate * payrollRates.regularHolidayRate;
+        holidayPay += amount;
+        holidayPayFromRegular += amount;
         continue;
       }
 
@@ -535,7 +536,9 @@ export function calculatePayrollBaseFromRecords(args: {
       if (salaryType !== "monthly") {
         basicPay += dailyRate;
       }
-      holidayPay += basicDailyRate * payrollRates.regularHolidayRate;
+      const amount = basicDailyRate * payrollRates.regularHolidayRate;
+      holidayPay += amount;
+      holidayPayFromRegular += amount;
       continue;
     }
 
@@ -558,6 +561,13 @@ export function calculatePayrollBaseFromRecords(args: {
     }
   }
 
+  const holidayPayType =
+    holidayPayFromSpecial > 0
+      ? "special"
+      : holidayPayFromRegular > 0
+        ? "regular"
+        : undefined;
+
   return {
     basicPay,
     daysWorked,
@@ -566,6 +576,7 @@ export function calculatePayrollBaseFromRecords(args: {
     undertimeHours,
     overtimeHours,
     holidayPay,
+    holidayPayType,
     nightDiffPay,
     overtimeRegular,
     overtimeRestDay,

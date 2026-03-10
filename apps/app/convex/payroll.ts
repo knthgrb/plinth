@@ -496,12 +496,9 @@ function getUndertimeHoursFromAttendance(att: {
   undertime?: number;
   undertimeManualOverride?: boolean;
 }): number {
+  // Only use stored undertime when explicitly overridden; otherwise compute from scheduleOut/actualOut (early departure only).
   if (att.undertimeManualOverride === true) {
     return att.undertime ?? 0;
-  }
-
-  if (att.undertime !== undefined && att.undertime !== null) {
-    return att.undertime;
   }
 
   const scheduleMinutes = timeStringToMinutes(att.scheduleOut);
@@ -542,6 +539,7 @@ type PayrollBaseResult = {
   undertimeHours: number;
   overtimeHours: number;
   holidayPay: number;
+  holidayPayType?: "regular" | "special";
   nightDiffPay: number;
   overtimeRegular: number;
   overtimeRestDay: number;
@@ -803,6 +801,7 @@ export const computeEmployeePayroll = query({
       undertimeHours: payrollBase.undertimeHours,
       overtimeHours: payrollBase.overtimeHours,
       holidayPay: payrollBase.holidayPay,
+      holidayPayType: payrollBase.holidayPayType,
       restDayPay: 0,
       nightDiffPay: payrollBase.nightDiffPay,
       overtimeRegular: payrollBase.overtimeRegular,
@@ -1337,6 +1336,7 @@ export const createPayrollRun = mutation({
         overtimeHours: payrollBase.overtimeHours,
         holidayPay:
           payrollBase.holidayPay > 0 ? round2(payrollBase.holidayPay) : undefined,
+        holidayPayType: payrollBase.holidayPayType,
         nightDiffPay:
           payrollBase.nightDiffPay > 0
             ? round2(payrollBase.nightDiffPay)
@@ -1875,6 +1875,7 @@ export const updatePayrollRun = mutation({
             payrollBase.holidayPay > 0
               ? round2(payrollBase.holidayPay)
               : undefined,
+          holidayPayType: payrollBase.holidayPayType,
           nightDiffPay:
             payrollBase.nightDiffPay > 0
               ? round2(payrollBase.nightDiffPay)

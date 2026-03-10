@@ -830,10 +830,8 @@ export function BulkAddAttendanceDialog({
             : 0;
 
         const calculatedLateValue =
-          dayTimes.status === "present" &&
-          finalTimeIn &&
-          calculatedUndertimeValue === 0
-            ? calculateLate(daySchedule.in, finalTimeIn, false)
+          dayTimes.status === "present" && finalTimeIn
+            ? calculateLate(daySchedule.in, finalTimeIn)
             : 0;
 
         // Overtime: user-set only (no auto-calculation)
@@ -1362,13 +1360,8 @@ export function BulkAddAttendanceDialog({
                             const calculatedLate =
                               daySchedule &&
                               dayTimes.status === "present" &&
-                              dayTimes.timeIn &&
-                              calculatedUndertime === 0
-                                ? calculateLate(
-                                    daySchedule.in,
-                                    dayTimes.timeIn,
-                                    false,
-                                  )
+                              dayTimes.timeIn
+                                ? calculateLate(daySchedule.in, dayTimes.timeIn)
                                 : 0;
 
                             // Use manual values if enabled, otherwise use calculated (late and undertime in mins in UI). Overtime is user-set only.

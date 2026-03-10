@@ -89,6 +89,12 @@ export function PayslipDetail({
     (api as any).settings.getSettings,
     organization?._id ? { organizationId: organization._id } : "skip"
   );
+
+  // When payslip has no holidayPayType (e.g. old runs), infer from org holidays in cutoff so label is correct.
+  const holidaysInRange = useQuery(
+    (api as any).holidays.getHolidays,
+    organization?._id ? { organizationId: organization._id } : "skip"
+  );
   const dailyRateWorkingDaysPerYear =
     settings?.payrollSettings?.dailyRateWorkingDaysPerYear ?? 261;
 
@@ -259,11 +265,73 @@ export function PayslipDetail({
     getAttendanceDeductionAmount((name) => name.startsWith("absent")) ||
     (salaryType === "monthly" ? calculatedAbsences * dailyRate : 0);
   const holidayPayAmount = payslip.holidayPay ?? 0;
+  const hasLegalHolidayOvertime = (payslip.overtimeLegalHoliday ?? 0) > 0;
+  const hasSpecialHolidayOvertime = (payslip.overtimeSpecialHoliday ?? 0) > 0;
+
+  // Infer holiday type from org holidays in cutoff when payslip has no holidayPayType (e.g. old runs).
+  // Use same Manila day boundaries as backend (payroll-calculations.ts).
+  const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  const getManilaDateParts = (ts: number) => {
+    const d = new Date(ts + MANILA_OFFSET_MS);
+    return {
+      y: d.getUTCFullYear(),
+      m: d.getUTCMonth(),
+      d: d.getUTCDate(),
+    };
+  };
+  const toLocalDayTimestamp = (ts: number) => {
+    const { y, m, d } = getManilaDateParts(ts);
+    return Date.UTC(y, m, d);
+  };
+  const holidayMatchesDate = (holiday: { offsetDate?: number; date: number; isRecurring?: boolean; year?: number }, dateTs: number) => {
+    const effectiveTs = holiday.offsetDate ?? holiday.date;
+    const targetParts = getManilaDateParts(dateTs);
+    const holidayParts = getManilaDateParts(typeof effectiveTs === "number" ? effectiveTs : new Date(effectiveTs).getTime());
+    if (holiday.isRecurring) {
+      return holidayParts.m === targetParts.m && holidayParts.d === targetParts.d;
+    }
+    if (holiday.year != null && holiday.year !== targetParts.y) return false;
+    return holidayParts.y === targetParts.y && holidayParts.m === targetParts.m && holidayParts.d === targetParts.d;
+  };
+  let inferredSpecialInRange = false;
+  let inferredRegularInRange = false;
+  if (
+    holidayPayAmount > 0 &&
+    payslip.holidayPayType == null &&
+    Array.isArray(holidaysInRange) &&
+    cutoffStart != null &&
+    cutoffEnd != null
+  ) {
+    const startDayTs = toLocalDayTimestamp(cutoffStart);
+    const endDayTs = toLocalDayTimestamp(cutoffEnd);
+    for (let dayTs = startDayTs; dayTs <= endDayTs; dayTs += ONE_DAY_MS) {
+      for (const h of holidaysInRange as { type?: string; offsetDate?: number; date: number; isRecurring?: boolean; year?: number }[]) {
+        if (h.type === "special_working") continue;
+        if (!holidayMatchesDate(h, dayTs)) continue;
+        if (h.type === "special") inferredSpecialInRange = true;
+        else if (h.type === "regular") inferredRegularInRange = true;
+      }
+    }
+  }
+
   const holidayPayLabel =
     holidayPayAmount > 0
-      ? holidayPayAmount >= dailyRate * 0.75
-        ? "Legal Holiday"
-        : "Special Holiday"
+      ? payslip.holidayPayType === "special"
+        ? "Special Holiday"
+        : payslip.holidayPayType === "regular"
+          ? "Legal Holiday"
+          : inferredSpecialInRange
+            ? "Special Holiday"
+            : inferredRegularInRange
+              ? "Legal Holiday"
+              : hasLegalHolidayOvertime
+                ? "Legal Holiday"
+                : hasSpecialHolidayOvertime
+                  ? "Special Holiday"
+                  : holidayPayAmount >= dailyRate * 0.75
+                    ? "Legal Holiday"
+                    : "Special Holiday"
       : "Holiday";
 
   // Basic pay shows the full amount (₱5,000 for bi-monthly)
@@ -501,8 +569,8 @@ export function PayslipDetail({
                         </div>
                       )}
                     {(payslip.overtimeSpecialHoliday ?? 0) > 0 && (
-                        <div className="flex justify-between">
-                          <span>Special Holiday</span>
+                      <div className="flex justify-between">
+                        <span>Overtime - Special Holiday</span>
                           <span>
                             ₱
                             {payslip.overtimeSpecialHoliday!.toLocaleString(
@@ -516,8 +584,8 @@ export function PayslipDetail({
                         </div>
                       )}
                     {(payslip.overtimeSpecialHolidayExcess ?? 0) > 0 && (
-                        <div className="flex justify-between">
-                          <span>Special Holiday excess of 8 hrs.</span>
+                      <div className="flex justify-between">
+                        <span>Overtime - Special Holiday excess of 8 hrs.</span>
                           <span>
                             ₱
                             {payslip.overtimeSpecialHolidayExcess!.toLocaleString(
@@ -531,8 +599,8 @@ export function PayslipDetail({
                         </div>
                       )}
                     {(payslip.overtimeLegalHoliday ?? 0) > 0 && (
-                        <div className="flex justify-between">
-                          <span>Legal Holiday</span>
+                      <div className="flex justify-between">
+                        <span>Overtime - Legal Holiday</span>
                           <span>
                             ₱
                             {payslip.overtimeLegalHoliday!.toLocaleString(
@@ -546,8 +614,8 @@ export function PayslipDetail({
                         </div>
                       )}
                     {(payslip.overtimeLegalHolidayExcess ?? 0) > 0 && (
-                        <div className="flex justify-between">
-                          <span>Legal Holiday excess of 8 hrs.</span>
+                      <div className="flex justify-between">
+                        <span>Overtime - Legal Holiday excess of 8 hrs.</span>
                           <span>
                             ₱
                             {payslip.overtimeLegalHolidayExcess!.toLocaleString(

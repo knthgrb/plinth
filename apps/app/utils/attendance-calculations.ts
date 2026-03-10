@@ -1,16 +1,15 @@
 /**
- * Calculate late time in minutes
+ * Calculate late time in minutes (arrival after scheduled start).
+ * Per policy: late and undertime are independent — late = late arrival only.
  * @param scheduleIn - Scheduled time in (HH:mm format)
  * @param actualIn - Actual time in (HH:mm format)
- * @param hasUndertime - Whether employee has undertime (if true, don't count as late)
- * @returns Minutes late, or 0 if not late or has undertime
+ * @returns Minutes late, or 0 if on time or no actualIn
  */
 export function calculateLate(
   scheduleIn: string,
   actualIn: string | undefined,
-  hasUndertime: boolean = false,
 ): number {
-  if (!actualIn || hasUndertime) return 0;
+  if (!actualIn) return 0;
 
   const [scheduleHour, scheduleMin] = scheduleIn.split(":").map(Number);
   const [actualHour, actualMin] = actualIn.split(":").map(Number);
@@ -23,39 +22,29 @@ export function calculateLate(
 }
 
 /**
- * Calculate undertime in hours
- * Assumes 1 hour lunch break (8 hours work = 9am-6pm schedule)
- * @param scheduleIn - Scheduled time in (HH:mm format)
+ * Calculate undertime in hours (early departure only).
+ * Per policy: undertime = time left before scheduled end (scheduleOut - actualOut).
+ * Do NOT use (scheduled work - actual work), which would double-count late arrival as undertime.
  * @param scheduleOut - Scheduled time out (HH:mm format)
- * @param actualIn - Actual time in (HH:mm format)
  * @param actualOut - Actual time out (HH:mm format)
- * @returns Hours undertime
+ * @returns Hours undertime (early departure)
  */
 export function calculateUndertime(
-  scheduleIn: string,
+  _scheduleIn: string,
   scheduleOut: string,
-  actualIn: string | undefined,
+  _actualIn: string | undefined,
   actualOut: string | undefined,
 ): number {
-  if (!actualIn || !actualOut) return 0;
+  if (!actualOut) return 0;
 
-  const [scheduleInHour, scheduleInMin] = scheduleIn.split(":").map(Number);
   const [scheduleOutHour, scheduleOutMin] = scheduleOut.split(":").map(Number);
-  const [actualInHour, actualInMin] = actualIn.split(":").map(Number);
   const [actualOutHour, actualOutMin] = actualOut.split(":").map(Number);
 
-  // Calculate scheduled work hours (assuming 1 hour lunch break)
-  const scheduleInMinutes = scheduleInHour * 60 + scheduleInMin;
   const scheduleOutMinutes = scheduleOutHour * 60 + scheduleOutMin;
-  const scheduledWorkMinutes = scheduleOutMinutes - scheduleInMinutes - 60; // Subtract 1 hour lunch
-
-  // Calculate actual work hours
-  const actualInMinutes = actualInHour * 60 + actualInMin;
   const actualOutMinutes = actualOutHour * 60 + actualOutMin;
-  const actualWorkMinutes = actualOutMinutes - actualInMinutes - 60; // Subtract 1 hour lunch
 
-  // Calculate undertime
-  const undertimeMinutes = scheduledWorkMinutes - actualWorkMinutes;
+  // Undertime = early departure only (left before scheduled end)
+  const undertimeMinutes = Math.max(0, scheduleOutMinutes - actualOutMinutes);
   const undertimeHours = undertimeMinutes / 60;
 
   return undertimeHours > 0 ? undertimeHours : 0;

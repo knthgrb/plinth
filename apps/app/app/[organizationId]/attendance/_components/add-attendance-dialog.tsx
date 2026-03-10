@@ -98,7 +98,7 @@ export function AddAttendanceDialog({
       timeOut,
     );
     // If employee has undertime, don't count as late
-    return calculateLate(employeeSchedule.in, timeIn, calculatedUndertime > 0);
+    return calculateLate(employeeSchedule.in, timeIn);
   }, [employeeSchedule, timeIn, timeOut, status]);
 
   const calculatedUndertime = useMemo(() => {

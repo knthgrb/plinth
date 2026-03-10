@@ -444,6 +444,8 @@ export default defineSchema({
     undertimeHours: v.number(),
     overtimeHours: v.number(),
     holidayPay: v.optional(v.number()),
+    /** When holidayPay > 0: "regular" = Legal Holiday, "special" = Special Holiday (for label only). */
+    holidayPayType: v.optional(v.union(v.literal("regular"), v.literal("special"))),
     restDayPay: v.optional(v.number()),
     nightDiffPay: v.optional(v.number()),
     overtimeRegular: v.optional(v.number()),

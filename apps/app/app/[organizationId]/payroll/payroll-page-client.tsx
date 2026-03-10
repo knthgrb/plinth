@@ -1133,6 +1133,7 @@ export default function PayrollPageClient({
           undertimeHours,
           overtimeHours: payroll.overtimeHours || 0,
           holidayPay: payroll.holidayPay || 0,
+          holidayPayType: payroll.holidayPayType,
           restDayPay: payroll.restDayPay || 0,
           nightDiffPay: payroll.nightDiffPay || 0,
           overtimeRegular: payroll.overtimeRegular || 0,

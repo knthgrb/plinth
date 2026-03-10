@@ -2,13 +2,12 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 
-// Helper functions for calculating late and undertime
+// Late = late arrival only. Undertime = early departure only (see calculateUndertime).
 function calculateLate(
   scheduleIn: string,
   actualIn: string | undefined,
-  hasUndertime: boolean = false,
 ): number {
-  if (!actualIn || hasUndertime) return 0;
+  if (!actualIn) return 0;
 
   const [scheduleHour, scheduleMin] = scheduleIn.split(":").map(Number);
   const [actualHour, actualMin] = actualIn.split(":").map(Number);
@@ -20,31 +19,23 @@ function calculateLate(
   return lateMinutes > 0 ? lateMinutes : 0;
 }
 
+// Undertime = early departure only (left before scheduled end). Do not use (scheduled work - actual work)
+// or late arrival would be double-counted as undertime.
 function calculateUndertime(
-  scheduleIn: string,
+  _scheduleIn: string,
   scheduleOut: string,
-  actualIn: string | undefined,
+  _actualIn: string | undefined,
   actualOut: string | undefined,
 ): number {
-  if (!actualIn || !actualOut) return 0;
+  if (!actualOut) return 0;
 
-  const [scheduleInHour, scheduleInMin] = scheduleIn.split(":").map(Number);
   const [scheduleOutHour, scheduleOutMin] = scheduleOut.split(":").map(Number);
-  const [actualInHour, actualInMin] = actualIn.split(":").map(Number);
   const [actualOutHour, actualOutMin] = actualOut.split(":").map(Number);
 
-  // Calculate scheduled work hours (assuming 1 hour lunch break)
-  const scheduleInMinutes = scheduleInHour * 60 + scheduleInMin;
   const scheduleOutMinutes = scheduleOutHour * 60 + scheduleOutMin;
-  const scheduledWorkMinutes = scheduleOutMinutes - scheduleInMinutes - 60; // Subtract 1 hour lunch
-
-  // Calculate actual work hours
-  const actualInMinutes = actualInHour * 60 + actualInMin;
   const actualOutMinutes = actualOutHour * 60 + actualOutMin;
-  const actualWorkMinutes = actualOutMinutes - actualInMinutes - 60; // Subtract 1 hour lunch
 
-  // Calculate undertime
-  const undertimeMinutes = scheduledWorkMinutes - actualWorkMinutes;
+  const undertimeMinutes = Math.max(0, scheduleOutMinutes - actualOutMinutes);
   const undertimeHours = undertimeMinutes / 60;
 
   return undertimeHours > 0 ? undertimeHours : 0;
@@ -294,15 +285,12 @@ export const createAttendance = mutation({
             )
           : 0;
 
-    // Calculate late automatically if not manually provided
-    // If employee has undertime, don't count as late (they're taking undertime, not late)
+    // Calculate late from actualIn vs scheduleIn (independent of undertime)
     const calculatedLate =
       args.late !== undefined
         ? args.late
-        : args.status === "present" &&
-            args.actualIn &&
-            calculatedUndertime === 0
-          ? calculateLate(args.scheduleIn, args.actualIn, false)
+        : args.status === "present" && args.actualIn
+          ? calculateLate(args.scheduleIn, args.actualIn)
           : 0;
 
     const now = Date.now();
@@ -422,10 +410,8 @@ export const updateAttendance = mutation({
             )
           : 0);
       const calculatedLate =
-        currentStatus === "present" &&
-        currentActualIn &&
-        calculatedUndertime === 0
-          ? calculateLate(currentScheduleIn, currentActualIn, false)
+        currentStatus === "present" && currentActualIn
+          ? calculateLate(currentScheduleIn, currentActualIn)
           : 0;
       updates.late = calculatedLate > 0 ? calculatedLate : undefined;
       updates.lateManualOverride = undefined;
@@ -534,14 +520,8 @@ export const bulkCreateAttendance = mutation({
         const calculatedLate =
           entry.late !== undefined
             ? entry.late
-            : entry.status === "present" &&
-                currentActualIn &&
-                calculatedUndertime === 0
-              ? calculateLate(
-                  entry.scheduleIn,
-                  currentActualIn,
-                  calculatedUndertime > 0,
-                )
+            : entry.status === "present" && currentActualIn
+              ? calculateLate(entry.scheduleIn, currentActualIn)
               : 0;
 
         updates.undertime =
@@ -566,14 +546,8 @@ export const bulkCreateAttendance = mutation({
         const calculatedLate =
           entry.late !== undefined
             ? entry.late
-            : entry.status === "present" &&
-                entry.actualIn &&
-                calculatedUndertime === 0
-              ? calculateLate(
-                  entry.scheduleIn,
-                  entry.actualIn,
-                  calculatedUndertime > 0,
-                )
+            : entry.status === "present" && entry.actualIn
+              ? calculateLate(entry.scheduleIn, entry.actualIn)
               : 0;
 
         const attendanceId = await ctx.db.insert("attendance", {
@@ -676,10 +650,7 @@ export const recalculateEmployeeAttendance = mutation({
         );
         newUndertime = undertime > 0 ? undertime : undefined;
 
-        const late =
-          undertime === 0
-            ? calculateLate(scheduleIn, actualIn, false)
-            : 0;
+        const late = calculateLate(scheduleIn, actualIn);
         newLate = late > 0 ? late : undefined;
       } else {
         newUndertime = undefined;

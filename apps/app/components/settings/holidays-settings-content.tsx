@@ -33,7 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
-import { Plus, Pencil, Trash2, Upload } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, X } from "lucide-react";
 import { useOrganization } from "@/hooks/organization-context";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -344,13 +344,31 @@ export function HolidaysSettingsContent() {
                 </div>
                 <div className="space-y-2">
                   <Label>Offset date (optional)</Label>
-                  <DatePicker
-                    value={formData.offsetDate}
-                    onValueChange={(value) =>
-                      setFormData((prev) => ({ ...prev, offsetDate: value ?? "" }))
-                    }
-                    placeholder="Select offset date for payroll"
-                  />
+                  <div className="flex gap-2 items-center">
+                    <DatePicker
+                      value={formData.offsetDate}
+                      onValueChange={(value) =>
+                        setFormData((prev) => ({ ...prev, offsetDate: value ?? "" }))
+                      }
+                      placeholder="Select offset date for payroll"
+                      className="flex-1 min-w-0"
+                    />
+                    {formData.offsetDate ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="shrink-0 h-9 w-9"
+                        onClick={() =>
+                          setFormData((prev) => ({ ...prev, offsetDate: "" }))
+                        }
+                        title="Remove offset date"
+                        aria-label="Remove offset date"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    ) : null}
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     When set, payroll uses this date as the holiday; attendance and calendar show both dates.
                   </p>

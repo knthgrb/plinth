@@ -117,7 +117,7 @@ describe("payroll calculations", () => {
     expect(result.holidayPay).toBeCloseTo(1103.45, 2);
   });
 
-  it("prefers the attendance holiday type over the org holiday type", () => {
+  it("uses holiday list type when holiday matches by date (source of truth)", () => {
     const date = localDate(2026, 1, 20);
     const result = calculate({
       attendance: [
@@ -144,7 +144,8 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
 
-    expect(result.holidayPay).toBeCloseTo(1103.45, 2);
+    // Holiday list type wins so prod and local match; special = 30% of daily rate
+    expect(result.holidayPay).toBeCloseTo(331.03, 2);
   });
 
   it("pays special holiday premium at 30% of the basic daily rate", () => {
