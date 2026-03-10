@@ -205,7 +205,7 @@ export function PayrollSettingsContent() {
             <LabelWithHelp
               id="regularHoliday"
               label="Regular Holiday Rate (%)"
-              tooltip='Additional pay for the day = 200% × daily rate. If "Include allowance in daily rate" is unchecked, the rate is applied to basic daily pay only (200% × basic daily pay).'
+              tooltip='200% × daily rate. If "Include allowance in daily rate" is unchecked, the rate is applied to basic daily pay only (200% × basic daily pay).'
             />
             <Input
               id="regularHoliday"
@@ -224,7 +224,7 @@ export function PayrollSettingsContent() {
             <LabelWithHelp
               id="specialHoliday"
               label="Special non-working holiday rate (%)"
-              tooltip='Additional pay for the day = 130% × daily rate. If "Include allowance in daily rate" is unchecked, the rate is applied to basic daily pay only (130% × basic daily pay).'
+              tooltip='130% × daily rate. If "Include allowance in daily rate" is unchecked, the rate is applied to basic daily pay only (130% × basic daily pay).'
             />
             <Input
               id="specialHoliday"
