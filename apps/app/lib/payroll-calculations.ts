@@ -470,6 +470,9 @@ export function calculatePayrollBaseFromRecords(args: {
         nightDiffPay +=
           dayNightDiffHours * basicHourlyRate * payrollRates.nightDiffRate;
       }
+    } else if (att.status === "no_work") {
+      // Holiday (or similar) when employee did not work — no additional pay, no absence
+      continue;
     } else if (att.status === "leave") {
       if (isPaidLeave(att.date)) {
         daysWorked += 1;

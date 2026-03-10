@@ -489,11 +489,16 @@ export default function AttendancePage() {
       const dayHolidays = holidaysByDateForMonth[dayKey] || [];
 
       const noTimeRecorded = !record.actualIn && !record.actualOut;
+      const isRegularOrSpecialHoliday = dayHolidays.some(
+        (h) => h.type === "regular" || h.type === "special",
+      );
       const effectiveStatus =
         noTimeRecorded && dayHolidays.length > 0
           ? dayHolidays.some((h) => h.type === "special_working")
             ? "absent"
-            : "present"
+            : isRegularOrSpecialHoliday
+              ? "no_work"
+              : "present"
           : record.status;
 
       if (effectiveStatus === "absent") {
@@ -501,7 +506,9 @@ export default function AttendancePage() {
       }
 
       const isAbsentOrLeave =
-        effectiveStatus === "absent" || effectiveStatus === "leave";
+        effectiveStatus === "absent" ||
+        effectiveStatus === "leave" ||
+        effectiveStatus === "no_work";
 
       if (!isAbsentOrLeave) {
         const late =
@@ -973,21 +980,26 @@ export default function AttendancePage() {
                             ).getTime();
                             const dayHolidays =
                               holidaysByDateForMonth[dayKey] || [];
-                            // Holiday with no time in/out: absent only for special_working; regular/special → present
+                            // Holiday with no time in/out: absent for special_working; regular/special → no_work; else present
                             const noTimeRecorded =
                               !record.actualIn && !record.actualOut;
+                            const isRegularOrSpecialHoliday = dayHolidays.some(
+                              (h) => h.type === "regular" || h.type === "special",
+                            );
                             const effectiveStatus =
-                              noTimeRecorded &&
-                              dayHolidays.length > 0
+                              noTimeRecorded && dayHolidays.length > 0
                                 ? dayHolidays.some(
                                     (h) => h.type === "special_working",
                                   )
                                   ? "absent"
-                                  : "present"
+                                  : isRegularOrSpecialHoliday
+                                    ? "no_work"
+                                    : "present"
                                 : record.status;
                             const isAbsentOrLeave =
                               effectiveStatus === "absent" ||
-                              effectiveStatus === "leave";
+                              effectiveStatus === "leave" ||
+                              effectiveStatus === "no_work";
                             // Late and undertime: use stored value when manually overridden (including 0), else auto-calculate
                             const late = isAbsentOrLeave
                               ? null
@@ -1079,8 +1091,9 @@ export default function AttendancePage() {
                                 <TableCell
                                   className={`hidden sm:table-cell py-1.5 px-3 ${hasLate ? "text-red-600 font-medium" : ""}`}
                                 >
-                                  {effectiveStatus === "leave" ||
-                                  effectiveStatus === "absent"
+                                  {                                  effectiveStatus === "leave" ||
+                                  effectiveStatus === "absent" ||
+                                  effectiveStatus === "no_work"
                                     ? "-"
                                     : record.actualIn
                                       ? formatTime12Hour(record.actualIn)
@@ -1089,8 +1102,9 @@ export default function AttendancePage() {
                                 <TableCell
                                   className={`hidden sm:table-cell py-1.5 px-3 ${hasUndertime ? "text-red-600 font-medium" : ""}`}
                                 >
-                                  {effectiveStatus === "leave" ||
-                                  effectiveStatus === "absent"
+                                  {                                  effectiveStatus === "leave" ||
+                                  effectiveStatus === "absent" ||
+                                  effectiveStatus === "no_work"
                                     ? "-"
                                     : record.actualOut
                                       ? formatTime12Hour(record.actualOut)
@@ -1107,7 +1121,9 @@ export default function AttendancePage() {
                                         effectiveStatus,
                                       )}
                                     >
-                                      {effectiveStatus}
+                                      {effectiveStatus === "no_work"
+                                        ? "No work"
+                                        : effectiveStatus}
                                     </Badge>
                                     {dayHolidays.length > 0 && (
                                       <div className="flex flex-wrap gap-1">
@@ -1487,7 +1503,8 @@ export default function AttendancePage() {
                                 if (record) {
                                   const isAbsentOrLeave =
                                     record.status === "absent" ||
-                                    record.status === "leave";
+                                    record.status === "leave" ||
+                                    record.status === "no_work";
                                   if (!isAbsentOrLeave) {
                                     const late =
                                       record.lateManualOverride === true
@@ -1547,7 +1564,8 @@ export default function AttendancePage() {
                                     const dayLate =
                                       record &&
                                       record.status !== "absent" &&
-                                      record.status !== "leave"
+                                      record.status !== "leave" &&
+                                      record.status !== "no_work"
                                         ? record.lateManualOverride === true
                                           ? (record.late ?? 0)
                                           : record.late != null
@@ -1560,7 +1578,8 @@ export default function AttendancePage() {
                                     const dayUndertime =
                                       record &&
                                       record.status !== "absent" &&
-                                      record.status !== "leave"
+                                      record.status !== "leave" &&
+                                      record.status !== "no_work"
                                         ? record.undertimeManualOverride === true
                                           ? Math.round((record.undertime ?? 0) * 60)
                                           : record.undertime != null
@@ -1593,7 +1612,8 @@ export default function AttendancePage() {
                                                 }
                                               >
                                                 {record.status === "leave" ||
-                                                record.status === "absent"
+                                                record.status === "absent" ||
+                                                record.status === "no_work"
                                                   ? "-"
                                                   : record.actualIn
                                                     ? formatTime12Hour(
@@ -1604,7 +1624,8 @@ export default function AttendancePage() {
                                               <span
                                                 className={
                                                   record.status === "leave" ||
-                                                  record.status === "absent"
+                                                  record.status === "absent" ||
+                                                  record.status === "no_work"
                                                     ? "text-gray-400"
                                                     : hasDayUndertime
                                                       ? "text-red-600 font-medium"
@@ -1612,7 +1633,8 @@ export default function AttendancePage() {
                                                 }
                                               >
                                                 {record.status === "leave" ||
-                                                record.status === "absent"
+                                                record.status === "absent" ||
+                                                record.status === "no_work"
                                                   ? "-"
                                                   : record.actualOut
                                                     ? formatTime12Hour(

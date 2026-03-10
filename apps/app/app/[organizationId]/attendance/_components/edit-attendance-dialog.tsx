@@ -52,7 +52,7 @@ export function EditAttendanceDialog({
   const [editTimeOut, setEditTimeOut] = useState("");
   const [editOvertime, setEditOvertime] = useState("");
   const [editRemarks, setEditRemarks] = useState("");
-  const [editStatus, setEditStatus] = useState<"present" | "absent" | "leave">(
+  const [editStatus, setEditStatus] = useState<"present" | "absent" | "leave" | "no_work">(
     "present",
   );
   const [isUpdating, setIsUpdating] = useState(false);
@@ -146,17 +146,17 @@ export function EditAttendanceDialog({
 
     setIsUpdating(true);
     try {
-      // Clear time in/out and overtime for leave or absent
+      // Clear time in/out and overtime for leave, absent, or no_work
       const finalTimeIn =
-        editStatus === "leave" || editStatus === "absent"
+        editStatus === "leave" || editStatus === "absent" || editStatus === "no_work"
           ? undefined
           : editTimeIn || undefined;
       const finalTimeOut =
-        editStatus === "leave" || editStatus === "absent"
+        editStatus === "leave" || editStatus === "absent" || editStatus === "no_work"
           ? undefined
           : editTimeOut || undefined;
       const finalOvertime =
-        editStatus === "leave" || editStatus === "absent"
+        editStatus === "leave" || editStatus === "absent" || editStatus === "no_work"
           ? undefined
           : editOvertime
             ? parseFloat(editOvertime)
@@ -275,6 +275,7 @@ export function EditAttendanceDialog({
                     <SelectItem value="present">Present</SelectItem>
                     <SelectItem value="absent">Absent</SelectItem>
                     <SelectItem value="leave">Leave</SelectItem>
+                    <SelectItem value="no_work">No work</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

@@ -88,6 +88,7 @@ export const statusColorMap: Record<string, keyof typeof statusColors> = {
   archived: "gray",
   inactive: "gray",
   closed: "gray",
+  no_work: "gray",
 
   // Special statuses
   half_day: "purple",

@@ -293,6 +293,7 @@ export default defineSchema({
       v.literal("absent"),
       v.literal("half-day"),
       v.literal("leave"),
+      v.literal("no_work"), // Holiday when employee did not work — no additional pay
     ),
     createdAt: v.number(),
     updatedAt: v.number(),

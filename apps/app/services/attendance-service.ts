@@ -18,7 +18,7 @@ export class AttendanceService {
     isHoliday?: boolean;
     holidayType?: "regular" | "special" | "special_working";
     remarks?: string;
-    status: "present" | "absent" | "half-day" | "leave";
+    status: "present" | "absent" | "half-day" | "leave" | "no_work";
   }) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(
@@ -44,7 +44,7 @@ export class AttendanceService {
       isHoliday?: boolean;
       holidayType?: "regular" | "special" | "special_working";
       remarks?: string;
-      status?: "present" | "absent" | "half-day" | "leave";
+      status?: "present" | "absent" | "half-day" | "leave" | "no_work";
     },
   ) {
     const convex = await getAuthedConvexClient();
@@ -78,7 +78,7 @@ export class AttendanceService {
       isHoliday?: boolean;
       holidayType?: "regular" | "special" | "special_working";
       remarks?: string;
-      status: "present" | "absent" | "half-day" | "leave";
+      status: "present" | "absent" | "half-day" | "leave" | "no_work";
     }>,
   ) {
     const convex = await getAuthedConvexClient();

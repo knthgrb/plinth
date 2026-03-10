@@ -278,7 +278,7 @@ export function BulkAddAttendanceDialog({
       {
         timeIn: string;
         timeOut: string;
-        status: "present" | "absent" | "leave";
+        status: "present" | "absent" | "leave" | "no_work";
         overtime: string;
         late: string;
         undertime: string;
@@ -304,7 +304,7 @@ export function BulkAddAttendanceDialog({
     scheduleOut: string;
     actualIn: string | undefined;
     actualOut: string | undefined;
-    status: "present" | "absent" | "leave" | "half-day";
+    status: "present" | "absent" | "leave" | "half-day" | "no_work";
     notes: string;
     error: string | null;
     /** When true, row will be imported; when false, excluded. User can toggle per row. */
@@ -443,7 +443,7 @@ export function BulkAddAttendanceDialog({
           const { ts: dateTs, label: dateLabel } = parseDateToLocalTimestamp(dateStr);
           const actualIn = timeInStr ? parseTimeToHHmm(timeInStr) ?? undefined : undefined;
           const actualOut = timeOutStr ? parseTimeToHHmm(timeOutStr) ?? undefined : undefined;
-          const status: "present" | "absent" | "leave" | "half-day" =
+          const status: "present" | "absent" | "leave" | "half-day" | "no_work" =
             !actualIn && !actualOut ? "absent" : "present";
 
           let scheduleIn = "09:00";
@@ -526,12 +526,14 @@ export function BulkAddAttendanceDialog({
         const statusStr = ((row[statusCol ?? ""] ?? "").trim() || "present").toLowerCase();
         const notes = (row[notesCol ?? ""] ?? "").trim();
 
-        const statusMap: Record<string, "present" | "absent" | "leave" | "half-day"> = {
+        const statusMap: Record<string, "present" | "absent" | "leave" | "half-day" | "no_work"> = {
           present: "present",
           absent: "absent",
           leave: "leave",
           "half-day": "half-day",
           halfday: "half-day",
+          "no_work": "no_work",
+          "no work": "no_work",
         };
         const status = statusMap[statusStr] ?? "present";
 
@@ -772,7 +774,7 @@ export function BulkAddAttendanceDialog({
         actualIn?: string;
         actualOut?: string;
         overtime?: number;
-        status: "present" | "absent" | "leave";
+        status: "present" | "absent" | "leave" | "no_work";
       }> = [];
 
       for (const dateInfo of dates) {
@@ -878,7 +880,7 @@ export function BulkAddAttendanceDialog({
           late?: number;
           undertime?: number;
           remarks?: string;
-          status: "present" | "absent" | "leave";
+          status: "present" | "absent" | "leave" | "no_work";
         } = {
           organizationId: currentOrganizationId,
           employeeId: bulkSelectedEmployee,
@@ -1575,6 +1577,9 @@ export function BulkAddAttendanceDialog({
                                       </SelectItem>
                                       <SelectItem value="leave">
                                         Leave
+                                      </SelectItem>
+                                      <SelectItem value="no_work">
+                                        No work
                                       </SelectItem>
                                     </SelectContent>
                                   </Select>

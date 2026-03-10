@@ -41,6 +41,27 @@ function calculateUndertime(
   return undertimeHours > 0 ? undertimeHours : 0;
 }
 
+const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+function getManilaDateParts(ts: number) {
+  const d = new Date(ts + MANILA_OFFSET_MS);
+  return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate() };
+}
+function isDateRegularOrSpecialHoliday(
+  dateTs: number,
+  holidays: { date: number; offsetDate?: number; isRecurring?: boolean; year?: number; type: string }[],
+): boolean {
+  const target = getManilaDateParts(dateTs);
+  for (const h of holidays) {
+    const effectiveTs = h.offsetDate ?? h.date;
+    const parts = getManilaDateParts(typeof effectiveTs === "number" ? effectiveTs : new Date(effectiveTs).getTime());
+    const match = h.isRecurring
+      ? parts.m === target.m && parts.d === target.d
+      : (h.year == null || h.year === target.y) && parts.y === target.y && parts.m === target.m && parts.d === target.d;
+    if (match && (h.type === "regular" || h.type === "special")) return true;
+  }
+  return false;
+}
+
 // Helper to check authorization with organization context
 async function checkAuth(
   ctx: any,
@@ -256,6 +277,7 @@ export const createAttendance = mutation({
       v.literal("absent"),
       v.literal("half-day"),
       v.literal("leave"),
+      v.literal("no_work"),
     ),
   },
   handler: async (ctx, args) => {
@@ -272,11 +294,24 @@ export const createAttendance = mutation({
       throw new Error("Attendance already exists for this date");
     }
 
+    // On regular/special holiday with no time in/out → no_work (no additional pay)
+    let resolvedStatus = args.status;
+    const holidays = await (ctx.db.query("holidays") as any)
+      .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
+      .collect();
+    if (
+      isDateRegularOrSpecialHoliday(args.date, holidays) &&
+      !args.actualIn &&
+      !args.actualOut
+    ) {
+      resolvedStatus = "no_work";
+    }
+
     // Calculate undertime automatically if not manually provided
     const calculatedUndertime =
       args.undertime !== undefined
         ? args.undertime
-        : args.status === "present" && args.actualIn && args.actualOut
+        : resolvedStatus === "present" && args.actualIn && args.actualOut
           ? calculateUndertime(
               args.scheduleIn,
               args.scheduleOut,
@@ -289,7 +324,7 @@ export const createAttendance = mutation({
     const calculatedLate =
       args.late !== undefined
         ? args.late
-        : args.status === "present" && args.actualIn
+        : resolvedStatus === "present" && args.actualIn
           ? calculateLate(args.scheduleIn, args.actualIn)
           : 0;
 
@@ -308,7 +343,7 @@ export const createAttendance = mutation({
       isHoliday: args.isHoliday,
       holidayType: args.holidayType,
       remarks: args.remarks,
-      status: args.status,
+      status: resolvedStatus,
       createdAt: now,
       updatedAt: now,
     });
@@ -345,6 +380,7 @@ export const updateAttendance = mutation({
         v.literal("absent"),
         v.literal("half-day"),
         v.literal("leave"),
+        v.literal("no_work"),
       ),
     ),
   },
@@ -363,14 +399,30 @@ export const updateAttendance = mutation({
     if (args.isHoliday !== undefined) updates.isHoliday = args.isHoliday;
     if (args.holidayType !== undefined) updates.holidayType = args.holidayType;
     if (args.remarks !== undefined) updates.remarks = args.remarks;
-    if (args.status !== undefined) updates.status = args.status;
-
     // Get current values for calculation
     const currentScheduleIn = args.scheduleIn ?? attendance.scheduleIn;
     const currentScheduleOut = args.scheduleOut ?? attendance.scheduleOut;
     const currentActualIn = args.actualIn ?? attendance.actualIn;
     const currentActualOut = args.actualOut ?? attendance.actualOut;
-    const currentStatus = args.status ?? attendance.status;
+    let currentStatus = args.status ?? attendance.status;
+
+    // On holiday with no time in/out → no_work (no additional pay)
+    if (args.status === undefined) {
+      const holidays = await (ctx.db.query("holidays") as any)
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", attendance.organizationId),
+        )
+        .collect();
+      if (
+        !currentActualIn &&
+        !currentActualOut &&
+        isDateRegularOrSpecialHoliday(attendance.date, holidays)
+      ) {
+        currentStatus = "no_work";
+        updates.status = "no_work";
+      }
+    }
+    if (args.status !== undefined) updates.status = args.status;
 
     // Undertime: use explicit override flag so "override to 0" is never lost
     if (args.undertimeManualOverride === true) {
@@ -470,6 +522,7 @@ export const bulkCreateAttendance = mutation({
           v.literal("absent"),
           v.literal("half-day"),
           v.literal("leave"),
+          v.literal("no_work"),
         ),
       }),
     ),
@@ -479,17 +532,35 @@ export const bulkCreateAttendance = mutation({
     const results = [];
 
     // Check auth for first entry's organization (all should be same org)
-    if (args.entries.length > 0) {
-      await checkAuth(ctx, args.entries[0].organizationId, "hr");
+    const organizationId =
+      args.entries.length > 0 ? args.entries[0].organizationId : null;
+    if (organizationId) {
+      await checkAuth(ctx, organizationId, "hr");
     }
+    const holidays =
+      organizationId
+        ? await (ctx.db.query("holidays") as any)
+            .withIndex("by_organization", (q: any) =>
+              q.eq("organizationId", organizationId),
+            )
+            .collect()
+        : [];
 
     for (const entry of args.entries) {
-      // Check if attendance already exists
       const existing = await (ctx.db.query("attendance") as any)
         .withIndex("by_employee_date", (q: any) =>
           q.eq("employeeId", entry.employeeId).eq("date", entry.date),
         )
         .first();
+
+      const currentActualIn = entry.actualIn ?? existing?.actualIn;
+      const currentActualOut = entry.actualOut ?? existing?.actualOut;
+      const resolvedStatus =
+        !currentActualIn &&
+        !currentActualOut &&
+        isDateRegularOrSpecialHoliday(entry.date, holidays)
+          ? "no_work"
+          : entry.status;
 
       if (existing) {
         // Update existing
@@ -501,7 +572,7 @@ export const bulkCreateAttendance = mutation({
         if (entry.holidayType !== undefined)
           updates.holidayType = entry.holidayType;
         if (entry.remarks !== undefined) updates.remarks = entry.remarks;
-        updates.status = entry.status;
+        updates.status = resolvedStatus;
 
         // Calculate undertime and late if not manually provided
         const currentActualIn = entry.actualIn ?? existing.actualIn;
@@ -509,7 +580,7 @@ export const bulkCreateAttendance = mutation({
         const calculatedUndertime =
           entry.undertime !== undefined
             ? entry.undertime
-            : entry.status === "present" && currentActualIn && currentActualOut
+            : resolvedStatus === "present" && currentActualIn && currentActualOut
               ? calculateUndertime(
                   entry.scheduleIn,
                   entry.scheduleOut,
@@ -520,7 +591,7 @@ export const bulkCreateAttendance = mutation({
         const calculatedLate =
           entry.late !== undefined
             ? entry.late
-            : entry.status === "present" && currentActualIn
+            : resolvedStatus === "present" && currentActualIn
               ? calculateLate(entry.scheduleIn, currentActualIn)
               : 0;
 
@@ -535,7 +606,7 @@ export const bulkCreateAttendance = mutation({
         const calculatedUndertime =
           entry.undertime !== undefined
             ? entry.undertime
-            : entry.status === "present" && entry.actualIn && entry.actualOut
+            : resolvedStatus === "present" && entry.actualIn && entry.actualOut
               ? calculateUndertime(
                   entry.scheduleIn,
                   entry.scheduleOut,
@@ -546,12 +617,13 @@ export const bulkCreateAttendance = mutation({
         const calculatedLate =
           entry.late !== undefined
             ? entry.late
-            : entry.status === "present" && entry.actualIn
+            : resolvedStatus === "present" && entry.actualIn
               ? calculateLate(entry.scheduleIn, entry.actualIn)
               : 0;
 
         const attendanceId = await ctx.db.insert("attendance", {
           ...entry,
+          status: resolvedStatus,
           late: calculatedLate > 0 ? calculatedLate : undefined,
           undertime: calculatedUndertime > 0 ? calculatedUndertime : undefined,
           createdAt: now,

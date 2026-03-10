@@ -53,7 +53,7 @@ export function AddAttendanceDialog({
   const [timeIn, setTimeIn] = useState("");
   const [timeOut, setTimeOut] = useState("");
   const [overtime, setOvertime] = useState("");
-  const [status, setStatus] = useState<"present" | "absent" | "leave">(
+  const [status, setStatus] = useState<"present" | "absent" | "leave" | "no_work">(
     "present",
   );
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -154,7 +154,7 @@ export function AddAttendanceDialog({
       const employee = employees?.find((e: any) => e._id === selectedEmployee);
       if (!employee) return;
 
-      // For present, at least one time should be provided
+      // For present, at least one time should be provided; no_work/leave/absent do not require times
       if (status === "present" && !timeIn && !timeOut) {
         toast({
           title: "Error",
@@ -171,17 +171,17 @@ export function AddAttendanceDialog({
           dayName as keyof typeof employee.schedule.defaultSchedule
         ];
 
-      // Clear time in/out for leave or absent
+      // Clear time in/out for leave, absent, or no_work
       const finalTimeIn =
-        status === "leave" || status === "absent"
+        status === "leave" || status === "absent" || status === "no_work"
           ? undefined
           : timeIn || undefined;
       const finalTimeOut =
-        status === "leave" || status === "absent"
+        status === "leave" || status === "absent" || status === "no_work"
           ? undefined
           : timeOut || undefined;
       const finalOvertime =
-        status === "leave" || status === "absent"
+        status === "leave" || status === "absent" || status === "no_work"
           ? undefined
           : overtime
             ? parseFloat(overtime)
@@ -285,8 +285,8 @@ export function AddAttendanceDialog({
                   value={status}
                   onValueChange={(value: any) => {
                     setStatus(value);
-                    // Auto-clear time in/out for leave or absent
-                    if (value === "leave" || value === "absent") {
+                    // Auto-clear time in/out for leave, absent, or no_work
+                    if (value === "leave" || value === "absent" || value === "no_work") {
                       setTimeIn("");
                       setTimeOut("");
                       setOvertime("");
@@ -312,6 +312,7 @@ export function AddAttendanceDialog({
                     <SelectItem value="present">Present</SelectItem>
                     <SelectItem value="absent">Absent</SelectItem>
                     <SelectItem value="leave">Leave</SelectItem>
+                    <SelectItem value="no_work">No work</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -320,7 +321,7 @@ export function AddAttendanceDialog({
                   value={timeIn}
                   onValueChange={setTimeIn}
                   disabled={
-                    status === "absent" || status === "leave" || isSubmitting
+                    status === "absent" || status === "leave" || status === "no_work" || isSubmitting
                   }
                   label="Time In"
                   placeholder="Select time in"
@@ -329,7 +330,7 @@ export function AddAttendanceDialog({
                   value={timeOut}
                   onValueChange={setTimeOut}
                   disabled={
-                    status === "absent" || status === "leave" || isSubmitting
+                    status === "absent" || status === "leave" || status === "no_work" || isSubmitting
                   }
                   label="Time Out"
                   placeholder="Select time out"
@@ -346,11 +347,11 @@ export function AddAttendanceDialog({
                   onChange={(e) => setOvertime(e.target.value)}
                   placeholder="0.00"
                   disabled={
-                    status === "absent" || status === "leave" || isSubmitting
+                    status === "absent" || status === "leave" || status === "no_work" || isSubmitting
                   }
                 />
                 <p className="text-xs text-gray-500">
-                  Optional: Enter overtime hours worked
+                  Optional: Enter overtime hours worked. Use &quot;No work&quot; for holidays when employee did not work (no additional pay).
                 </p>
               </div>
               <div className="space-y-2">
