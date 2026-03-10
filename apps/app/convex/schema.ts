@@ -800,7 +800,7 @@ export default defineSchema({
         regularHolidayOtRate: v.optional(v.number()), // Regular holiday OT multiplier (default 2.0 = 200%)
         specialHolidayOtRate: v.optional(v.number()), // Special holiday OT multiplier (default 1.69 = 169%)
         // Daily rate from monthly: (basic + allowance?) × (12 / workingDaysPerYear)
-        dailyRateIncludesAllowance: v.optional(v.boolean()), // If true, daily rate = (basic + allowance) × 12/261 (default false = basic only)
+        dailyRateIncludesAllowance: v.optional(v.boolean()), // If true, daily rate = (basic + allowance) × 12/261 (default true)
         dailyRateWorkingDaysPerYear: v.optional(v.number()), // Working days per year for daily rate (default 261)
       }),
     ),

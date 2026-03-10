@@ -122,13 +122,13 @@ export const getSettings = query({
         leaveTrackerRows: [],
         payrollSettings: {
           nightDiffPercent: 0.1, // 10% per hour from 10 PM
-          regularHolidayRate: 1.0, // 100% of daily pay additional (regular holiday)
-          specialHolidayRate: 0.3, // 30% of daily pay additional (special holiday)
+          regularHolidayRate: 2.0, // 200% of daily pay additional (regular holiday)
+          specialHolidayRate: 1.3, // 130% of daily pay additional (special holiday)
           overtimeRegularRate: 1.25, // Regular day OT: 125% per hour (25% additional)
           overtimeRestDayRate: 1.69, // Rest day OT: 169% per hour
           regularHolidayOtRate: 2.0, // Regular holiday OT: 200% per hour
           specialHolidayOtRate: 1.69, // Special holiday OT: 169% per hour
-          dailyRateIncludesAllowance: false, // Daily rate from basic only (set true for basic + allowance) × 12/261
+          dailyRateIncludesAllowance: true, // Daily rate from basic + allowance (set false for basic only) × 12/261
           dailyRateWorkingDaysPerYear: 261,
         },
         attendanceSettings: {

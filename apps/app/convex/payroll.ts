@@ -311,6 +311,8 @@ export type PayrollRates = {
   nightDiffRate: number;
   dailyRateIncludesAllowance: boolean;
   dailyRateWorkingDaysPerYear: number;
+  regularHolidayRate: number;
+  specialHolidayRate: number;
 };
 
 /** Load payroll rates from organization settings (with defaults). */
@@ -330,10 +332,12 @@ async function getPayrollRates(
     regularHolidayOt: ps?.regularHolidayOtRate ?? DEFAULT_REGULAR_HOLIDAY_OT,
     restDayOt: ps?.overtimeRestDayRate ?? DEFAULT_REST_DAY_OT,
     nightDiffRate: ps?.nightDiffPercent ?? DEFAULT_NIGHT_DIFF_RATE,
-    dailyRateIncludesAllowance: ps?.dailyRateIncludesAllowance ?? false,
+    dailyRateIncludesAllowance: ps?.dailyRateIncludesAllowance ?? true,
     dailyRateWorkingDaysPerYear:
       ps?.dailyRateWorkingDaysPerYear ??
       DEFAULT_DAILY_RATE_WORKING_DAYS_PER_YEAR,
+    regularHolidayRate: ps?.regularHolidayRate ?? 2.0,
+    specialHolidayRate: ps?.specialHolidayRate ?? 1.3,
   };
 }
 
@@ -349,10 +353,11 @@ function getEmployeePayrollRates(
 } {
   const compensation = employee.compensation || {};
   const regularHolidayRate = Math.max(
-    compensation.regularHolidayRate ?? 1.0,
+    compensation.regularHolidayRate ?? organizationRates.regularHolidayRate,
     1.0,
   );
-  const specialHolidayRate = compensation.specialHolidayRate ?? 0.3;
+  const specialHolidayRate =
+    compensation.specialHolidayRate ?? organizationRates.specialHolidayRate;
 
   return {
     ...organizationRates,

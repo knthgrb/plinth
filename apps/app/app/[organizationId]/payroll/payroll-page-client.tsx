@@ -1047,7 +1047,7 @@ export default function PayrollPageClient({
 
         // Daily rate formula from settings: (basic + allowance?) × 12/workingDaysPerYear (matches backend)
         const dailyRateIncludesAllowance =
-          settings?.payrollSettings?.dailyRateIncludesAllowance ?? false;
+          settings?.payrollSettings?.dailyRateIncludesAllowance ?? true;
         const dailyRateWorkingDaysPerYear =
           settings?.payrollSettings?.dailyRateWorkingDaysPerYear ?? 261;
 
