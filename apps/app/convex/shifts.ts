@@ -76,12 +76,6 @@ export async function getScheduleWithLunch(
     const att = settings?.attendanceSettings;
     lunchStart = att?.defaultLunchStart ?? "12:00";
     lunchEnd = att?.defaultLunchEnd ?? "13:00";
-    if (att?.defaultLunchBreakMinutes != null) {
-      const [h, m] = lunchStart.split(":").map(Number);
-      const startMins = h * 60 + m;
-      const endMins = startMins + att.defaultLunchBreakMinutes;
-      lunchEnd = `${Math.floor(endMins / 60)}:${String(endMins % 60).padStart(2, "0")}`;
-    }
   }
 
   const [lsH, lsM] = lunchStart.split(":").map(Number);

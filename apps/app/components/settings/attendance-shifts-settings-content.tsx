@@ -47,7 +47,6 @@ export function AttendanceShiftsSettingsContent() {
 
   const [defaultLunchStart, setDefaultLunchStart] = useState("12:00");
   const [defaultLunchEnd, setDefaultLunchEnd] = useState("13:00");
-  const [defaultLunchMinutes, setDefaultLunchMinutes] = useState(60);
   const [savingLunch, setSavingLunch] = useState(false);
 
   const [shiftDialogOpen, setShiftDialogOpen] = useState(false);
@@ -74,7 +73,6 @@ export function AttendanceShiftsSettingsContent() {
     if (att) {
       setDefaultLunchStart(att.defaultLunchStart ?? "12:00");
       setDefaultLunchEnd(att.defaultLunchEnd ?? "13:00");
-      setDefaultLunchMinutes(att.defaultLunchBreakMinutes ?? 60);
     }
   }, [settings?.attendanceSettings]);
 
@@ -87,7 +85,6 @@ export function AttendanceShiftsSettingsContent() {
         attendanceSettings: {
           defaultLunchStart,
           defaultLunchEnd,
-          defaultLunchBreakMinutes: defaultLunchMinutes,
         },
       });
       toast({ title: "Saved", description: "Default lunch settings updated." });
@@ -177,7 +174,10 @@ export function AttendanceShiftsSettingsContent() {
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-3">
+          <p className="text-xs text-muted-foreground">
+            Break duration is automatic: end time − start time.
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Lunch start (HH:mm)</Label>
               <Input
@@ -192,16 +192,6 @@ export function AttendanceShiftsSettingsContent() {
                 type="time"
                 value={defaultLunchEnd}
                 onChange={(e) => setDefaultLunchEnd(e.target.value || "13:00")}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Break duration (minutes)</Label>
-              <Input
-                type="number"
-                min={0}
-                max={240}
-                value={defaultLunchMinutes}
-                onChange={(e) => setDefaultLunchMinutes(parseInt(e.target.value, 10) || 60)}
               />
             </div>
           </div>
