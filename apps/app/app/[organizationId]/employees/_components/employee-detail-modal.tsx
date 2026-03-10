@@ -61,6 +61,7 @@ import {
 } from "./employee-form-validation";
 import { cn } from "@/utils/utils";
 import { recalculateEmployeeAttendance } from "@/actions/attendance";
+import { useToast } from "@/components/ui/use-toast";
 
 interface EmployeeDetailModalProps {
   employeeId: string | null;
@@ -85,6 +86,7 @@ export function EmployeeDetailModal({
 }: EmployeeDetailModalProps) {
   const router = useRouter();
   const { currentOrganizationId } = useOrganization();
+  const { toast } = useToast();
   const isEditing = mode === "edit";
 
   const defaultEditValues: EmployeeFormValues = {
@@ -584,9 +586,14 @@ export function EmployeeDetailModal({
       }
       onModeChange?.("view");
       router.refresh();
-    } catch (error) {
+      toast({ title: "Saved", description: "Employee updated successfully." });
+    } catch (error: any) {
       console.error("Error updating employee:", error);
-      alert("Failed to update employee. Please try again.");
+      toast({
+        title: "Failed to update employee",
+        description: error?.message ?? "Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsSaving(false);
     }
