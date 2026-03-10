@@ -14,9 +14,9 @@ const openSans = Open_Sans({
 const mainAppUrl = process.env.NEXT_PUBLIC_MAIN_APP_URL ?? "";
 
 export const metadata: Metadata = {
-  title: "Plinth – HR & Payroll for the Philippines",
+  title: "Plinth – Built for companies to succeed",
   description:
-    "HRIS for companies in the Philippines. Payroll, attendance, leave, recruitment, and compliance.",
+    "The foundation for companies in the Philippines. HR & payroll, attendance, leave, recruitment, and compliance — built for Philippine labor law.",
 };
 
 export default function RootLayout({
@@ -24,10 +24,10 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={openSans.variable} suppressHydrationWarning>
-      <body className="antialiased font-sans bg-white text-gray-900">
+      <body className="antialiased font-sans bg-white text-gray-900" suppressHydrationWarning>
         <div className="min-h-screen flex flex-col bg-white">
           <header className="sticky top-0 z-50 w-full border-b border-gray-200/80 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
-            <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+            <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
               <Link
                 href="/"
                 className="flex items-center gap-2 font-semibold text-gray-900"

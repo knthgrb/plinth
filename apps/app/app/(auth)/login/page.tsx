@@ -10,9 +10,10 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
-import Image from "next/image";
+import { AuthSidePanel } from "@/components/auth-side-panel";
 
 const PENDING_SIGNOUT_KEY = "pendingSignOut";
+const marketingUrl = process.env.NEXT_PUBLIC_MARKETING_URL ?? "/";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -75,8 +76,15 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen bg-white">
       {/* Left Side - Form */}
-      <div className="flex-1 flex items-center justify-center px-6 py-12">
+      <div className="flex flex-1 flex-col items-center justify-center px-6 py-12">
         <div className="w-full max-w-md space-y-8">
+          <Link
+            href={marketingUrl}
+            className="self-start text-xl font-semibold text-brand-purple transition-colors hover:text-brand-purple-hover focus:outline-none focus:ring-2 focus:ring-brand-purple focus:ring-offset-2 rounded"
+            title="Go to Plinth"
+          >
+            Plinth
+          </Link>
           <div className="space-y-2">
             <h1 className="text-3xl font-light tracking-tight text-gray-900">
               Welcome back
@@ -155,27 +163,7 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* Right Side - Image */}
-      <div className="hidden lg:flex flex-1 bg-gradient-to-br from-purple-50 to-purple-100 items-center justify-center p-12">
-        <div className="relative w-full h-full max-w-2xl">
-          {/* Placeholder for app preview image - you can replace this with actual image */}
-          <div className="absolute inset-0 bg-white rounded-lg shadow-2xl flex items-center justify-center">
-            <div className="text-center space-y-4 p-12">
-              <div className="text-6xl font-bold text-brand-purple mb-4">
-                Plinth
-              </div>
-              <p className="text-gray-600 text-lg">
-                Your complete HRIS solution
-              </p>
-              <div className="grid grid-cols-3 gap-4 mt-8">
-                <div className="bg-gray-100 rounded-lg p-4 h-32"></div>
-                <div className="bg-gray-100 rounded-lg p-4 h-32"></div>
-                <div className="bg-gray-100 rounded-lg p-4 h-32"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <AuthSidePanel />
     </div>
   );
 }

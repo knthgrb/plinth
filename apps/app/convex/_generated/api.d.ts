@@ -29,6 +29,7 @@ import type * as payroll from "../payroll.js";
 import type * as payslipPin from "../payslipPin.js";
 import type * as recruitment from "../recruitment.js";
 import type * as settings from "../settings.js";
+import type * as shifts from "../shifts.js";
 import type * as sss from "../sss.js";
 import type * as users from "../users.js";
 
@@ -60,6 +61,7 @@ declare const fullApi: ApiFromModules<{
   payslipPin: typeof payslipPin;
   recruitment: typeof recruitment;
   settings: typeof settings;
+  shifts: typeof shifts;
   sss: typeof sss;
   users: typeof users;
 }>;

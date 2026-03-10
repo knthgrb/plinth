@@ -17,3 +17,32 @@ body {
   background: var(--background);
   color: var(--foreground);
 }
+
+/* Hero background: slow rotation */
+@keyframes hero-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Hero content: staggered entrance */
+@keyframes hero-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hero-entrance {
+  animation-fill-mode: both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-entrance {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+}
