@@ -381,6 +381,10 @@ export function calculatePayrollBaseFromRecords(args: {
     includeAllowance: false,
     workingDaysPerYear: payrollRates.dailyRateWorkingDaysPerYear,
   });
+  // When "include allowance on daily rate" is enabled, holiday additional pay uses basic + allowance; otherwise basic only.
+  const holidayPremiumBase = payrollRates.dailyRateIncludesAllowance
+    ? dailyRate
+    : basicDailyRate;
   const hourlyRate = dailyRate / 8;
   const basicHourlyRate = basicDailyRate / 8;
   // Late and undertime deductions always use basic + allowance hourly rate.
@@ -491,12 +495,12 @@ export function calculatePayrollBaseFromRecords(args: {
 
       if (holidayType === "regular") {
         const amount =
-          basicDailyRate * payrollRates.regularHolidayRate * dayMultiplier;
+          holidayPremiumBase * payrollRates.regularHolidayRate * dayMultiplier;
         holidayPay += amount;
         holidayPayFromRegular += amount;
       } else if (holidayType === "special") {
         const amount =
-          basicDailyRate * payrollRates.specialHolidayRate * dayMultiplier;
+          holidayPremiumBase * payrollRates.specialHolidayRate * dayMultiplier;
         holidayPay += amount;
         holidayPayFromSpecial += amount;
       }
@@ -533,7 +537,7 @@ export function calculatePayrollBaseFromRecords(args: {
         if (salaryType !== "monthly") {
           basicPay += dailyRate;
         }
-        const amount = basicDailyRate * payrollRates.regularHolidayRate;
+        const amount = holidayPremiumBase * payrollRates.regularHolidayRate;
         holidayPay += amount;
         holidayPayFromRegular += amount;
         continue;
@@ -578,7 +582,7 @@ export function calculatePayrollBaseFromRecords(args: {
       if (salaryType !== "monthly") {
         basicPay += dailyRate;
       }
-      const amount = basicDailyRate * payrollRates.regularHolidayRate;
+      const amount = holidayPremiumBase * payrollRates.regularHolidayRate;
       holidayPay += amount;
       holidayPayFromRegular += amount;
       continue;

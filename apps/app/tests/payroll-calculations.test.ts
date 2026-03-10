@@ -87,7 +87,7 @@ function calculate({
 }
 
 describe("payroll calculations", () => {
-  it("pays regular holiday premium using the basic daily rate only", () => {
+  it("pays regular holiday premium (basic+allowance when include allowance on daily rate is enabled)", () => {
     const date = localDate(2026, 1, 20);
     const result = calculate({
       attendance: [
@@ -113,8 +113,8 @@ describe("payroll calculations", () => {
       cutoffStart: date,
       cutoffEnd: date,
     });
-
-    expect(result.holidayPay).toBeCloseTo(1103.45, 2);
+    // baseRates has dailyRateIncludesAllowance: true → holiday premium = (24k+6k)*12/261 * 100% = 1379.31
+    expect(result.holidayPay).toBeCloseTo(1379.31, 2);
   });
 
   it("uses holiday list type when holiday matches by date (source of truth)", () => {
@@ -144,8 +144,8 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
 
-    // Holiday list type wins so prod and local match; special = 30% of daily rate
-    expect(result.holidayPay).toBeCloseTo(331.03, 2);
+    // Holiday list type wins so prod and local match; special = 30% of daily (basic+allowance when setting on)
+    expect(result.holidayPay).toBeCloseTo(413.79, 2);
   });
 
   it("pays special holiday premium at 30% of the basic daily rate", () => {
@@ -175,7 +175,31 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
 
-    expect(result.holidayPay).toBeCloseTo(331.03, 2);
+    // baseRates has dailyRateIncludesAllowance: true → special holiday 30% of (basic+allowance) daily
+    expect(result.holidayPay).toBeCloseTo(413.79, 2);
+  });
+
+  it("pays holiday premium using basic only when include allowance on daily rate is disabled", () => {
+    const date = localDate(2026, 1, 20);
+    const result = calculate({
+      payrollRates: { ...baseRates, dailyRateIncludesAllowance: false },
+      attendance: [
+        {
+          date,
+          status: "present",
+          actualIn: "09:00",
+          actualOut: "18:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+          isHoliday: true,
+          holidayType: "regular",
+        },
+      ],
+      holidays: [{ date, type: "regular", isRecurring: false, year: 2026 }],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    expect(result.holidayPay).toBeCloseTo(1103.45, 2);
   });
 
   it("calculates regular day overtime from the basic hourly rate", () => {
@@ -249,7 +273,7 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
 
-    expect(result.holidayPay).toBeCloseTo(1103.45, 2);
+    expect(result.holidayPay).toBeCloseTo(1379.31, 2);
     expect(result.overtimeLegalHoliday).toBeCloseTo(551.72, 2);
   });
 
@@ -281,7 +305,7 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
 
-    expect(result.holidayPay).toBeCloseTo(331.03, 2);
+    expect(result.holidayPay).toBeCloseTo(413.79, 2);
     expect(result.overtimeSpecialHoliday).toBeCloseTo(466.21, 2);
   });
 
