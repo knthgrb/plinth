@@ -47,6 +47,7 @@ export type PayrollBaseResult = {
   payrollRates: ResolvedPayrollRates;
 };
 
+/** Use UTC so rest day / day-of-week is identical in local and production (Convex runs in UTC). */
 function getDayName(date: number): string {
   const dayNames = [
     "sunday",
@@ -58,7 +59,7 @@ function getDayName(date: number): string {
     "saturday",
   ];
   const dateObj = new Date(date);
-  return dayNames[dateObj.getDay()];
+  return dayNames[dateObj.getUTCDay()];
 }
 
 function isRestDay(date: number, employeeSchedule: any): boolean {
@@ -71,10 +72,18 @@ function isRestDay(date: number, employeeSchedule: any): boolean {
   if (!daySchedule || typeof daySchedule.isWorkday !== "boolean") return false;
 
   if (employeeSchedule.scheduleOverrides) {
-    const override = employeeSchedule.scheduleOverrides.find(
-      (o: any) =>
-        new Date(o.date).toDateString() === new Date(date).toDateString(),
-    );
+    const d = new Date(date);
+    const dY = d.getUTCFullYear();
+    const dM = d.getUTCMonth();
+    const dD = d.getUTCDate();
+    const override = employeeSchedule.scheduleOverrides.find((o: any) => {
+      const oD = new Date(o.date);
+      return (
+        oD.getUTCFullYear() === dY &&
+        oD.getUTCMonth() === dM &&
+        oD.getUTCDate() === dD
+      );
+    });
     if (override) {
       return false;
     }
@@ -115,33 +124,36 @@ function getPerCutoffAmount(
   return payFrequency === "bimonthly" ? monthlyAmount / 2 : monthlyAmount;
 }
 
+/** Normalize to UTC midnight so cutoff/attendance day grouping is identical in local and production. */
 function toLocalDayTimestamp(date: number): number {
   const dateObj = new Date(date);
-  dateObj.setHours(0, 0, 0, 0);
-  return dateObj.getTime();
+  return Date.UTC(
+    dateObj.getUTCFullYear(),
+    dateObj.getUTCMonth(),
+    dateObj.getUTCDate(),
+  );
 }
 
 function holidayMatchesDate(holiday: any, date: number): boolean {
-  // Payroll uses offset date as the holiday date when set
   const effectiveTimestamp = holiday.offsetDate ?? holiday.date;
   const holidayDate = new Date(effectiveTimestamp);
   const targetDate = new Date(date);
 
   if (holiday.isRecurring) {
     return (
-      holidayDate.getMonth() === targetDate.getMonth() &&
-      holidayDate.getDate() === targetDate.getDate()
+      holidayDate.getUTCMonth() === targetDate.getUTCMonth() &&
+      holidayDate.getUTCDate() === targetDate.getUTCDate()
     );
   }
 
-  if (holiday.year != null && holiday.year !== targetDate.getFullYear()) {
+  if (holiday.year != null && holiday.year !== targetDate.getUTCFullYear()) {
     return false;
   }
 
   return (
-    holidayDate.getFullYear() === targetDate.getFullYear() &&
-    holidayDate.getMonth() === targetDate.getMonth() &&
-    holidayDate.getDate() === targetDate.getDate()
+    holidayDate.getUTCFullYear() === targetDate.getUTCFullYear() &&
+    holidayDate.getUTCMonth() === targetDate.getUTCMonth() &&
+    holidayDate.getUTCDate() === targetDate.getUTCDate()
   );
 }
 
@@ -506,7 +518,7 @@ export function calculatePayrollBaseFromRecords(args: {
 
   while (currentDate <= lastDate) {
     const dateTs = currentDate.getTime();
-    currentDate.setDate(currentDate.getDate() + 1);
+    currentDate.setUTCDate(currentDate.getUTCDate() + 1);
 
     if (attendanceDates.has(dateTs)) continue;
 

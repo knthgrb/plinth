@@ -199,7 +199,8 @@ describe("payroll calculations", () => {
   });
 
   it("calculates rest day work using the configured rest day rate", () => {
-    const date = localDate(2026, 1, 21);
+    // Use UTC so Feb 21 00:00 UTC is Saturday (payroll uses UTC for day-of-week)
+    const date = Date.UTC(2026, 1, 21);
     const result = calculate({
       attendance: [
         {
