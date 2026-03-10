@@ -126,18 +126,22 @@ export function EditAttendanceDialog({
     }
   }, [record, employee, isOpen]);
 
-  // Calculate late and undertime automatically when times change
+  // Lunch from record (from shift or org default when record was created/updated) so undertime/late match server
+  const lunchStart = record?.lunchStart;
+  const lunchEnd = record?.lunchEnd;
+  const lunchMinutes =
+    lunchStart && lunchEnd
+      ? (() => {
+          const [lh, lm] = lunchStart.split(":").map(Number);
+          const [eh, em] = lunchEnd.split(":").map(Number);
+          return Math.max(0, (eh * 60 + em) - (lh * 60 + lm));
+        })()
+      : undefined;
+
   const calculatedLate = useMemo(() => {
     if (!editScheduleIn || !editTimeIn || editStatus !== "present") return 0;
-    const calculatedUndertime = calculateUndertime(
-      editScheduleIn,
-      editScheduleOut,
-      editTimeIn,
-      editTimeOut,
-    );
-    // If employee has undertime, don't count as late
-    return calculateLate(editScheduleIn, editTimeIn);
-  }, [editScheduleIn, editScheduleOut, editTimeIn, editTimeOut, editStatus]);
+    return calculateLate(editScheduleIn, editTimeIn, lunchStart);
+  }, [editScheduleIn, editTimeIn, editStatus, lunchStart]);
 
   const calculatedUndertime = useMemo(() => {
     if (
@@ -153,8 +157,20 @@ export function EditAttendanceDialog({
       editScheduleOut,
       editTimeIn,
       editTimeOut,
+      lunchStart,
+      lunchEnd,
+      lunchMinutes,
     );
-  }, [editScheduleIn, editScheduleOut, editTimeIn, editTimeOut, editStatus]);
+  }, [
+    editScheduleIn,
+    editScheduleOut,
+    editTimeIn,
+    editTimeOut,
+    editStatus,
+    lunchStart,
+    lunchEnd,
+    lunchMinutes,
+  ]);
 
   // Use manual values if enabled, otherwise use calculated
   const finalLate = useManualLate

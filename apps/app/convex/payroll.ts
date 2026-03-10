@@ -527,9 +527,10 @@ function getUndertimeHoursFromAttendance(att: {
   ) {
     const breakMins = lunchEndM - lunchStartM;
     const requiredWorkMins = Math.max(0, scheduleOutM - scheduleInM - breakMins);
-    const overlapStart = Math.max(actualInM, lunchStartM);
-    const overlapEnd = Math.min(actualOutM, lunchEndM);
-    const breakDeducted = Math.max(0, overlapEnd - overlapStart);
+    const breakDeducted =
+      actualInM >= lunchEndM
+        ? 0
+        : Math.max(0, Math.min(actualOutM, lunchEndM) - Math.max(actualInM, lunchStartM));
     const actualWorkMins = Math.max(0, actualOutM - actualInM - breakDeducted);
     const undertimeMins = Math.max(0, requiredWorkMins - actualWorkMins);
     return undertimeMins / 60;
