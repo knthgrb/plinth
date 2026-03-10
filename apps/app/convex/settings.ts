@@ -131,6 +131,11 @@ export const getSettings = query({
           dailyRateIncludesAllowance: false, // Daily rate from basic only (set true for basic + allowance) × 12/261
           dailyRateWorkingDaysPerYear: 261,
         },
+        attendanceSettings: {
+          defaultLunchBreakMinutes: 60,
+          defaultLunchStart: "12:00",
+          defaultLunchEnd: "13:00",
+        },
         leaveTypes: [
           {
             type: "sick",
@@ -221,6 +226,46 @@ export const updatePayrollSettings = mutation({
       });
     }
 
+    return { success: true };
+  },
+});
+
+// Update attendance / lunch settings (org default when employee has no shift)
+export const updateAttendanceSettings = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    attendanceSettings: v.object({
+      defaultLunchBreakMinutes: v.optional(v.number()),
+      defaultLunchStart: v.optional(v.string()),
+      defaultLunchEnd: v.optional(v.string()),
+    }),
+  },
+  handler: async (ctx, args) => {
+    await checkAuth(ctx, args.organizationId, "hr");
+
+    let settings = await (ctx.db.query("settings") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .first();
+
+    const now = Date.now();
+    if (!settings) {
+      await ctx.db.insert("settings", {
+        organizationId: args.organizationId,
+        attendanceSettings: args.attendanceSettings,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.patch(settings._id, {
+        attendanceSettings: {
+          ...(settings.attendanceSettings || {}),
+          ...args.attendanceSettings,
+        },
+        updatedAt: now,
+      });
+    }
     return { success: true };
   },
 });

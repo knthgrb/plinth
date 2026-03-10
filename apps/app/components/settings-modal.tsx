@@ -17,6 +17,7 @@ import {
   LogOut,
   Mail,
   Shield,
+  Clock,
 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -49,6 +50,13 @@ const HolidaysSettingsContent = dynamic(
     ),
   { ssr: false },
 );
+const AttendanceShiftsSettingsContent = dynamic(
+  () =>
+    import("@/components/settings/attendance-shifts-settings-content").then(
+      (m) => m.AttendanceShiftsSettingsContent,
+    ),
+  { ssr: false },
+);
 
 type SettingsSection =
   | "account"
@@ -56,7 +64,8 @@ type SettingsSection =
   | "payroll"
   | "leave-types"
   | "departments"
-  | "holidays";
+  | "holidays"
+  | "attendance-shifts";
 
 type OrganizationRole = "owner" | "admin" | "hr" | "accounting" | "employee";
 
@@ -145,6 +154,12 @@ export function SettingsModal({
       id: "holidays" as SettingsSection,
       name: "Holidays",
       icon: CalendarIcon,
+      roles: ["admin", "hr", "accounting"],
+    },
+    {
+      id: "attendance-shifts" as SettingsSection,
+      name: "Attendance & Shifts",
+      icon: Clock,
       roles: ["admin", "hr", "accounting"],
     },
   ];
@@ -278,6 +293,20 @@ export function SettingsModal({
               </p>
             </div>
             <HolidaysSettingsContent />
+          </div>
+        );
+      case "attendance-shifts":
+        return (
+          <div className="space-y-4 sm:space-y-6">
+            <div>
+              <h2 className="text-xl sm:text-2xl font-semibold mb-1 sm:mb-2">
+                Attendance & Shifts
+              </h2>
+              <p className="text-sm sm:text-base text-gray-600">
+                Default lunch break and shift-specific lunch windows for late/undertime and paid hours
+              </p>
+            </div>
+            <AttendanceShiftsSettingsContent />
           </div>
         );
       default:

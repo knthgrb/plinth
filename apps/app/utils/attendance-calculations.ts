@@ -1,53 +1,71 @@
 /**
+ * Parse "HH:mm" to minutes since midnight.
+ */
+function timeToMins(t: string): number {
+  const [h, m] = t.split(":").map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+}
+
+/**
  * Calculate late time in minutes (arrival after scheduled start).
  * Per policy: late and undertime are independent — late = late arrival only.
- * @param scheduleIn - Scheduled time in (HH:mm format)
- * @param actualIn - Actual time in (HH:mm format)
- * @returns Minutes late, or 0 if on time or no actualIn
+ * When lunchStart is provided: if actualIn is at or after lunchStart, count as 0 late (time in after lunch = undertime, not late).
  */
 export function calculateLate(
   scheduleIn: string,
   actualIn: string | undefined,
+  lunchStart?: string,
 ): number {
   if (!actualIn) return 0;
 
-  const [scheduleHour, scheduleMin] = scheduleIn.split(":").map(Number);
-  const [actualHour, actualMin] = actualIn.split(":").map(Number);
+  const scheduleMinutes = timeToMins(scheduleIn);
+  const actualMinutes = timeToMins(actualIn);
 
-  const scheduleMinutes = scheduleHour * 60 + scheduleMin;
-  const actualMinutes = actualHour * 60 + actualMin;
+  if (lunchStart != null) {
+    const lunchStartMins = timeToMins(lunchStart);
+    if (actualMinutes >= lunchStartMins) return 0; // Clock in after/during lunch = not late
+  }
 
   const lateMinutes = actualMinutes - scheduleMinutes;
   return lateMinutes > 0 ? lateMinutes : 0;
 }
 
 /**
- * Calculate undertime in hours (early departure only).
- * Per policy: undertime = time left before scheduled end (scheduleOut - actualOut).
- * Do NOT use (scheduled work - actual work), which would double-count late arrival as undertime.
- * @param scheduleOut - Scheduled time out (HH:mm format)
- * @param actualOut - Actual time out (HH:mm format)
- * @returns Hours undertime (early departure)
+ * Calculate undertime in hours.
+ * Without lunch: early departure only (scheduleOut - actualOut).
+ * With lunch: Undertime = (Required work - Actual paid work). Required = (scheduleOut - scheduleIn - lunchMinutes). Actual = (actualOut - actualIn - breakDeducted). Break deducted = overlap of [actualIn, actualOut] with [lunchStart, lunchEnd], or full lunch if worked through.
  */
 export function calculateUndertime(
-  _scheduleIn: string,
+  scheduleIn: string,
   scheduleOut: string,
-  _actualIn: string | undefined,
+  actualIn: string | undefined,
   actualOut: string | undefined,
+  lunchStart?: string,
+  lunchEnd?: string,
+  lunchMinutes?: number,
 ): number {
   if (!actualOut) return 0;
 
-  const [scheduleOutHour, scheduleOutMin] = scheduleOut.split(":").map(Number);
-  const [actualOutHour, actualOutMin] = actualOut.split(":").map(Number);
+  const scheduleInM = timeToMins(scheduleIn);
+  const scheduleOutM = timeToMins(scheduleOut);
+  const actualInM = actualIn ? timeToMins(actualIn) : 0;
+  const actualOutM = timeToMins(actualOut);
 
-  const scheduleOutMinutes = scheduleOutHour * 60 + scheduleOutMin;
-  const actualOutMinutes = actualOutHour * 60 + actualOutMin;
+  if (lunchStart != null && lunchEnd != null && (lunchMinutes ?? 0) > 0) {
+    const lunchStartM = timeToMins(lunchStart);
+    const lunchEndM = timeToMins(lunchEnd);
+    const breakMins = lunchMinutes ?? Math.max(0, lunchEndM - lunchStartM);
+    const requiredWorkMins = Math.max(0, (scheduleOutM - scheduleInM) - breakMins);
+    const overlapStart = Math.max(actualInM, lunchStartM);
+    const overlapEnd = Math.min(actualOutM, lunchEndM);
+    const breakDeducted = Math.max(0, overlapEnd - overlapStart);
+    const actualWorkMins = Math.max(0, (actualOutM - actualInM) - breakDeducted);
+    const undertimeMins = Math.max(0, requiredWorkMins - actualWorkMins);
+    return undertimeMins / 60;
+  }
 
-  // Undertime = early departure only (left before scheduled end)
-  const undertimeMinutes = Math.max(0, scheduleOutMinutes - actualOutMinutes);
-  const undertimeHours = undertimeMinutes / 60;
-
-  return undertimeHours > 0 ? undertimeHours : 0;
+  const undertimeMinutes = Math.max(0, scheduleOutM - actualOutM);
+  return undertimeMinutes / 60;
 }
 
 /**

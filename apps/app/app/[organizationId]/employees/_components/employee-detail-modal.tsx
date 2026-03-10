@@ -158,6 +158,8 @@ export function EmployeeDetailModal({
     sunday: { start: "09:00", end: "18:00", workday: false },
   });
 
+  const [editShiftId, setEditShiftId] = useState<string | null>(null);
+
   const [isSaving, setIsSaving] = useState(false);
 
   // Use pre-fetched data if available, otherwise fetch
@@ -175,6 +177,13 @@ export function EmployeeDetailModal({
       ? ({ organizationId: employee.organizationId } as {
           organizationId: Id<"organizations">;
         })
+      : "skip",
+  );
+
+  const shifts = useQuery(
+    (api as any).shifts.listShifts,
+    employee && currentOrganizationId
+      ? { organizationId: currentOrganizationId as Id<"organizations"> }
       : "skip",
   );
 
@@ -224,6 +233,7 @@ export function EmployeeDetailModal({
   // Populate edit form when opening in edit mode
   useEffect(() => {
     if (!open || mode !== "edit" || !employee) return;
+    setEditShiftId((employee as any).shiftId ?? null);
     const daysOrder = [
       "monday",
       "tuesday",
@@ -537,6 +547,7 @@ export function EmployeeDetailModal({
           ...employee.schedule,
           defaultSchedule: newDefaultSchedule,
         },
+        shiftId: !editShiftId ? null : (editShiftId as Id<"shifts">),
       });
 
       // Optionally update leave credits totals if changed
@@ -1665,6 +1676,25 @@ export function EmployeeDetailModal({
                     Choose whether this employee has the same time for all work
                     days or different times per day.
                   </p>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Shift (lunch window for late/undertime)</Label>
+                    <Select
+                      value={editShiftId ?? ""}
+                      onValueChange={(v) => setEditShiftId(v === "" ? null : v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="None (use default lunch)" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">None (use default lunch)</SelectItem>
+                        {shifts?.map((s: any) => (
+                          <SelectItem key={s._id} value={s._id}>
+                            {s.name} ({s.scheduleIn}–{s.scheduleOut}, lunch {s.lunchStart}–{s.lunchEnd})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="space-y-2">
                     <Label className="text-sm">Schedule Type</Label>
                     <Select

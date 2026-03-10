@@ -257,11 +257,14 @@ export default defineSchema({
     customFields: v.optional(v.any()), // Flexible object for custom fields
     /** Hashed PIN for accessing payslips page (e.g. SHA-256 of pin + salt). Set by employee or HR. */
     payslipPinHash: v.optional(v.string()),
+    /** Optional shift (Morning, UK, Night). When set, schedule + lunch come from shift; else use defaultSchedule + org default lunch. */
+    shiftId: v.optional(v.id("shifts")),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_organization", ["organizationId"])
     .index("by_employee_id", ["employment.employeeId"])
+    .index("by_shift", ["shiftId"])
     .index("by_status", ["employment.status"])
     .index("by_department", ["employment.department"]),
 
@@ -272,6 +275,9 @@ export default defineSchema({
     date: v.number(), // Unix timestamp
     scheduleIn: v.string(), // Time string "HH:mm"
     scheduleOut: v.string(),
+    /** Lunch window used for this record (from shift or org default). Enables correct late/undertime when clock in after lunch. */
+    lunchStart: v.optional(v.string()),
+    lunchEnd: v.optional(v.string()),
     actualIn: v.optional(v.string()),
     actualOut: v.optional(v.string()),
     overtime: v.optional(v.number()), // Hours
@@ -302,6 +308,19 @@ export default defineSchema({
     .index("by_date", ["date"])
     .index("by_organization", ["organizationId"])
     .index("by_employee_date", ["employeeId", "date"]),
+
+  // Shifts table (per-org; each shift has schedule + lunch window for late/undertime)
+  shifts: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(), // e.g. "Morning", "UK", "Night"
+    scheduleIn: v.string(), // HH:mm
+    scheduleOut: v.string(),
+    lunchStart: v.string(), // HH:mm
+    lunchEnd: v.string(), // HH:mm
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"]),
 
   // Holidays table
   holidays: defineTable({
@@ -762,6 +781,14 @@ export default defineSchema({
       ),
     ),
     taxTable: v.optional(v.string()), // Reference to tax table version
+    // Attendance / lunch break (org default when employee has no shift)
+    attendanceSettings: v.optional(
+      v.object({
+        defaultLunchBreakMinutes: v.optional(v.number()), // e.g. 60 (used when no shift or shift has no lunch)
+        defaultLunchStart: v.optional(v.string()), // HH:mm e.g. "12:00"
+        defaultLunchEnd: v.optional(v.string()), // HH:mm e.g. "13:00"
+      }),
+    ),
     // Payroll configurations
     payrollSettings: v.optional(
       v.object({

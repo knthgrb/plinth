@@ -704,6 +704,7 @@ export const updateEmployee = mutation({
       }),
     ),
     customFields: v.optional(v.any()), // Flexible object for custom fields
+    shiftId: v.optional(v.union(v.id("shifts"), v.null())), // Optional shift (schedule + lunch); null = use defaultSchedule + org default lunch
   },
   handler: async (ctx, args) => {
     const employee = await ctx.db.get(args.employeeId);
@@ -738,6 +739,7 @@ export const updateEmployee = mutation({
     if (args.employment) updates.employment = args.employment;
     if (args.compensation) updates.compensation = args.compensation;
     if (args.schedule) updates.schedule = args.schedule;
+    if (args.shiftId !== undefined) updates.shiftId = args.shiftId;
     if (args.customFields !== undefined) {
       // Merge with existing customFields
       const existingCustomFields = (employee as any).customFields;

@@ -151,6 +151,7 @@ export class EmployeesService {
           reason: string;
         }>;
       };
+      shiftId?: Id<"shifts"> | null;
       customFields?: Record<string, any>;
     }
   ) {

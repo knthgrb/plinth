@@ -1,44 +1,56 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { getScheduleWithLunch } from "./shifts";
 
-// Late = late arrival only. Undertime = early departure only (see calculateUndertime).
+function timeToMins(t: string): number {
+  const [h, m] = t.split(":").map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+}
+
+// Late = late arrival only. If lunchStart provided and actualIn >= lunchStart, return 0 (time in after lunch = undertime, not late).
 function calculateLate(
   scheduleIn: string,
   actualIn: string | undefined,
+  lunchStart?: string,
 ): number {
   if (!actualIn) return 0;
-
-  const [scheduleHour, scheduleMin] = scheduleIn.split(":").map(Number);
-  const [actualHour, actualMin] = actualIn.split(":").map(Number);
-
-  const scheduleMinutes = scheduleHour * 60 + scheduleMin;
-  const actualMinutes = actualHour * 60 + actualMin;
-
+  const scheduleMinutes = timeToMins(scheduleIn);
+  const actualMinutes = timeToMins(actualIn);
+  if (lunchStart != null && actualMinutes >= timeToMins(lunchStart)) return 0;
   const lateMinutes = actualMinutes - scheduleMinutes;
   return lateMinutes > 0 ? lateMinutes : 0;
 }
 
-// Undertime = early departure only (left before scheduled end). Do not use (scheduled work - actual work)
-// or late arrival would be double-counted as undertime.
+// Undertime: with lunch = (required work - actual paid work); without = early departure only (scheduleOut - actualOut).
 function calculateUndertime(
-  _scheduleIn: string,
+  scheduleIn: string,
   scheduleOut: string,
-  _actualIn: string | undefined,
+  actualIn: string | undefined,
   actualOut: string | undefined,
+  lunchStart?: string,
+  lunchEnd?: string,
+  lunchMinutes?: number,
 ): number {
   if (!actualOut) return 0;
-
-  const [scheduleOutHour, scheduleOutMin] = scheduleOut.split(":").map(Number);
-  const [actualOutHour, actualOutMin] = actualOut.split(":").map(Number);
-
-  const scheduleOutMinutes = scheduleOutHour * 60 + scheduleOutMin;
-  const actualOutMinutes = actualOutHour * 60 + actualOutMin;
-
-  const undertimeMinutes = Math.max(0, scheduleOutMinutes - actualOutMinutes);
-  const undertimeHours = undertimeMinutes / 60;
-
-  return undertimeHours > 0 ? undertimeHours : 0;
+  const scheduleInM = timeToMins(scheduleIn);
+  const scheduleOutM = timeToMins(scheduleOut);
+  const actualInM = actualIn ? timeToMins(actualIn) : 0;
+  const actualOutM = timeToMins(actualOut);
+  if (lunchStart != null && lunchEnd != null && (lunchMinutes ?? 0) > 0) {
+    const lunchStartM = timeToMins(lunchStart);
+    const lunchEndM = timeToMins(lunchEnd);
+    const breakMins = lunchMinutes ?? Math.max(0, lunchEndM - lunchStartM);
+    const requiredWorkMins = Math.max(0, scheduleOutM - scheduleInM - breakMins);
+    const overlapStart = Math.max(actualInM, lunchStartM);
+    const overlapEnd = Math.min(actualOutM, lunchEndM);
+    const breakDeducted = Math.max(0, overlapEnd - overlapStart);
+    const actualWorkMins = Math.max(0, actualOutM - actualInM - breakDeducted);
+    const undertimeMins = Math.max(0, requiredWorkMins - actualWorkMins);
+    return undertimeMins / 60;
+  }
+  const undertimeMinutes = Math.max(0, scheduleOutM - actualOutM);
+  return undertimeMinutes / 60;
 }
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -307,34 +319,46 @@ export const createAttendance = mutation({
       resolvedStatus = "no_work";
     }
 
-    // Calculate undertime automatically if not manually provided
+    const employee = await ctx.db.get(args.employeeId);
+    const scheduleWithLunch = employee
+      ? await getScheduleWithLunch(ctx, employee, args.date, args.organizationId)
+      : null;
+
+    const scheduleIn = scheduleWithLunch?.scheduleIn ?? args.scheduleIn;
+    const scheduleOut = scheduleWithLunch?.scheduleOut ?? args.scheduleOut;
+    const lunchStart = scheduleWithLunch?.lunchStart;
+    const lunchEnd = scheduleWithLunch?.lunchEnd;
+    const lunchMinutes = scheduleWithLunch?.lunchMinutes ?? 0;
+
     const calculatedUndertime =
       args.undertime !== undefined
         ? args.undertime
         : resolvedStatus === "present" && args.actualIn && args.actualOut
           ? calculateUndertime(
-              args.scheduleIn,
-              args.scheduleOut,
+              scheduleIn,
+              scheduleOut,
               args.actualIn,
               args.actualOut,
+              lunchStart,
+              lunchEnd,
+              lunchMinutes,
             )
           : 0;
 
-    // Calculate late from actualIn vs scheduleIn (independent of undertime)
     const calculatedLate =
       args.late !== undefined
         ? args.late
         : resolvedStatus === "present" && args.actualIn
-          ? calculateLate(args.scheduleIn, args.actualIn)
+          ? calculateLate(scheduleIn, args.actualIn, lunchStart)
           : 0;
 
     const now = Date.now();
-    const attendanceId = await ctx.db.insert("attendance", {
+    const insertPayload: Record<string, unknown> = {
       organizationId: args.organizationId,
       employeeId: args.employeeId,
       date: args.date,
-      scheduleIn: args.scheduleIn,
-      scheduleOut: args.scheduleOut,
+      scheduleIn,
+      scheduleOut,
       actualIn: args.actualIn,
       actualOut: args.actualOut,
       overtime: args.overtime,
@@ -346,7 +370,11 @@ export const createAttendance = mutation({
       status: resolvedStatus,
       createdAt: now,
       updatedAt: now,
-    });
+    };
+    if (lunchStart != null) insertPayload.lunchStart = lunchStart;
+    if (lunchEnd != null) insertPayload.lunchEnd = lunchEnd;
+
+    const attendanceId = await ctx.db.insert("attendance", insertPayload as any);
 
     return attendanceId;
   },
@@ -390,6 +418,17 @@ export const updateAttendance = mutation({
 
     const userRecord = await checkAuth(ctx, attendance.organizationId, "hr");
 
+    const employee = await ctx.db.get(attendance.employeeId);
+    const scheduleWithLunch = employee
+      ? await getScheduleWithLunch(ctx, employee, attendance.date, attendance.organizationId)
+      : null;
+
+    const resolvedScheduleIn = scheduleWithLunch?.scheduleIn ?? args.scheduleIn ?? attendance.scheduleIn;
+    const resolvedScheduleOut = scheduleWithLunch?.scheduleOut ?? args.scheduleOut ?? attendance.scheduleOut;
+    const lunchStart = scheduleWithLunch?.lunchStart ?? attendance.lunchStart;
+    const lunchEnd = scheduleWithLunch?.lunchEnd ?? attendance.lunchEnd;
+    const lunchMinutes = scheduleWithLunch?.lunchMinutes ?? 0;
+
     const updates: any = { updatedAt: Date.now() };
     if (args.scheduleIn !== undefined) updates.scheduleIn = args.scheduleIn;
     if (args.scheduleOut !== undefined) updates.scheduleOut = args.scheduleOut;
@@ -399,14 +438,15 @@ export const updateAttendance = mutation({
     if (args.isHoliday !== undefined) updates.isHoliday = args.isHoliday;
     if (args.holidayType !== undefined) updates.holidayType = args.holidayType;
     if (args.remarks !== undefined) updates.remarks = args.remarks;
-    // Get current values for calculation
+    if (scheduleWithLunch?.lunchStart != null) updates.lunchStart = scheduleWithLunch.lunchStart;
+    if (scheduleWithLunch?.lunchEnd != null) updates.lunchEnd = scheduleWithLunch.lunchEnd;
+
     const currentScheduleIn = args.scheduleIn ?? attendance.scheduleIn;
     const currentScheduleOut = args.scheduleOut ?? attendance.scheduleOut;
     const currentActualIn = args.actualIn ?? attendance.actualIn;
     const currentActualOut = args.actualOut ?? attendance.actualOut;
     let currentStatus = args.status ?? attendance.status;
 
-    // On holiday with no time in/out → no_work (no additional pay)
     if (args.status === undefined) {
       const holidays = await (ctx.db.query("holidays") as any)
         .withIndex("by_organization", (q: any) =>
@@ -424,7 +464,6 @@ export const updateAttendance = mutation({
     }
     if (args.status !== undefined) updates.status = args.status;
 
-    // Undertime: use explicit override flag so "override to 0" is never lost
     if (args.undertimeManualOverride === true) {
       updates.undertime = args.undertime ?? 0;
       updates.undertimeManualOverride = true;
@@ -432,10 +471,13 @@ export const updateAttendance = mutation({
       const calculatedUndertime =
         currentStatus === "present" && currentActualIn && currentActualOut
           ? calculateUndertime(
-              currentScheduleIn,
-              currentScheduleOut,
+              resolvedScheduleIn,
+              resolvedScheduleOut,
               currentActualIn,
               currentActualOut,
+              lunchStart,
+              lunchEnd,
+              lunchMinutes,
             )
           : 0;
       updates.undertime =
@@ -446,24 +488,13 @@ export const updateAttendance = mutation({
       updates.undertimeManualOverride = true;
     }
 
-    // Late: use explicit override flag so "override to 0" is never lost
     if (args.lateManualOverride === true) {
       updates.late = args.late ?? 0;
       updates.lateManualOverride = true;
     } else if (args.late === null) {
-      const calculatedUndertime =
-        updates.undertime ??
-        (currentStatus === "present" && currentActualIn && currentActualOut
-          ? calculateUndertime(
-              currentScheduleIn,
-              currentScheduleOut,
-              currentActualIn,
-              currentActualOut,
-            )
-          : 0);
       const calculatedLate =
         currentStatus === "present" && currentActualIn
-          ? calculateLate(currentScheduleIn, currentActualIn)
+          ? calculateLate(resolvedScheduleIn, currentActualIn, lunchStart)
           : 0;
       updates.late = calculatedLate > 0 ? calculatedLate : undefined;
       updates.lateManualOverride = undefined;
@@ -562,8 +593,17 @@ export const bulkCreateAttendance = mutation({
           ? "no_work"
           : entry.status;
 
+      const employee = await ctx.db.get(entry.employeeId);
+      const scheduleWithLunch = employee
+        ? await getScheduleWithLunch(ctx, employee, entry.date, entry.organizationId)
+        : null;
+      const scheduleIn = scheduleWithLunch?.scheduleIn ?? entry.scheduleIn;
+      const scheduleOut = scheduleWithLunch?.scheduleOut ?? entry.scheduleOut;
+      const lunchStart = scheduleWithLunch?.lunchStart;
+      const lunchEnd = scheduleWithLunch?.lunchEnd;
+      const lunchMinutes = scheduleWithLunch?.lunchMinutes ?? 0;
+
       if (existing) {
-        // Update existing
         const updates: any = { updatedAt: now };
         if (entry.actualIn !== undefined) updates.actualIn = entry.actualIn;
         if (entry.actualOut !== undefined) updates.actualOut = entry.actualOut;
@@ -573,8 +613,13 @@ export const bulkCreateAttendance = mutation({
           updates.holidayType = entry.holidayType;
         if (entry.remarks !== undefined) updates.remarks = entry.remarks;
         updates.status = resolvedStatus;
+        if (scheduleWithLunch) {
+          updates.scheduleIn = scheduleIn;
+          updates.scheduleOut = scheduleOut;
+          updates.lunchStart = lunchStart;
+          updates.lunchEnd = lunchEnd;
+        }
 
-        // Calculate undertime and late if not manually provided
         const currentActualIn = entry.actualIn ?? existing.actualIn;
         const currentActualOut = entry.actualOut ?? existing.actualOut;
         const calculatedUndertime =
@@ -582,17 +627,20 @@ export const bulkCreateAttendance = mutation({
             ? entry.undertime
             : resolvedStatus === "present" && currentActualIn && currentActualOut
               ? calculateUndertime(
-                  entry.scheduleIn,
-                  entry.scheduleOut,
+                  scheduleIn,
+                  scheduleOut,
                   currentActualIn,
                   currentActualOut,
+                  lunchStart,
+                  lunchEnd,
+                  lunchMinutes,
                 )
               : 0;
         const calculatedLate =
           entry.late !== undefined
             ? entry.late
             : resolvedStatus === "present" && currentActualIn
-              ? calculateLate(entry.scheduleIn, currentActualIn)
+              ? calculateLate(scheduleIn, currentActualIn, lunchStart)
               : 0;
 
         updates.undertime =
@@ -602,33 +650,40 @@ export const bulkCreateAttendance = mutation({
         await ctx.db.patch(existing._id, updates);
         results.push({ id: existing._id, action: "updated" });
       } else {
-        // Create new - calculate undertime and late
         const calculatedUndertime =
           entry.undertime !== undefined
             ? entry.undertime
             : resolvedStatus === "present" && entry.actualIn && entry.actualOut
               ? calculateUndertime(
-                  entry.scheduleIn,
-                  entry.scheduleOut,
+                  scheduleIn,
+                  scheduleOut,
                   entry.actualIn,
                   entry.actualOut,
+                  lunchStart,
+                  lunchEnd,
+                  lunchMinutes,
                 )
               : 0;
         const calculatedLate =
           entry.late !== undefined
             ? entry.late
             : resolvedStatus === "present" && entry.actualIn
-              ? calculateLate(entry.scheduleIn, entry.actualIn)
+              ? calculateLate(scheduleIn, entry.actualIn, lunchStart)
               : 0;
 
-        const attendanceId = await ctx.db.insert("attendance", {
+        const insertPayload: Record<string, unknown> = {
           ...entry,
+          scheduleIn,
+          scheduleOut,
           status: resolvedStatus,
           late: calculatedLate > 0 ? calculatedLate : undefined,
           undertime: calculatedUndertime > 0 ? calculatedUndertime : undefined,
           createdAt: now,
           updatedAt: now,
-        });
+        };
+        if (lunchStart != null) insertPayload.lunchStart = lunchStart;
+        if (lunchEnd != null) insertPayload.lunchEnd = lunchEnd;
+        const attendanceId = await ctx.db.insert("attendance", insertPayload as any);
         results.push({ id: attendanceId, action: "created" });
       }
     }
@@ -689,17 +744,23 @@ export const recalculateEmployeeAttendance = mutation({
       return { updated: 0 };
     }
 
-    const schedule = (employee as any).schedule;
     const now = Date.now();
     let updatedCount = 0;
 
     for (const record of records) {
-      const { scheduleIn, scheduleOut } = getScheduledTimesForDate(
+      const scheduleWithLunch = await getScheduleWithLunch(
+        ctx,
+        employee,
         record.date,
-        schedule,
+        args.organizationId,
       );
 
-      // If we can't determine a schedule, leave record unchanged
+      const scheduleIn = scheduleWithLunch?.scheduleIn ?? record.scheduleIn;
+      const scheduleOut = scheduleWithLunch?.scheduleOut ?? record.scheduleOut;
+      const lunchStart = scheduleWithLunch?.lunchStart ?? record.lunchStart;
+      const lunchEnd = scheduleWithLunch?.lunchEnd ?? record.lunchEnd;
+      const lunchMinutes = scheduleWithLunch?.lunchMinutes ?? 0;
+
       if (!scheduleIn || !scheduleOut) continue;
 
       const actualIn = record.actualIn as string | undefined;
@@ -708,7 +769,8 @@ export const recalculateEmployeeAttendance = mutation({
         | "present"
         | "absent"
         | "half-day"
-        | "leave";
+        | "leave"
+        | "no_work";
 
       let newUndertime: number | undefined;
       let newLate: number | undefined;
@@ -719,23 +781,29 @@ export const recalculateEmployeeAttendance = mutation({
           scheduleOut,
           actualIn,
           actualOut,
+          lunchStart,
+          lunchEnd,
+          lunchMinutes,
         );
         newUndertime = undertime > 0 ? undertime : undefined;
 
-        const late = calculateLate(scheduleIn, actualIn);
+        const late = calculateLate(scheduleIn, actualIn, lunchStart);
         newLate = late > 0 ? late : undefined;
       } else {
         newUndertime = undefined;
         newLate = undefined;
       }
 
-      await ctx.db.patch(record._id, {
+      const patchPayload: Record<string, unknown> = {
         scheduleIn,
         scheduleOut,
         undertime: newUndertime,
         late: newLate,
         updatedAt: now,
-      });
+      };
+      if (scheduleWithLunch?.lunchStart != null) patchPayload.lunchStart = scheduleWithLunch.lunchStart;
+      if (scheduleWithLunch?.lunchEnd != null) patchPayload.lunchEnd = scheduleWithLunch.lunchEnd;
+      await ctx.db.patch(record._id, patchPayload as any);
       updatedCount++;
     }
 

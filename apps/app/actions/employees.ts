@@ -132,6 +132,7 @@ export async function updateEmployee(
         reason: string;
       }>;
     };
+    shiftId?: Id<"shifts"> | null;
     customFields?: Record<string, any>;
   }
 ) {

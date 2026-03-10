@@ -475,6 +475,7 @@ function getLateHoursFromAttendance(att: {
   scheduleIn?: string;
   late?: number;
   lateManualOverride?: boolean;
+  lunchStart?: string;
 }): number {
   if (att.lateManualOverride === true) {
     return (att.late ?? 0) / 60;
@@ -487,24 +488,54 @@ function getLateHoursFromAttendance(att: {
   const scheduleMinutes = timeStringToMinutes(att.scheduleIn);
   const actualMinutes = timeStringToMinutes(att.actualIn);
   if (scheduleMinutes === null || actualMinutes === null) return 0;
+  if (att.lunchStart != null) {
+    const lunchStartM = timeStringToMinutes(att.lunchStart);
+    if (lunchStartM !== null && actualMinutes >= lunchStartM) return 0;
+  }
   return Math.max(0, actualMinutes - scheduleMinutes) / 60;
 }
 
 function getUndertimeHoursFromAttendance(att: {
+  actualIn?: string;
   actualOut?: string;
+  scheduleIn?: string;
   scheduleOut?: string;
   undertime?: number;
   undertimeManualOverride?: boolean;
+  lunchStart?: string;
+  lunchEnd?: string;
 }): number {
-  // Only use stored undertime when explicitly overridden; otherwise compute from scheduleOut/actualOut (early departure only).
   if (att.undertimeManualOverride === true) {
     return att.undertime ?? 0;
   }
 
-  const scheduleMinutes = timeStringToMinutes(att.scheduleOut);
-  const actualMinutes = timeStringToMinutes(att.actualOut);
-  if (scheduleMinutes === null || actualMinutes === null) return 0;
-  return Math.max(0, scheduleMinutes - actualMinutes) / 60;
+  const scheduleOutM = timeStringToMinutes(att.scheduleOut);
+  const actualOutM = timeStringToMinutes(att.actualOut);
+  if (scheduleOutM === null || actualOutM === null) return 0;
+
+  const lunchStartM = att.lunchStart != null ? timeStringToMinutes(att.lunchStart) : null;
+  const lunchEndM = att.lunchEnd != null ? timeStringToMinutes(att.lunchEnd) : null;
+  const scheduleInM = timeStringToMinutes(att.scheduleIn);
+  const actualInM = timeStringToMinutes(att.actualIn);
+
+  if (
+    lunchStartM !== null &&
+    lunchEndM !== null &&
+    scheduleInM !== null &&
+    actualInM !== null &&
+    lunchEndM > lunchStartM
+  ) {
+    const breakMins = lunchEndM - lunchStartM;
+    const requiredWorkMins = Math.max(0, scheduleOutM - scheduleInM - breakMins);
+    const overlapStart = Math.max(actualInM, lunchStartM);
+    const overlapEnd = Math.min(actualOutM, lunchEndM);
+    const breakDeducted = Math.max(0, overlapEnd - overlapStart);
+    const actualWorkMins = Math.max(0, actualOutM - actualInM - breakDeducted);
+    const undertimeMins = Math.max(0, requiredWorkMins - actualWorkMins);
+    return undertimeMins / 60;
+  }
+
+  return Math.max(0, scheduleOutM - actualOutM) / 60;
 }
 
 function getMonthlyBasicForTax(
@@ -621,8 +652,8 @@ async function buildEmployeePayrollBase(
 }
 
 /**
- * Get total hours worked for a day from attendance (actual in/out minus 1 hr lunch).
- * Fallback: 8 * dayMultiplier + overtime when actual times missing.
+ * Get total hours worked for a day from attendance (actual in/out minus break).
+ * Uses lunchStart/lunchEnd from record when present; else deducts 60 min.
  */
 function getHoursWorkedFromAttendance(att: {
   actualIn?: string;
@@ -631,16 +662,23 @@ function getHoursWorkedFromAttendance(att: {
   scheduleOut?: string;
   status?: string;
   overtime?: number;
+  lunchStart?: string;
+  lunchEnd?: string;
 }): number {
   const dayMultiplier = att.status === "half-day" ? 0.5 : 1;
   if (att.actualIn && att.actualOut) {
-    const [inH, inM] = att.actualIn.split(":").map(Number);
-    const [outH, outM] = att.actualOut.split(":").map(Number);
-    const inMins = (inH ?? 0) * 60 + (inM ?? 0);
-    const outMins = (outH ?? 0) * 60 + (outM ?? 0);
-    const workMins = outMins - inMins - 60; // 1 hr lunch
-    const hours = Math.max(0, workMins / 60);
-    return hours;
+    const inMins = timeStringToMinutes(att.actualIn) ?? 0;
+    const outMins = timeStringToMinutes(att.actualOut) ?? 0;
+    let breakMins = 60;
+    if (att.lunchStart != null && att.lunchEnd != null) {
+      const ls = timeStringToMinutes(att.lunchStart) ?? 0;
+      const le = timeStringToMinutes(att.lunchEnd) ?? 0;
+      const overlapStart = Math.max(inMins, ls);
+      const overlapEnd = Math.min(outMins, le);
+      breakMins = Math.max(0, overlapEnd - overlapStart);
+    }
+    const workMins = Math.max(0, outMins - inMins - breakMins);
+    return workMins / 60;
   }
   return 8 * dayMultiplier + (att.overtime ?? 0);
 }
