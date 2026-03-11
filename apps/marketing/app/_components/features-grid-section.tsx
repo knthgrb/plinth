@@ -266,7 +266,7 @@ function CompactEmployeeRecordsSnapshot() {
       </div>
       <div className="bg-gradient-to-b from-white/95 to-gray-50/90 p-3 backdrop-blur-sm">
         <div className="space-y-2">
-          {["Maria Santos", "Juan Dela Cruz", "Ana Reyes"].map((name, i) => (
+          {["Marc Vincent Palautog", "Jimmy Ricks Chixboi", "Kenneth Goodboy"].map((name, i) => (
             <div
               key={name}
               className="flex items-center gap-2 rounded-lg border border-white/80 bg-white/70 px-2 py-1.5 backdrop-blur-md"

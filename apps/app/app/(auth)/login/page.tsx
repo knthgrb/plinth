@@ -75,13 +75,13 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen bg-white">
-      {/* Left Side - Form */}
-      <div className="flex flex-1 flex-col items-center justify-center px-6 py-12">
+    <div className="flex min-h-screen overflow-hidden bg-white">
+      {/* Left Side - Form (white bg, z-10, overflow-hidden to clip snapshot overflow) */}
+      <div className="relative z-10 flex flex-1 flex-col items-center justify-center overflow-hidden bg-white px-6 py-12">
         <div className="w-full max-w-md space-y-8">
           <Link
             href={marketingUrl}
-            className="self-start block mb-6 text-xl font-semibold text-brand-purple transition-colors hover:text-brand-purple-hover focus:outline-none focus:ring-2 focus:ring-brand-purple focus:ring-offset-2 rounded"
+            className="inline-block mb-6 text-xl font-semibold text-brand-purple transition-colors hover:text-brand-purple-hover focus:outline-none focus:ring-0"
             title="Go to Plinth"
           >
             Plinth
