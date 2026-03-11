@@ -12,14 +12,14 @@ const resources = [
   {
     id: "guides",
     title: "Guides",
-    description: "Step-by-step tutorials and best practices for HR and payroll.",
+    description: "Step-by-step tutorials and best practices for people and operations.",
     icon: GraduationCap,
     status: "Coming soon",
   },
   {
     id: "blog",
     title: "Blog",
-    description: "Latest updates and articles on HR, payroll, and Philippine compliance.",
+    description: "Latest updates and articles on people, payroll, and Philippine compliance.",
     icon: Newspaper,
     status: "Coming soon",
   },

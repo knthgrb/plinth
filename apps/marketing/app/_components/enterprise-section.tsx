@@ -13,13 +13,13 @@ export function EnterpriseSection() {
           Scales with you
         </h2>
         <p className="mt-4 max-w-2xl text-lg text-gray-600">
-          HR and payroll that adapt to your needs — from a few employees to hundreds.
+          People, payroll, and operations that adapt to your needs — from a few employees to hundreds.
         </p>
 
         <div className="mt-12 grid gap-12 lg:grid-cols-2 lg:items-start">
           <div>
             <h3 className="text-xl font-semibold text-gray-900">
-              Transform your team with compliant HR and payroll
+              One place for people, payroll, and operations
             </h3>
             <Link
               href="/whos-it-for"
@@ -29,7 +29,7 @@ export function EnterpriseSection() {
             </Link>
           </div>
           <p className="text-gray-600">
-            SMEs and growing teams across the Philippines use Plinth to run payroll, track attendance, manage leave, and stay compliant with SSS, PhilHealth, Pag-IBIG, and BIR — without spreadsheets or legacy software.
+            SMEs and growing teams across the Philippines use Plinth for people, payroll, attendance, leave, and compliance — without spreadsheets or legacy software.
           </p>
         </div>
 
@@ -77,7 +77,7 @@ export function EnterpriseSection() {
                   ))}
                 </div>
                 <p className="mt-3 text-center text-xs text-gray-500">
-                  HR & payroll in one place
+                  Everything in one place
                 </p>
               </div>
             </div>

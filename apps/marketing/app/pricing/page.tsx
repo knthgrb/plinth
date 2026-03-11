@@ -10,7 +10,7 @@ const PLANS = [
   {
     id: "starter",
     name: "Starter",
-    description: "For small teams getting started with HR and payroll.",
+    description: "For small teams getting started with people and payroll.",
     monthly: 2999,
     yearly: 29990,
     features: [
@@ -25,7 +25,7 @@ const PLANS = [
   {
     id: "professional",
     name: "Professional",
-    description: "For growing companies that need full HR and compliance.",
+    description: "For growing companies that need full people, payroll, and compliance.",
     monthly: 5999,
     yearly: 59990,
     features: [

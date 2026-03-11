@@ -46,3 +46,40 @@ body {
     opacity: 1 !important;
   }
 }
+
+/* Features "And so much more" — scrolling list with fade */
+.features-more-list {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 12%,
+    black 88%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 12%,
+    black 88%,
+    transparent 100%
+  );
+}
+
+@keyframes features-scroll {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(-50%);
+  }
+}
+
+.animate-features-scroll {
+  animation: features-scroll 20s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-features-scroll {
+    animation: none;
+  }
+}

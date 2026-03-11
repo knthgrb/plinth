@@ -37,7 +37,7 @@ export function FeatureSnapshotsSection() {
           Everything in one place
         </h2>
         <p className="mx-auto mt-2 max-w-xl text-center text-gray-600">
-          Payroll, attendance, leave, assets, and more — built for Philippine labor law.
+          People, payroll, attendance, and more — built for Philippine labor law.
         </p>
 
         {/* Top row: Payroll + Attendance (Stripe-style side-by-side) */}

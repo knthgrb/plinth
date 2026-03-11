@@ -117,7 +117,7 @@ export default function FeaturesPage() {
           Features
         </h1>
         <p className="mt-4 text-lg text-gray-600">
-          Everything you need to run HR and payroll for your team in the Philippines.
+          Everything you need to run your company — people, payroll, operations, and communication.
         </p>
       </div>
 

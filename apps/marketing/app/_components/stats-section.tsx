@@ -7,7 +7,7 @@ export function StatsSection() {
   const stats = [
     { value: "SSS, PhilHealth, Pag-IBIG", label: "Statutory compliance built in" },
     { value: "Philippine Labor Code", label: "Leave, OT, and holiday rules" },
-    { value: "99.9%", label: "Uptime for payroll and HR data" },
+    { value: "99.9%", label: "Uptime for your company data" },
     { value: "1 platform", label: "Payroll, attendance, leave, and more" },
   ];
 

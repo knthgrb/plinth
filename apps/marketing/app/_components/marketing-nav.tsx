@@ -38,7 +38,7 @@ const featuresItems = [
   {
     title: "Recruitment",
     description:
-      "Job postings, applicant tracking, interviews, and hire-to-employee flow.",
+      "Applicant tracking, interviews, and hire-to-employee flow.",
     href: "/features",
     icon: <Briefcase className="h-4 w-4" />,
   },
@@ -66,7 +66,7 @@ const whosItForItems = [
   {
     title: "SMEs in the Philippines",
     description:
-      "Small and medium enterprises managing payroll and HR in-house with local compliance.",
+      "Small and medium enterprises running people and operations in-house with local compliance.",
     href: "/whos-it-for",
     icon: <Building2 className="h-4 w-4" />,
   },
@@ -78,9 +78,9 @@ const whosItForItems = [
     icon: <Rocket className="h-4 w-4" />,
   },
   {
-    title: "HR Teams",
+    title: "People & operations",
     description:
-      "HR managers and admins who need one place for records, payroll, and recruitment.",
+      "Managers and admins who need one place for people, payroll, and operations.",
     href: "/whos-it-for",
     icon: <UserCheck className="h-4 w-4" />,
   },
@@ -108,7 +108,7 @@ const resourcesItems = [
   },
   {
     title: "Blog",
-    description: "Updates and articles on HR and payroll.",
+    description: "Updates and articles on people, payroll, and operations.",
     href: "/resources#blog",
     icon: <Newspaper className="h-4 w-4" />,
   },

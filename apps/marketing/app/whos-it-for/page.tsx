@@ -5,25 +5,25 @@ const audiences = [
   {
     title: "SMEs in the Philippines",
     description:
-      "Small and medium enterprises managing payroll and HR in-house. Plinth handles Philippine statutory compliance (SSS, PhilHealth, Pag-IBIG, BIR) so you can focus on running your business.",
+      "Small and medium enterprises running people and operations in-house. Plinth handles Philippine statutory compliance (SSS, PhilHealth, Pag-IBIG, BIR) so you can focus on running your business.",
     icon: Building2,
   },
   {
     title: "Startups",
     description:
-      "Growing teams that need structure without spreadsheets. Get employee records, leave, and payroll in one place from day one.",
+      "Growing teams that need structure without spreadsheets. Get people, leave, payroll, and communication in one place from day one.",
     icon: Rocket,
   },
   {
-    title: "HR teams",
+    title: "People & operations",
     description:
-      "HR managers and admins who need one place for records, attendance, evaluations, recruitment, and payroll — with role-based access for employees and accounting.",
+      "Managers and admins who need one place for people, attendance, evaluations, recruitment, payroll, and communication — with role-based access for employees and accounting.",
     icon: UserCheck,
   },
   {
     title: "Accounting & finance",
     description:
-      "Teams handling payroll, deductions, and Philippine statutory reporting. Plinth supports multiple cutoffs, custom deductions, and compliance-ready payslips.",
+      "Teams handling payroll, expenses, and Philippine statutory reporting. Plinth supports multiple cutoffs, custom deductions, and compliance-ready payslips.",
     icon: Landmark,
   },
 ];
@@ -36,7 +36,7 @@ export default function WhosItForPage() {
           Who&apos;s it for
         </h1>
         <p className="mt-4 text-lg text-gray-600">
-          Plinth is built for companies in the Philippines that need HR and payroll in one place.
+          Plinth is built for companies in the Philippines that need people, payroll, and operations in one place.
         </p>
       </div>
 

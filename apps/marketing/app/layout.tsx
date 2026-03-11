@@ -16,7 +16,7 @@ const mainAppUrl = process.env.NEXT_PUBLIC_MAIN_APP_URL ?? "";
 export const metadata: Metadata = {
   title: "Plinth – Built for companies to succeed",
   description:
-    "The foundation for companies in the Philippines. HR & payroll, attendance, leave, recruitment, and compliance — built for Philippine labor law.",
+    "The foundation for companies in the Philippines. People, payroll, compliance, and communication — all in one place.",
 };
 
 export default function RootLayout({

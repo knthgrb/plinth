@@ -1,8 +1,6 @@
 import Link from "next/link";
 import { HeroBackground } from "@/app/_components/hero-background";
-import { PayrollFeatureSection } from "@/app/_components/payroll-feature-section";
-import { AccountingUISection } from "@/app/_components/accounting-ui-section";
-import { AttendanceFeatureSection } from "@/app/_components/attendance-feature-section";
+import { FeaturesGridSection } from "@/app/_components/features-grid-section";
 import { StatsSection } from "@/app/_components/stats-section";
 import { EnterpriseSection } from "@/app/_components/enterprise-section";
 
@@ -34,7 +32,7 @@ export default function MarketingLandingPage() {
               className="hero-entrance mt-6 text-lg leading-relaxed text-gray-600 sm:text-xl"
               style={{ animation: "hero-fade-up 0.6s ease-out 0.2s both", opacity: 0 }}
             >
-              Plinth is the foundation your company is built on — HR & payroll, attendance, leave, recruitment, and compliance, built for Philippine labor law.
+              Plinth is the foundation your company is built on — people, payroll, compliance, and communication in one place. Built for Philippine labor law.
             </p>
             <div
               className="hero-entrance mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4"
@@ -69,76 +67,23 @@ export default function MarketingLandingPage() {
         </div>
       </section>
 
-      <PayrollFeatureSection />
-      <AccountingUISection />
-      <AttendanceFeatureSection />
-      <StatsSection />
-      <EnterpriseSection />
-
-      {/* One platform for HR and payroll — matches feature section styling */}
-      <section className="border-b border-gray-100 bg-gray-50/50 py-16 sm:py-24">
+      {/* Broader value — people, operations, communication */}
+      <section className="border-b border-gray-100 bg-gray-50/50 py-10 sm:py-12">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-2xl text-center">
-            <h2 className="text-2xl font-semibold tracking-tight text-gray-900 sm:text-3xl">
-              One platform for HR and payroll
-            </h2>
-            <p className="mt-3 text-gray-600 sm:text-lg">
-              From employee records to payslips — SSS, PhilHealth, Pag-IBIG, and
-              withholding tax handled for you.
+            <p className="text-base font-medium text-gray-900 sm:text-lg">
+              People, operations, and communication — all in one place.
             </p>
-          </div>
-          <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {[
-              {
-                title: "Payroll",
-                description:
-                  "Philippine Labor Code compliant. Automatic SSS, PhilHealth, Pag-IBIG, and TRAIN withholding tax.",
-              },
-              {
-                title: "Employee records",
-                description:
-                  "Profiles, schedules, leave credits, requirements, and document tracking.",
-              },
-              {
-                title: "Recruitment",
-                description:
-                  "Job postings, applicant tracking, interviews, and hire-to-employee flow.",
-              },
-              {
-                title: "Leave & attendance",
-                description:
-                  "Leave requests, approvals, balance tracking, and daily encoding.",
-              },
-              {
-                title: "Announcements & chat",
-                description:
-                  "Memos, acknowledgements, and team chat in one place.",
-              },
-              {
-                title: "Dashboard & reports",
-                description:
-                  "Overview, statistics, and quick actions for admins and HR.",
-              },
-            ].map((item) => (
-              <div
-                key={item.title}
-                className="rounded-xl border border-white/80 bg-white/90 p-6 shadow-lg shadow-gray-200/50 backdrop-blur-sm"
-              >
-                <h3 className="font-semibold text-gray-900">{item.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-gray-600">{item.description}</p>
-              </div>
-            ))}
-          </div>
-          <div className="mt-12 text-center">
-            <Link
-              href="/features"
-              className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors"
-            >
-              See all features →
-            </Link>
+            <p className="mt-2 text-sm text-gray-600">
+              Payroll, attendance, leave, recruitment, announcements, and chat. Everything your team needs.
+            </p>
           </div>
         </div>
       </section>
+
+      <FeaturesGridSection />
+      <StatsSection />
+      <EnterpriseSection />
 
       {/* Built for companies to succeed — clear section with CTA */}
       <section className="border-b border-gray-100 bg-white py-16 sm:py-24">
@@ -148,7 +93,7 @@ export default function MarketingLandingPage() {
               Built for companies to succeed
             </h2>
             <p className="mt-3 text-gray-600 sm:text-lg">
-              Whether you&apos;re an SME, startup, or growing team — we handle compliance so you can focus on your people.
+              Whether you&apos;re an SME, startup, or growing team — one place for people, operations, and compliance.
             </p>
             <div className="mt-10">
               <Link
