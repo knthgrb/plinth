@@ -151,17 +151,31 @@ function holidayMatchesDate(holiday: any, date: number): boolean {
   );
 }
 
+function holidayAppliesToEmployee(holiday: any, employee: any): boolean {
+  if (holiday.applyToAll !== false) return true;
+  const provinces = holiday.provinces as string[] | undefined;
+  if (!provinces || provinces.length === 0) return true;
+  const empProvince = (employee?.personalInfo?.province ?? "").trim();
+  if (!empProvince) return false;
+  return provinces.some(
+    (p) => String(p).trim().toLowerCase() === empProvince.toLowerCase()
+  );
+}
+
 function getHolidayInfo(
   date: number,
   holidays: any[],
   attendanceRecord?: any,
-): { isHoliday: boolean; holidayType?: HolidayType } {
+  employee?: any,
+): { isHoliday: boolean; holidayType?: HolidayType; appliesToEmployee?: boolean } {
   // Prefer holiday list (source of truth) so prod and local match; use Manila date matching.
   const holiday = holidays.find((entry) => holidayMatchesDate(entry, date));
   if (holiday) {
+    const appliesToEmployee = holidayAppliesToEmployee(holiday, employee ?? {});
     return {
       isHoliday: true,
       holidayType: holiday.type,
+      appliesToEmployee,
     };
   }
   // No matching holiday by date — use attendance if marked as holiday (e.g. one-off).
@@ -169,6 +183,7 @@ function getHolidayInfo(
     return {
       isHoliday: true,
       holidayType: attendanceRecord.holidayType,
+      appliesToEmployee: true,
     };
   }
 
@@ -184,27 +199,78 @@ function timeStringToMinutes(time: string | undefined): number | null {
   return hours * 60 + minutes;
 }
 
+/**
+ * Calculate night diff hours: overlap of (scheduled shift ∩ 10pm-6am) ∩ actual worked.
+ * Night diff applies only when the employee's SCHEDULED shift includes the 10pm-6am
+ * window. Early clock-in (e.g. 5:40am when scheduled 6am) does not qualify.
+ */
 function calculateNightDiffHours(
+  actualIn: string | undefined,
+  actualOut: string | undefined,
+  scheduleIn: string | undefined,
+  scheduleOut: string | undefined,
+): number {
+  const actualStart = timeStringToMinutes(actualIn);
+  const actualEnd = timeStringToMinutes(actualOut);
+  const scheduleStart = timeStringToMinutes(scheduleIn);
+  const scheduleEnd = timeStringToMinutes(scheduleOut);
+
+  if (actualStart === null || actualEnd === null) return 0;
+  if (scheduleStart === null || scheduleEnd === null) {
+    // Fallback: if no schedule, use old behavior (actual ∩ night) for backward compat
+    return calculateNightDiffHoursFallback(actualIn, actualOut);
+  }
+
+  const nightStart = 22 * 60;
+  const nightEnd = 30 * 60; // 6:00 AM next day
+
+  // Normalize times to handle overnight shifts (e.g. 22:00-06:00)
+  const norm = (start: number, end: number) => {
+    let s = start;
+    let e = end;
+    if (s < 6 * 60) {
+      s += 24 * 60;
+      e += 24 * 60;
+    } else if (e <= s) {
+      e += 24 * 60;
+    }
+    return { start: s, end: e };
+  };
+
+  const sched = norm(scheduleStart, scheduleEnd);
+  const schedNightStart = Math.max(sched.start, nightStart);
+  const schedNightEnd = Math.min(sched.end, nightEnd);
+  if (schedNightEnd <= schedNightStart) return 0;
+  // Scheduled shift has no overlap with 10pm-6am → no night diff
+
+  const act = norm(actualStart, actualEnd);
+  const actNightStart = Math.max(act.start, nightStart);
+  const actNightEnd = Math.min(act.end, nightEnd);
+  if (actNightEnd <= actNightStart) return 0;
+
+  const overlapStart = Math.max(schedNightStart, actNightStart);
+  const overlapEnd = Math.min(schedNightEnd, actNightEnd);
+  if (overlapEnd <= overlapStart) return 0;
+  return (overlapEnd - overlapStart) / 60;
+}
+
+function calculateNightDiffHoursFallback(
   actualIn: string | undefined,
   actualOut: string | undefined,
 ): number {
   let startMinutes = timeStringToMinutes(actualIn);
   let endMinutes = timeStringToMinutes(actualOut);
-
   if (startMinutes === null || endMinutes === null) return 0;
-
   if (startMinutes < 6 * 60) {
     startMinutes += 24 * 60;
     endMinutes += 24 * 60;
   } else if (endMinutes <= startMinutes) {
     endMinutes += 24 * 60;
   }
-
   const nightStart = 22 * 60;
   const nightEnd = 30 * 60;
   const overlapStart = Math.max(startMinutes, nightStart);
   const overlapEnd = Math.min(endMinutes, nightEnd);
-
   if (overlapEnd <= overlapStart) return 0;
   return (overlapEnd - overlapStart) / 60;
 }
@@ -421,8 +487,9 @@ export function calculatePayrollBaseFromRecords(args: {
     if (att.status === "present" || att.status === "half-day") {
       const dayMultiplier = att.status === "half-day" ? 0.5 : 1;
       const isRestDayForEmployee = isRestDay(att.date, employee.schedule);
-      const holidayInfo = getHolidayInfo(att.date, holidays, att);
+      const holidayInfo = getHolidayInfo(att.date, holidays, att, employee);
       const holidayType = holidayInfo.holidayType;
+      const holidayApplies = holidayInfo.appliesToEmployee !== false;
 
       daysWorked += dayMultiplier;
 
@@ -454,7 +521,7 @@ export function calculatePayrollBaseFromRecords(args: {
           (!holidayInfo.isHoliday || holidayType === "special_working")
         ) {
           // Rest day work is already paid as rest-day premium for the actual worked hours.
-        } else if (holidayType === "regular") {
+        } else if (holidayType === "regular" && holidayApplies) {
           const regularOTAmount =
             regularOTHours * basicHourlyRate * payrollRates.regularHolidayOt;
           const excessOTAmount =
@@ -462,7 +529,7 @@ export function calculatePayrollBaseFromRecords(args: {
           overtimeLegalHoliday += regularOTAmount;
           overtimeLegalHolidayExcess += excessOTAmount;
           basicPay += regularOTAmount + excessOTAmount;
-        } else if (holidayType === "special") {
+        } else if (holidayType === "special" && holidayApplies) {
           const regularOTAmount =
             regularOTHours * basicHourlyRate * payrollRates.specialHolidayOt;
           const excessOTAmount =
@@ -493,12 +560,12 @@ export function calculatePayrollBaseFromRecords(args: {
         undertimeDeduction += dayUndertimeHours * hourlyRateBasicPlusAllowance;
       }
 
-      if (holidayType === "regular") {
+      if (holidayType === "regular" && holidayApplies) {
         const amount =
           holidayPremiumBase * payrollRates.regularHolidayRate * dayMultiplier;
         holidayPay += amount;
         holidayPayFromRegular += amount;
-      } else if (holidayType === "special") {
+      } else if (holidayType === "special" && holidayApplies) {
         const amount =
           holidayPremiumBase * payrollRates.specialHolidayRate * dayMultiplier;
         holidayPay += amount;
@@ -508,6 +575,8 @@ export function calculatePayrollBaseFromRecords(args: {
       const dayNightDiffHours = calculateNightDiffHours(
         att.actualIn,
         att.actualOut,
+        att.scheduleIn,
+        att.scheduleOut,
       );
       if (dayNightDiffHours > 0) {
         nightDiffPay +=
@@ -539,8 +608,8 @@ export function calculatePayrollBaseFromRecords(args: {
         continue;
       }
 
-      const holidayInfo = getHolidayInfo(att.date, holidays, att);
-      if (holidayInfo.holidayType === "regular") {
+      const holidayInfo = getHolidayInfo(att.date, holidays, att, employee);
+      if (holidayInfo.holidayType === "regular" && holidayInfo.appliesToEmployee !== false) {
         if (salaryType !== "monthly") {
           basicPay += dailyRate;
         }
@@ -550,7 +619,7 @@ export function calculatePayrollBaseFromRecords(args: {
         continue;
       }
 
-      if (holidayInfo.holidayType === "special") {
+      if (holidayInfo.holidayType === "special" && holidayInfo.appliesToEmployee !== false) {
         if (salaryType !== "monthly") {
           basicPay += dailyRate;
         }
@@ -584,8 +653,8 @@ export function calculatePayrollBaseFromRecords(args: {
       continue;
     }
 
-    const holidayInfo = getHolidayInfo(dateTs, holidays);
-    if (holidayInfo.holidayType === "regular") {
+    const holidayInfo = getHolidayInfo(dateTs, holidays, undefined, employee);
+    if (holidayInfo.holidayType === "regular" && holidayInfo.appliesToEmployee !== false) {
       if (salaryType !== "monthly") {
         basicPay += dailyRate;
       }
@@ -595,7 +664,7 @@ export function calculatePayrollBaseFromRecords(args: {
       continue;
     }
 
-    if (holidayInfo.holidayType === "special") {
+    if (holidayInfo.holidayType === "special" && holidayInfo.appliesToEmployee !== false) {
       if (salaryType !== "monthly") {
         basicPay += dailyRate;
       }

@@ -67,6 +67,7 @@ import {
   employeeFormSchema,
   type EmployeeFormValues,
 } from "./_components/employee-form-validation";
+import { PH_PROVINCES } from "@/utils/ph-provinces";
 import { cn } from "@/utils/utils";
 const EmployeesTable = dynamic(
   () => import("./_components/employees-table").then((m) => m.EmployeesTable),
@@ -261,6 +262,7 @@ export default function EmployeesPage() {
     middleName: "",
     email: "",
     phone: "",
+    province: "",
     position: "",
     department: "",
     employmentType: "probationary",
@@ -764,6 +766,7 @@ export default function EmployeesPage() {
           middleName: data.middleName || undefined,
           email: data.email,
           phone: data.phone || undefined,
+          province: data.province || undefined,
         },
         employment: {
           employeeId: "", // Auto-generated on backend from document id
@@ -1024,6 +1027,34 @@ export default function EmployeesPage() {
                             type="tel"
                             {...registerAdd("phone")}
                           />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="province">Province</Label>
+                          <Controller
+                            name="province"
+                            control={addFormControl}
+                            render={({ field }) => (
+                              <Select
+                                value={field.value || "none"}
+                                onValueChange={(v) => field.onChange(v === "none" ? "" : v)}
+                              >
+                                <SelectTrigger id="province">
+                                  <SelectValue placeholder="Select province (optional)" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">—</SelectItem>
+                                  {PH_PROVINCES.map((p) => (
+                                    <SelectItem key={p} value={p}>
+                                      {p}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            For province-specific holiday pay.
+                          </p>
                         </div>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

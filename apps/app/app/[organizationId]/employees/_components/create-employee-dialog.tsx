@@ -43,6 +43,7 @@ import {
   type EmployeeFormValues,
 } from "./employee-form-validation";
 import { cn } from "@/utils/utils";
+import { PH_PROVINCES } from "@/utils/ph-provinces";
 
 const defaultFormData = {
   firstName: "",
@@ -50,6 +51,7 @@ const defaultFormData = {
   middleName: "",
   email: "",
   phone: "",
+  province: "",
   position: "",
   department: "",
   employmentType: "probationary" as EmploymentType,
@@ -202,6 +204,7 @@ export function CreateEmployeeDialog({
           middleName: data.middleName || undefined,
           email: data.email,
           phone: data.phone || undefined,
+          province: data.province || undefined,
         },
         employment: {
           employeeId: "",
@@ -410,6 +413,36 @@ export function CreateEmployeeDialog({
                     type="tel"
                     {...register("phone")}
                   />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="ce-province">Province</Label>
+                  <Controller
+                    name="province"
+                    control={control}
+                    render={({ field }) => (
+                      <Select
+                        value={field.value || "none"}
+                        onValueChange={(v) => field.onChange(v === "none" ? "" : v)}
+                      >
+                        <SelectTrigger id="ce-province">
+                          <SelectValue placeholder="Select province (optional)" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">—</SelectItem>
+                          {PH_PROVINCES.map((p) => (
+                            <SelectItem key={p} value={p}>
+                              {p}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Used for province-specific holiday pay (e.g. Cebu-only holidays).
+                  </p>
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

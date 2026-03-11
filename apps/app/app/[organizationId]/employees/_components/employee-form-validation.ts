@@ -16,6 +16,7 @@ export const employeeFormSchema = z.object({
     .min(1, "Email is required")
     .email("Please enter a valid email address"),
   phone: z.string().optional(),
+  province: z.string().optional(),
   position: z
     .string()
     .trim()

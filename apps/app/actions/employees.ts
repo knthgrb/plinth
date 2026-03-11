@@ -16,6 +16,7 @@ export async function createEmployee(data: {
     email: string;
     phone?: string;
     address?: string;
+    province?: string;
     dateOfBirth?: number;
     civilStatus?: string;
     emergencyContact?: {
@@ -81,6 +82,7 @@ export async function updateEmployee(
       email?: string;
       phone?: string;
       address?: string;
+      province?: string;
       dateOfBirth?: number;
       civilStatus?: string;
       emergencyContact?: {

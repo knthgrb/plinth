@@ -446,35 +446,6 @@ function timeStringToMinutes(time: string | undefined): number | null {
   return hours * 60 + minutes;
 }
 
-/**
- * Calculate hours worked inside the 10 PM to 6 AM window.
- */
-function calculateNightDiffHours(
-  actualIn: string | undefined,
-  actualOut: string | undefined,
-): number {
-  let startMinutes = timeStringToMinutes(actualIn);
-  let endMinutes = timeStringToMinutes(actualOut);
-
-  if (startMinutes === null || endMinutes === null) return 0;
-
-  // Treat early-morning shifts as part of the same overnight window.
-  if (startMinutes < 6 * 60) {
-    startMinutes += 24 * 60;
-    endMinutes += 24 * 60;
-  } else if (endMinutes <= startMinutes) {
-    endMinutes += 24 * 60;
-  }
-
-  const nightStart = 22 * 60;
-  const nightEnd = 30 * 60; // 6 AM next day
-  const overlapStart = Math.max(startMinutes, nightStart);
-  const overlapEnd = Math.min(endMinutes, nightEnd);
-
-  if (overlapEnd <= overlapStart) return 0;
-  return (overlapEnd - overlapStart) / 60;
-}
-
 function getLateHoursFromAttendance(att: {
   actualIn?: string;
   scheduleIn?: string;
@@ -2655,32 +2626,69 @@ export const getPayrollRunSummary = query({
           return hours * 60 + minutes;
         };
 
-        // Helper to calculate night differential hours (Philippines: 10pm-6am)
+        // Helper to calculate night differential hours (Philippines: 10pm-6am).
+        // Only counts when SCHEDULED shift overlaps 10pm-6am (early clock-in doesn't qualify).
         const calculateNightDiffHours = (
+          actualIn?: string,
+          actualOut?: string,
+          scheduleIn?: string,
+          scheduleOut?: string,
+        ): number => {
+          if (!actualIn || !actualOut) return 0;
+          if (!scheduleIn || !scheduleOut) {
+            return calculateNightDiffHoursFallback(actualIn, actualOut);
+          }
+
+          const norm = (start: number, end: number) => {
+            let s = start;
+            let e = end;
+            if (s < 6 * 60) {
+              s += 24 * 60;
+              e += 24 * 60;
+            } else if (e <= s) {
+              e += 24 * 60;
+            }
+            return { start: s, end: e };
+          };
+
+          const nightStart = 22 * 60;
+          const nightEnd = 24 * 60 + 6 * 60;
+
+          const sched = norm(timeToMinutes(scheduleIn), timeToMinutes(scheduleOut));
+          const schedNightStart = Math.max(sched.start, nightStart);
+          const schedNightEnd = Math.min(sched.end, nightEnd);
+          if (schedNightEnd <= schedNightStart) return 0;
+
+          const act = norm(timeToMinutes(actualIn), timeToMinutes(actualOut));
+          const actNightStart = Math.max(act.start, nightStart);
+          const actNightEnd = Math.min(act.end, nightEnd);
+          if (actNightEnd <= actNightStart) return 0;
+
+          const overlapStart = Math.max(schedNightStart, actNightStart);
+          const overlapEnd = Math.min(schedNightEnd, actNightEnd);
+          if (overlapEnd <= overlapStart) return 0;
+          return (overlapEnd - overlapStart) / 60;
+        };
+
+        const calculateNightDiffHoursFallback = (
           timeIn?: string,
           timeOut?: string,
         ): number => {
           if (!timeIn || !timeOut) return 0;
-
-          const startMinutes = timeToMinutes(timeIn); // 0-1439
-          let endMinutes = timeToMinutes(timeOut); // 0-1439
-
-          // Handle shifts that cross midnight (e.g. 22:00-03:00)
-          if (endMinutes <= startMinutes) {
+          let startMinutes = timeToMinutes(timeIn);
+          let endMinutes = timeToMinutes(timeOut);
+          if (startMinutes < 6 * 60) {
+            startMinutes += 24 * 60;
+            endMinutes += 24 * 60;
+          } else if (endMinutes <= startMinutes) {
             endMinutes += 24 * 60;
           }
-
-          // Night diff window: 22:00 (1320) to 06:00 next day (1800)
-          const nightStart = 22 * 60; // 1320
-          const nightEnd = 24 * 60 + 6 * 60; // 1800
-
+          const nightStart = 22 * 60;
+          const nightEnd = 24 * 60 + 6 * 60;
           const overlapStart = Math.max(startMinutes, nightStart);
           const overlapEnd = Math.min(endMinutes, nightEnd);
-
           if (overlapEnd <= overlapStart) return 0;
-
-          const overlapMinutes = overlapEnd - overlapStart;
-          return overlapMinutes / 60;
+          return (overlapEnd - overlapStart) / 60;
         };
 
         // Build daily attendance data (match by 24h window so attendance aligns with summary dates)
@@ -2756,11 +2764,13 @@ export const getPayrollRunSummary = query({
             }
           }
 
-          // Calculate night differential strictly based on 10pm-6am overlap
+          // Calculate night differential: scheduled shift ∩ 10pm-6am ∩ actual worked
           if (att.status === "present") {
             nightDiffHours = calculateNightDiffHours(
               att.actualIn,
               att.actualOut,
+              att.scheduleIn,
+              att.scheduleOut,
             );
             totalNightDiffHours += nightDiffHours;
           }

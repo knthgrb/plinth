@@ -309,8 +309,8 @@ describe("payroll calculations", () => {
     expect(result.overtimeSpecialHoliday).toBeCloseTo(466.21, 2);
   });
 
-  it("calculates night differential only for hours inside 10pm to 6am", () => {
-    const date = localDate(2026, 1, 23);
+  it("calculates night differential only when scheduled shift overlaps 10pm-6am", () => {
+    const date = localDate(2026, 1, 23); // Friday
     const employee = createEmployee({
       schedule: {
         defaultSchedule: {
@@ -340,8 +340,48 @@ describe("payroll calculations", () => {
       cutoffStart: date,
       cutoffEnd: date,
     });
-
+    // 8 hrs in night window, hourlyRate ≈ 172.41, 10% = 110.34
     expect(result.nightDiffPay).toBeCloseTo(110.34, 2);
+  });
+
+  it("no night diff when scheduled 6am-3pm even if employee clocks in early at 5:40am", () => {
+    const date = localDate(2026, 1, 23); // Friday
+    const result = calculate({
+      attendance: [
+        {
+          date,
+          status: "present",
+          actualIn: "05:40",
+          actualOut: "15:00",
+          scheduleIn: "06:00",
+          scheduleOut: "15:00",
+        },
+      ],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    // Schedule 6am-3pm has no overlap with 10pm-6am → 0 night diff
+    expect(result.nightDiffPay).toBe(0);
+  });
+
+  it("night diff when scheduled 5:30am (30 mins in night window)", () => {
+    const date = localDate(2026, 1, 23); // Friday
+    const result = calculate({
+      attendance: [
+        {
+          date,
+          status: "present",
+          actualIn: "05:30",
+          actualOut: "14:30",
+          scheduleIn: "05:30",
+          scheduleOut: "14:30",
+        },
+      ],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    // 5:30-6:00 = 30 min in night window. basicHourlyRate = basic only ≈ 137.93, 0.5 * 137.93 * 0.1 ≈ 6.90
+    expect(result.nightDiffPay).toBeCloseTo(6.90, 2);
   });
 
   it("uses manual late overrides when present (late = basic+allowance hourly rate)", () => {

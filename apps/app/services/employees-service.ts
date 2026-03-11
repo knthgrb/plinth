@@ -12,6 +12,7 @@ export class EmployeesService {
       email: string;
       phone?: string;
       address?: string;
+      province?: string;
       dateOfBirth?: number;
       civilStatus?: string;
       emergencyContact?: {

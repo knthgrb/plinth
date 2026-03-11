@@ -121,6 +121,8 @@ export const createHoliday = mutation({
     ),
     isRecurring: v.boolean(),
     year: v.optional(v.number()),
+    applyToAll: v.optional(v.boolean()),
+    provinces: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     await checkAuth(ctx, args.organizationId, "hr");
@@ -143,6 +145,8 @@ export const createHoliday = mutation({
       updatedAt: now,
     };
     if (args.offsetDate !== undefined) doc.offsetDate = args.offsetDate;
+    if (args.applyToAll !== undefined) doc.applyToAll = args.applyToAll;
+    if (args.provinces !== undefined) doc.provinces = args.provinces;
     const holidayId = await ctx.db.insert("holidays", doc);
 
     return holidayId;
@@ -166,6 +170,8 @@ export const updateHoliday = mutation({
     ),
     isRecurring: v.optional(v.boolean()),
     year: v.optional(v.number()),
+    applyToAll: v.optional(v.boolean()),
+    provinces: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const holiday = await ctx.db.get(args.holidayId);
@@ -195,6 +201,8 @@ export const updateHoliday = mutation({
     }
     if (args.type !== undefined) updates.type = args.type;
     if (args.isRecurring !== undefined) updates.isRecurring = args.isRecurring;
+    if (args.applyToAll !== undefined) updates.applyToAll = args.applyToAll;
+    if (args.provinces !== undefined) updates.provinces = args.provinces;
     // Always keep year in sync with date/isRecurring, ignoring any manual year arg
     updates.year = nextYear;
 
@@ -236,6 +244,8 @@ export const bulkCreateHolidays = mutation({
         ),
         isRecurring: v.boolean(),
         year: v.optional(v.number()),
+        applyToAll: v.optional(v.boolean()),
+        provinces: v.optional(v.array(v.string())),
       })
     ),
   },
@@ -271,6 +281,8 @@ export const bulkCreateHolidays = mutation({
           updatedAt: now,
         };
         if (holiday.offsetDate !== undefined) doc.offsetDate = holiday.offsetDate;
+        if (holiday.applyToAll !== undefined) doc.applyToAll = holiday.applyToAll;
+        if (holiday.provinces !== undefined) doc.provinces = holiday.provinces;
         const holidayId = await ctx.db.insert("holidays", doc);
         results.push({ id: holidayId, name: holiday.name, action: "created" });
       } else {

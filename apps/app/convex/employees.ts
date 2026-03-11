@@ -345,6 +345,7 @@ export const createEmployee = mutation({
       email: v.string(),
       phone: v.optional(v.string()),
       address: v.optional(v.string()),
+      province: v.optional(v.string()),
       dateOfBirth: v.optional(v.number()),
       civilStatus: v.optional(v.string()),
       emergencyContact: v.optional(
@@ -595,6 +596,7 @@ export const updateEmployee = mutation({
         email: v.string(),
         phone: v.optional(v.string()),
         address: v.optional(v.string()),
+        province: v.optional(v.string()),
         dateOfBirth: v.optional(v.number()),
         civilStatus: v.optional(v.string()),
         emergencyContact: v.optional(

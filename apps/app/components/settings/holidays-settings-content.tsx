@@ -36,6 +36,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { Plus, Pencil, Trash2, Upload, X } from "lucide-react";
 import { useOrganization } from "@/hooks/organization-context";
 import { useToast } from "@/components/ui/use-toast";
+import { PH_PROVINCES } from "@/utils/ph-provinces";
 
 export function HolidaysSettingsContent() {
   const { currentOrganizationId } = useOrganization();
@@ -62,6 +63,8 @@ export function HolidaysSettingsContent() {
     offsetDate: "" as string,
     type: "regular" as "regular" | "special" | "special_working",
     isRecurring: false,
+    applyToAll: true,
+    provinces: [] as string[],
   });
   const [bulkText, setBulkText] = useState("");
   const [isProcessingBulk, setIsProcessingBulk] = useState(false);
@@ -74,6 +77,8 @@ export function HolidaysSettingsContent() {
       offsetDate: "",
       type: "regular",
       isRecurring: false,
+      applyToAll: true,
+      provinces: [],
     });
     setIsDialogOpen(true);
   };
@@ -90,6 +95,8 @@ export function HolidaysSettingsContent() {
       offsetDate,
       type: holiday.type,
       isRecurring: holiday.isRecurring,
+      applyToAll: holiday.applyToAll !== false,
+      provinces: holiday.provinces ?? [],
     });
     setIsDialogOpen(true);
   };
@@ -117,6 +124,8 @@ export function HolidaysSettingsContent() {
               : {}),
           type: formData.type,
           isRecurring: formData.isRecurring,
+          applyToAll: formData.applyToAll,
+          provinces: formData.applyToAll ? [] : formData.provinces,
         });
         toast({
           title: "Success",
@@ -130,6 +139,8 @@ export function HolidaysSettingsContent() {
           offsetDate: hasValidOffset ? offsetTimestamp : undefined,
           type: formData.type,
           isRecurring: formData.isRecurring,
+          applyToAll: formData.applyToAll,
+          provinces: formData.applyToAll ? [] : formData.provinces,
         });
         toast({
           title: "Success",
@@ -204,20 +215,21 @@ export function HolidaysSettingsContent() {
                 <TableHead>Date</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Recurring</TableHead>
+                <TableHead>Applies To</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {!holidays ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center">
+                  <TableCell colSpan={6} className="text-center">
                     Loading...
                   </TableCell>
                 </TableRow>
               ) : holidays.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={5}
+                    colSpan={6}
                     className="text-center text-gray-500"
                   >
                     No holidays configured
@@ -249,6 +261,13 @@ export function HolidaysSettingsContent() {
                     </TableCell>
                     <TableCell>
                       {holiday.isRecurring ? "Yes" : "No"}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {holiday.applyToAll !== false
+                        ? "All provinces"
+                        : (holiday.provinces ?? []).length > 0
+                          ? (holiday.provinces as string[]).join(", ")
+                          : "—"}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex gap-2 justify-end">
@@ -412,6 +431,64 @@ export function HolidaysSettingsContent() {
                     }
                   />
                   <Label htmlFor="isRecurring">Recurring (every year)</Label>
+                </div>
+                <div className="space-y-2">
+                  <Label>Applies to</Label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="applyTo"
+                        checked={formData.applyToAll}
+                        onChange={() =>
+                          setFormData({ ...formData, applyToAll: true, provinces: [] })
+                        }
+                        className="rounded-full accent-brand-purple"
+                      />
+                      <span className="text-sm">All provinces</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="applyTo"
+                        checked={!formData.applyToAll}
+                        onChange={() =>
+                          setFormData({ ...formData, applyToAll: false })
+                        }
+                        className="rounded-full accent-brand-purple"
+                      />
+                      <span className="text-sm">Specific provinces</span>
+                    </label>
+                  </div>
+                  {!formData.applyToAll && (
+                    <div className="flex flex-wrap gap-2 pt-2 max-h-32 overflow-y-auto border rounded-md p-2">
+                      {PH_PROVINCES.map((p) => {
+                        const isSelected = formData.provinces.includes(p);
+                        return (
+                          <label
+                            key={p}
+                            className="flex items-center gap-1.5 cursor-pointer text-sm"
+                          >
+                            <Checkbox
+                              checked={isSelected}
+                              onCheckedChange={(checked) => {
+                                setFormData({
+                                  ...formData,
+                                  provinces: checked
+                                    ? [...formData.provinces, p]
+                                    : formData.provinces.filter((x) => x !== p),
+                                });
+                              }}
+                            />
+                            {p}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    When &quot;Specific provinces&quot;, only employees tied to those provinces receive additional holiday pay when they work on that day.
+                  </p>
                 </div>
               </div>
               <DialogFooter>

@@ -90,6 +90,7 @@ export default defineSchema({
       email: v.string(),
       phone: v.optional(v.string()),
       address: v.optional(v.string()),
+      province: v.optional(v.string()), // For province-specific holiday pay (e.g. Cebu only)
       dateOfBirth: v.optional(v.number()),
       civilStatus: v.optional(v.string()),
       emergencyContact: v.optional(
@@ -348,6 +349,10 @@ export default defineSchema({
     ),
     isRecurring: v.boolean(),
     year: v.optional(v.number()), // For non-recurring holidays
+    /** When true (default for backward compat), holiday applies to all employees. When false, only employees in provinces list get holiday pay. */
+    applyToAll: v.optional(v.boolean()),
+    /** When applyToAll is false, only employees with province in this list receive holiday pay. */
+    provinces: v.optional(v.array(v.string())),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

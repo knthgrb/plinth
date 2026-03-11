@@ -46,6 +46,7 @@ import { EmploymentTypeSelect } from "@/components/ui/employment-type-select";
 import { SalaryTypeSelect } from "@/components/ui/salary-type-select";
 import { DepartmentSelect } from "@/components/ui/department-select";
 import { DatePicker } from "@/components/ui/date-picker";
+import { PH_PROVINCES } from "@/utils/ph-provinces";
 import { TimePicker } from "@/components/ui/time-picker";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -95,6 +96,7 @@ export function EmployeeDetailModal({
     middleName: "",
     email: "",
     phone: "",
+    province: "",
     position: "",
     department: "",
     employmentType: "probationary",
@@ -363,6 +365,7 @@ export function EmployeeDetailModal({
       middleName: employee.personalInfo.middleName || "",
       email: employee.personalInfo.email,
       phone: employee.personalInfo.phone || "",
+      province: employee.personalInfo.province || "",
       position: employee.employment.position,
       department: employee.employment.department,
       employmentType: employee.employment.employmentType,
@@ -519,6 +522,7 @@ export function EmployeeDetailModal({
           middleName: data.middleName || undefined,
           email: data.email,
           phone: data.phone || undefined,
+          province: data.province || undefined,
         },
         employment: {
           ...employee.employment,
@@ -738,7 +742,8 @@ export function EmployeeDetailModal({
                       </div>
                     </div>
                     {(employee.personalInfo.phone ||
-                      employee.personalInfo.address) && (
+                      employee.personalInfo.address ||
+                      employee.personalInfo.province) && (
                       <div className="grid gap-3 sm:grid-cols-2 pt-2 border-t border-gray-100">
                         {employee.personalInfo.phone && (
                           <div className="flex gap-1.5 items-start min-w-0">
@@ -772,6 +777,24 @@ export function EmployeeDetailModal({
                               </p>
                               <p className="text-sm">
                                 {employee.personalInfo.address}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                        {employee.personalInfo.province && (
+                          <div className="flex gap-1.5 items-start min-w-0">
+                            <span
+                              className="w-2 shrink-0 flex justify-center pt-0.5"
+                              aria-hidden
+                            >
+                              <span className="h-1 w-1 rounded-full bg-muted-foreground" />
+                            </span>
+                            <div className="space-y-0.5 min-w-0 flex-1">
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                                Province
+                              </p>
+                              <p className="text-sm">
+                                {employee.personalInfo.province}
                               </p>
                             </div>
                           </div>
@@ -905,6 +928,36 @@ export function EmployeeDetailModal({
                         type="tel"
                         {...register("phone")}
                       />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-province" className="text-sm">
+                        Province
+                      </Label>
+                      <Controller
+                        name="province"
+                        control={control}
+                        render={({ field }) => (
+                          <Select
+                            value={field.value || "none"}
+                            onValueChange={(v) => field.onChange(v === "none" ? "" : v)}
+                          >
+                            <SelectTrigger id="edit-province">
+                              <SelectValue placeholder="Select province (optional)" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">—</SelectItem>
+                              {PH_PROVINCES.map((p) => (
+                                <SelectItem key={p} value={p}>
+                                  {p}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        For province-specific holiday pay (e.g. Cebu-only holidays).
+                      </p>
                     </div>
                   </div>
                 </div>
