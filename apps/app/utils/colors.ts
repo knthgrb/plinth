@@ -81,6 +81,8 @@ export const statusColorMap: Record<string, keyof typeof statusColors> = {
   // Info/Neutral statuses - Blue
   finalized: "blue",
   leave: "blue",
+  leave_with_pay: "blue",
+  leave_without_pay: "coral",
   info: "blue",
   new: "blue",
 
@@ -126,4 +128,21 @@ export function getStatusBadgeStyle(status: string): React.CSSProperties {
  */
 export function getStatusBadgeClass(status: string): string {
   return "font-normal rounded-md hover:opacity-90 focus:ring-0 focus:ring-offset-0 transition-none border";
+}
+
+/**
+ * Human-readable label for attendance status (for badges, exports, etc.)
+ * Legacy "leave" is shown as "Leave with pay" for backward compatibility.
+ */
+export function getAttendanceStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    present: "Present",
+    absent: "Absent",
+    leave: "Leave with pay",
+    leave_with_pay: "Leave with pay",
+    leave_without_pay: "Leave without pay",
+    no_work: "No work",
+    half_day: "Half day",
+  };
+  return labels[status] ?? status;
 }

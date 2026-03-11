@@ -16,7 +16,14 @@ export async function createAttendance(data: {
   isHoliday?: boolean;
   holidayType?: "regular" | "special" | "special_working";
   remarks?: string;
-  status: "present" | "absent" | "half-day" | "leave" | "no_work";
+  status:
+    | "present"
+    | "absent"
+    | "half-day"
+    | "leave"
+    | "leave_with_pay"
+    | "leave_without_pay"
+    | "no_work";
 }) {
   return AttendanceService.createAttendance(data);
 }
@@ -34,7 +41,14 @@ export async function updateAttendance(
     isHoliday?: boolean;
     holidayType?: "regular" | "special" | "special_working";
     remarks?: string;
-    status?: "present" | "absent" | "half-day" | "leave" | "no_work";
+    status?:
+      | "present"
+      | "absent"
+      | "half-day"
+      | "leave"
+      | "leave_with_pay"
+      | "leave_without_pay"
+      | "no_work";
   }
 ) {
   return AttendanceService.updateAttendance(attendanceId, data);
@@ -59,7 +73,14 @@ export async function bulkCreateAttendance(
     isHoliday?: boolean;
     holidayType?: "regular" | "special" | "special_working";
     remarks?: string;
-    status: "present" | "absent" | "half-day" | "leave" | "no_work";
+    status:
+      | "present"
+      | "absent"
+      | "half-day"
+      | "leave"
+      | "leave_with_pay"
+      | "leave_without_pay"
+      | "no_work";
   }>
 ) {
   return AttendanceService.bulkCreateAttendance(entries);

@@ -466,7 +466,8 @@ export default function PayrollPageClient({
         const dayData = empSummary.dailyData.find((d: any) => d.date === date);
         if (!dayData || !dayData.timeIn) return "-";
         if (dayData.status === "absent") return "ABSENT";
-        if (dayData.status === "leave") return "LEAVE";
+        if (dayData.status === "leave_without_pay") return "LWOP";
+        if (dayData.status === "leave" || dayData.status === "leave_with_pay") return "LEAVE";
         let value = dayData.timeIn || "";
         if (dayData.timeOut) value += ` - ${dayData.timeOut}`;
         if (dayData.lateMinutes > 0) value += ` | ${dayData.lateMinutes} MIN L`;

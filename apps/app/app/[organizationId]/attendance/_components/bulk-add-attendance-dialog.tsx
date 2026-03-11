@@ -278,7 +278,7 @@ export function BulkAddAttendanceDialog({
       {
         timeIn: string;
         timeOut: string;
-        status: "present" | "absent" | "leave" | "no_work";
+        status: "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay" | "no_work";
         overtime: string;
         late: string;
         undertime: string;
@@ -304,7 +304,7 @@ export function BulkAddAttendanceDialog({
     scheduleOut: string;
     actualIn: string | undefined;
     actualOut: string | undefined;
-    status: "present" | "absent" | "leave" | "half-day" | "no_work";
+    status: "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay" | "half-day" | "no_work";
     notes: string;
     error: string | null;
     /** When true, row will be imported; when false, excluded. User can toggle per row. */
@@ -526,10 +526,17 @@ export function BulkAddAttendanceDialog({
         const statusStr = ((row[statusCol ?? ""] ?? "").trim() || "present").toLowerCase();
         const notes = (row[notesCol ?? ""] ?? "").trim();
 
-        const statusMap: Record<string, "present" | "absent" | "leave" | "half-day" | "no_work"> = {
+        const statusMap: Record<
+          string,
+          "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay" | "half-day" | "no_work"
+        > = {
           present: "present",
           absent: "absent",
           leave: "leave",
+          "leave with pay": "leave_with_pay",
+          "leave_with_pay": "leave_with_pay",
+          "leave without pay": "leave_without_pay",
+          "leave_without_pay": "leave_without_pay",
           "half-day": "half-day",
           halfday: "half-day",
           "no_work": "no_work",
@@ -774,7 +781,7 @@ export function BulkAddAttendanceDialog({
         actualIn?: string;
         actualOut?: string;
         overtime?: number;
-        status: "present" | "absent" | "leave" | "no_work";
+        status: "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay" | "no_work";
       }> = [];
 
       for (const dateInfo of dates) {
@@ -810,15 +817,14 @@ export function BulkAddAttendanceDialog({
           return;
         }
 
-        // Clear time in/out for leave or absent
-        const finalTimeIn =
-          dayTimes.status === "leave" || dayTimes.status === "absent"
-            ? undefined
-            : dayTimes.timeIn || undefined;
-        const finalTimeOut =
-          dayTimes.status === "leave" || dayTimes.status === "absent"
-            ? undefined
-            : dayTimes.timeOut || undefined;
+        // Clear time in/out for leave types or absent
+        const clearsTime =
+          dayTimes.status === "leave" ||
+          dayTimes.status === "leave_with_pay" ||
+          dayTimes.status === "leave_without_pay" ||
+          dayTimes.status === "absent";
+        const finalTimeIn = clearsTime ? undefined : dayTimes.timeIn || undefined;
+        const finalTimeOut = clearsTime ? undefined : dayTimes.timeOut || undefined;
 
         // Calculate late and undertime if not manually provided
         const calculatedUndertimeValue =
@@ -838,7 +844,7 @@ export function BulkAddAttendanceDialog({
 
         // Overtime: user-set only (no auto-calculation)
         const finalOvertime =
-          dayTimes.status === "leave" || dayTimes.status === "absent"
+          clearsTime
             ? undefined
             : dayTimes.useManualOvertime && dayTimes.overtime
               ? parseFloat(dayTimes.overtime)
@@ -846,7 +852,7 @@ export function BulkAddAttendanceDialog({
 
         // Use manual values if enabled, otherwise use calculated (late and undertime only)
         const finalLate =
-          dayTimes.status === "leave" || dayTimes.status === "absent"
+          clearsTime
             ? undefined
             : dayTimes.useManualLate
               ? dayTimes.late
@@ -858,7 +864,7 @@ export function BulkAddAttendanceDialog({
 
         // Undertime: UI stores minutes; API expects hours
         const finalUndertime =
-          dayTimes.status === "leave" || dayTimes.status === "absent"
+          clearsTime
             ? undefined
             : dayTimes.useManualUndertime
               ? dayTimes.undertime
@@ -880,7 +886,7 @@ export function BulkAddAttendanceDialog({
           late?: number;
           undertime?: number;
           remarks?: string;
-          status: "present" | "absent" | "leave" | "no_work";
+          status: "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay" | "no_work";
         } = {
           organizationId: currentOrganizationId,
           employeeId: bulkSelectedEmployee,
@@ -889,7 +895,7 @@ export function BulkAddAttendanceDialog({
           scheduleOut: daySchedule.out,
           actualIn: finalTimeIn,
           actualOut: finalTimeOut,
-          status: dayTimes.status as "present" | "absent" | "leave",
+          status: dayTimes.status as "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay",
         };
 
         if (finalLate !== undefined) {
@@ -1435,6 +1441,8 @@ export function BulkAddAttendanceDialog({
                                     disabled={
                                       dayTimes.status === "absent" ||
                                       dayTimes.status === "leave" ||
+                                      dayTimes.status === "leave_with_pay" ||
+                                      dayTimes.status === "leave_without_pay" ||
                                       isSubmittingBulk
                                     }
                                     placeholder="Time in"
@@ -1483,6 +1491,8 @@ export function BulkAddAttendanceDialog({
                                     disabled={
                                       dayTimes.status === "absent" ||
                                       dayTimes.status === "leave" ||
+                                      dayTimes.status === "leave_with_pay" ||
+                                      dayTimes.status === "leave_without_pay" ||
                                       isSubmittingBulk
                                     }
                                     placeholder="Time out"
@@ -1526,27 +1536,37 @@ export function BulkAddAttendanceDialog({
                                           [dateInfo.timestamp]: {
                                             timeIn:
                                               value === "leave" ||
+                                              value === "leave_with_pay" ||
+                                              value === "leave_without_pay" ||
                                               value === "absent"
                                                 ? ""
                                                 : newTimeIn,
                                             timeOut:
                                               value === "leave" ||
+                                              value === "leave_with_pay" ||
+                                              value === "leave_without_pay" ||
                                               value === "absent"
                                                 ? ""
                                                 : newTimeOut,
                                             status: value,
                                             overtime:
                                               value === "leave" ||
+                                              value === "leave_with_pay" ||
+                                              value === "leave_without_pay" ||
                                               value === "absent"
                                                 ? ""
                                                 : currentTimes.overtime || "",
                                             late:
                                               value === "leave" ||
+                                              value === "leave_with_pay" ||
+                                              value === "leave_without_pay" ||
                                               value === "absent"
                                                 ? ""
                                                 : currentTimes.late || "",
                                             undertime:
                                               value === "leave" ||
+                                              value === "leave_with_pay" ||
+                                              value === "leave_without_pay" ||
                                               value === "absent"
                                                 ? ""
                                                 : currentTimes.undertime || "",
@@ -1575,8 +1595,11 @@ export function BulkAddAttendanceDialog({
                                       <SelectItem value="absent">
                                         Absent
                                       </SelectItem>
-                                      <SelectItem value="leave">
-                                        Leave
+                                      <SelectItem value="leave_with_pay">
+                                        Leave with pay
+                                      </SelectItem>
+                                      <SelectItem value="leave_without_pay">
+                                        Leave without pay
                                       </SelectItem>
                                       <SelectItem value="no_work">
                                         No work
@@ -1794,6 +1817,8 @@ export function BulkAddAttendanceDialog({
                                         disabled={
                                           dayTimes.status === "absent" ||
                                           dayTimes.status === "leave" ||
+                                          dayTimes.status === "leave_with_pay" ||
+                                          dayTimes.status === "leave_without_pay" ||
                                           isSubmittingBulk
                                         }
                                         readOnly={!dayTimes.useManualOvertime}

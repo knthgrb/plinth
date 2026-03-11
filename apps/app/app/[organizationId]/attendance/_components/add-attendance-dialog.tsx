@@ -53,7 +53,9 @@ export function AddAttendanceDialog({
   const [timeIn, setTimeIn] = useState("");
   const [timeOut, setTimeOut] = useState("");
   const [overtime, setOvertime] = useState("");
-  const [status, setStatus] = useState<"present" | "absent" | "leave" | "no_work">(
+  const [status, setStatus] = useState<
+    "present" | "absent" | "leave_with_pay" | "leave_without_pay" | "no_work"
+  >(
     "present",
   );
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -171,21 +173,19 @@ export function AddAttendanceDialog({
           dayName as keyof typeof employee.schedule.defaultSchedule
         ];
 
-      // Clear time in/out for leave, absent, or no_work
-      const finalTimeIn =
-        status === "leave" || status === "absent" || status === "no_work"
-          ? undefined
-          : timeIn || undefined;
-      const finalTimeOut =
-        status === "leave" || status === "absent" || status === "no_work"
-          ? undefined
-          : timeOut || undefined;
-      const finalOvertime =
-        status === "leave" || status === "absent" || status === "no_work"
-          ? undefined
-          : overtime
-            ? parseFloat(overtime)
-            : undefined;
+      // Clear time in/out for leave types, absent, or no_work
+      const clearsTime =
+        status === "leave_with_pay" ||
+        status === "leave_without_pay" ||
+        status === "absent" ||
+        status === "no_work";
+      const finalTimeIn = clearsTime ? undefined : timeIn || undefined;
+      const finalTimeOut = clearsTime ? undefined : timeOut || undefined;
+      const finalOvertime = clearsTime
+        ? undefined
+        : overtime
+          ? parseFloat(overtime)
+          : undefined;
 
       const dateTimestamp = new Date(selectedDate).getTime();
 
@@ -268,6 +268,11 @@ export function AddAttendanceDialog({
                     onValueChange={setSelectedDate}
                     placeholder="Select date"
                   />
+                  {selectedDate && (
+                    <p className="text-sm text-muted-foreground">
+                      {format(new Date(selectedDate), "MMM dd, yyyy")} – {format(new Date(selectedDate), "EEEE")}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="employee">Employee <span className="text-red-500">*</span></Label>
@@ -285,8 +290,13 @@ export function AddAttendanceDialog({
                   value={status}
                   onValueChange={(value: any) => {
                     setStatus(value);
-                    // Auto-clear time in/out for leave, absent, or no_work
-                    if (value === "leave" || value === "absent" || value === "no_work") {
+                    // Auto-clear time in/out for leave types, absent, or no_work
+                    if (
+                      value === "leave_with_pay" ||
+                      value === "leave_without_pay" ||
+                      value === "absent" ||
+                      value === "no_work"
+                    ) {
                       setTimeIn("");
                       setTimeOut("");
                       setOvertime("");
@@ -311,7 +321,8 @@ export function AddAttendanceDialog({
                   <SelectContent>
                     <SelectItem value="present">Present</SelectItem>
                     <SelectItem value="absent">Absent</SelectItem>
-                    <SelectItem value="leave">Leave</SelectItem>
+                    <SelectItem value="leave_with_pay">Leave with pay</SelectItem>
+                    <SelectItem value="leave_without_pay">Leave without pay</SelectItem>
                     <SelectItem value="no_work">No work</SelectItem>
                   </SelectContent>
                 </Select>
@@ -321,7 +332,11 @@ export function AddAttendanceDialog({
                   value={timeIn}
                   onValueChange={setTimeIn}
                   disabled={
-                    status === "absent" || status === "leave" || status === "no_work" || isSubmitting
+                    status === "absent" ||
+                      status === "leave_with_pay" ||
+                      status === "leave_without_pay" ||
+                      status === "no_work" ||
+                      isSubmitting
                   }
                   label="Time In"
                   placeholder="Select time in"
@@ -330,7 +345,11 @@ export function AddAttendanceDialog({
                   value={timeOut}
                   onValueChange={setTimeOut}
                   disabled={
-                    status === "absent" || status === "leave" || status === "no_work" || isSubmitting
+                    status === "absent" ||
+                      status === "leave_with_pay" ||
+                      status === "leave_without_pay" ||
+                      status === "no_work" ||
+                      isSubmitting
                   }
                   label="Time Out"
                   placeholder="Select time out"
@@ -347,7 +366,11 @@ export function AddAttendanceDialog({
                   onChange={(e) => setOvertime(e.target.value)}
                   placeholder="0.00"
                   disabled={
-                    status === "absent" || status === "leave" || status === "no_work" || isSubmitting
+                    status === "absent" ||
+                      status === "leave_with_pay" ||
+                      status === "leave_without_pay" ||
+                      status === "no_work" ||
+                      isSubmitting
                   }
                 />
                 <p className="text-xs text-gray-500">

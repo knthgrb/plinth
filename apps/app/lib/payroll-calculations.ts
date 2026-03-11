@@ -516,14 +516,21 @@ export function calculatePayrollBaseFromRecords(args: {
     } else if (att.status === "no_work") {
       // Holiday (or similar) when employee did not work — no additional pay, no absence
       continue;
-    } else if (att.status === "leave") {
+    } else if (
+      att.status === "leave" ||
+      att.status === "leave_with_pay"
+    ) {
+      // leave = legacy, treat as leave_with_pay
       if (isPaidLeave(att.date)) {
         daysWorked += 1;
         if (salaryType !== "monthly") {
           basicPay += dailyRate;
         }
       }
-    } else if (att.status === "absent") {
+    } else if (
+      att.status === "leave_without_pay" ||
+      att.status === "absent"
+    ) {
       if (isPaidLeave(att.date)) {
         daysWorked += 1;
         if (salaryType !== "monthly") {

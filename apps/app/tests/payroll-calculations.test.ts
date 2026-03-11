@@ -368,4 +368,53 @@ describe("payroll calculations", () => {
     expect(result.lateHours).toBeCloseTo(20 / 60, 5);
     expect(result.lateDeduction).toBeCloseTo(57.47, 2);
   });
+
+  it("treats leave_without_pay as absent (deduction)", () => {
+    const date = localDate(2026, 1, 23); // Friday
+    const result = calculate({
+      attendance: [
+        {
+          date,
+          status: "leave_without_pay",
+        },
+      ],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    // dailyRate ≈ 30000 * 12/261 ≈ 1379.31
+    expect(result.absences).toBe(1);
+    expect(result.absentDeduction).toBeCloseTo(1379.31, 2);
+  });
+
+  it("treats leave_with_pay as paid (no deduction)", () => {
+    const date = localDate(2026, 1, 23); // Friday
+    const result = calculate({
+      attendance: [
+        {
+          date,
+          status: "leave_with_pay",
+        },
+      ],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    expect(result.absences).toBe(0);
+    expect(result.absentDeduction).toBe(0);
+  });
+
+  it("treats legacy leave as paid (no deduction)", () => {
+    const date = localDate(2026, 1, 23); // Friday
+    const result = calculate({
+      attendance: [
+        {
+          date,
+          status: "leave",
+        },
+      ],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    expect(result.absences).toBe(0);
+    expect(result.absentDeduction).toBe(0);
+  });
 });

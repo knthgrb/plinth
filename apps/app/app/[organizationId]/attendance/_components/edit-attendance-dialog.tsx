@@ -31,6 +31,7 @@ import {
   formatTime12Hour,
 } from "@/utils/attendance-calculations";
 import { Loader2 } from "lucide-react";
+import { format } from "date-fns";
 
 interface EditAttendanceDialogProps {
   isOpen: boolean;
@@ -74,9 +75,9 @@ export function EditAttendanceDialog({
   const [editTimeOut, setEditTimeOut] = useState("");
   const [editOvertime, setEditOvertime] = useState("");
   const [editRemarks, setEditRemarks] = useState("");
-  const [editStatus, setEditStatus] = useState<"present" | "absent" | "leave" | "no_work">(
-    "present",
-  );
+  const [editStatus, setEditStatus] = useState<
+    "present" | "absent" | "half-day" | "leave" | "leave_with_pay" | "leave_without_pay" | "no_work"
+  >("present");
   const [isUpdating, setIsUpdating] = useState(false);
   const [manualLate, setManualLate] = useState<string>("");
   const [manualUndertime, setManualUndertime] = useState<string>("");
@@ -101,7 +102,9 @@ export function EditAttendanceDialog({
       setEditTimeIn(record.actualIn || "");
       setEditTimeOut(record.actualOut || "");
       setEditOvertime(record.overtime ? record.overtime.toString() : "");
-      setEditStatus(record.status);
+      setEditStatus(
+        record.status === "leave" ? "leave_with_pay" : record.status
+      );
       setEditRemarks(record.remarks || "");
       // Seed manual fields from stored values (late in mins, undertime stored in hours → show as mins)
       setManualLate(
@@ -190,21 +193,20 @@ export function EditAttendanceDialog({
 
     setIsUpdating(true);
     try {
-      // Clear time in/out and overtime for leave, absent, or no_work
-      const finalTimeIn =
-        editStatus === "leave" || editStatus === "absent" || editStatus === "no_work"
-          ? undefined
-          : editTimeIn || undefined;
-      const finalTimeOut =
-        editStatus === "leave" || editStatus === "absent" || editStatus === "no_work"
-          ? undefined
-          : editTimeOut || undefined;
-      const finalOvertime =
-        editStatus === "leave" || editStatus === "absent" || editStatus === "no_work"
-          ? undefined
-          : editOvertime
-            ? parseFloat(editOvertime)
-            : undefined;
+      // Clear time in/out and overtime for leave types, absent, or no_work
+      const clearsTime =
+        editStatus === "leave" ||
+        editStatus === "leave_with_pay" ||
+        editStatus === "leave_without_pay" ||
+        editStatus === "absent" ||
+        editStatus === "no_work";
+      const finalTimeIn = clearsTime ? undefined : editTimeIn || undefined;
+      const finalTimeOut = clearsTime ? undefined : editTimeOut || undefined;
+      const finalOvertime = clearsTime
+        ? undefined
+        : editOvertime
+          ? parseFloat(editOvertime)
+          : undefined;
 
       // When manual override is used, append specific note(s): "Late manually overridden." and/or "Undertime manually overridden."
       const overrideNotes: string[] = [];
@@ -265,6 +267,11 @@ export function EditAttendanceDialog({
             Edit Attendance Record
           </DialogTitle>
           <DialogDescription className="text-sm">
+            {record?.date && (
+              <span className="block font-medium text-foreground mb-1">
+                {format(new Date(record.date), "MMM dd, yyyy")} – {format(new Date(record.date), "EEEE")}
+              </span>
+            )}
             Update attendance record details. Late and undertime are based on this
             employee's scheduled time in/out; you can override them manually.
           </DialogDescription>
@@ -298,8 +305,14 @@ export function EditAttendanceDialog({
                   value={editStatus}
                   onValueChange={(value: any) => {
                     setEditStatus(value);
-                    // Auto-clear time in/out for leave or absent
-                    if (value === "leave" || value === "absent") {
+                    // Auto-clear time in/out for leave types or absent
+                    const clearsTime =
+                      value === "leave" ||
+                      value === "leave_with_pay" ||
+                      value === "leave_without_pay" ||
+                      value === "absent" ||
+                      value === "no_work";
+                    if (clearsTime) {
                       // Keep schedule, but clear actual times and overtime
                       setEditTimeIn("");
                       setEditTimeOut("");
@@ -318,7 +331,8 @@ export function EditAttendanceDialog({
                   <SelectContent>
                     <SelectItem value="present">Present</SelectItem>
                     <SelectItem value="absent">Absent</SelectItem>
-                    <SelectItem value="leave">Leave</SelectItem>
+                    <SelectItem value="leave_with_pay">Leave with pay</SelectItem>
+                    <SelectItem value="leave_without_pay">Leave without pay</SelectItem>
                     <SelectItem value="no_work">No work</SelectItem>
                   </SelectContent>
                 </Select>
@@ -330,6 +344,8 @@ export function EditAttendanceDialog({
                   disabled={
                     editStatus === "absent" ||
                     editStatus === "leave" ||
+                    editStatus === "leave_with_pay" ||
+                    editStatus === "leave_without_pay" ||
                     isUpdating
                   }
                   label="Time In"
@@ -341,6 +357,8 @@ export function EditAttendanceDialog({
                   disabled={
                     editStatus === "absent" ||
                     editStatus === "leave" ||
+                    editStatus === "leave_with_pay" ||
+                    editStatus === "leave_without_pay" ||
                     isUpdating
                   }
                   label="Time Out"
@@ -452,6 +470,8 @@ export function EditAttendanceDialog({
                   disabled={
                     editStatus === "absent" ||
                     editStatus === "leave" ||
+                    editStatus === "leave_with_pay" ||
+                    editStatus === "leave_without_pay" ||
                     isUpdating
                   }
                 />

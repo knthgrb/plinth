@@ -55,7 +55,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useOrganization } from "@/hooks/organization-context";
-import { getStatusBadgeClass, getStatusBadgeStyle } from "@/utils/colors";
+import {
+  getAttendanceStatusLabel,
+  getStatusBadgeClass,
+  getStatusBadgeStyle,
+} from "@/utils/colors";
 import { formatTime12Hour } from "@/utils/attendance-calculations";
 
 // Lazy load modal components
@@ -501,13 +505,15 @@ export default function AttendancePage() {
               : "present"
           : record.status;
 
-      if (effectiveStatus === "absent") {
+      if (effectiveStatus === "absent" || effectiveStatus === "leave_without_pay") {
         absences.push({ date: record.date });
       }
 
       const isAbsentOrLeave =
         effectiveStatus === "absent" ||
         effectiveStatus === "leave" ||
+        effectiveStatus === "leave_with_pay" ||
+        effectiveStatus === "leave_without_pay" ||
         effectiveStatus === "no_work";
 
       if (!isAbsentOrLeave) {
@@ -936,7 +942,7 @@ export default function AttendancePage() {
                     <Table>
                       <TableHeader className="sticky top-0 bg-white z-10">
                         <TableRow>
-                          <TableHead className="min-w-[100px] sm:min-w-[120px] h-8 py-1.5">
+                          <TableHead className="min-w-[140px] sm:min-w-[180px] h-8 py-1.5">
                             Date
                           </TableHead>
                           <TableHead className="min-w-[80px] sm:min-w-[100px] h-8 py-1.5">
@@ -1004,6 +1010,8 @@ export default function AttendancePage() {
                             const isAbsentOrLeave =
                               effectiveStatus === "absent" ||
                               effectiveStatus === "leave" ||
+                              effectiveStatus === "leave_with_pay" ||
+                              effectiveStatus === "leave_without_pay" ||
                               effectiveStatus === "no_work";
                             // Late and undertime: use stored value when manually overridden (including 0), else auto-calculate
                             const late = isAbsentOrLeave
@@ -1038,7 +1046,8 @@ export default function AttendancePage() {
                                         {format(
                                           new Date(record.date),
                                           "MMM dd, yyyy",
-                                        )}
+                                        )}{" "}
+                                        – {format(new Date(record.date), "EEEE")}
                                       </span>
                                       {record.remarks?.trim() ? (
                                         <Popover>
@@ -1126,9 +1135,7 @@ export default function AttendancePage() {
                                         effectiveStatus,
                                       )}
                                     >
-                                      {effectiveStatus === "no_work"
-                                        ? "No work"
-                                        : effectiveStatus}
+                                      {getAttendanceStatusLabel(effectiveStatus)}
                                     </Badge>
                                     {dayHolidays.length > 0 && (
                                       <div className="flex flex-wrap gap-1">
@@ -1509,6 +1516,8 @@ export default function AttendancePage() {
                                   const isAbsentOrLeave =
                                     record.status === "absent" ||
                                     record.status === "leave" ||
+                                    record.status === "leave_with_pay" ||
+                                    record.status === "leave_without_pay" ||
                                     record.status === "no_work";
                                   if (!isAbsentOrLeave) {
                                     const late =
@@ -1568,9 +1577,11 @@ export default function AttendancePage() {
                                       index === summaryMonthDates.length - 1;
                                     const dayLate =
                                       record &&
-                                      record.status !== "absent" &&
-                                      record.status !== "leave" &&
-                                      record.status !== "no_work"
+                                    record.status !== "absent" &&
+                                    record.status !== "leave" &&
+                                    record.status !== "leave_with_pay" &&
+                                    record.status !== "leave_without_pay" &&
+                                    record.status !== "no_work"
                                         ? record.lateManualOverride === true
                                           ? (record.late ?? 0)
                                           : record.late != null
@@ -1582,9 +1593,11 @@ export default function AttendancePage() {
                                         : null;
                                     const dayUndertime =
                                       record &&
-                                      record.status !== "absent" &&
-                                      record.status !== "leave" &&
-                                      record.status !== "no_work"
+                                    record.status !== "absent" &&
+                                    record.status !== "leave" &&
+                                    record.status !== "leave_with_pay" &&
+                                    record.status !== "leave_without_pay" &&
+                                    record.status !== "no_work"
                                         ? record.undertimeManualOverride === true
                                           ? Math.round((record.undertime ?? 0) * 60)
                                           : record.undertime != null
@@ -1608,15 +1621,19 @@ export default function AttendancePage() {
                                             <div className="grid grid-cols-2 gap-1 text-xs text-left">
                                               <span
                                                 className={
-                                                  record.status === "leave" ||
-                                                  record.status === "absent"
+                                                record.status === "leave" ||
+                                                record.status === "leave_with_pay" ||
+                                                record.status === "leave_without_pay" ||
+                                                record.status === "absent"
                                                     ? "text-gray-400"
                                                     : hasDayLate
                                                       ? "text-red-600 font-medium"
                                                       : "text-gray-900"
                                                 }
                                               >
-                                                {record.status === "leave" ||
+                                                {                                                record.status === "leave" ||
+                                                record.status === "leave_with_pay" ||
+                                                record.status === "leave_without_pay" ||
                                                 record.status === "absent" ||
                                                 record.status === "no_work"
                                                   ? "-"
@@ -1628,8 +1645,10 @@ export default function AttendancePage() {
                                               </span>
                                               <span
                                                 className={
-                                                  record.status === "leave" ||
-                                                  record.status === "absent" ||
+                                                record.status === "leave" ||
+                                                record.status === "leave_with_pay" ||
+                                                record.status === "leave_without_pay" ||
+                                                record.status === "absent" ||
                                                   record.status === "no_work"
                                                     ? "text-gray-400"
                                                     : hasDayUndertime
@@ -1637,7 +1656,9 @@ export default function AttendancePage() {
                                                       : "text-gray-900"
                                                 }
                                               >
-                                                {record.status === "leave" ||
+                                                {                                                record.status === "leave" ||
+                                                record.status === "leave_with_pay" ||
+                                                record.status === "leave_without_pay" ||
                                                 record.status === "absent" ||
                                                 record.status === "no_work"
                                                   ? "-"

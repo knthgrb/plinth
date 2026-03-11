@@ -309,7 +309,9 @@ export default defineSchema({
       v.literal("present"),
       v.literal("absent"),
       v.literal("half-day"),
-      v.literal("leave"),
+      v.literal("leave"), // Legacy: treat as leave_with_pay for backward compatibility
+      v.literal("leave_with_pay"),
+      v.literal("leave_without_pay"), // Treated as absent in payroll (deduction)
       v.literal("no_work"), // Holiday when employee did not work — no additional pay
     ),
     createdAt: v.number(),

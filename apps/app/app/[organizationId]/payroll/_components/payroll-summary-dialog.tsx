@@ -166,11 +166,15 @@ export function PayrollSummaryDialog({
                                 <Popover>
                                   <PopoverTrigger asChild>
                                     <div className="relative w-full h-full py-1">
-                                      {dayData.status === "absent" ? (
+                                      {dayData.status === "absent" ||
+                                      dayData.status === "leave_without_pay" ? (
                                         <div className="text-red-600 font-medium">
-                                          ABSENT
+                                          {dayData.status === "leave_without_pay"
+                                            ? "LWOP"
+                                            : "ABSENT"}
                                         </div>
-                                      ) : dayData.status === "leave" ? (
+                                      ) : dayData.status === "leave" ||
+                                        dayData.status === "leave_with_pay" ? (
                                         <div className="text-blue-600">
                                           LEAVE
                                         </div>
@@ -231,11 +235,15 @@ export function PayrollSummaryDialog({
                               key={date}
                               className="relative text-center text-xs"
                             >
-                              {dayData.status === "absent" ? (
+                              {dayData.status === "absent" ||
+                              dayData.status === "leave_without_pay" ? (
                                 <div className="text-red-600 font-medium">
-                                  ABSENT
+                                  {dayData.status === "leave_without_pay"
+                                    ? "LWOP"
+                                    : "ABSENT"}
                                 </div>
-                              ) : dayData.status === "leave" ? (
+                              ) : dayData.status === "leave" ||
+                                dayData.status === "leave_with_pay" ? (
                                 <div className="text-blue-600">LEAVE</div>
                               ) : (
                                 <div>

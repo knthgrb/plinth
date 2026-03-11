@@ -290,6 +290,8 @@ export const createAttendance = mutation({
       v.literal("absent"),
       v.literal("half-day"),
       v.literal("leave"),
+      v.literal("leave_with_pay"),
+      v.literal("leave_without_pay"),
       v.literal("no_work"),
     ),
   },
@@ -409,6 +411,8 @@ export const updateAttendance = mutation({
         v.literal("absent"),
         v.literal("half-day"),
         v.literal("leave"),
+        v.literal("leave_with_pay"),
+        v.literal("leave_without_pay"),
         v.literal("no_work"),
       ),
     ),
@@ -554,6 +558,8 @@ export const bulkCreateAttendance = mutation({
           v.literal("absent"),
           v.literal("half-day"),
           v.literal("leave"),
+          v.literal("leave_with_pay"),
+          v.literal("leave_without_pay"),
           v.literal("no_work"),
         ),
       }),
@@ -771,6 +777,8 @@ export const recalculateEmployeeAttendance = mutation({
         | "absent"
         | "half-day"
         | "leave"
+        | "leave_with_pay"
+        | "leave_without_pay"
         | "no_work";
 
       let newUndertime: number | undefined;

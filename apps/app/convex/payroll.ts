@@ -2765,12 +2765,13 @@ export const getPayrollRunSummary = query({
             totalNightDiffHours += nightDiffHours;
           }
 
-          // Don't count leave or paid leave as absent
+          // Count absent and leave_without_pay as absent (deduction)
           if (att.status === "absent") {
-            // Check if this is actually a paid leave
             if (!isPaidLeave(dateTimestamp)) {
               totalAbsentDays += 1;
             }
+          } else if (att.status === "leave_without_pay") {
+            totalAbsentDays += 1;
           }
 
           return {
@@ -2783,7 +2784,9 @@ export const getPayrollRunSummary = query({
             regularOTHours,
             specialOTHours,
             nightDiffHours,
-            isAbsent: att.status === "absent" && att.status !== "leave",
+            isAbsent:
+              att.status === "absent" ||
+              att.status === "leave_without_pay",
             note: att.remarks || null,
           };
         });
