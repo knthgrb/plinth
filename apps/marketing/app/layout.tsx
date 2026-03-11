@@ -14,7 +14,7 @@ const openSans = Open_Sans({
 const mainAppUrl = process.env.NEXT_PUBLIC_MAIN_APP_URL ?? "";
 
 export const metadata: Metadata = {
-  title: "Plinth – Built for companies to succeed",
+  title: "Plinth – One place for your company",
   description:
     "The foundation for companies in the Philippines. People, payroll, compliance, and communication — all in one place.",
 };
@@ -36,6 +36,12 @@ export default function RootLayout({
               </Link>
               <MarketingNav />
               <div className="flex items-center gap-3">
+                <Link
+                  href="/request-demo"
+                  className="text-sm font-medium text-gray-600 hover:text-gray-900"
+                >
+                  Request demo
+                </Link>
                 <Link
                   href={mainAppUrl ? `${mainAppUrl}/login` : "/login"}
                   className="text-sm font-medium text-gray-600 hover:text-gray-900"

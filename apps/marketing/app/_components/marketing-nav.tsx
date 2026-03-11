@@ -164,6 +164,12 @@ export function MarketingNav() {
       >
         Pricing
       </Link>
+      <Link
+        href="/support"
+        className="text-[15px] font-medium text-gray-700 hover:text-gray-900 transition-colors"
+      >
+        Support
+      </Link>
     </nav>
   );
 }

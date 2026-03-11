@@ -26,10 +26,21 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_name", ["name"]),
 
+  // Demo requests from marketing site
+  demoRequests: defineTable({
+    email: v.string(),
+    companyName: v.optional(v.string()),
+    name: v.optional(v.string()),
+    message: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_created", ["createdAt"]),
+
   // Users table (extends Better Auth user)
   users: defineTable({
     email: v.string(),
     name: v.optional(v.string()),
+    masterRole: v.optional(v.literal("super_admin")), // Master role: super_admin has access to /admin; null = regular user
     organizationId: v.optional(v.id("organizations")), // Deprecated: kept for backward compatibility
     role: v.optional(
       v.union(

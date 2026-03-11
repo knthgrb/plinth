@@ -14,6 +14,7 @@ import type * as assets from "../assets.js";
 import type * as attendance from "../attendance.js";
 import type * as auth from "../auth.js";
 import type * as chat from "../chat.js";
+import type * as demoRequests from "../demoRequests.js";
 import type * as documents from "../documents.js";
 import type * as employees from "../employees.js";
 import type * as evaluations from "../evaluations.js";
@@ -46,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   attendance: typeof attendance;
   auth: typeof auth;
   chat: typeof chat;
+  demoRequests: typeof demoRequests;
   documents: typeof documents;
   employees: typeof employees;
   evaluations: typeof evaluations;

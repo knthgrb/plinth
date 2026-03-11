@@ -20,7 +20,7 @@ export default function MarketingLandingPage() {
               className="hero-entrance text-sm font-medium uppercase tracking-widest text-brand-purple"
               style={{ animation: "hero-fade-up 0.6s ease-out both", opacity: 0 }}
             >
-              Built for companies to succeed
+              One place for your company
             </p>
             <h1
               className="hero-entrance mt-4 text-4xl font-semibold tracking-tight text-gray-900 sm:text-5xl lg:text-6xl"
@@ -49,6 +49,12 @@ export default function MarketingLandingPage() {
                 className="w-full min-w-[160px] shrink-0 rounded-xl border-2 border-gray-200 bg-white px-6 py-3.5 text-center text-base font-medium text-gray-700 transition-all hover:border-gray-300 hover:bg-gray-50 sm:w-auto"
               >
                 View features
+              </Link>
+              <Link
+                href="/request-demo"
+                className="w-full min-w-[160px] shrink-0 rounded-xl border-2 border-brand-purple/30 bg-white px-6 py-3.5 text-center text-base font-medium text-brand-purple transition-all hover:border-brand-purple/50 hover:bg-purple-50/50 sm:w-auto"
+              >
+                Request demo
               </Link>
             </div>
             <p
@@ -85,12 +91,12 @@ export default function MarketingLandingPage() {
       <StatsSection />
       <EnterpriseSection />
 
-      {/* Built for companies to succeed — clear section with CTA */}
+      {/* One place for your company — clear section with CTA */}
       <section className="border-b border-gray-100 bg-white py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-2xl text-center">
             <h2 className="text-2xl font-semibold tracking-tight text-gray-900 sm:text-3xl">
-              Built for companies to succeed
+              One place for your company
             </h2>
             <p className="mt-3 text-gray-600 sm:text-lg">
               Whether you&apos;re an SME, startup, or growing team — one place for people, operations, and compliance.
@@ -135,6 +141,12 @@ export default function MarketingLandingPage() {
               className="text-sm text-gray-600 hover:text-gray-900"
             >
               Pricing
+            </Link>
+            <Link
+              href="/support"
+              className="text-sm text-gray-600 hover:text-gray-900"
+            >
+              Support
             </Link>
           </div>
         </div>

@@ -286,7 +286,7 @@ export default function SignupPage() {
         <div className="w-full max-w-md space-y-8">
           <Link
             href={marketingUrl}
-            className="self-start text-xl font-semibold text-brand-purple transition-colors hover:text-brand-purple-hover focus:outline-none focus:ring-2 focus:ring-brand-purple focus:ring-offset-2 rounded"
+            className="self-start block mb-6 text-xl font-semibold text-brand-purple transition-colors hover:text-brand-purple-hover focus:outline-none focus:ring-2 focus:ring-brand-purple focus:ring-offset-2 rounded"
             title="Go to Plinth"
           >
             Plinth
