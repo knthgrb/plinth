@@ -10,7 +10,7 @@ export default function MarketingLandingPage() {
   const signupHref = mainAppUrl ? `${mainAppUrl}/signup` : "/signup";
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col min-w-0">
       {/* Hero — background, entrance animation, and trust line */}
       <section className="relative overflow-hidden border-b border-gray-100 bg-white py-20 sm:py-28 lg:py-32">
         <HeroBackground />

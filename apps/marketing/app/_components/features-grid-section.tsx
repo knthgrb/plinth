@@ -289,7 +289,7 @@ function CompactRecruitmentSnapshot() {
     <div
       className={
         glassPanel +
-        " min-w-[360px] overflow-hidden sm:min-w-[420px] lg:min-w-[480px]"
+        " min-w-0 max-w-full overflow-hidden sm:min-w-[320px] sm:max-w-[420px] lg:min-w-[420px] lg:max-w-[480px]"
       }
       style={{
         boxShadow:
@@ -350,8 +350,8 @@ function AndSoMuchMoreCard() {
 
 export function FeaturesGridSection() {
   return (
-    <section className="border-b border-gray-100 bg-gray-50/50 py-16 sm:py-24">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+    <section className="border-b border-gray-100 bg-gray-50/50 py-16 sm:py-24 overflow-hidden">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 min-w-0">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="text-2xl font-semibold tracking-tight text-gray-900 sm:text-3xl">
             Simple, but powerful
@@ -441,7 +441,7 @@ export function FeaturesGridSection() {
               </p>
             </div>
             <div
-              className="shrink-0 overflow-hidden rounded-xl"
+              className="min-w-0 shrink overflow-hidden rounded-xl"
               style={{ maxHeight: "200px" }}
             >
               <CompactRecruitmentSnapshot />
