@@ -13,7 +13,8 @@ import Link from "next/link";
 import { AuthSidePanel } from "@/components/auth-side-panel";
 
 const PENDING_SIGNOUT_KEY = "pendingSignOut";
-const marketingUrl = process.env.NEXT_PUBLIC_MARKETING_URL ?? "/";
+const marketingUrl =
+  process.env.NEXT_PUBLIC_MARKETING_APP_URL ?? process.env.NEXT_PUBLIC_MARKETING_URL ?? "/";
 
 export default function LoginPage() {
   const router = useRouter();

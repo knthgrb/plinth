@@ -13,7 +13,8 @@ import Link from "next/link";
 import { MainLoader } from "@/components/main-loader";
 import { AuthSidePanel } from "@/components/auth-side-panel";
 
-const marketingUrl = process.env.NEXT_PUBLIC_MARKETING_URL ?? "/";
+const marketingUrl =
+  process.env.NEXT_PUBLIC_MARKETING_APP_URL ?? process.env.NEXT_PUBLIC_MARKETING_URL ?? "/";
 
 type SignupStep = 1 | 2;
 
