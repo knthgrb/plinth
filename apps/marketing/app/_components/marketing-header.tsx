@@ -65,15 +65,18 @@ export function MarketingHeader() {
         </button>
       </div>
 
-      {/* Mobile/tablet menu overlay */}
+      {/* Mobile/tablet menu overlay — fixed to avoid header overflow clipping */}
       {menuOpen && (
         <>
           <div
-            className="fixed inset-0 z-40 bg-black/20 lg:hidden"
+            className="fixed inset-0 z-[100] bg-black/20 lg:hidden"
             onClick={() => setMenuOpen(false)}
             aria-hidden="true"
           />
-          <div className="absolute left-0 right-0 top-full z-50 border-b border-gray-200 bg-white shadow-lg lg:hidden">
+          <div
+            className="fixed left-0 right-0 z-[100] border-b border-gray-200 bg-white shadow-lg lg:hidden"
+            style={{ top: "3.5rem" }}
+          >
             <nav className="flex flex-col gap-1 p-4 max-h-[calc(100vh-3.5rem)] overflow-y-auto">
               <Link
                 href="/features"
