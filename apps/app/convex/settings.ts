@@ -122,8 +122,8 @@ export const getSettings = query({
         leaveTrackerRows: [],
         payrollSettings: {
           nightDiffPercent: 0.1, // 10% per hour from 10 PM
-          regularHolidayRate: 2.0, // 200% of daily pay additional (regular holiday)
-          specialHolidayRate: 1.3, // 130% of daily pay additional (special holiday)
+          regularHolidayRate: 2.0, // 200% = actual rate (2× daily pay for regular holiday)
+          specialHolidayRate: 1.3, // 130% = actual rate (1.3× daily pay for special holiday)
           overtimeRegularRate: 1.25, // Regular day OT: 125% per hour (25% additional)
           overtimeRestDayRate: 1.69, // Rest day OT: 169% per hour
           regularHolidayOtRate: 2.0, // Regular holiday OT: 200% per hour
@@ -195,6 +195,15 @@ export const updatePayrollSettings = mutation({
       specialHolidayOtRate: v.optional(v.number()),
       dailyRateIncludesAllowance: v.optional(v.boolean()),
       dailyRateWorkingDaysPerYear: v.optional(v.number()),
+      taxDeductionFrequency: v.optional(
+        v.union(
+          v.literal("once_per_month"),
+          v.literal("twice_per_month"),
+        ),
+      ),
+      taxDeductOnPay: v.optional(
+        v.union(v.literal("first"), v.literal("second")),
+      ),
     }),
   },
   handler: async (ctx, args) => {

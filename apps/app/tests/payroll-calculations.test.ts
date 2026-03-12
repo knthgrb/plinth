@@ -23,8 +23,8 @@ const baseRates: ResolvedPayrollRates = {
   nightDiffRate: 0.1,
   dailyRateIncludesAllowance: true,
   dailyRateWorkingDaysPerYear: 261,
-  regularHolidayRate: 1.0,
-  specialHolidayRate: 0.3,
+  regularHolidayRate: 2.0, // 200% actual rate (2× daily)
+  specialHolidayRate: 1.3, // 130% actual rate (1.3× daily)
 };
 
 function createEmployee(overrides: Record<string, unknown> = {}) {
@@ -144,7 +144,7 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
 
-    // Holiday list type wins so prod and local match; special = 30% of daily (basic+allowance when setting on)
+    // Holiday list type wins so prod and local match; special = 130% actual = 30% premium of daily (basic+allowance when setting on)
     expect(result.holidayPay).toBeCloseTo(413.79, 2);
   });
 
@@ -175,7 +175,7 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
 
-    // baseRates has dailyRateIncludesAllowance: true → special holiday 30% of (basic+allowance) daily
+    // baseRates has dailyRateIncludesAllowance: true → special holiday 130% actual = 30% premium of (basic+allowance) daily
     expect(result.holidayPay).toBeCloseTo(413.79, 2);
   });
 

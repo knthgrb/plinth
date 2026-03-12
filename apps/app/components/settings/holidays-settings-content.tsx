@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
+import { ConvexError } from "convex/values";
 import { api } from "@/convex/_generated/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -148,10 +149,16 @@ export function HolidaysSettingsContent() {
         });
       }
       setIsDialogOpen(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message =
+        error instanceof ConvexError && typeof error.data === "object" && error.data && "message" in error.data
+          ? String((error.data as { message: string }).message)
+          : error instanceof Error
+            ? error.message
+            : "Failed to save holiday";
       toast({
         title: "Error",
-        description: error.message || "Failed to save holiday",
+        description: message,
         variant: "destructive",
       });
     }

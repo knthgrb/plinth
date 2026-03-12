@@ -283,7 +283,7 @@ function getPerCutoffAmount(
   return effective === "half" ? monthlyAmount / 2 : monthlyAmount;
 }
 
-/** Government deductions are taken once per month (full monthly amount). For semi-monthly, apply only on the first cutoff of the month. */
+/** Government deductions (SSS, PhilHealth, Pag-IBIG) are taken once per month (full monthly amount). For semi-monthly, apply only on the first cutoff of the month. */
 function getGovDeductionAmount(
   monthlyAmount: number,
   cutoffStart: number,
@@ -292,6 +292,28 @@ function getGovDeductionAmount(
   if (payFrequency === "monthly") return monthlyAmount;
   const dayOfMonth = new Date(cutoffStart).getDate();
   return dayOfMonth <= 15 ? monthlyAmount : 0;
+}
+
+/** Tax deduction uses payroll settings: once_per_month = full on selected pay; twice_per_month = half on each pay. */
+function getTaxDeductionAmount(
+  monthlyTax: number,
+  cutoffStart: number,
+  payFrequency: PayFrequency,
+  taxDeductionFrequency: "once_per_month" | "twice_per_month",
+  taxDeductOnPay: "first" | "second",
+): number {
+  if (payFrequency === "monthly") return monthlyTax;
+  const dayOfMonth = new Date(cutoffStart).getDate();
+  const isFirstPay = dayOfMonth <= 15;
+
+  if (taxDeductionFrequency === "twice_per_month") {
+    return round2(monthlyTax / 2);
+  }
+  // once_per_month: full tax on selected pay only
+  if (taxDeductOnPay === "first") {
+    return isFirstPay ? monthlyTax : 0;
+  }
+  return isFirstPay ? 0 : monthlyTax;
 }
 
 // Default OT/holiday rates (used when org settings not set)
@@ -314,6 +336,27 @@ export type PayrollRates = {
   regularHolidayRate: number;
   specialHolidayRate: number;
 };
+
+/** Load tax deduction settings from organization (default: twice_per_month, first). */
+async function getTaxDeductionSettings(
+  ctx: any,
+  organizationId: any,
+): Promise<{
+  taxDeductionFrequency: "once_per_month" | "twice_per_month";
+  taxDeductOnPay: "first" | "second";
+}> {
+  const settings = await (ctx.db.query("settings") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", organizationId),
+    )
+    .first();
+  const ps = settings?.payrollSettings;
+  return {
+    taxDeductionFrequency:
+      ps?.taxDeductionFrequency ?? "twice_per_month",
+    taxDeductOnPay: ps?.taxDeductOnPay ?? "first",
+  };
+}
 
 /** Load payroll rates from organization settings (with defaults). */
 async function getPayrollRates(
@@ -352,12 +395,14 @@ function getEmployeePayrollRates(
   specialHolidayRate: number;
 } {
   const compensation = employee.compensation || {};
-  const regularHolidayRate = Math.max(
-    compensation.regularHolidayRate ?? organizationRates.regularHolidayRate,
-    1.0,
-  );
-  const specialHolidayRate =
+  let regularHolidayRate =
+    compensation.regularHolidayRate ?? organizationRates.regularHolidayRate;
+  let specialHolidayRate =
     compensation.specialHolidayRate ?? organizationRates.specialHolidayRate;
+  // Backward compatibility: legacy "additional" values (1.0=100% add, 0.3=30% add) → actual rates (2.0, 1.3)
+  if (regularHolidayRate <= 1.5) regularHolidayRate = 2.0;
+  if (specialHolidayRate <= 0.5) specialHolidayRate = 1.3;
+  regularHolidayRate = Math.max(regularHolidayRate, 1.0);
 
   return {
     ...organizationRates,
@@ -733,10 +778,16 @@ export const computeEmployeePayroll = query({
       args.cutoffStart,
       payFrequency,
     );
-    const withholdingTaxAmount = getGovDeductionAmount(
+    const taxSettings = await getTaxDeductionSettings(
+      ctx,
+      employee.organizationId,
+    );
+    const withholdingTaxAmount = getTaxDeductionAmount(
       monthlyTax,
       args.cutoffStart,
       payFrequency,
+      taxSettings.taxDeductionFrequency,
+      taxSettings.taxDeductOnPay,
     );
 
     // Total deductions = attendance deductions + government deductions + custom deductions
@@ -944,6 +995,10 @@ export const createPayrollRun = mutation({
     });
 
     const rates = await getPayrollRates(ctx, args.organizationId);
+    const taxSettings = await getTaxDeductionSettings(
+      ctx,
+      args.organizationId,
+    );
     const holidays = await (ctx.db.query("holidays") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId),
@@ -1044,10 +1099,12 @@ export const createPayrollRun = mutation({
           args.cutoffStart,
           payFrequency,
         );
-        const taxAmount = getGovDeductionAmount(
+        const taxAmount = getTaxDeductionAmount(
           monthlyTax,
           args.cutoffStart,
           payFrequency,
+          taxSettings.taxDeductionFrequency,
+          taxSettings.taxDeductOnPay,
         );
 
         const runDeductionsEnabled = deductionsEnabled;
@@ -1539,6 +1596,10 @@ export const updatePayrollRun = mutation({
       const cutoffEnd = args.cutoffEnd ?? payrollRun.cutoffEnd;
 
       const rates = await getPayrollRates(ctx, payrollRun.organizationId);
+      const taxSettingsUpdate = await getTaxDeductionSettings(
+        ctx,
+        payrollRun.organizationId,
+      );
       const organizationUpdate = await ctx.db.get(payrollRun.organizationId);
       const payFrequencyUpdate: PayFrequency =
         getOrganizationPayFrequency(organizationUpdate);
@@ -1629,10 +1690,12 @@ export const updatePayrollRun = mutation({
             cutoffStart,
             payFrequencyUpdate,
           );
-          const taxAmount = getGovDeductionAmount(
+          const taxAmount = getTaxDeductionAmount(
             monthlyTax,
             cutoffStart,
             payFrequencyUpdate,
+            taxSettingsUpdate.taxDeductionFrequency,
+            taxSettingsUpdate.taxDeductOnPay,
           );
 
           if (runDeductionsEnabled) {

@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Download, FileSpreadsheet } from "lucide-react";
+import { Download, FileSpreadsheet, Loader2 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -33,6 +33,8 @@ interface PayrollSummaryDialogProps {
   isLoadingSummary: boolean;
   selectedPayrollRun: any;
   isAdminOrAccounting: boolean;
+  isSavingDraft?: boolean;
+  isFinalizing?: boolean;
   onExportExcel: () => void;
   onExportPDF: () => void;
   onSaveDraft: () => Promise<void> | void;
@@ -46,6 +48,8 @@ export function PayrollSummaryDialog({
   isLoadingSummary,
   selectedPayrollRun,
   isAdminOrAccounting,
+  isSavingDraft = false,
+  isFinalizing = false,
   onExportExcel,
   onExportPDF,
   onSaveDraft,
@@ -93,10 +97,33 @@ export function PayrollSummaryDialog({
               {selectedPayrollRun?.status === "draft" &&
                 isAdminOrAccounting && (
                   <div className="flex gap-2">
-                    <Button variant="outline" onClick={onSaveDraft}>
-                      Save as Draft
+                    <Button
+                      variant="outline"
+                      onClick={onSaveDraft}
+                      disabled={isSavingDraft || isFinalizing}
+                    >
+                      {isSavingDraft ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        "Save as Draft"
+                      )}
                     </Button>
-                    <Button onClick={onFinalize}>Finalize Payroll</Button>
+                    <Button
+                      onClick={onFinalize}
+                      disabled={isSavingDraft || isFinalizing}
+                    >
+                      {isFinalizing ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Finalizing...
+                        </>
+                      ) : (
+                        "Finalize Payroll"
+                      )}
+                    </Button>
                   </div>
                 )}
             </div>

@@ -87,6 +87,8 @@ export function PayrollSettingsContent() {
     salaryPaymentFrequency: "bimonthly" as "monthly" | "bimonthly",
     firstPayDate: 15,
     secondPayDate: 30,
+    taxDeductionFrequency: "twice_per_month" as "once_per_month" | "twice_per_month",
+    taxDeductOnPay: "first" as "first" | "second",
   });
   const [isSaving, setIsSaving] = useState(false);
 
@@ -117,6 +119,10 @@ export function PayrollSettingsContent() {
             : "bimonthly",
         firstPayDate: organization?.firstPayDate ?? 15,
         secondPayDate: organization?.secondPayDate ?? 30,
+        taxDeductionFrequency:
+          settings.payrollSettings.taxDeductionFrequency ?? "twice_per_month",
+        taxDeductOnPay:
+          settings.payrollSettings.taxDeductOnPay ?? "first",
       });
     } else {
       setFormData((prev) => ({
@@ -127,6 +133,11 @@ export function PayrollSettingsContent() {
             : "bimonthly",
         firstPayDate: organization?.firstPayDate ?? 15,
         secondPayDate: organization?.secondPayDate ?? 30,
+        taxDeductionFrequency:
+          (settings?.payrollSettings as any)?.taxDeductionFrequency ??
+          "twice_per_month",
+        taxDeductOnPay:
+          (settings?.payrollSettings as any)?.taxDeductOnPay ?? "first",
       }));
     }
   }, [settings, organization]);
@@ -147,6 +158,8 @@ export function PayrollSettingsContent() {
           specialHolidayOtRate: formData.specialHolidayOtRate / 100,
           dailyRateIncludesAllowance: formData.dailyRateIncludesAllowance,
           dailyRateWorkingDaysPerYear: formData.dailyRateWorkingDaysPerYear,
+          taxDeductionFrequency: formData.taxDeductionFrequency,
+          taxDeductOnPay: formData.taxDeductOnPay,
         },
       });
 
@@ -364,6 +377,74 @@ export function PayrollSettingsContent() {
                 }
               />
             </div>
+          </div>
+        </div>
+
+        <div className="space-y-4 rounded-lg border p-4">
+          <h4 className="font-medium">Tax deduction</h4>
+          <p className="text-sm text-muted-foreground">
+            For bimonthly payroll: choose whether to deduct tax once (full on
+            one pay) or twice (half on 1st pay, half on 2nd pay). Monthly
+            payroll always deducts full tax in one pay.
+          </p>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="taxDeductionFrequency">
+                Tax deduction frequency
+              </Label>
+              <Select
+                value={formData.taxDeductionFrequency}
+                onValueChange={(
+                  value: "once_per_month" | "twice_per_month",
+                ) =>
+                  setFormData({
+                    ...formData,
+                    taxDeductionFrequency: value,
+                  })
+                }
+              >
+                <SelectTrigger
+                  id="taxDeductionFrequency"
+                  className="max-w-xs"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="twice_per_month">
+                    Twice per month (half on 1st pay, half on 2nd pay)
+                  </SelectItem>
+                  <SelectItem value="once_per_month">
+                    Once per month (full tax on one pay)
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {formData.taxDeductionFrequency === "once_per_month" && (
+              <div className="space-y-2">
+                <Label htmlFor="taxDeductOnPay">
+                  Deduct full tax on which pay?
+                </Label>
+                <Select
+                  value={formData.taxDeductOnPay}
+                  onValueChange={(value: "first" | "second") =>
+                    setFormData({
+                      ...formData,
+                      taxDeductOnPay: value,
+                    })
+                  }
+                >
+                  <SelectTrigger id="taxDeductOnPay" className="max-w-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="first">1st pay (e.g. 1st–15th)</SelectItem>
+                    <SelectItem value="second">
+                      2nd pay (e.g. 16th–30th/31st)
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
         </div>
 

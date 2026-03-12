@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 
@@ -174,40 +174,59 @@ export const updateHoliday = mutation({
     provinces: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
-    const holiday = await ctx.db.get(args.holidayId);
-    if (!holiday) throw new Error("Holiday not found");
+    try {
+      const holiday = await ctx.db.get(args.holidayId);
+      if (!holiday) throw new ConvexError({ code: "NOT_FOUND", message: "Holiday not found" });
 
-    // Authorize within the holiday's organization
-    await checkAuth(ctx, holiday.organizationId, "hr");
+      // Authorize within the holiday's organization
+      await checkAuth(ctx, holiday.organizationId, "hr");
 
-    // Determine effective values after update for year/isRecurring/date consistency
-    const nextDate = args.date ?? holiday.date;
-    const nextIsRecurring =
-      args.isRecurring !== undefined ? args.isRecurring : holiday.isRecurring;
+      // Validate: when applyToAll is false, provinces must be a non-empty array
+      if (args.applyToAll === false) {
+        const provinces = args.provinces ?? [];
+        if (!Array.isArray(provinces) || provinces.length === 0) {
+          throw new ConvexError({
+            code: "VALIDATION",
+            message: "Please select at least one province when using 'Specific provinces'.",
+          });
+        }
+      }
 
-    const dateObj = new Date(nextDate);
-    const nextYear =
-      nextIsRecurring || Number.isNaN(dateObj.getTime())
-        ? undefined
-        : dateObj.getFullYear();
+      // Determine effective values after update for year/isRecurring/date consistency
+      const nextDate = args.date ?? holiday.date;
+      const nextIsRecurring =
+        args.isRecurring !== undefined ? args.isRecurring : holiday.isRecurring;
 
-    const updates: any = { updatedAt: Date.now() };
-    if (args.name !== undefined) updates.name = args.name;
-    if (args.date !== undefined) updates.date = args.date;
-    if (args.clearOffsetDate) {
-      updates.offsetDate = undefined;
-    } else if (args.offsetDate !== undefined) {
-      updates.offsetDate = args.offsetDate;
+      const dateObj = new Date(nextDate);
+      const nextYear =
+        nextIsRecurring || Number.isNaN(dateObj.getTime())
+          ? undefined
+          : dateObj.getFullYear();
+
+      const updates: Record<string, unknown> = { updatedAt: Date.now() };
+      if (args.name !== undefined) updates.name = args.name;
+      if (args.date !== undefined) updates.date = args.date;
+      if (args.clearOffsetDate) {
+        updates.offsetDate = undefined;
+      } else if (args.offsetDate !== undefined) {
+        updates.offsetDate = args.offsetDate;
+      }
+      if (args.type !== undefined) updates.type = args.type;
+      if (args.isRecurring !== undefined) updates.isRecurring = args.isRecurring;
+      if (args.applyToAll !== undefined) updates.applyToAll = args.applyToAll;
+      if (args.provinces !== undefined) updates.provinces = args.provinces;
+      // Always keep year in sync with date/isRecurring, ignoring any manual year arg
+      updates.year = nextYear;
+
+      await ctx.db.patch(args.holidayId, updates);
+      return { success: true };
+    } catch (err) {
+      if (err instanceof ConvexError) throw err;
+      throw new ConvexError({
+        code: "UPDATE_FAILED",
+        message: err instanceof Error ? err.message : "Failed to update holiday",
+      });
     }
-    if (args.type !== undefined) updates.type = args.type;
-    if (args.isRecurring !== undefined) updates.isRecurring = args.isRecurring;
-    if (args.applyToAll !== undefined) updates.applyToAll = args.applyToAll;
-    if (args.provinces !== undefined) updates.provinces = args.provinces;
-    // Always keep year in sync with date/isRecurring, ignoring any manual year arg
-    updates.year = nextYear;
-
-    await ctx.db.patch(args.holidayId, updates);
-    return { success: true };
   },
 });
 

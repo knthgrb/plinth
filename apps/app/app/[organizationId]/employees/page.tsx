@@ -722,9 +722,9 @@ export default function EmployeesPage() {
     setIsCreatingEmployee(true);
     try {
       const orgRegularRateDecimal =
-        settings?.payrollSettings?.regularHolidayRate ?? 1.0;
+        settings?.payrollSettings?.regularHolidayRate ?? 2.0;
       const orgSpecialRateDecimal =
-        settings?.payrollSettings?.specialHolidayRate ?? 0.3;
+        settings?.payrollSettings?.specialHolidayRate ?? 1.3;
       const orgNightDiffDecimal =
         settings?.payrollSettings?.nightDiffPercent ?? 0.1;
       const orgOvertimeRegularDecimal =
@@ -1211,7 +1211,7 @@ export default function EmployeesPage() {
                             step="0.01"
                             placeholder={(
                               (settings?.payrollSettings?.regularHolidayRate ??
-                                1.0) * 100
+                                2.0) * 100
                             ).toString()}
                             {...registerAdd("regularHolidayRate")}
                             className={cn(addFormErrors.regularHolidayRate && "border-red-500 focus-visible:ring-red-500")}
@@ -1232,7 +1232,7 @@ export default function EmployeesPage() {
                             step="0.01"
                             placeholder={(
                               (settings?.payrollSettings?.specialHolidayRate ??
-                                0.3) * 100
+                                1.3) * 100
                             ).toString()}
                             {...registerAdd("specialHolidayRate")}
                             className={cn(addFormErrors.specialHolidayRate && "border-red-500 focus-visible:ring-red-500")}

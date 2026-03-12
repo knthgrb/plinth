@@ -88,8 +88,8 @@ export function BulkAddEmployeesDialog({
   const handleBulkAdd = async () => {
     if (!organizationId || validRows.length === 0 || isUploading) return;
 
-    const orgRegularRate = settings?.payrollSettings?.regularHolidayRate ?? 1.0;
-    const orgSpecialRate = settings?.payrollSettings?.specialHolidayRate ?? 0.3;
+    const orgRegularRate = settings?.payrollSettings?.regularHolidayRate ?? 2.0;
+    const orgSpecialRate = settings?.payrollSettings?.specialHolidayRate ?? 1.3;
     const orgNightDiff = settings?.payrollSettings?.nightDiffPercent ?? 0.1;
     const orgOtRegular = settings?.payrollSettings?.overtimeRegularRate ?? 1.25;
     const orgOtRestDay = settings?.payrollSettings?.overtimeRestDayRate ?? 1.69;

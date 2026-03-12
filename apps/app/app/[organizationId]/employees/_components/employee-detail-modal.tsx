@@ -322,9 +322,9 @@ export function EmployeeDetailModal({
     }
 
     const orgRegularRateDecimal =
-      settings?.payrollSettings?.regularHolidayRate ?? 1.0;
+      settings?.payrollSettings?.regularHolidayRate ?? 2.0;
     const orgSpecialRateDecimal =
-      settings?.payrollSettings?.specialHolidayRate ?? 0.3;
+      settings?.payrollSettings?.specialHolidayRate ?? 1.3;
     const orgNightDiffDecimal =
       settings?.payrollSettings?.nightDiffPercent ?? 0.1;
     const orgOvertimeRegularDecimal =
@@ -392,9 +392,9 @@ export function EmployeeDetailModal({
     try {
       setIsSaving(true);
       const orgRegularRateDecimal =
-        settings?.payrollSettings?.regularHolidayRate ?? 1.0;
+        settings?.payrollSettings?.regularHolidayRate ?? 2.0;
       const orgSpecialRateDecimal =
-        settings?.payrollSettings?.specialHolidayRate ?? 0.3;
+        settings?.payrollSettings?.specialHolidayRate ?? 1.3;
       const orgNightDiffDecimal =
         settings?.payrollSettings?.nightDiffPercent ?? 0.1;
       const orgOvertimeRegularDecimal =
@@ -1219,10 +1219,10 @@ export function EmployeeDetailModal({
                         </p>
                         <p className="text-sm">
                           {(
-                            (employee.compensation.regularHolidayRate ?? 1.0) *
+                            (employee.compensation.regularHolidayRate ?? 2.0) *
                             100
                           ).toFixed(0)}
-                          % additional
+                          %
                         </p>
                       </div>
                       <div className="space-y-0.5">
@@ -1231,10 +1231,10 @@ export function EmployeeDetailModal({
                         </p>
                         <p className="text-sm">
                           {(
-                            (employee.compensation.specialHolidayRate ?? 0.3) *
+                            (employee.compensation.specialHolidayRate ?? 1.3) *
                             100
                           ).toFixed(0)}
-                          % additional
+                          %
                         </p>
                       </div>
                       <div className="space-y-0.5">
@@ -1372,7 +1372,7 @@ export function EmployeeDetailModal({
                         step="0.01"
                         min="0"
                         {...register("regularHolidayRate")}
-                        placeholder="100"
+                        placeholder="200"
                         className={cn(errors.regularHolidayRate && "border-red-500 focus-visible:ring-red-500")}
                       />
                       {errors.regularHolidayRate?.message && (
@@ -1392,7 +1392,7 @@ export function EmployeeDetailModal({
                         step="0.01"
                         min="0"
                         {...register("specialHolidayRate")}
-                        placeholder="30"
+                        placeholder="130"
                         className={cn(errors.specialHolidayRate && "border-red-500 focus-visible:ring-red-500")}
                       />
                       {errors.specialHolidayRate?.message && (

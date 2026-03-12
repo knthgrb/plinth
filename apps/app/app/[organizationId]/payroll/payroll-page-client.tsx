@@ -36,6 +36,7 @@ import {
   MessageSquare,
   FileSpreadsheet,
   Download,
+  Loader2,
 } from "lucide-react";
 import { format } from "date-fns";
 import { PayrollRunsTable } from "./_components/payroll-runs-table";
@@ -319,6 +320,8 @@ export default function PayrollPageClient({
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [summaryData, setSummaryData] = useState<any>(null);
   const [isLoadingSummary, setIsLoadingSummary] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [isFinalizing, setIsFinalizing] = useState(false);
   const [isEditPayrollRunOpen, setIsEditPayrollRunOpen] = useState(false);
   const [editingPayrollRun, setEditingPayrollRun] = useState<any>(null);
   const [editPayrollStep, setEditPayrollStep] = useState(1);
@@ -1677,18 +1680,28 @@ export default function PayrollPageClient({
                           onClick={() => handleSubmit("draft")}
                           disabled={isProcessing}
                         >
-                          {submitStatus === "draft"
-                            ? "Saving..."
-                            : "Save as Draft"}
+                          {submitStatus === "draft" ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Saving...
+                            </>
+                          ) : (
+                            "Save as Draft"
+                          )}
                         </Button>
                         <Button
                           type="button"
                           onClick={() => handleSubmit("finalized")}
                           disabled={isProcessing}
                         >
-                          {submitStatus === "finalized"
-                            ? "Finalizing..."
-                            : "Finalize Payroll"}
+                          {submitStatus === "finalized" ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Finalizing...
+                            </>
+                          ) : (
+                            "Finalize Payroll"
+                          )}
                         </Button>
                       </div>
                     )}
@@ -1812,7 +1825,10 @@ export default function PayrollPageClient({
               isAdminOrAccounting={isAdminOrAccounting}
               onExportExcel={handleExportExcel}
               onExportPDF={handleExportPDF}
+              isSavingDraft={isSavingDraft}
+              isFinalizing={isFinalizing}
               onSaveDraft={async () => {
+                setIsSavingDraft(true);
                 try {
                   await loadPayrollRuns();
                   toast({
@@ -1826,9 +1842,12 @@ export default function PayrollPageClient({
                     description: error.message || "Failed to save payroll run",
                     variant: "destructive",
                   });
+                } finally {
+                  setIsSavingDraft(false);
                 }
               }}
               onFinalize={async () => {
+                setIsFinalizing(true);
                 try {
                   await updatePayrollRunStatus(
                     selectedPayrollRun._id,
@@ -1848,6 +1867,8 @@ export default function PayrollPageClient({
                       error.message || "Failed to finalize payroll run",
                     variant: "destructive",
                   });
+                } finally {
+                  setIsFinalizing(false);
                 }
               }}
             />

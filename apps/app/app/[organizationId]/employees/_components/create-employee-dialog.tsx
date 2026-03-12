@@ -160,9 +160,9 @@ export function CreateEmployeeDialog({
     setIsCreatingEmployee(true);
     try {
       const orgRegularRateDecimal =
-        settings?.payrollSettings?.regularHolidayRate ?? 1.0;
+        settings?.payrollSettings?.regularHolidayRate ?? 2.0;
       const orgSpecialRateDecimal =
-        settings?.payrollSettings?.specialHolidayRate ?? 0.3;
+        settings?.payrollSettings?.specialHolidayRate ?? 1.3;
       const orgNightDiffDecimal =
         settings?.payrollSettings?.nightDiffPercent ?? 0.1;
       const orgOvertimeRegularDecimal =
@@ -586,7 +586,7 @@ export function CreateEmployeeDialog({
                     type="number"
                     step="0.01"
                     placeholder={
-                      ((settings?.payrollSettings?.regularHolidayRate ?? 1.0) *
+                      ((settings?.payrollSettings?.regularHolidayRate ?? 2.0) *
                         100
                       ).toString()
                     }
@@ -608,7 +608,7 @@ export function CreateEmployeeDialog({
                     type="number"
                     step="0.01"
                     placeholder={
-                      ((settings?.payrollSettings?.specialHolidayRate ?? 0.3) *
+                      ((settings?.payrollSettings?.specialHolidayRate ?? 1.3) *
                         100
                       ).toString()
                     }

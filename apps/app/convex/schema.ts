@@ -136,8 +136,8 @@ export default defineSchema({
           accountName: v.string(),
         }),
       ),
-      regularHolidayRate: v.optional(v.number()), // Additional % for regular holidays (default 1.0 = 100%)
-      specialHolidayRate: v.optional(v.number()), // Additional % for special holidays (default 0.3 = 30%)
+      regularHolidayRate: v.optional(v.number()), // Actual rate for regular holidays (default 2.0 = 200% of daily)
+      specialHolidayRate: v.optional(v.number()), // Actual rate for special holidays (default 1.3 = 130% of daily)
       nightDiffPercent: v.optional(v.number()), // Night differential override (default from settings)
       overtimeRegularRate: v.optional(v.number()), // Regular OT override (default from settings)
       overtimeRestDayRate: v.optional(v.number()), // Rest day OT override (default from settings)
@@ -811,8 +811,8 @@ export default defineSchema({
     payrollSettings: v.optional(
       v.object({
         nightDiffPercent: v.optional(v.number()), // Night differential: additional % per hour from 10 PM (default 0.1 = 10%)
-        regularHolidayRate: v.optional(v.number()), // Regular holiday day premium: additional % of daily pay (default 1.0 = 100%)
-        specialHolidayRate: v.optional(v.number()), // Special holiday day premium: additional % of daily pay (default 0.3 = 30%)
+        regularHolidayRate: v.optional(v.number()), // Actual rate for regular holidays (default 2.0 = 200% of daily)
+        specialHolidayRate: v.optional(v.number()), // Actual rate for special holidays (default 1.3 = 130% of daily)
         overtimeRegularRate: v.optional(v.number()), // Regular day OT multiplier (default 1.25 = 125% per hour)
         overtimeRestDayRate: v.optional(v.number()), // Rest day OT multiplier (default 1.69 = 169%)
         regularHolidayOtRate: v.optional(v.number()), // Regular holiday OT multiplier (default 2.0 = 200%)
@@ -820,6 +820,17 @@ export default defineSchema({
         // Daily rate from monthly: (basic + allowance?) × (12 / workingDaysPerYear)
         dailyRateIncludesAllowance: v.optional(v.boolean()), // If true, daily rate = (basic + allowance) × 12/261 (default true)
         dailyRateWorkingDaysPerYear: v.optional(v.number()), // Working days per year for daily rate (default 261)
+        // Tax deduction: once_per_month = full tax on one pay; twice_per_month = half on 1st, half on 2nd (bimonthly only)
+        taxDeductionFrequency: v.optional(
+          v.union(
+            v.literal("once_per_month"),
+            v.literal("twice_per_month"),
+          ),
+        ),
+        // When once_per_month: which pay deducts full tax (first = 1st cutoff, second = 2nd cutoff)
+        taxDeductOnPay: v.optional(
+          v.union(v.literal("first"), v.literal("second")),
+        ),
       }),
     ),
     // Leave type configurations

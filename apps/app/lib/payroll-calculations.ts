@@ -561,13 +561,16 @@ export function calculatePayrollBaseFromRecords(args: {
       }
 
       if (holidayType === "regular" && holidayApplies) {
+        // Rate is actual total (e.g. 2.0 = 200% of daily); premium = (rate - 1) * base
+        const rate = payrollRates.regularHolidayRate;
         const amount =
-          holidayPremiumBase * payrollRates.regularHolidayRate * dayMultiplier;
+          holidayPremiumBase * Math.max(0, rate - 1) * dayMultiplier;
         holidayPay += amount;
         holidayPayFromRegular += amount;
       } else if (holidayType === "special" && holidayApplies) {
+        const rate = payrollRates.specialHolidayRate;
         const amount =
-          holidayPremiumBase * payrollRates.specialHolidayRate * dayMultiplier;
+          holidayPremiumBase * Math.max(0, rate - 1) * dayMultiplier;
         holidayPay += amount;
         holidayPayFromSpecial += amount;
       }
@@ -613,7 +616,8 @@ export function calculatePayrollBaseFromRecords(args: {
         if (salaryType !== "monthly") {
           basicPay += dailyRate;
         }
-        const amount = holidayPremiumBase * payrollRates.regularHolidayRate;
+        const rate = payrollRates.regularHolidayRate;
+        const amount = holidayPremiumBase * Math.max(0, rate - 1);
         holidayPay += amount;
         holidayPayFromRegular += amount;
         continue;
@@ -658,7 +662,8 @@ export function calculatePayrollBaseFromRecords(args: {
       if (salaryType !== "monthly") {
         basicPay += dailyRate;
       }
-      const amount = holidayPremiumBase * payrollRates.regularHolidayRate;
+      const rate = payrollRates.regularHolidayRate;
+      const amount = holidayPremiumBase * Math.max(0, rate - 1);
       holidayPay += amount;
       holidayPayFromRegular += amount;
       continue;
