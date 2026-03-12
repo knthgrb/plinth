@@ -74,6 +74,10 @@ interface EditPayrollRunDialogProps {
     description: string;
     variant?: "destructive";
   }) => void;
+  taxSettings?: {
+    taxDeductionFrequency: "once_per_month" | "twice_per_month";
+    taxDeductOnPay: "first" | "second";
+  };
 }
 
 export function EditPayrollRunDialog({
@@ -108,6 +112,10 @@ export function EditPayrollRunDialog({
   onSavePayrollRun,
   editSubmitStatus = "idle",
   toast,
+  taxSettings = {
+    taxDeductionFrequency: "twice_per_month" as const,
+    taxDeductOnPay: "first" as const,
+  },
 }: EditPayrollRunDialogProps) {
   const handleSelectAll = () => {
     if (editSelectedEmployees.length === employees?.length) {
@@ -285,6 +293,12 @@ export function EditPayrollRunDialog({
               deductionsEnabled={editDeductionsEnabled}
               onDeductionsEnabledChange={setEditDeductionsEnabled}
               onUpdateGovernmentDeduction={onUpdateGovernmentDeduction}
+              taxSettings={taxSettings}
+              cutoffStart={
+                editCutoffStart
+                  ? new Date(editCutoffStart).getTime()
+                  : undefined
+              }
             />
           </Suspense>
         )}

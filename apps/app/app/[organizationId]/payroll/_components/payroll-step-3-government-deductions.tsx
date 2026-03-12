@@ -12,6 +12,12 @@ export interface GovernmentDeductionSettings {
   tax: { enabled: boolean; frequency: "full" | "half" };
 }
 
+/** Tax settings from org - withholding tax follows these independently of "Enable government deductions" */
+export type TaxSettings = {
+  taxDeductionFrequency: "once_per_month" | "twice_per_month";
+  taxDeductOnPay: "first" | "second";
+};
+
 interface PayrollStep3GovernmentDeductionsProps {
   employees: any[];
   selectedEmployees: string[];
@@ -24,6 +30,21 @@ interface PayrollStep3GovernmentDeductionsProps {
     field: "enabled" | "frequency",
     value: boolean | "full" | "half"
   ) => void;
+  /** Org tax settings - withholding tax is enabled based on these (independent of deductionsEnabled) */
+  taxSettings?: TaxSettings;
+  /** Cutoff start timestamp - used to determine if this is 1st or 2nd pay for once_per_month */
+  cutoffStart?: number;
+}
+
+function isTaxEnabledForRun(
+  taxSettings: TaxSettings,
+  cutoffStart?: number
+): boolean {
+  if (taxSettings.taxDeductionFrequency === "twice_per_month") return true;
+  if (!cutoffStart) return true; // default enabled when unknown
+  const dayOfMonth = new Date(cutoffStart).getDate();
+  const isFirstPay = dayOfMonth <= 15;
+  return taxSettings.taxDeductOnPay === "first" ? isFirstPay : !isFirstPay;
 }
 
 export function PayrollStep3GovernmentDeductions({
@@ -33,7 +54,20 @@ export function PayrollStep3GovernmentDeductions({
   deductionsEnabled,
   onDeductionsEnabledChange,
   onUpdateGovernmentDeduction,
+  taxSettings = {
+    taxDeductionFrequency: "twice_per_month",
+    taxDeductOnPay: "first",
+  },
+  cutoffStart,
 }: PayrollStep3GovernmentDeductionsProps) {
+  const taxEnabledForRun = isTaxEnabledForRun(taxSettings, cutoffStart);
+  const taxNote =
+    taxSettings.taxDeductionFrequency === "twice_per_month"
+      ? "Based on org settings (tax deducted twice per month)."
+      : taxEnabledForRun
+        ? `Based on org settings (full tax on ${taxSettings.taxDeductOnPay === "first" ? "1st" : "2nd"} pay).`
+        : "Not applicable this pay (org settings: full tax on other pay only).";
+
   return (
     <div className="grid gap-4 py-4">
       <div className="space-y-4">
@@ -54,14 +88,14 @@ export function PayrollStep3GovernmentDeductions({
           </Label>
         </div>
         <p className="text-sm text-gray-500">
-          When enabled, full monthly SSS, PhilHealth, Pag-IBIG, and withholding
-          tax are applied. Use the per-employee checkboxes below to override
-          (e.g. skip deductions for a specific employee this run).
+          When enabled, full monthly SSS, PhilHealth, and Pag-IBIG are applied.
+          Withholding tax follows org settings independently (see note below).
+          Use the per-employee checkboxes to override.
         </p>
         {!deductionsEnabled && (
           <p className="text-sm text-amber-600 font-medium">
-            Deductions are off for this run — no SSS, PhilHealth, Pag-IBIG, or
-            tax will be applied to any employee.
+            SSS, PhilHealth, and Pag-IBIG are off for this run. Withholding tax
+            still follows org settings.
           </p>
         )}
         <div className="space-y-6 max-h-96 overflow-y-auto">
@@ -91,14 +125,23 @@ export function PayrollStep3GovernmentDeductions({
                     this run.
                   </p>
                   {[
-                    { key: "sss", label: "SSS" },
-                    { key: "pagibig", label: "Pag-IBIG" },
-                    { key: "philhealth", label: "PhilHealth" },
-                    { key: "tax", label: "Withholding Tax" },
-                  ].map(({ key, label }) => (
+                    { key: "sss", label: "SSS", disabledByMaster: true },
+                    { key: "pagibig", label: "Pag-IBIG", disabledByMaster: true },
+                    {
+                      key: "philhealth",
+                      label: "PhilHealth",
+                      disabledByMaster: true,
+                    },
+                    {
+                      key: "tax",
+                      label: "Withholding Tax",
+                      disabledByMaster: false,
+                      note: taxNote,
+                    },
+                  ].map(({ key, label, disabledByMaster, note }) => (
                     <div
                       key={key}
-                      className="flex items-center gap-4 border-b pb-3"
+                      className="flex flex-col gap-1 border-b pb-3"
                     >
                       <div className="flex items-center gap-2">
                         <input
@@ -108,7 +151,9 @@ export function PayrollStep3GovernmentDeductions({
                               key as "sss" | "pagibig" | "philhealth" | "tax"
                             ].enabled
                           }
-                          disabled={!deductionsEnabled}
+                          disabled={
+                            disabledByMaster ? !deductionsEnabled : false
+                          }
                           onChange={(e) =>
                             onUpdateGovernmentDeduction(
                               employeeId,
@@ -121,6 +166,11 @@ export function PayrollStep3GovernmentDeductions({
                         />
                         <Label className="font-medium w-32">{label}</Label>
                       </div>
+                      {note && (
+                        <p className="text-xs text-muted-foreground pl-6">
+                          {note}
+                        </p>
+                      )}
                     </div>
                   ))}
                 </CardContent>

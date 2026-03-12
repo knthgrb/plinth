@@ -1855,6 +1855,18 @@ export default function PayrollPageClient({
                     deductionsEnabled={deductionsEnabled}
                     onDeductionsEnabledChange={setDeductionsEnabled}
                     onUpdateGovernmentDeduction={updateGovernmentDeduction}
+                    taxSettings={{
+                      taxDeductionFrequency:
+                        settings?.payrollSettings?.taxDeductionFrequency ??
+                        "twice_per_month",
+                      taxDeductOnPay:
+                        settings?.payrollSettings?.taxDeductOnPay ?? "first",
+                    }}
+                    cutoffStart={
+                      cutoffStart
+                        ? new Date(cutoffStart).getTime()
+                        : undefined
+                    }
                   />
                 </Suspense>
               )}
@@ -2308,6 +2320,13 @@ export default function PayrollPageClient({
               onSavePayrollRun={handleSavePayrollRun}
               editSubmitStatus={editSubmitStatus}
               toast={toast}
+              taxSettings={{
+                taxDeductionFrequency:
+                  settings?.payrollSettings?.taxDeductionFrequency ??
+                  "twice_per_month",
+                taxDeductOnPay:
+                  settings?.payrollSettings?.taxDeductOnPay ?? "first",
+              }}
             />
           </Suspense>
         )}

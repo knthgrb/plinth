@@ -1055,6 +1055,12 @@ export const createPayrollRun = mutation({
         "Pag-IBIG",
         "Withholding Tax",
       ]);
+      // SSS, PhilHealth, Pag-IBIG only - withholding tax follows org settings independently
+      const GOV_DEDUCTIONS_EXCEPT_TAX = new Set([
+        "SSS",
+        "PhilHealth",
+        "Pag-IBIG",
+      ]);
       const hasOverrideDeductionsCreate =
         manualDeductionEntry?.deductions?.length &&
         manualDeductionEntry.deductions.some((d: { name: string }) =>
@@ -1073,11 +1079,12 @@ export const createPayrollRun = mutation({
             d.name !== "Undertime" &&
             !d.name.startsWith("Absent "),
         );
-        // When run has government deductions disabled, exclude them from override deductions
+        // When run has government deductions disabled, exclude SSS/PhilHealth/Pag-IBIG only; withholding tax follows org settings
         deductions =
           deductionsEnabled === false
             ? nonAttendance.filter(
-                (d: { name: string }) => !GOV_DEDUCTION_NAMES_CREATE.has(d.name),
+                (d: { name: string }) =>
+                  !GOV_DEDUCTIONS_EXCEPT_TAX.has(d.name),
               )
             : [...nonAttendance];
       } else {
@@ -1132,7 +1139,7 @@ export const createPayrollRun = mutation({
 
         const runDeductionsEnabled = deductionsEnabled;
 
-        // Add government deductions only when run has deductions enabled; per-employee override via govSettings (enabled: false = skip that type)
+        // Add SSS, PhilHealth, Pag-IBIG only when run has deductions enabled; per-employee override via govSettings
         if (runDeductionsEnabled) {
           if (govSettings) {
             if (govSettings.sss.enabled) {
@@ -1156,15 +1163,8 @@ export const createPayrollRun = mutation({
                 type: "government",
               });
             }
-            if (govSettings.tax.enabled) {
-              deductions.push({
-                name: "Withholding Tax",
-                amount: taxAmount,
-                type: "government",
-              });
-            }
           } else {
-            deductions = [
+            deductions.push(
               { name: "SSS", amount: sssEmployeeAmount, type: "government" },
               {
                 name: "PhilHealth",
@@ -1176,13 +1176,20 @@ export const createPayrollRun = mutation({
                 amount: pagibigEmployeeAmount,
                 type: "government",
               },
-              {
-                name: "Withholding Tax",
-                amount: taxAmount,
-                type: "government",
-              },
-            ];
+            );
           }
+        }
+
+        // Withholding tax follows org settings independently of deductionsEnabled (twice_per_month = both pays; once_per_month = selected pay only; getTaxDeductionAmount returns 0 when not applicable)
+        const taxApplies = taxAmount > 0;
+        const taxEnabled =
+          !govSettings ? taxApplies : govSettings.tax.enabled && taxApplies;
+        if (taxEnabled) {
+          deductions.push({
+            name: "Withholding Tax",
+            amount: taxAmount,
+            type: "government",
+          });
         }
 
         // Add manual/custom deductions (loans, etc.) - these are separate from government deductions
@@ -1666,6 +1673,11 @@ export const updatePayrollRun = mutation({
           "Pag-IBIG",
           "Withholding Tax",
         ]);
+        const GOV_DEDUCTIONS_EXCEPT_TAX_UPDATE = new Set([
+          "SSS",
+          "PhilHealth",
+          "Pag-IBIG",
+        ]);
         const hasOverrideDeductions =
           manualDeductionEntry?.deductions?.length &&
           manualDeductionEntry.deductions.some((d: { name: string }) =>
@@ -1683,11 +1695,12 @@ export const updatePayrollRun = mutation({
               d.name !== "Undertime" &&
               !d.name.startsWith("Absent "),
           );
-          // When run has government deductions disabled, exclude them from override deductions
+          // When run has government deductions disabled, exclude SSS/PhilHealth/Pag-IBIG only; withholding tax follows org settings
           deductions =
             runDeductionsEnabled === false
               ? nonAttendance.filter(
-                  (d: { name: string }) => !GOV_DEDUCTION_NAMES.has(d.name),
+                  (d: { name: string }) =>
+                    !GOV_DEDUCTIONS_EXCEPT_TAX_UPDATE.has(d.name),
                 )
               : [...nonAttendance];
         } else {
@@ -1756,15 +1769,8 @@ export const updatePayrollRun = mutation({
                   type: "government",
                 });
               }
-              if (govSettings.tax.enabled) {
-                deductions.push({
-                  name: "Withholding Tax",
-                  amount: taxAmount,
-                  type: "government",
-                });
-              }
             } else {
-              deductions = [
+              deductions.push(
                 { name: "SSS", amount: sssEmployeeAmount, type: "government" },
                 {
                   name: "PhilHealth",
@@ -1776,13 +1782,22 @@ export const updatePayrollRun = mutation({
                   amount: pagibigEmployeeAmount,
                   type: "government",
                 },
-                {
-                  name: "Withholding Tax",
-                  amount: taxAmount,
-                  type: "government",
-                },
-              ];
+              );
             }
+          }
+
+          // Withholding tax follows org settings independently of deductionsEnabled
+          const taxAppliesUpdate = taxAmount > 0;
+          const taxEnabledUpdate =
+            !govSettings
+              ? taxAppliesUpdate
+              : govSettings.tax.enabled && taxAppliesUpdate;
+          if (taxEnabledUpdate) {
+            deductions.push({
+              name: "Withholding Tax",
+              amount: taxAmount,
+              type: "government",
+            });
           }
 
           if (manualDeductionEntry?.deductions) {

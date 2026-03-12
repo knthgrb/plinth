@@ -131,6 +131,8 @@ export const getSettings = query({
           specialHolidayOtRate: 1.69, // Special holiday OT: 169% per hour
           dailyRateIncludesAllowance: true, // Daily rate from basic + allowance (set false for basic only) × 12/261
           dailyRateWorkingDaysPerYear: 261,
+          taxDeductionFrequency: "twice_per_month",
+          taxDeductOnPay: "first",
         },
         attendanceSettings: {
           defaultLunchBreakMinutes: 60,

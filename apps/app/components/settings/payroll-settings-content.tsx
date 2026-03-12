@@ -93,36 +93,29 @@ export function PayrollSettingsContent() {
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    if (settings?.payrollSettings) {
+    const ps = settings?.payrollSettings;
+    const taxFreq =
+      ps?.taxDeductionFrequency ?? "twice_per_month";
+    const taxPay = ps?.taxDeductOnPay ?? "first";
+    if (ps) {
       setFormData({
-        nightDiffPercent:
-          (settings.payrollSettings.nightDiffPercent || 0.1) * 100,
-        regularHolidayRate:
-          (settings.payrollSettings.regularHolidayRate ?? 2.0) * 100,
-        specialHolidayRate:
-          (settings.payrollSettings.specialHolidayRate ?? 1.3) * 100,
-        overtimeRegularRate:
-          (settings.payrollSettings.overtimeRegularRate || 1.25) * 100,
-        overtimeRestDayRate:
-          (settings.payrollSettings.overtimeRestDayRate || 1.69) * 100,
-        regularHolidayOtRate:
-          (settings.payrollSettings.regularHolidayOtRate ?? 2.0) * 100,
-        specialHolidayOtRate:
-          (settings.payrollSettings.specialHolidayOtRate ?? 1.69) * 100,
-        dailyRateIncludesAllowance:
-          settings.payrollSettings.dailyRateIncludesAllowance ?? true,
-        dailyRateWorkingDaysPerYear:
-          settings.payrollSettings.dailyRateWorkingDaysPerYear ?? 261,
+        nightDiffPercent: (ps.nightDiffPercent || 0.1) * 100,
+        regularHolidayRate: (ps.regularHolidayRate ?? 2.0) * 100,
+        specialHolidayRate: (ps.specialHolidayRate ?? 1.3) * 100,
+        overtimeRegularRate: (ps.overtimeRegularRate || 1.25) * 100,
+        overtimeRestDayRate: (ps.overtimeRestDayRate || 1.69) * 100,
+        regularHolidayOtRate: (ps.regularHolidayOtRate ?? 2.0) * 100,
+        specialHolidayOtRate: (ps.specialHolidayOtRate ?? 1.69) * 100,
+        dailyRateIncludesAllowance: ps.dailyRateIncludesAllowance ?? true,
+        dailyRateWorkingDaysPerYear: ps.dailyRateWorkingDaysPerYear ?? 261,
         salaryPaymentFrequency:
           organization?.salaryPaymentFrequency === "monthly"
             ? "monthly"
             : "bimonthly",
         firstPayDate: organization?.firstPayDate ?? 15,
         secondPayDate: organization?.secondPayDate ?? 30,
-        taxDeductionFrequency:
-          settings.payrollSettings.taxDeductionFrequency ?? "twice_per_month",
-        taxDeductOnPay:
-          settings.payrollSettings.taxDeductOnPay ?? "first",
+        taxDeductionFrequency: taxFreq,
+        taxDeductOnPay: taxPay,
       });
     } else {
       setFormData((prev) => ({
@@ -133,11 +126,8 @@ export function PayrollSettingsContent() {
             : "bimonthly",
         firstPayDate: organization?.firstPayDate ?? 15,
         secondPayDate: organization?.secondPayDate ?? 30,
-        taxDeductionFrequency:
-          (settings?.payrollSettings as any)?.taxDeductionFrequency ??
-          "twice_per_month",
-        taxDeductOnPay:
-          (settings?.payrollSettings as any)?.taxDeductOnPay ?? "first",
+        taxDeductionFrequency: taxFreq,
+        taxDeductOnPay: taxPay,
       }));
     }
   }, [settings, organization]);
@@ -393,7 +383,7 @@ export function PayrollSettingsContent() {
                 Tax deduction frequency
               </Label>
               <Select
-                value={formData.taxDeductionFrequency}
+                value={formData.taxDeductionFrequency || "twice_per_month"}
                 onValueChange={(
                   value: "once_per_month" | "twice_per_month",
                 ) =>
@@ -425,7 +415,7 @@ export function PayrollSettingsContent() {
                   Deduct full tax on which pay?
                 </Label>
                 <Select
-                  value={formData.taxDeductOnPay}
+                  value={formData.taxDeductOnPay || "first"}
                   onValueChange={(value: "first" | "second") =>
                     setFormData({
                       ...formData,
