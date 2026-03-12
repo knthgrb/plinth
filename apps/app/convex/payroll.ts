@@ -1087,6 +1087,44 @@ export const createPayrollRun = mutation({
                   !GOV_DEDUCTIONS_EXCEPT_TAX.has(d.name),
               )
             : [...nonAttendance];
+        // Withholding tax follows org settings independently: ensure it's present when it applies (override may not include it)
+        const hasTaxInOverride = deductions.some(
+          (d) => d.name === "Withholding Tax",
+        );
+        if (!hasTaxInOverride) {
+          const monthlyBasicForTax = getMonthlyBasicForTax(
+            employee,
+            payrollBase.payrollRates.dailyRateWorkingDaysPerYear,
+          );
+          const sssContribution = getSSSContribution(monthlyBasicForTax);
+          const annualBasic = monthlyBasicForTax * 12;
+          const annualSSS = sssContribution.employeeShare * 12;
+          const annualPhilhealth = PHILHEALTH_EMPLOYEE_MONTHLY * 12;
+          const annualPagibig = PAGIBIG_EMPLOYEE_MONTHLY * 12;
+          const annualTaxableIncome = Math.max(
+            0,
+            annualBasic - annualSSS - annualPhilhealth - annualPagibig,
+          );
+          const annualTax = computeAnnualTaxFromBasic(annualTaxableIncome);
+          const monthlyTax = round2(annualTax / 12);
+          const taxAmount = getTaxDeductionAmount(
+            monthlyTax,
+            args.cutoffStart,
+            payFrequency,
+            taxSettings.taxDeductionFrequency,
+            taxSettings.taxDeductOnPay,
+          );
+          const taxApplies = taxAmount > 0;
+          const taxEnabled =
+            !govSettings ? taxApplies : govSettings.tax.enabled && taxApplies;
+          if (taxEnabled) {
+            deductions.push({
+              name: "Withholding Tax",
+              amount: taxAmount,
+              type: "government",
+            });
+          }
+        }
       } else {
         const monthlyBasicForTax = getMonthlyBasicForTax(
           employee,
@@ -1703,6 +1741,53 @@ export const updatePayrollRun = mutation({
                     !GOV_DEDUCTIONS_EXCEPT_TAX_UPDATE.has(d.name),
                 )
               : [...nonAttendance];
+          // Withholding tax follows org settings independently: ensure it's present when it applies (override may not include it)
+          const hasTaxInOverrideUpdate = deductions.some(
+            (d) => d.name === "Withholding Tax",
+          );
+          if (!hasTaxInOverrideUpdate) {
+            const monthlyBasicForTaxOverride = getMonthlyBasicForTax(
+              employee,
+              payrollBase.payrollRates.dailyRateWorkingDaysPerYear,
+            );
+            const sssContributionOverride = getSSSContribution(
+              monthlyBasicForTaxOverride,
+            );
+            const annualBasicOverride = monthlyBasicForTaxOverride * 12;
+            const annualSSSOverride = sssContributionOverride.employeeShare * 12;
+            const annualPhilhealthOverride = PHILHEALTH_EMPLOYEE_MONTHLY * 12;
+            const annualPagibigOverride = PAGIBIG_EMPLOYEE_MONTHLY * 12;
+            const annualTaxableIncomeOverride = Math.max(
+              0,
+              annualBasicOverride -
+                annualSSSOverride -
+                annualPhilhealthOverride -
+                annualPagibigOverride,
+            );
+            const annualTaxOverride = computeAnnualTaxFromBasic(
+              annualTaxableIncomeOverride,
+            );
+            const monthlyTaxOverride = round2(annualTaxOverride / 12);
+            const taxAmountOverride = getTaxDeductionAmount(
+              monthlyTaxOverride,
+              cutoffStart,
+              payFrequencyUpdate,
+              taxSettingsUpdate.taxDeductionFrequency,
+              taxSettingsUpdate.taxDeductOnPay,
+            );
+            const taxAppliesOverride = taxAmountOverride > 0;
+            const taxEnabledOverride =
+              !govSettings
+                ? taxAppliesOverride
+                : govSettings.tax.enabled && taxAppliesOverride;
+            if (taxEnabledOverride) {
+              deductions.push({
+                name: "Withholding Tax",
+                amount: taxAmountOverride,
+                type: "government",
+              });
+            }
+          }
         } else {
           const monthlyBasicForTax = getMonthlyBasicForTax(
             employee,

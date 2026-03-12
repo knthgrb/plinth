@@ -987,43 +987,46 @@ export default function PayrollPageClient({
           return baseAmount;
         };
 
-        const sssAmount = applyGovSetting(
-          govSettings?.sss.enabled,
-          govSettings?.sss.frequency,
-          payroll.deductions?.sss,
-        );
-        if (sssAmount > 0) {
-          deductions.push({
-            name: "SSS",
-            amount: sssAmount,
-            type: "government",
-          });
-        }
+        // SSS, PhilHealth, Pag-IBIG only when deductionsEnabled; withholding tax follows org settings independently
+        if (deductionsEnabled) {
+          const sssAmount = applyGovSetting(
+            govSettings?.sss.enabled,
+            govSettings?.sss.frequency,
+            payroll.deductions?.sss,
+          );
+          if (sssAmount > 0) {
+            deductions.push({
+              name: "SSS",
+              amount: sssAmount,
+              type: "government",
+            });
+          }
 
-        const philhealthAmount = applyGovSetting(
-          govSettings?.philhealth.enabled,
-          govSettings?.philhealth.frequency,
-          payroll.deductions?.philhealth,
-        );
-        if (philhealthAmount > 0) {
-          deductions.push({
-            name: "PhilHealth",
-            amount: philhealthAmount,
-            type: "government",
-          });
-        }
+          const philhealthAmount = applyGovSetting(
+            govSettings?.philhealth.enabled,
+            govSettings?.philhealth.frequency,
+            payroll.deductions?.philhealth,
+          );
+          if (philhealthAmount > 0) {
+            deductions.push({
+              name: "PhilHealth",
+              amount: philhealthAmount,
+              type: "government",
+            });
+          }
 
-        const pagibigAmount = applyGovSetting(
-          govSettings?.pagibig.enabled,
-          govSettings?.pagibig.frequency,
-          payroll.deductions?.pagibig,
-        );
-        if (pagibigAmount > 0) {
-          deductions.push({
-            name: "Pag-IBIG",
-            amount: pagibigAmount,
-            type: "government",
-          });
+          const pagibigAmount = applyGovSetting(
+            govSettings?.pagibig.enabled,
+            govSettings?.pagibig.frequency,
+            payroll.deductions?.pagibig,
+          );
+          if (pagibigAmount > 0) {
+            deductions.push({
+              name: "Pag-IBIG",
+              amount: pagibigAmount,
+              type: "government",
+            });
+          }
         }
 
         const taxAmount =
@@ -1245,41 +1248,44 @@ export default function PayrollPageClient({
           return baseAmount;
         };
 
-        const sssAmount = applyGovSetting(
-          govSettings?.sss.enabled,
-          govSettings?.sss.frequency,
-          payroll.deductions?.sss,
-        );
-        if (sssAmount > 0)
-          deductions.push({
-            name: "SSS",
-            amount: sssAmount,
-            type: "government",
-          });
+        // SSS, PhilHealth, Pag-IBIG only when editDeductionsEnabled; withholding tax follows org settings independently
+        if (editDeductionsEnabled) {
+          const sssAmount = applyGovSetting(
+            govSettings?.sss.enabled,
+            govSettings?.sss.frequency,
+            payroll.deductions?.sss,
+          );
+          if (sssAmount > 0)
+            deductions.push({
+              name: "SSS",
+              amount: sssAmount,
+              type: "government",
+            });
 
-        const philhealthAmount = applyGovSetting(
-          govSettings?.philhealth.enabled,
-          govSettings?.philhealth.frequency,
-          payroll.deductions?.philhealth,
-        );
-        if (philhealthAmount > 0)
-          deductions.push({
-            name: "PhilHealth",
-            amount: philhealthAmount,
-            type: "government",
-          });
+          const philhealthAmount = applyGovSetting(
+            govSettings?.philhealth.enabled,
+            govSettings?.philhealth.frequency,
+            payroll.deductions?.philhealth,
+          );
+          if (philhealthAmount > 0)
+            deductions.push({
+              name: "PhilHealth",
+              amount: philhealthAmount,
+              type: "government",
+            });
 
-        const pagibigAmount = applyGovSetting(
-          govSettings?.pagibig.enabled,
-          govSettings?.pagibig.frequency,
-          payroll.deductions?.pagibig,
-        );
-        if (pagibigAmount > 0)
-          deductions.push({
-            name: "Pag-IBIG",
-            amount: pagibigAmount,
-            type: "government",
-          });
+          const pagibigAmount = applyGovSetting(
+            govSettings?.pagibig.enabled,
+            govSettings?.pagibig.frequency,
+            payroll.deductions?.pagibig,
+          );
+          if (pagibigAmount > 0)
+            deductions.push({
+              name: "Pag-IBIG",
+              amount: pagibigAmount,
+              type: "government",
+            });
+        }
 
         const taxAmount =
           govSettings && govSettings.tax.enabled === false
@@ -1497,16 +1503,29 @@ export default function PayrollPageClient({
         (ei) => ei.incentives.length > 0,
       );
 
+      // Ensure we have governmentDeductionSettings for every selected employee (withholding tax needs govSettings.tax.enabled)
+      const govSettingsForSubmit = selectedEmployees.map((employeeId) => {
+        const existing = governmentDeductionSettings.find(
+          (gs) => gs.employeeId === employeeId,
+        );
+        return (
+          existing ?? {
+            employeeId,
+            sss: { enabled: true, frequency: "full" as const },
+            pagibig: { enabled: true, frequency: "full" as const },
+            philhealth: { enabled: true, frequency: "full" as const },
+            tax: { enabled: true, frequency: "full" as const },
+          }
+        );
+      });
+
       const payrollRunId = await createPayrollRun({
         organizationId: currentOrganizationId,
         cutoffStart: dateStringToLocalMs(cutoffStart),
         cutoffEnd: dateStringToLocalMs(cutoffEnd),
         employeeIds: selectedEmployees,
         deductionsEnabled,
-        governmentDeductionSettings:
-          governmentDeductionSettings.length > 0
-            ? governmentDeductionSettings
-            : undefined,
+        governmentDeductionSettings: govSettingsForSubmit,
         manualDeductions:
           manualDeductions.length > 0 ? manualDeductions : undefined,
         incentives: incentives.length > 0 ? incentives : undefined,
@@ -1696,16 +1715,31 @@ export default function PayrollPageClient({
         (ei) => ei.incentives.length > 0,
       );
 
+      // Ensure we have governmentDeductionSettings for every selected employee
+      const editGovSettingsForSubmit = editSelectedEmployees.map(
+        (employeeId) => {
+          const existing = editGovernmentDeductionSettings.find(
+            (gs) => gs.employeeId === employeeId,
+          );
+          return (
+            existing ?? {
+              employeeId,
+              sss: { enabled: true, frequency: "full" as const },
+              pagibig: { enabled: true, frequency: "full" as const },
+              philhealth: { enabled: true, frequency: "full" as const },
+              tax: { enabled: true, frequency: "full" as const },
+            }
+          );
+        },
+      );
+
       await updatePayrollRun({
         payrollRunId: editingPayrollRun._id,
         cutoffStart: dateStringToLocalMs(editCutoffStart),
         cutoffEnd: dateStringToLocalMs(editCutoffEnd),
         employeeIds: editSelectedEmployees,
         deductionsEnabled: editDeductionsEnabled,
-        governmentDeductionSettings:
-          editGovernmentDeductionSettings.length > 0
-            ? editGovernmentDeductionSettings
-            : undefined,
+        governmentDeductionSettings: editGovSettingsForSubmit,
         manualDeductions:
           manualDeductions.length > 0 ? manualDeductions : undefined,
         incentives: incentives.length > 0 ? incentives : undefined,
