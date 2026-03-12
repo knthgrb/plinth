@@ -102,7 +102,41 @@ export function PayrollStep5Preview({
                       },
                     ]
                   : []),
-                ...(preview.lateDeduction > 0
+                ...(preview.lateDeductionSpecialHoliday > 0
+                  ? [
+                      {
+                        name: "Special Holiday Late",
+                        amount: preview.lateDeductionSpecialHoliday,
+                        type: "attendance",
+                      },
+                    ]
+                  : []),
+                ...(preview.lateDeductionRegularHoliday > 0
+                  ? [
+                      {
+                        name: "Regular Holiday Late",
+                        amount: preview.lateDeductionRegularHoliday,
+                        type: "attendance",
+                      },
+                    ]
+                  : []),
+                ...((preview.lateDeductionRegularDay ?? 0) > 0
+                  ? [
+                      {
+                        name:
+                          (preview.lateDeductionSpecialHoliday > 0 ||
+                            preview.lateDeductionRegularHoliday > 0)
+                            ? "Regular day late"
+                            : "Late",
+                        amount: preview.lateDeductionRegularDay,
+                        type: "attendance",
+                      },
+                    ]
+                  : []),
+                ...(preview.lateDeduction > 0 &&
+                !preview.lateDeductionSpecialHoliday &&
+                !preview.lateDeductionRegularHoliday &&
+                !preview.lateDeductionRegularDay
                   ? [
                       {
                         name: "Late",

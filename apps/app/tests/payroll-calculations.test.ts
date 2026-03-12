@@ -117,12 +117,16 @@ describe("payroll calculations", () => {
     expect(result.holidayPay).toBeCloseTo(1379.31, 2);
   });
 
-  it("pays holiday premium proportionally to worked hours when employee is late", () => {
+  it("pays holiday premium and deducts holiday late using rate multiplier (image 2/3)", () => {
     const date = localDate(2026, 1, 20);
-    // Late 5 mins: in at 09:05, out at 18:00 → 7h55m worked (minus 1h break) = 6h55m... actually 09:05-18:00 = 8h55m - 1h break = 7h55m = 7.9167h
+    // Late 5 mins on regular holiday (200%): deduction = 5/60 * hourlyRate * 2.0
     const result = calculate({
       employee: createEmployee({
-        compensation: { basicSalary: 25_000, allowance: 10_000, salaryType: "monthly" },
+        compensation: {
+          basicSalary: 25_000,
+          allowance: 10_000,
+          salaryType: "monthly",
+        },
       }),
       attendance: [
         {
@@ -142,13 +146,206 @@ describe("payroll calculations", () => {
       cutoffStart: date,
       cutoffEnd: date,
     });
-    // Daily rate = (25k+10k)*12/261 = 1611.49. Worked ~7.9h (late 5min). Premium proportional to worked hours, not full daily
-    expect(result.holidayPay).toBeCloseTo(1592.43, 2);
-    // Full day premium would be 1611.49; proportional is less due to late
-    expect(result.holidayPay).toBeLessThan(1611.49);
+    const fullPremium = (25_000 + 10_000) * (12 / 261); // 1609.20
+    expect(result.holidayPay).toBeCloseTo(fullPremium, 2);
+    // Per image 2: 5 mins × (P3.3525/min × 2.0) = P33.53
+    const hourlyRate = ((25_000 + 10_000) * (12 / 261)) / 8; // 201.15
+    const expectedRegularHolidayLate = (5 / 60) * hourlyRate * 2.0;
+    expect(result.lateDeductionRegularHoliday).toBeCloseTo(
+      expectedRegularHolidayLate,
+      1,
+    );
+    expect(result.lateDeductionRegularDay).toBe(0);
   });
 
-  it("uses holiday list type when holiday matches by date (source of truth)", () => {
+  it("categorizes late as Regular Holiday Late vs Late (regular day) with rate multiplier (image 2)", () => {
+    const holidayDate = localDate(2026, 1, 20); // Monday - regular holiday
+    const regularDate = localDate(2026, 1, 21); // Tuesday - regular day
+    const result = calculate({
+      employee: createEmployee({
+        compensation: {
+          basicSalary: 25_000,
+          allowance: 10_000,
+          salaryType: "monthly",
+        },
+      }),
+      attendance: [
+        {
+          date: holidayDate,
+          status: "present",
+          actualIn: "09:05",
+          actualOut: "18:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+          lunchStart: "12:00",
+          lunchEnd: "13:00",
+          isHoliday: true,
+          holidayType: "regular",
+        },
+        {
+          date: regularDate,
+          status: "present",
+          actualIn: "09:06",
+          actualOut: "18:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+          lunchStart: "12:00",
+          lunchEnd: "13:00",
+        },
+      ],
+      holidays: [
+        { date: holidayDate, type: "regular", isRecurring: false, year: 2026 },
+      ],
+      cutoffStart: holidayDate,
+      cutoffEnd: regularDate,
+    });
+    // Per image 2: 5 mins × (P3.3525/min × 2.0) = P33.53, 6 mins × P3.3525 = P20.12, total P53.65
+    const hourlyRate = ((25_000 + 10_000) * (12 / 261)) / 8;
+    expect(result.lateDeductionRegularHoliday).toBeCloseTo(
+      (5 / 60) * hourlyRate * 2.0,
+      1,
+    );
+    expect(result.lateDeductionRegularDay).toBeCloseTo(
+      (6 / 60) * hourlyRate,
+      1,
+    );
+    expect(result.lateDeductionSpecialHoliday).toBe(0);
+    expect(result.lateDeduction).toBeCloseTo(
+      result.lateDeductionRegularHoliday + result.lateDeductionRegularDay,
+      1,
+    );
+  });
+
+  it("uses employee-specific regular/special holiday rates for late deduction", () => {
+    const date = localDate(2026, 1, 20);
+    // Employee has custom rates: 250% regular, 150% special (vs org default 200%/130%)
+    const customRates = {
+      ...baseRates,
+      regularHolidayRate: 2.5,
+      specialHolidayRate: 1.5,
+    };
+    const result = calculate({
+      employee: createEmployee({
+        compensation: {
+          basicSalary: 25_000,
+          allowance: 10_000,
+          salaryType: "monthly",
+        },
+      }),
+      payrollRates: customRates,
+      attendance: [
+        {
+          date,
+          status: "present",
+          actualIn: "09:05",
+          actualOut: "18:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+          lunchStart: "12:00",
+          lunchEnd: "13:00",
+          isHoliday: true,
+          holidayType: "regular",
+        },
+      ],
+      holidays: [{ date, type: "regular", isRecurring: false, year: 2026 }],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    const hourlyRate = ((25_000 + 10_000) * (12 / 261)) / 8;
+    // 5 mins × hourly × 2.5 (employee's rate, not org default 2.0)
+    expect(result.lateDeductionRegularHoliday).toBeCloseTo(
+      (5 / 60) * hourlyRate * 2.5,
+      1,
+    );
+  });
+
+  it("rounds 33.525 to 33.53 (not 33.52) per payslip spec", () => {
+    const date = localDate(2026, 1, 20);
+    const result = calculate({
+      employee: createEmployee({
+        compensation: {
+          basicSalary: 25_000,
+          allowance: 10_000,
+          salaryType: "monthly",
+        },
+      }),
+      attendance: [
+        {
+          date,
+          status: "present",
+          actualIn: "09:05",
+          actualOut: "18:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+          lunchStart: "12:00",
+          lunchEnd: "13:00",
+          isHoliday: true,
+          holidayType: "regular",
+        },
+      ],
+      holidays: [{ date, type: "regular", isRecurring: false, year: 2026 }],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    // 5 mins × (P3.3525/min × 2.0) = P33.525 → must round to P33.53
+    expect(result.lateDeductionRegularHoliday).toBe(33.53);
+  });
+
+  it("deducts special holiday late using 130% rate multiplier (image 3)", () => {
+    const holidayDate = localDate(2026, 1, 20); // Special holiday
+    const regularDate = localDate(2026, 1, 21); // Regular day
+    const result = calculate({
+      employee: createEmployee({
+        compensation: {
+          basicSalary: 25_000,
+          allowance: 10_000,
+          salaryType: "monthly",
+        },
+      }),
+      attendance: [
+        {
+          date: holidayDate,
+          status: "present",
+          actualIn: "09:05",
+          actualOut: "18:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+          lunchStart: "12:00",
+          lunchEnd: "13:00",
+          isHoliday: true,
+          holidayType: "special",
+        },
+        {
+          date: regularDate,
+          status: "present",
+          actualIn: "09:06",
+          actualOut: "18:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+          lunchStart: "12:00",
+          lunchEnd: "13:00",
+        },
+      ],
+      holidays: [
+        { date: holidayDate, type: "special", isRecurring: false, year: 2026 },
+      ],
+      cutoffStart: holidayDate,
+      cutoffEnd: regularDate,
+    });
+    // Per image 3: 5 mins × (P3.3525/min × 1.3) = P21.79, 6 mins × P3.3525 = P20.12, total P41.91
+    const hourlyRate = ((25_000 + 10_000) * (12 / 261)) / 8;
+    expect(result.lateDeductionSpecialHoliday).toBeCloseTo(
+      (5 / 60) * hourlyRate * 1.3,
+      1,
+    );
+    expect(result.lateDeductionRegularDay).toBeCloseTo(
+      (6 / 60) * hourlyRate,
+      1,
+    );
+    expect(result.lateDeductionRegularHoliday).toBe(0);
+  });
+
+  it("uses attendance isHoliday/holidayType when set (from backfill or edit)", () => {
     const date = localDate(2026, 1, 20);
     const result = calculate({
       attendance: [
@@ -175,7 +372,37 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
 
-    // Holiday list type wins so prod and local match; special = 130% actual = 30% premium of daily (basic+allowance when setting on)
+    // Attendance holiday type wins when set (from backfill/edit); regular = 100% premium
+    expect(result.holidayPay).toBeCloseTo(1379.31, 2);
+  });
+
+  it("uses holiday list type when attendance has no isHoliday/holidayType", () => {
+    const date = localDate(2026, 1, 20);
+    const result = calculate({
+      attendance: [
+        {
+          date,
+          status: "present",
+          actualIn: "09:00",
+          actualOut: "18:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+          // No isHoliday/holidayType — holiday list is used
+        },
+      ],
+      holidays: [
+        {
+          date,
+          type: "special",
+          isRecurring: false,
+          year: 2026,
+        },
+      ],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+
+    // Holiday list type used when attendance has no holiday info; special = 30% premium
     expect(result.holidayPay).toBeCloseTo(413.79, 2);
   });
 
@@ -412,7 +639,7 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
     // 5:30-6:00 = 30 min in night window. basicHourlyRate = basic only ≈ 137.93, 0.5 * 137.93 * 0.1 ≈ 6.90
-    expect(result.nightDiffPay).toBeCloseTo(6.90, 2);
+    expect(result.nightDiffPay).toBeCloseTo(6.9, 2);
   });
 
   it("uses manual late overrides when present (late = basic+allowance hourly rate)", () => {

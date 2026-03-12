@@ -35,6 +35,7 @@ interface PayrollRunsTableProps {
   onViewSummary: (run: any) => void;
   onViewPayslips: (run: any) => void;
   onEdit: (run: any) => void;
+  onRegeneratePayslips?: (run: any) => void;
   onStatusChange: (run: any, status: string) => void;
   onDelete: (run: any) => void;
 }
@@ -44,6 +45,7 @@ export function PayrollRunsTable({
   onViewSummary,
   onViewPayslips,
   onEdit,
+  onRegeneratePayslips,
   onStatusChange,
   onDelete,
 }: PayrollRunsTableProps) {
@@ -121,10 +123,20 @@ export function PayrollRunsTable({
                         {run.status === "draft" && (
                           <>
                             {(run.runType ?? "regular") !== "13th_month" && (
-                              <DropdownMenuItem onClick={() => onEdit(run)}>
-                                <Pencil className="h-4 w-4 mr-2" />
-                                Edit
-                              </DropdownMenuItem>
+                              <>
+                                <DropdownMenuItem onClick={() => onEdit(run)}>
+                                  <Pencil className="h-4 w-4 mr-2" />
+                                  Edit
+                                </DropdownMenuItem>
+                                {onRegeneratePayslips && (
+                                  <DropdownMenuItem
+                                    onClick={() => onRegeneratePayslips(run)}
+                                  >
+                                    <FileText className="h-4 w-4 mr-2" />
+                                    Regenerate payslips
+                                  </DropdownMenuItem>
+                                )}
+                              </>
                             )}
                             <DropdownMenuItem
                               onClick={() => onStatusChange(run, "finalized")}

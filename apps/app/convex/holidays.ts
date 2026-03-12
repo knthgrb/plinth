@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { holidayMatchesDate } from "@/lib/payroll-calculations";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -241,6 +242,24 @@ export const deleteHoliday = mutation({
 
     // Authorize within the holiday's organization
     await checkAuth(ctx, holiday.organizationId, "hr");
+
+    // Clear isHoliday/holidayType on attendance that matched this holiday
+    // so payroll doesn't treat those days as holidays when regenerating payslips.
+    const attendance = await (ctx.db.query("attendance") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", holiday.organizationId),
+      )
+      .collect();
+    const now = Date.now();
+    for (const rec of attendance) {
+      if (holidayMatchesDate(holiday, rec.date) && (rec.isHoliday || rec.holidayType)) {
+        await ctx.db.patch(rec._id, {
+          isHoliday: false,
+          holidayType: undefined,
+          updatedAt: now,
+        });
+      }
+    }
 
     await ctx.db.delete(args.holidayId);
     return { success: true };

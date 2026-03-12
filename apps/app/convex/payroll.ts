@@ -5,7 +5,10 @@ import {
   getSSSContribution,
   getSSSContributionByEmployeeDeduction,
 } from "./sss";
-import { calculatePayrollBaseFromRecords } from "@/lib/payroll-calculations";
+import {
+  calculatePayrollBaseFromRecords,
+  getMatchingHolidayForDate,
+} from "@/lib/payroll-calculations";
 
 function buildDraftPayrollConfig(args: {
   employeeIds: any[];
@@ -356,8 +359,7 @@ async function getTaxDeductionSettings(
     .first();
   const ps = settings?.payrollSettings;
   return {
-    taxDeductionFrequency:
-      ps?.taxDeductionFrequency ?? "twice_per_month",
+    taxDeductionFrequency: ps?.taxDeductionFrequency ?? "twice_per_month",
     taxDeductOnPay: ps?.taxDeductOnPay ?? "first",
   };
 }
@@ -410,14 +412,12 @@ function getEmployeePayrollRates(
 
   return {
     ...organizationRates,
-    regularOt:
-      compensation.overtimeRegularRate ?? organizationRates.regularOt,
+    regularOt: compensation.overtimeRegularRate ?? organizationRates.regularOt,
     specialHolidayOt:
       compensation.specialHolidayOtRate ?? organizationRates.specialHolidayOt,
     regularHolidayOt:
       compensation.regularHolidayOtRate ?? organizationRates.regularHolidayOt,
-    restDayOt:
-      compensation.overtimeRestDayRate ?? organizationRates.restDayOt,
+    restDayOt: compensation.overtimeRestDayRate ?? organizationRates.restDayOt,
     nightDiffRate:
       compensation.nightDiffPercent ?? organizationRates.nightDiffRate,
     // Legal/regular holidays should never pay less than an additional 100%
@@ -538,8 +538,10 @@ function getUndertimeHoursFromAttendance(att: {
   const actualOutM = timeStringToMinutes(att.actualOut);
   if (scheduleOutM === null || actualOutM === null) return 0;
 
-  const lunchStartM = att.lunchStart != null ? timeStringToMinutes(att.lunchStart) : null;
-  const lunchEndM = att.lunchEnd != null ? timeStringToMinutes(att.lunchEnd) : null;
+  const lunchStartM =
+    att.lunchStart != null ? timeStringToMinutes(att.lunchStart) : null;
+  const lunchEndM =
+    att.lunchEnd != null ? timeStringToMinutes(att.lunchEnd) : null;
   const scheduleInM = timeStringToMinutes(att.scheduleIn);
   const actualInM = timeStringToMinutes(att.actualIn);
 
@@ -551,11 +553,17 @@ function getUndertimeHoursFromAttendance(att: {
     lunchEndM > lunchStartM
   ) {
     const breakMins = lunchEndM - lunchStartM;
-    const requiredWorkMins = Math.max(0, scheduleOutM - scheduleInM - breakMins);
+    const requiredWorkMins = Math.max(
+      0,
+      scheduleOutM - scheduleInM - breakMins,
+    );
     const breakDeducted =
       actualInM >= lunchEndM
         ? 0
-        : Math.max(0, Math.min(actualOutM, lunchEndM) - Math.max(actualInM, lunchStartM));
+        : Math.max(
+            0,
+            Math.min(actualOutM, lunchEndM) - Math.max(actualInM, lunchStartM),
+          );
     const actualWorkMins = Math.max(0, actualOutM - actualInM - breakDeducted);
     const undertimeMins = Math.max(0, requiredWorkMins - actualWorkMins);
     return undertimeMins / 60;
@@ -575,15 +583,10 @@ function getMonthlyBasicForTax(
     return basicSalary;
   }
 
-  const dailyRateNoAllowance = getDailyRateForEmployee(
-    employee,
-    0,
-    0,
-    {
-      includeAllowance: false,
-      workingDaysPerYear,
-    },
-  );
+  const dailyRateNoAllowance = getDailyRateForEmployee(employee, 0, 0, {
+    includeAllowance: false,
+    workingDaysPerYear,
+  });
 
   return dailyRateNoAllowance * (workingDaysPerYear / 12);
 }
@@ -606,6 +609,9 @@ type PayrollBaseResult = {
   overtimeLegalHoliday: number;
   overtimeLegalHolidayExcess: number;
   lateDeduction: number;
+  lateDeductionRegularDay: number;
+  lateDeductionSpecialHoliday: number;
+  lateDeductionRegularHoliday: number;
   undertimeDeduction: number;
   absentDeduction: number;
   dailyRate: number;
@@ -738,7 +744,10 @@ export const computeEmployeePayroll = query({
       for (const incentive of employee.incentives) {
         if (incentive.isActive) {
           if (incentive.frequency === "monthly") {
-            incentiveTotal += getPerCutoffAmount(incentive.amount, payFrequency);
+            incentiveTotal += getPerCutoffAmount(
+              incentive.amount,
+              payFrequency,
+            );
           } else if (incentive.frequency === "per-cutoff") {
             incentiveTotal += incentive.amount;
           }
@@ -889,6 +898,12 @@ export const computeEmployeePayroll = query({
       overtimeSpecialHolidayExcess: payrollBase.overtimeSpecialHolidayExcess,
       overtimeLegalHoliday: payrollBase.overtimeLegalHoliday,
       overtimeLegalHolidayExcess: payrollBase.overtimeLegalHolidayExcess,
+      lateDeduction: payrollBase.lateDeduction,
+      lateDeductionRegularDay: payrollBase.lateDeductionRegularDay,
+      lateDeductionRegularHoliday: payrollBase.lateDeductionRegularHoliday,
+      lateDeductionSpecialHoliday: payrollBase.lateDeductionSpecialHoliday,
+      absentDeduction: payrollBase.absentDeduction,
+      undertimeDeduction: payrollBase.undertimeDeduction,
       incentiveTotal,
       grossPay,
       deductions: {
@@ -1007,15 +1022,39 @@ export const createPayrollRun = mutation({
     });
 
     const rates = await getPayrollRates(ctx, args.organizationId);
-    const taxSettings = await getTaxDeductionSettings(
-      ctx,
-      args.organizationId,
-    );
+    const taxSettings = await getTaxDeductionSettings(ctx, args.organizationId);
     const holidays = await (ctx.db.query("holidays") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
+
+    // Backfill isHoliday/holidayType on attendance so late-on-holiday is categorized correctly.
+    // Sync attendance to current holidays: set when match found, clear when holiday was deleted.
+    for (const employeeId of args.employeeIds) {
+      const attendance = await (ctx.db.query("attendance") as any)
+        .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
+        .collect();
+      for (const rec of attendance) {
+        if (rec.date >= args.cutoffStart && rec.date <= args.cutoffEnd) {
+          const matched = getMatchingHolidayForDate(rec.date, holidays);
+          if (matched) {
+            await ctx.db.patch(rec._id, {
+              isHoliday: true,
+              holidayType: matched.type,
+              updatedAt: now,
+            });
+          } else if (rec.isHoliday || rec.holidayType) {
+            // Holiday was deleted — clear so payroll doesn't treat it as holiday
+            await ctx.db.patch(rec._id, {
+              isHoliday: false,
+              holidayType: undefined,
+              updatedAt: now,
+            });
+          }
+        }
+      }
+    }
     const leaveTypes = await (ctx.db.query("leaveTypes") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId),
@@ -1073,9 +1112,14 @@ export const createPayrollRun = mutation({
       if (hasOverrideDeductionsCreate) {
         // Manual override: use saved/edited deduction amounts as-is (from "Edit deductions" in preview).
         // Override values for SSS, PhilHealth, Pag-IBIG, Withholding Tax are used directly in computation.
-        const nonAttendance = (manualDeductionEntry!.deductions as any[]).filter(
+        const nonAttendance = (
+          manualDeductionEntry!.deductions as any[]
+        ).filter(
           (d: { name: string }) =>
             d.name !== "Late" &&
+            d.name !== "Regular day late" &&
+            d.name !== "Regular Holiday Late" &&
+            d.name !== "Special Holiday Late" &&
             d.name !== "Undertime" &&
             !d.name.startsWith("Absent "),
         );
@@ -1083,8 +1127,7 @@ export const createPayrollRun = mutation({
         deductions =
           deductionsEnabled === false
             ? nonAttendance.filter(
-                (d: { name: string }) =>
-                  !GOV_DEDUCTIONS_EXCEPT_TAX.has(d.name),
+                (d: { name: string }) => !GOV_DEDUCTIONS_EXCEPT_TAX.has(d.name),
               )
             : [...nonAttendance];
         // Withholding tax follows org settings independently: ensure it's present when it applies (override may not include it)
@@ -1115,8 +1158,9 @@ export const createPayrollRun = mutation({
             taxSettings.taxDeductOnPay,
           );
           const taxApplies = taxAmount > 0;
-          const taxEnabled =
-            !govSettings ? taxApplies : govSettings.tax.enabled && taxApplies;
+          const taxEnabled = !govSettings
+            ? taxApplies
+            : govSettings.tax.enabled && taxApplies;
           if (taxEnabled) {
             deductions.push({
               name: "Withholding Tax",
@@ -1220,8 +1264,9 @@ export const createPayrollRun = mutation({
 
         // Withholding tax follows org settings independently of deductionsEnabled (twice_per_month = both pays; once_per_month = selected pay only; getTaxDeductionAmount returns 0 when not applicable)
         const taxApplies = taxAmount > 0;
-        const taxEnabled =
-          !govSettings ? taxApplies : govSettings.tax.enabled && taxApplies;
+        const taxEnabled = !govSettings
+          ? taxApplies
+          : govSettings.tax.enabled && taxApplies;
         if (taxEnabled) {
           deductions.push({
             name: "Withholding Tax",
@@ -1260,11 +1305,29 @@ export const createPayrollRun = mutation({
         }
       }
 
-      // Add attendance-based deductions to deductions array
-      if (payrollBase.lateDeduction > 0) {
+      // Add attendance-based deductions (categorized: holiday late vs regular late)
+      // When there are holiday lates, show "Regular day late" for regular-day lates; otherwise generic "Late"
+      const hasHolidayLate =
+        payrollBase.lateDeductionSpecialHoliday > 0 ||
+        payrollBase.lateDeductionRegularHoliday > 0;
+      if (payrollBase.lateDeductionSpecialHoliday > 0) {
         deductions.push({
-          name: "Late",
-          amount: payrollBase.lateDeduction,
+          name: "Special Holiday Late",
+          amount: payrollBase.lateDeductionSpecialHoliday,
+          type: "attendance",
+        });
+      }
+      if (payrollBase.lateDeductionRegularHoliday > 0) {
+        deductions.push({
+          name: "Regular Holiday Late",
+          amount: payrollBase.lateDeductionRegularHoliday,
+          type: "attendance",
+        });
+      }
+      if (payrollBase.lateDeductionRegularDay > 0) {
+        deductions.push({
+          name: hasHolidayLate ? "Regular day late" : "Late",
+          amount: payrollBase.lateDeductionRegularDay,
           type: "attendance",
         });
       }
@@ -1452,7 +1515,8 @@ export const createPayrollRun = mutation({
       } = {};
       if (employeeSSSAmount > 0) {
         employerContributions.sss = round2(
-          getSSSContributionByEmployeeDeduction(employeeSSSAmount).employerShare,
+          getSSSContributionByEmployeeDeduction(employeeSSSAmount)
+            .employerShare,
         );
       }
       if (employeePhilhealthAmount > 0) {
@@ -1482,7 +1546,9 @@ export const createPayrollRun = mutation({
         undertimeHours: payrollBase.undertimeHours,
         overtimeHours: payrollBase.overtimeHours,
         holidayPay:
-          payrollBase.holidayPay > 0 ? round2(payrollBase.holidayPay) : undefined,
+          payrollBase.holidayPay > 0
+            ? round2(payrollBase.holidayPay)
+            : undefined,
         holidayPayType: payrollBase.holidayPayType,
         nightDiffPay:
           payrollBase.nightDiffPay > 0
@@ -1642,25 +1708,26 @@ export const updatePayrollRun = mutation({
       updatedAt: Date.now(),
     });
 
-    if (
-      args.employeeIds ||
-      args.manualDeductions ||
-      args.incentives ||
-      args.governmentDeductionSettings ||
-      args.deductionsEnabled !== undefined
-    ) {
+    // Always regenerate payslips for draft runs so late categorization (Regular Holiday Late vs Late) stays correct
+    {
       const existingPayslips = await (ctx.db.query("payslips") as any)
         .withIndex("by_payroll_run", (q: any) =>
           q.eq("payrollRunId", args.payrollRunId),
         )
         .collect();
-      const existingEmployeeIds = existingPayslips.map((p: any) => p.employeeId);
+      const existingEmployeeIds = existingPayslips.map(
+        (p: any) => p.employeeId,
+      );
 
       for (const payslip of existingPayslips) {
         await ctx.db.delete(payslip._id);
       }
 
-      const employeeIds = args.employeeIds ?? existingEmployeeIds;
+      const employeeIds =
+        args.employeeIds ??
+        (existingEmployeeIds.length > 0
+          ? existingEmployeeIds
+          : (previousDraftConfig.employeeIds ?? []));
       const cutoffStart = args.cutoffStart ?? payrollRun.cutoffStart;
       const cutoffEnd = args.cutoffEnd ?? payrollRun.cutoffEnd;
 
@@ -1683,9 +1750,38 @@ export const updatePayrollRun = mutation({
         )
         .collect();
 
+      const nowUpdate = Date.now();
+      for (const employeeId of employeeIds) {
+        const attendance = await (ctx.db.query("attendance") as any)
+          .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
+          .collect();
+        for (const rec of attendance) {
+          if (rec.date >= cutoffStart && rec.date <= cutoffEnd) {
+            const matched = getMatchingHolidayForDate(rec.date, holidays);
+            if (matched) {
+              await ctx.db.patch(rec._id, {
+                isHoliday: true,
+                holidayType: matched.type,
+                updatedAt: nowUpdate,
+              });
+            } else if (rec.isHoliday || rec.holidayType) {
+              // Holiday was deleted — clear so payroll doesn't treat it as holiday
+              await ctx.db.patch(rec._id, {
+                isHoliday: false,
+                holidayType: undefined,
+                updatedAt: nowUpdate,
+              });
+            }
+          }
+        }
+      }
+
       for (const employeeId of employeeIds) {
         const employee = (await ctx.db.get(employeeId)) as any;
-        if (!employee || employee.organizationId !== payrollRun.organizationId) {
+        if (
+          !employee ||
+          employee.organizationId !== payrollRun.organizationId
+        ) {
           continue;
         }
 
@@ -1727,9 +1823,14 @@ export const updatePayrollRun = mutation({
 
         if (hasOverrideDeductions) {
           // Use saved/edited deductions as-is; only refresh attendance-based ones
-          const nonAttendance = (manualDeductionEntry!.deductions as any[]).filter(
+          const nonAttendance = (
+            manualDeductionEntry!.deductions as any[]
+          ).filter(
             (d: { name: string }) =>
               d.name !== "Late" &&
+              d.name !== "Regular day late" &&
+              d.name !== "Regular Holiday Late" &&
+              d.name !== "Special Holiday Late" &&
               d.name !== "Undertime" &&
               !d.name.startsWith("Absent "),
           );
@@ -1754,7 +1855,8 @@ export const updatePayrollRun = mutation({
               monthlyBasicForTaxOverride,
             );
             const annualBasicOverride = monthlyBasicForTaxOverride * 12;
-            const annualSSSOverride = sssContributionOverride.employeeShare * 12;
+            const annualSSSOverride =
+              sssContributionOverride.employeeShare * 12;
             const annualPhilhealthOverride = PHILHEALTH_EMPLOYEE_MONTHLY * 12;
             const annualPagibigOverride = PAGIBIG_EMPLOYEE_MONTHLY * 12;
             const annualTaxableIncomeOverride = Math.max(
@@ -1776,10 +1878,9 @@ export const updatePayrollRun = mutation({
               taxSettingsUpdate.taxDeductOnPay,
             );
             const taxAppliesOverride = taxAmountOverride > 0;
-            const taxEnabledOverride =
-              !govSettings
-                ? taxAppliesOverride
-                : govSettings.tax.enabled && taxAppliesOverride;
+            const taxEnabledOverride = !govSettings
+              ? taxAppliesOverride
+              : govSettings.tax.enabled && taxAppliesOverride;
             if (taxEnabledOverride) {
               deductions.push({
                 name: "Withholding Tax",
@@ -1873,10 +1974,9 @@ export const updatePayrollRun = mutation({
 
           // Withholding tax follows org settings independently of deductionsEnabled
           const taxAppliesUpdate = taxAmount > 0;
-          const taxEnabledUpdate =
-            !govSettings
-              ? taxAppliesUpdate
-              : govSettings.tax.enabled && taxAppliesUpdate;
+          const taxEnabledUpdate = !govSettings
+            ? taxAppliesUpdate
+            : govSettings.tax.enabled && taxAppliesUpdate;
           if (taxEnabledUpdate) {
             deductions.push({
               name: "Withholding Tax",
@@ -1910,10 +2010,27 @@ export const updatePayrollRun = mutation({
           }
         }
 
-        if (payrollBase.lateDeduction > 0) {
+        const hasHolidayLateUpdate =
+          payrollBase.lateDeductionSpecialHoliday > 0 ||
+          payrollBase.lateDeductionRegularHoliday > 0;
+        if (payrollBase.lateDeductionSpecialHoliday > 0) {
           deductions.push({
-            name: "Late",
-            amount: payrollBase.lateDeduction,
+            name: "Special Holiday Late",
+            amount: payrollBase.lateDeductionSpecialHoliday,
+            type: "attendance",
+          });
+        }
+        if (payrollBase.lateDeductionRegularHoliday > 0) {
+          deductions.push({
+            name: "Regular Holiday Late",
+            amount: payrollBase.lateDeductionRegularHoliday,
+            type: "attendance",
+          });
+        }
+        if (payrollBase.lateDeductionRegularDay > 0) {
+          deductions.push({
+            name: hasHolidayLateUpdate ? "Regular day late" : "Late",
+            amount: payrollBase.lateDeductionRegularDay,
             type: "attendance",
           });
         }
@@ -2051,7 +2168,9 @@ export const updatePayrollRun = mutation({
           netPay = 0;
         }
 
-        const employeeSSSAmount = getDeductionAmountByNames(deductions, ["sss"]);
+        const employeeSSSAmount = getDeductionAmountByNames(deductions, [
+          "sss",
+        ]);
         const employeePhilhealthAmount = getDeductionAmountByNames(deductions, [
           "philhealth",
         ]);
@@ -2634,7 +2753,8 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
 
   const activeExpenseNames = new Set<string>();
   if (totalNetPay > 0) activeExpenseNames.add(payrollExpenseName);
-  if (totalEmployeeSSS > 0 || totalSSSEmployer > 0) activeExpenseNames.add(sssExpenseName);
+  if (totalEmployeeSSS > 0 || totalSSSEmployer > 0)
+    activeExpenseNames.add(sssExpenseName);
   if (totalEmployeePagIbig > 0 || totalPagIbigEmployer > 0)
     activeExpenseNames.add(pagibigExpenseName);
   if (totalEmployeePhilHealth > 0 || totalPhilHealthEmployer > 0)
@@ -2728,7 +2848,14 @@ async function compute13thMonthAmountsInternal(
     year: number;
     employeeIds?: any[];
   },
-): Promise<Array<{ employeeId: any; employee: any; totalBasicPay: number; thirteenthMonthAmount: number }>> {
+): Promise<
+  Array<{
+    employeeId: any;
+    employee: any;
+    totalBasicPay: number;
+    thirteenthMonthAmount: number;
+  }>
+> {
   const org = await ctx.db.get(args.organizationId);
   const payFrequency = getOrganizationPayFrequency(org);
   const yearStart = new Date(args.year, 0, 1).getTime();
@@ -2793,7 +2920,9 @@ async function compute13thMonthAmountsInternal(
         runIds.has(p.payrollRunId) &&
         (() => {
           const run = regularRuns.find((r: any) => r._id === p.payrollRunId);
-          return run && run.cutoffStart >= yearStart && run.cutoffEnd <= yearEnd;
+          return (
+            run && run.cutoffStart >= yearStart && run.cutoffEnd <= yearEnd
+          );
         })(),
     );
 
@@ -2929,138 +3058,138 @@ async function computeLeaveConversionAmountsInternal(
     employeeIds: any[];
   },
 ) {
-    await checkAuth(ctx, args.organizationId);
+  await checkAuth(ctx, args.organizationId);
 
-    const settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .first();
+  const settings = await (ctx.db.query("settings") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", args.organizationId),
+    )
+    .first();
 
-    const employees = await (ctx.db.query("employees") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .collect();
+  const employees = await (ctx.db.query("employees") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", args.organizationId),
+    )
+    .collect();
 
-    const employeeIds =
-      args.employeeIds ??
-      employees.filter((e: any) => e.employment?.status === "active").map((e: any) => e._id);
+  const employeeIds =
+    args.employeeIds ??
+    employees
+      .filter((e: any) => e.employment?.status === "active")
+      .map((e: any) => e._id);
 
-    const byYear = settings?.leaveTrackerByYear ?? [];
-    const yearData = byYear.find((e: any) => e.year === args.year);
-    const legacyRows = settings?.leaveTrackerRows ?? [];
-    const currentYear = new Date().getFullYear();
-    const rowsForYear =
-      yearData?.rows ??
-      (args.year === currentYear ? legacyRows : []);
+  const byYear = settings?.leaveTrackerByYear ?? [];
+  const yearData = byYear.find((e: any) => e.year === args.year);
+  const legacyRows = settings?.leaveTrackerRows ?? [];
+  const currentYear = new Date().getFullYear();
+  const rowsForYear =
+    yearData?.rows ?? (args.year === currentYear ? legacyRows : []);
 
-    const rowsMap = new Map(
-      rowsForYear.map((r: any) => [r.employeeId, r]),
-    );
+  const rowsMap = new Map(rowsForYear.map((r: any) => [r.employeeId, r]));
 
-    const annualSil = settings?.annualSil ?? 8;
-    const proratedLeave = settings?.proratedLeave !== false;
-    const grantLeaveUponRegularization =
-      settings?.grantLeaveUponRegularization !== false;
-    const maxConvertibleLeaveDays = settings?.maxConvertibleLeaveDays ?? 5;
+  const annualSil = settings?.annualSil ?? 8;
+  const proratedLeave = settings?.proratedLeave !== false;
+  const grantLeaveUponRegularization =
+    settings?.grantLeaveUponRegularization !== false;
+  const maxConvertibleLeaveDays = settings?.maxConvertibleLeaveDays ?? 5;
 
-    const referenceDate = new Date(args.year, 11, 31).getTime();
+  const referenceDate = new Date(args.year, 11, 31).getTime();
 
-    function getCompletedYearsSince(startDate: number | undefined, ref: number) {
-      if (!startDate) return 0;
-      const start = new Date(startDate);
-      const end = new Date(ref);
-      let years = end.getFullYear() - start.getFullYear();
-      const monthDiff = end.getMonth() - start.getMonth();
-      const dayDiff = end.getDate() - start.getDate();
-      if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) years -= 1;
-      return Math.max(0, years);
-    }
+  function getCompletedYearsSince(startDate: number | undefined, ref: number) {
+    if (!startDate) return 0;
+    const start = new Date(startDate);
+    const end = new Date(ref);
+    let years = end.getFullYear() - start.getFullYear();
+    const monthDiff = end.getMonth() - start.getMonth();
+    const dayDiff = end.getDate() - start.getDate();
+    if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) years -= 1;
+    return Math.max(0, years);
+  }
 
-    function getAccrualStartMonth(startDate: number) {
-      const date = new Date(startDate);
-      const month = date.getMonth() + 1;
-      return date.getDate() <= 15 ? month : month + 1;
-    }
+  function getAccrualStartMonth(startDate: number) {
+    const date = new Date(startDate);
+    const month = date.getMonth() + 1;
+    return date.getDate() <= 15 ? month : month + 1;
+  }
 
-    function getProratedAnnualSil(
-      base: number,
-      startDate: number | undefined,
-      ref: number,
-    ) {
-      if (!startDate) return base;
-      const start = new Date(startDate);
-      const refDate = new Date(ref);
-      if (start.getFullYear() < refDate.getFullYear()) return base;
-      if (start.getFullYear() > refDate.getFullYear()) return 0;
-      const accrualStartMonth = getAccrualStartMonth(startDate);
-      if (accrualStartMonth > 12) return 0;
-      const monthsRemaining = 13 - accrualStartMonth;
-      return Math.round((base / 12) * monthsRemaining * 100) / 100;
-    }
+  function getProratedAnnualSil(
+    base: number,
+    startDate: number | undefined,
+    ref: number,
+  ) {
+    if (!startDate) return base;
+    const start = new Date(startDate);
+    const refDate = new Date(ref);
+    if (start.getFullYear() < refDate.getFullYear()) return base;
+    if (start.getFullYear() > refDate.getFullYear()) return 0;
+    const accrualStartMonth = getAccrualStartMonth(startDate);
+    if (accrualStartMonth > 12) return 0;
+    const monthsRemaining = 13 - accrualStartMonth;
+    return Math.round((base / 12) * monthsRemaining * 100) / 100;
+  }
 
-    const amounts = await compute13thMonthAmountsInternal(ctx, {
-      organizationId: args.organizationId,
-      year: args.year,
-      employeeIds,
+  const amounts = await compute13thMonthAmountsInternal(ctx, {
+    organizationId: args.organizationId,
+    year: args.year,
+    employeeIds,
+  });
+
+  const workingDaysPerYear = 261;
+  const results: Array<{
+    employeeId: any;
+    employee: any;
+    convertibleDays: number;
+    dailyRate: number;
+    leaveConversionAmount: number;
+  }> = [];
+
+  for (const empId of employeeIds) {
+    const employee = employees.find((e: any) => e._id === empId);
+    if (!employee) continue;
+
+    const amt13 = amounts.find((a: any) => a.employeeId === empId);
+    const totalBasicPay = amt13?.totalBasicPay ?? 0;
+    const dailyRate =
+      totalBasicPay > 0 ? totalBasicPay / workingDaysPerYear : 0;
+
+    const regDate =
+      employee?.employment?.regularizationDate ??
+      employee?.employment?.hireDate;
+    const hireDate = employee?.employment?.hireDate;
+    const prorationStart =
+      grantLeaveUponRegularization && regDate ? regDate : hireDate;
+
+    const formulaAnnualSil = proratedLeave
+      ? getProratedAnnualSil(annualSil, prorationStart, referenceDate)
+      : annualSil;
+    const anniversaryLeave = getCompletedYearsSince(regDate, referenceDate);
+
+    const savedRow = rowsMap.get(empId) as
+      | { annualSilOverride?: number; availed?: number }
+      | undefined;
+    const annualSilValue = savedRow?.annualSilOverride ?? formulaAnnualSil;
+    const defaultAvailed =
+      args.year < currentYear
+        ? 0
+        : (employee?.leaveCredits?.vacation?.used ?? 0) +
+          (employee?.leaveCredits?.sick?.used ?? 0);
+    const availed = savedRow?.availed ?? defaultAvailed;
+
+    const total = Math.round((annualSilValue + anniversaryLeave) * 100) / 100;
+    const balance = Math.max(0, Math.round((total - availed) * 100) / 100);
+    const convertibleDays = Math.min(maxConvertibleLeaveDays, balance);
+    const leaveConversionAmount = round2(convertibleDays * dailyRate);
+
+    results.push({
+      employeeId: empId,
+      employee,
+      convertibleDays,
+      dailyRate: round2(dailyRate),
+      leaveConversionAmount,
     });
+  }
 
-    const workingDaysPerYear = 261;
-    const results: Array<{
-      employeeId: any;
-      employee: any;
-      convertibleDays: number;
-      dailyRate: number;
-      leaveConversionAmount: number;
-    }> = [];
-
-    for (const empId of employeeIds) {
-      const employee = employees.find((e: any) => e._id === empId);
-      if (!employee) continue;
-
-      const amt13 = amounts.find((a: any) => a.employeeId === empId);
-      const totalBasicPay = amt13?.totalBasicPay ?? 0;
-      const dailyRate =
-        totalBasicPay > 0 ? totalBasicPay / workingDaysPerYear : 0;
-
-      const regDate =
-        employee?.employment?.regularizationDate ?? employee?.employment?.hireDate;
-      const hireDate = employee?.employment?.hireDate;
-      const prorationStart =
-        grantLeaveUponRegularization && regDate ? regDate : hireDate;
-
-      const formulaAnnualSil = proratedLeave
-        ? getProratedAnnualSil(annualSil, prorationStart, referenceDate)
-        : annualSil;
-      const anniversaryLeave = getCompletedYearsSince(regDate, referenceDate);
-
-      const savedRow = rowsMap.get(empId) as
-        | { annualSilOverride?: number; availed?: number }
-        | undefined;
-      const annualSilValue = savedRow?.annualSilOverride ?? formulaAnnualSil;
-      const defaultAvailed =
-        args.year < currentYear
-          ? 0
-          : (employee?.leaveCredits?.vacation?.used ?? 0) +
-            (employee?.leaveCredits?.sick?.used ?? 0);
-      const availed = savedRow?.availed ?? defaultAvailed;
-
-      const total = Math.round((annualSilValue + anniversaryLeave) * 100) / 100;
-      const balance = Math.max(0, Math.round((total - availed) * 100) / 100);
-      const convertibleDays = Math.min(maxConvertibleLeaveDays, balance);
-      const leaveConversionAmount = round2(convertibleDays * dailyRate);
-
-      results.push({
-        employeeId: empId,
-        employee,
-        convertibleDays,
-        dailyRate: round2(dailyRate),
-        leaveConversionAmount,
-      });
-    }
-
-    return results;
+  return results;
 }
 
 /** Compute leave conversion amounts: first 5 days of unused leave × daily rate. */
@@ -3361,7 +3490,10 @@ export const getPayrollRunSummary = query({
           const nightStart = 22 * 60;
           const nightEnd = 24 * 60 + 6 * 60;
 
-          const sched = norm(timeToMinutes(scheduleIn), timeToMinutes(scheduleOut));
+          const sched = norm(
+            timeToMinutes(scheduleIn),
+            timeToMinutes(scheduleOut),
+          );
           const schedNightStart = Math.max(sched.start, nightStart);
           const schedNightEnd = Math.min(sched.end, nightEnd);
           if (schedNightEnd <= schedNightStart) return 0;
@@ -3481,8 +3613,7 @@ export const getPayrollRunSummary = query({
             specialOTHours,
             nightDiffHours,
             isAbsent:
-              att.status === "absent" ||
-              att.status === "leave_without_pay",
+              att.status === "absent" || att.status === "leave_without_pay",
             note: att.remarks || null,
           };
         });
@@ -3717,10 +3848,10 @@ export const updatePayslip = mutation({
       newDeductions,
       ["philhealth"],
     );
-    const editedEmployeePagibigAmount = getDeductionAmountByNames(newDeductions, [
-      "pag-ibig",
-      "pagibig",
-    ]);
+    const editedEmployeePagibigAmount = getDeductionAmountByNames(
+      newDeductions,
+      ["pag-ibig", "pagibig"],
+    );
     const updatedEmployerContributions: {
       sss?: number;
       philhealth?: number;
@@ -3738,7 +3869,9 @@ export const updatePayslip = mutation({
       );
     }
     if (editedEmployeePagibigAmount > 0) {
-      updatedEmployerContributions.pagibig = round2(editedEmployeePagibigAmount);
+      updatedEmployerContributions.pagibig = round2(
+        editedEmployeePagibigAmount,
+      );
     }
 
     // Helper function to detect specific changes in arrays

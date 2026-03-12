@@ -502,7 +502,8 @@ export default function PayrollPageClient({
         if (!dayData || !dayData.timeIn) return "-";
         if (dayData.status === "absent") return "ABSENT";
         if (dayData.status === "leave_without_pay") return "LWOP";
-        if (dayData.status === "leave" || dayData.status === "leave_with_pay") return "LEAVE";
+        if (dayData.status === "leave" || dayData.status === "leave_with_pay")
+          return "LEAVE";
         let value = dayData.timeIn || "";
         if (dayData.timeOut) value += ` - ${dayData.timeOut}`;
         if (dayData.lateMinutes > 0) value += ` | ${dayData.lateMinutes} MIN L`;
@@ -667,6 +668,35 @@ export default function PayrollPageClient({
       toast({
         title: "Error",
         description: error.message || "Failed to update payroll status",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleRegeneratePayslips = async (payrollRun: any) => {
+    try {
+      const draftConfig = payrollRun.draftConfig ?? {};
+      const employeeIds = draftConfig.employeeIds ?? [];
+      await updatePayrollRun({
+        payrollRunId: payrollRun._id,
+        cutoffStart: payrollRun.cutoffStart,
+        cutoffEnd: payrollRun.cutoffEnd,
+        employeeIds: employeeIds.length > 0 ? employeeIds : undefined,
+        deductionsEnabled: payrollRun.deductionsEnabled,
+        governmentDeductionSettings: draftConfig.governmentDeductionSettings,
+        manualDeductions: draftConfig.manualDeductions,
+        incentives: draftConfig.incentives,
+      });
+      await loadPayrollRuns();
+      toast({
+        title: "Payslips regenerated",
+        description:
+          "Payslips updated with correct late categorization (Regular Holiday Late vs Late).",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to regenerate payslips",
         variant: "destructive",
       });
     }
@@ -1122,17 +1152,38 @@ export default function PayrollPageClient({
           basicHourlyRate = hourlyRate;
         }
 
-        // Calculate deductions for lates, undertime, and absences.
-        // We trust the backend-computed absences on the payroll object, which
-        // already take into account rest days, holidays, and paid leaves,
-        // so we don't recompute absences from the schedule here.
-        const calculatedAbsences = absences;
+        // Absence always uses (basic + allowance) × 12/261
+        const dailyRateForAbsence =
+          salaryType === "monthly"
+            ? (monthlySalary + (allowance ?? 0)) *
+              (12 / dailyRateWorkingDaysPerYear)
+            : basicDailyRate;
+        const hourlyRateBasicPlusAllowance =
+          salaryType === "monthly"
+            ? ((monthlySalary + (allowance ?? 0)) *
+                (12 / dailyRateWorkingDaysPerYear)) /
+              8
+            : hourlyRate;
 
-        // Attendance deductions should use the basic-only rate, excluding allowance.
-        const lateDeduction = lateHours * basicHourlyRate;
-        const undertimeDeduction = undertimeHours * basicHourlyRate;
+        // Use backend-calculated attendance deductions (categorized late) when available
+        const calculatedAbsences = absences;
+        const lateDeduction =
+          (payroll as any).lateDeduction ??
+          lateHours * hourlyRateBasicPlusAllowance;
+        const lateDeductionRegularDay =
+          (payroll as any).lateDeductionRegularDay ?? 0;
+        const lateDeductionRegularHoliday =
+          (payroll as any).lateDeductionRegularHoliday ?? 0;
+        const lateDeductionSpecialHoliday =
+          (payroll as any).lateDeductionSpecialHoliday ?? 0;
+        const undertimeDeduction =
+          (payroll as any).undertimeDeduction ??
+          undertimeHours * hourlyRateBasicPlusAllowance;
         const absentDeduction =
-          salaryType === "monthly" ? calculatedAbsences * basicDailyRate : 0;
+          (payroll as any).absentDeduction ??
+          (salaryType === "monthly"
+            ? calculatedAbsences * dailyRateForAbsence
+            : 0);
 
         // Total deductions = government + custom + attendance deductions
         const governmentAndCustomDeductions =
@@ -1181,6 +1232,9 @@ export default function PayrollPageClient({
           overtimeLegalHoliday: payroll.overtimeLegalHoliday || 0,
           overtimeLegalHolidayExcess: payroll.overtimeLegalHolidayExcess || 0,
           lateDeduction,
+          lateDeductionRegularDay,
+          lateDeductionRegularHoliday,
+          lateDeductionSpecialHoliday,
           undertimeDeduction,
           absentDeduction,
           incentives,
@@ -1368,13 +1422,36 @@ export default function PayrollPageClient({
           basicHourlyRate = hourlyRate;
         }
 
-        const calculatedAbsences = absences;
-        const lateDeduction = lateHours * basicHourlyRate;
-        const undertimeDeduction = undertimeHours * basicHourlyRate;
-        const absentDeduction =
+        const dailyRateForAbsence =
           salaryType === "monthly"
-            ? calculatedAbsences * basicDailyRate
-            : 0;
+            ? (monthlySalary + (allowance ?? 0)) *
+              (12 / dailyRateWorkingDaysPerYear)
+            : basicDailyRate;
+        const hourlyRateBasicPlusAllowance =
+          salaryType === "monthly"
+            ? ((monthlySalary + (allowance ?? 0)) *
+                (12 / dailyRateWorkingDaysPerYear)) /
+              8
+            : hourlyRate;
+
+        const calculatedAbsences = absences;
+        const lateDeduction =
+          (payroll as any).lateDeduction ??
+          lateHours * hourlyRateBasicPlusAllowance;
+        const lateDeductionRegularDay =
+          (payroll as any).lateDeductionRegularDay ?? 0;
+        const lateDeductionRegularHoliday =
+          (payroll as any).lateDeductionRegularHoliday ?? 0;
+        const lateDeductionSpecialHoliday =
+          (payroll as any).lateDeductionSpecialHoliday ?? 0;
+        const undertimeDeduction =
+          (payroll as any).undertimeDeduction ??
+          undertimeHours * hourlyRateBasicPlusAllowance;
+        const absentDeduction =
+          (payroll as any).absentDeduction ??
+          (salaryType === "monthly"
+            ? calculatedAbsences * dailyRateForAbsence
+            : 0);
 
         const governmentAndCustomDeductions =
           deductions.reduce((sum, d) => sum + d.amount, 0) || 0;
@@ -1418,6 +1495,9 @@ export default function PayrollPageClient({
           overtimeLegalHoliday: payroll.overtimeLegalHoliday || 0,
           overtimeLegalHolidayExcess: payroll.overtimeLegalHolidayExcess || 0,
           lateDeduction,
+          lateDeductionRegularDay,
+          lateDeductionRegularHoliday,
+          lateDeductionSpecialHoliday,
           undertimeDeduction,
           absentDeduction,
           incentives,
@@ -1450,7 +1530,10 @@ export default function PayrollPageClient({
     setIsProcessing(true);
     try {
       // Use preview data (including "Edit deductions" overrides) when available so saved amounts match what user saw
-      let manualDeductions: { employeeId: string; deductions: { name: string; amount: number; type: string }[] }[];
+      let manualDeductions: {
+        employeeId: string;
+        deductions: { name: string; amount: number; type: string }[];
+      }[];
       if (previewData.length > 0 && selectedEmployees.length > 0) {
         manualDeductions = selectedEmployees.map((employeeId: string) => {
           const p = previewData.find(
@@ -1472,7 +1555,41 @@ export default function PayrollPageClient({
                   },
                 ]
               : []),
-            ...(p.lateDeduction > 0
+            ...(p.lateDeductionSpecialHoliday > 0
+              ? [
+                  {
+                    name: "Special Holiday Late",
+                    amount: p.lateDeductionSpecialHoliday,
+                    type: "attendance",
+                  },
+                ]
+              : []),
+            ...(p.lateDeductionRegularHoliday > 0
+              ? [
+                  {
+                    name: "Regular Holiday Late",
+                    amount: p.lateDeductionRegularHoliday,
+                    type: "attendance",
+                  },
+                ]
+              : []),
+            ...((p.lateDeductionRegularDay ?? 0) > 0
+              ? [
+                  {
+                    name:
+                      (p.lateDeductionSpecialHoliday > 0 ||
+                        p.lateDeductionRegularHoliday > 0)
+                        ? "Regular day late"
+                        : "Late",
+                    amount: p.lateDeductionRegularDay,
+                    type: "attendance",
+                  },
+                ]
+              : []),
+            ...(p.lateDeduction > 0 &&
+            !p.lateDeductionSpecialHoliday &&
+            !p.lateDeductionRegularHoliday &&
+            !p.lateDeductionRegularDay
               ? [
                   {
                     name: "Late",
@@ -1614,7 +1731,7 @@ export default function PayrollPageClient({
         const normalizedGovSettings: GovernmentDeductionSettings[] =
           employeeIds.map((employeeId: string) => {
             const saved = draftConfig?.governmentDeductionSettings?.find(
-              (gs: GovernmentDeductionSettings) => gs.employeeId === employeeId
+              (gs: GovernmentDeductionSettings) => gs.employeeId === employeeId,
             );
             return (
               saved || {
@@ -1664,7 +1781,7 @@ export default function PayrollPageClient({
       const normalizedGovSettings: GovernmentDeductionSettings[] =
         selectedEmployeeIds.map((employeeId: string) => {
           const saved = draftConfig.governmentDeductionSettings?.find(
-            (gs: GovernmentDeductionSettings) => gs.employeeId === employeeId
+            (gs: GovernmentDeductionSettings) => gs.employeeId === employeeId,
           );
           return (
             saved || {
@@ -1681,20 +1798,20 @@ export default function PayrollPageClient({
       const normalizedDeductions: EmployeeDeduction[] = selectedEmployeeIds.map(
         (employeeId: string) => {
           const saved = draftConfig.manualDeductions?.find(
-            (ed: EmployeeDeduction) => ed.employeeId === employeeId
+            (ed: EmployeeDeduction) => ed.employeeId === employeeId,
           );
           return { employeeId, deductions: saved?.deductions ?? [] };
-        }
+        },
       );
       setEditEmployeeDeductions(normalizedDeductions);
 
       const normalizedIncentives: EmployeeIncentive[] = selectedEmployeeIds.map(
         (employeeId: string) => {
           const saved = draftConfig.incentives?.find(
-            (ei: EmployeeIncentive) => ei.employeeId === employeeId
+            (ei: EmployeeIncentive) => ei.employeeId === employeeId,
           );
           return { employeeId, incentives: saved?.incentives ?? [] };
-        }
+        },
       );
       setEditEmployeeIncentives(normalizedIncentives);
     }
@@ -1784,268 +1901,270 @@ export default function PayrollPageClient({
             </p>
           </div>
           {activeTab === "regular" && (
-          <Dialog
-            open={isDialogOpen}
-            onOpenChange={(open) => {
-              setIsDialogOpen(open);
-              if (!open) resetDialog();
-            }}
-          >
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" />
-                Process Payroll
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Process Payroll</DialogTitle>
-                <div className="mt-4 overflow-x-auto pb-2 -mx-1 min-w-0">
-                  <div className="min-w-[560px]">
-                <Stepper
-                  currentStep={currentStep}
-                  steps={[
-                    { title: "Select Period" },
-                    { title: "Select Employees" },
-                    { title: "Government Deductions" },
-                    { title: "Deductions & Incentives" },
-                    { title: "Preview & Confirm" },
-                  ]}
-                />
+            <Dialog
+              open={isDialogOpen}
+              onOpenChange={(open) => {
+                setIsDialogOpen(open);
+                if (!open) resetDialog();
+              }}
+            >
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Process Payroll
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Process Payroll</DialogTitle>
+                  <div className="mt-4 overflow-x-auto pb-2 -mx-1 min-w-0">
+                    <div className="min-w-[560px]">
+                      <Stepper
+                        currentStep={currentStep}
+                        steps={[
+                          { title: "Select Period" },
+                          { title: "Select Employees" },
+                          { title: "Government Deductions" },
+                          { title: "Deductions & Incentives" },
+                          { title: "Preview & Confirm" },
+                        ]}
+                      />
+                    </div>
                   </div>
-                </div>
-              </DialogHeader>
+                </DialogHeader>
 
-              {/* Step 1: Dates */}
-              {currentStep === 1 && (
-                <Suspense fallback={<div className="py-4">Loading...</div>}>
-                  <PayrollStep1Dates
-                    cutoffStart={cutoffStart}
-                    cutoffEnd={cutoffEnd}
-                    onCutoffStartChange={setCutoffStart}
-                    onCutoffEndChange={setCutoffEnd}
-                  />
-                </Suspense>
-              )}
+                {/* Step 1: Dates */}
+                {currentStep === 1 && (
+                  <Suspense fallback={<div className="py-4">Loading...</div>}>
+                    <PayrollStep1Dates
+                      cutoffStart={cutoffStart}
+                      cutoffEnd={cutoffEnd}
+                      onCutoffStartChange={setCutoffStart}
+                      onCutoffEndChange={setCutoffEnd}
+                    />
+                  </Suspense>
+                )}
 
-              {/* Step 2: Employees */}
-              {currentStep === 2 && (
-                <Suspense fallback={<div className="py-4">Loading...</div>}>
-                  <PayrollStep2Employees
-                    employees={employees ?? []}
-                    selectedEmployees={selectedEmployees}
-                    onEmployeeSelect={handleEmployeeSelect}
-                    isLoading={employees === undefined}
-                    onSelectAll={() => {
-                      if (selectedEmployees.length === (employees?.length ?? 0)) {
-                        // Deselect all
-                        setSelectedEmployees([]);
-                        setGovernmentDeductionSettings([]);
-                        setEmployeeDeductions([]);
-                        setEmployeeIncentives([]);
-                      } else {
-                        // Select all
-                        const allEmployeeIds: string[] =
-                          employees?.map((e: any) => e._id) || [];
-                        setSelectedEmployees(allEmployeeIds);
-                        // Initialize settings for all employees
-                        const allGovSettings: GovernmentDeductionSettings[] =
-                          allEmployeeIds.map((employeeId: string) => ({
-                            employeeId,
-                            sss: { enabled: true, frequency: "full" },
-                            pagibig: { enabled: true, frequency: "full" },
-                            philhealth: {
-                              enabled: true,
-                              frequency: "full",
-                            },
-                            tax: { enabled: true, frequency: "full" },
-                          }));
-                        setGovernmentDeductionSettings(allGovSettings);
-                        const allDeductions: EmployeeDeduction[] =
-                          allEmployeeIds.map((employeeId: string) => ({
-                            employeeId,
-                            deductions: [],
-                          }));
-                        setEmployeeDeductions(allDeductions);
-                        const allIncentives: EmployeeIncentive[] =
-                          allEmployeeIds.map((employeeId: string) => ({
-                            employeeId,
-                            incentives: [],
-                          }));
-                        setEmployeeIncentives(allIncentives);
+                {/* Step 2: Employees */}
+                {currentStep === 2 && (
+                  <Suspense fallback={<div className="py-4">Loading...</div>}>
+                    <PayrollStep2Employees
+                      employees={employees ?? []}
+                      selectedEmployees={selectedEmployees}
+                      onEmployeeSelect={handleEmployeeSelect}
+                      isLoading={employees === undefined}
+                      onSelectAll={() => {
+                        if (
+                          selectedEmployees.length === (employees?.length ?? 0)
+                        ) {
+                          // Deselect all
+                          setSelectedEmployees([]);
+                          setGovernmentDeductionSettings([]);
+                          setEmployeeDeductions([]);
+                          setEmployeeIncentives([]);
+                        } else {
+                          // Select all
+                          const allEmployeeIds: string[] =
+                            employees?.map((e: any) => e._id) || [];
+                          setSelectedEmployees(allEmployeeIds);
+                          // Initialize settings for all employees
+                          const allGovSettings: GovernmentDeductionSettings[] =
+                            allEmployeeIds.map((employeeId: string) => ({
+                              employeeId,
+                              sss: { enabled: true, frequency: "full" },
+                              pagibig: { enabled: true, frequency: "full" },
+                              philhealth: {
+                                enabled: true,
+                                frequency: "full",
+                              },
+                              tax: { enabled: true, frequency: "full" },
+                            }));
+                          setGovernmentDeductionSettings(allGovSettings);
+                          const allDeductions: EmployeeDeduction[] =
+                            allEmployeeIds.map((employeeId: string) => ({
+                              employeeId,
+                              deductions: [],
+                            }));
+                          setEmployeeDeductions(allDeductions);
+                          const allIncentives: EmployeeIncentive[] =
+                            allEmployeeIds.map((employeeId: string) => ({
+                              employeeId,
+                              incentives: [],
+                            }));
+                          setEmployeeIncentives(allIncentives);
+                        }
+                      }}
+                    />
+                  </Suspense>
+                )}
+
+                {/* Step 3: Government Deductions */}
+                {currentStep === 3 && (
+                  <Suspense fallback={<div className="py-4">Loading...</div>}>
+                    <PayrollStep3GovernmentDeductions
+                      employees={employees || []}
+                      selectedEmployees={selectedEmployees}
+                      governmentDeductionSettings={governmentDeductionSettings}
+                      deductionsEnabled={deductionsEnabled}
+                      onDeductionsEnabledChange={setDeductionsEnabled}
+                      onUpdateGovernmentDeduction={updateGovernmentDeduction}
+                      taxSettings={{
+                        taxDeductionFrequency:
+                          settings?.payrollSettings?.taxDeductionFrequency ??
+                          "twice_per_month",
+                        taxDeductOnPay:
+                          settings?.payrollSettings?.taxDeductOnPay ?? "first",
+                      }}
+                      cutoffStart={
+                        cutoffStart
+                          ? new Date(cutoffStart).getTime()
+                          : undefined
                       }
-                    }}
-                  />
-                </Suspense>
-              )}
+                    />
+                  </Suspense>
+                )}
 
-              {/* Step 3: Government Deductions */}
-              {currentStep === 3 && (
-                <Suspense fallback={<div className="py-4">Loading...</div>}>
-                  <PayrollStep3GovernmentDeductions
-                    employees={employees || []}
-                    selectedEmployees={selectedEmployees}
-                    governmentDeductionSettings={governmentDeductionSettings}
-                    deductionsEnabled={deductionsEnabled}
-                    onDeductionsEnabledChange={setDeductionsEnabled}
-                    onUpdateGovernmentDeduction={updateGovernmentDeduction}
-                    taxSettings={{
-                      taxDeductionFrequency:
-                        settings?.payrollSettings?.taxDeductionFrequency ??
-                        "twice_per_month",
-                      taxDeductOnPay:
-                        settings?.payrollSettings?.taxDeductOnPay ?? "first",
-                    }}
-                    cutoffStart={
-                      cutoffStart
-                        ? new Date(cutoffStart).getTime()
-                        : undefined
-                    }
-                  />
-                </Suspense>
-              )}
+                {/* Step 4: Other Deductions and Incentives */}
+                {currentStep === 4 && (
+                  <Suspense fallback={<div className="py-4">Loading...</div>}>
+                    <PayrollStep4DeductionsIncentives
+                      employees={employees || []}
+                      selectedEmployees={selectedEmployees}
+                      employeeDeductions={employeeDeductions}
+                      employeeIncentives={employeeIncentives}
+                      onAddDeduction={addDeduction}
+                      onRemoveDeduction={removeDeduction}
+                      onUpdateDeduction={updateDeduction}
+                      onAddIncentive={addIncentive}
+                      onRemoveIncentive={removeIncentive}
+                      onUpdateIncentive={updateIncentive}
+                    />
+                  </Suspense>
+                )}
 
-              {/* Step 4: Other Deductions and Incentives */}
-              {currentStep === 4 && (
-                <Suspense fallback={<div className="py-4">Loading...</div>}>
-                  <PayrollStep4DeductionsIncentives
-                    employees={employees || []}
-                    selectedEmployees={selectedEmployees}
-                    employeeDeductions={employeeDeductions}
-                    employeeIncentives={employeeIncentives}
-                    onAddDeduction={addDeduction}
-                    onRemoveDeduction={removeDeduction}
-                    onUpdateDeduction={updateDeduction}
-                    onAddIncentive={addIncentive}
-                    onRemoveIncentive={removeIncentive}
-                    onUpdateIncentive={updateIncentive}
-                  />
-                </Suspense>
-              )}
+                {/* Step 5: Preview */}
+                {currentStep === 5 && (
+                  <Suspense fallback={<div className="py-4">Loading...</div>}>
+                    <PayrollStep5Preview
+                      previewData={previewData}
+                      cutoffStart={cutoffStart}
+                      cutoffEnd={cutoffEnd}
+                      currentOrganization={currentOrganization}
+                      canEditDeductions={canEditPreviewDeductions}
+                      employeeDeductions={employeeDeductions}
+                      previewDeductionOverrides={previewDeductionOverrides}
+                      onAddDeduction={addDeduction}
+                      onRemoveDeduction={removeDeduction}
+                      onUpdateDeduction={updateDeduction}
+                      onOverrideDeductionAmount={setPreviewDeductionOverride}
+                      onRecomputePreview={computePreview}
+                    />
+                  </Suspense>
+                )}
 
-              {/* Step 5: Preview */}
-              {currentStep === 5 && (
-                <Suspense fallback={<div className="py-4">Loading...</div>}>
-                  <PayrollStep5Preview
-                    previewData={previewData}
-                    cutoffStart={cutoffStart}
-                    cutoffEnd={cutoffEnd}
-                    currentOrganization={currentOrganization}
-                    canEditDeductions={canEditPreviewDeductions}
-                    employeeDeductions={employeeDeductions}
-                    previewDeductionOverrides={previewDeductionOverrides}
-                    onAddDeduction={addDeduction}
-                    onRemoveDeduction={removeDeduction}
-                    onUpdateDeduction={updateDeduction}
-                    onOverrideDeductionAmount={setPreviewDeductionOverride}
-                    onRecomputePreview={computePreview}
-                  />
-                </Suspense>
-              )}
-
-              <DialogFooter>
-                <div className="flex justify-between w-full">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      if (currentStep > 1) {
-                        setCurrentStep(currentStep - 1);
-                      } else {
-                        setIsDialogOpen(false);
-                        resetDialog();
-                      }
-                    }}
-                    disabled={isProcessing}
-                  >
-                    <ChevronLeft className="h-4 w-4 mr-2" />
-                    {currentStep === 1 ? "Cancel" : "Back"}
-                  </Button>
-                  <div className="flex gap-2">
-                    {currentStep < 5 && (
-                      <Button
-                        type="button"
-                        onClick={() => {
-                          if (currentStep === 1) {
-                            if (!cutoffStart || !cutoffEnd) {
-                              toast({
-                                title: "Validation Error",
-                                description: "Please select cutoff dates",
-                                variant: "destructive",
-                              });
-                              return;
-                            }
-                            setCurrentStep(2);
-                          } else if (currentStep === 2) {
-                            if (selectedEmployees.length === 0) {
-                              toast({
-                                title: "Validation Error",
-                                description:
-                                  "Please select at least one employee",
-                                variant: "destructive",
-                              });
-                              return;
-                            }
-                            setCurrentStep(3);
-                          } else if (currentStep === 3) {
-                            setCurrentStep(4);
-                          } else if (currentStep === 4) {
-                            computePreview();
-                          }
-                        }}
-                        disabled={isProcessing}
-                      >
-                        {currentStep === 4 && isProcessing ? (
-                          <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Generating Payslips
-                          </>
-                        ) : (
-                          <>
-                            Next
-                            <ChevronRight className="h-4 w-4 ml-2" />
-                          </>
-                        )}
-                      </Button>
-                    )}
-                    {currentStep === 5 && (
-                      <div className="flex gap-2">
+                <DialogFooter>
+                  <div className="flex justify-between w-full">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        if (currentStep > 1) {
+                          setCurrentStep(currentStep - 1);
+                        } else {
+                          setIsDialogOpen(false);
+                          resetDialog();
+                        }
+                      }}
+                      disabled={isProcessing}
+                    >
+                      <ChevronLeft className="h-4 w-4 mr-2" />
+                      {currentStep === 1 ? "Cancel" : "Back"}
+                    </Button>
+                    <div className="flex gap-2">
+                      {currentStep < 5 && (
                         <Button
                           type="button"
-                          variant="outline"
-                          onClick={() => handleSubmit("draft")}
+                          onClick={() => {
+                            if (currentStep === 1) {
+                              if (!cutoffStart || !cutoffEnd) {
+                                toast({
+                                  title: "Validation Error",
+                                  description: "Please select cutoff dates",
+                                  variant: "destructive",
+                                });
+                                return;
+                              }
+                              setCurrentStep(2);
+                            } else if (currentStep === 2) {
+                              if (selectedEmployees.length === 0) {
+                                toast({
+                                  title: "Validation Error",
+                                  description:
+                                    "Please select at least one employee",
+                                  variant: "destructive",
+                                });
+                                return;
+                              }
+                              setCurrentStep(3);
+                            } else if (currentStep === 3) {
+                              setCurrentStep(4);
+                            } else if (currentStep === 4) {
+                              computePreview();
+                            }
+                          }}
                           disabled={isProcessing}
                         >
-                          {submitStatus === "draft" ? (
+                          {currentStep === 4 && isProcessing ? (
                             <>
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              Saving...
+                              Generating Payslips
                             </>
                           ) : (
-                            "Save as Draft"
-                          )}
-                        </Button>
-                        <Button
-                          type="button"
-                          onClick={() => handleSubmit("finalized")}
-                          disabled={isProcessing}
-                        >
-                          {submitStatus === "finalized" ? (
                             <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              Finalizing...
+                              Next
+                              <ChevronRight className="h-4 w-4 ml-2" />
                             </>
-                          ) : (
-                            "Finalize Payroll"
                           )}
                         </Button>
-                      </div>
-                    )}
+                      )}
+                      {currentStep === 5 && (
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => handleSubmit("draft")}
+                            disabled={isProcessing}
+                          >
+                            {submitStatus === "draft" ? (
+                              <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                Saving...
+                              </>
+                            ) : (
+                              "Save as Draft"
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            onClick={() => handleSubmit("finalized")}
+                            disabled={isProcessing}
+                          >
+                            {submitStatus === "finalized" ? (
+                              <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                Finalizing...
+                              </>
+                            ) : (
+                              "Finalize Payroll"
+                            )}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           )}
         </div>
 
@@ -2062,16 +2181,10 @@ export default function PayrollPageClient({
           }
         >
           <TabsList className="mb-4 h-8 p-1">
-            <TabsTrigger
-              value="regular"
-              className="px-2.5 py-1 text-xs"
-            >
+            <TabsTrigger value="regular" className="px-2.5 py-1 text-xs">
               Regular Payroll
             </TabsTrigger>
-            <TabsTrigger
-              value="13th_month"
-              className="px-2.5 py-1 text-xs"
-            >
+            <TabsTrigger value="13th_month" className="px-2.5 py-1 text-xs">
               13th Month
             </TabsTrigger>
             <TabsTrigger
@@ -2082,66 +2195,67 @@ export default function PayrollPageClient({
             </TabsTrigger>
           </TabsList>
           <TabsContent value="regular">
-        <Card>
-          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-4 space-y-0">
-            <CardTitle>Payroll Runs</CardTitle>
-            <MonthPicker
-              value={filterMonth}
-              onChange={setFilterMonth}
-              className="min-w-[220px]"
-              triggerClassName="w-full sm:w-[220px]"
-            />
-          </CardHeader>
-          <CardContent>
-            <PayrollRunsTable
-              payrollRuns={paginatedPayrollRuns || []}
-              onViewSummary={handleViewSummary}
-              onViewPayslips={handleViewPayslips}
-              onEdit={handleEditPayrollRun}
-              onStatusChange={handleStatusChange}
-              onDelete={handleDeletePayrollRun}
-            />
-            {filteredPayrollRuns.length > payrollRunsPageSize && (
-              <div className="flex items-center justify-between gap-4 border-t pt-4 mt-4">
-                <p className="text-sm text-muted-foreground">
-                  {(payrollRunsPage - 1) * payrollRunsPageSize + 1}-
-                  {Math.min(
-                    payrollRunsPage * payrollRunsPageSize,
-                    filteredPayrollRuns.length,
-                  )}{" "}
-                  of {filteredPayrollRuns.length}
-                </p>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setPayrollRunsPage((page) => Math.max(1, page - 1))
-                    }
-                    disabled={payrollRunsPage <= 1}
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <span className="text-sm text-muted-foreground">
-                    Page {payrollRunsPage} of {totalPayrollRunPages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setPayrollRunsPage((page) =>
-                        Math.min(totalPayrollRunPages, page + 1),
-                      )
-                    }
-                    disabled={payrollRunsPage >= totalPayrollRunPages}
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+            <Card>
+              <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-4 space-y-0">
+                <CardTitle>Payroll Runs</CardTitle>
+                <MonthPicker
+                  value={filterMonth}
+                  onChange={setFilterMonth}
+                  className="min-w-[220px]"
+                  triggerClassName="w-full sm:w-[220px]"
+                />
+              </CardHeader>
+              <CardContent>
+                <PayrollRunsTable
+                  payrollRuns={paginatedPayrollRuns || []}
+                  onViewSummary={handleViewSummary}
+                  onViewPayslips={handleViewPayslips}
+                  onEdit={handleEditPayrollRun}
+                  onRegeneratePayslips={handleRegeneratePayslips}
+                  onStatusChange={handleStatusChange}
+                  onDelete={handleDeletePayrollRun}
+                />
+                {filteredPayrollRuns.length > payrollRunsPageSize && (
+                  <div className="flex items-center justify-between gap-4 border-t pt-4 mt-4">
+                    <p className="text-sm text-muted-foreground">
+                      {(payrollRunsPage - 1) * payrollRunsPageSize + 1}-
+                      {Math.min(
+                        payrollRunsPage * payrollRunsPageSize,
+                        filteredPayrollRuns.length,
+                      )}{" "}
+                      of {filteredPayrollRuns.length}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setPayrollRunsPage((page) => Math.max(1, page - 1))
+                        }
+                        disabled={payrollRunsPage <= 1}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span className="text-sm text-muted-foreground">
+                        Page {payrollRunsPage} of {totalPayrollRunPages}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setPayrollRunsPage((page) =>
+                            Math.min(totalPayrollRunPages, page + 1),
+                          )
+                        }
+                        disabled={payrollRunsPage >= totalPayrollRunPages}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
           <TabsContent value="13th_month">
             {effectiveOrganizationId && (
@@ -2307,7 +2421,9 @@ export default function PayrollPageClient({
               editEmployeeIncentives={editEmployeeIncentives}
               editPreviewData={editPreviewData}
               editPreviewDeductionOverrides={editPreviewDeductionOverrides}
-              setEditPreviewDeductionOverrides={setEditPreviewDeductionOverrides}
+              setEditPreviewDeductionOverrides={
+                setEditPreviewDeductionOverrides
+              }
               currentOrganization={currentOrganization}
               canEditPreviewDeductions={canEditPreviewDeductions}
               isComputingEditPreview={isComputingEditPreview}

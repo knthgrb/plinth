@@ -40,6 +40,12 @@ export type PayrollBaseResult = {
   overtimeLegalHoliday: number;
   overtimeLegalHolidayExcess: number;
   lateDeduction: number;
+  /** Late on regular (non-holiday) days only */
+  lateDeductionRegularDay: number;
+  /** Late on special nonworking holiday — portion of holiday premium lost */
+  lateDeductionSpecialHoliday: number;
+  /** Late on regular holiday — portion of holiday premium lost */
+  lateDeductionRegularHoliday: number;
   undertimeDeduction: number;
   absentDeduction: number;
   dailyRate: number;
@@ -52,7 +58,17 @@ export type PayrollBaseResult = {
 // Asia/Manila (UTC+8) — payroll dates and rest day use Manila so local and prod match
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 
-function getManilaDateParts(date: number): { y: number; m: number; d: number; dayOfWeek: number } {
+/** Round to nearest hundredths (2 decimal places) for payslip display. */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function getManilaDateParts(date: number): {
+  y: number;
+  m: number;
+  d: number;
+  dayOfWeek: number;
+} {
   const d = new Date(date + MANILA_OFFSET_MS);
   return {
     y: d.getUTCFullYear(),
@@ -64,7 +80,13 @@ function getManilaDateParts(date: number): { y: number; m: number; d: number; da
 
 function getDayName(date: number): string {
   const dayNames = [
-    "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
   ];
   const { dayOfWeek } = getManilaDateParts(date);
   return dayNames[dayOfWeek];
@@ -131,10 +153,12 @@ function toLocalDayTimestamp(date: number): number {
   return Date.UTC(y, m, d);
 }
 
-function holidayMatchesDate(holiday: any, date: number): boolean {
+export function holidayMatchesDate(holiday: any, date: number): boolean {
   const effectiveTimestamp = holiday.offsetDate ?? holiday.date;
   const targetParts = getManilaDateParts(date);
-  const holidayParts = getManilaDateParts(new Date(effectiveTimestamp).getTime());
+  const holidayParts = getManilaDateParts(
+    new Date(effectiveTimestamp).getTime(),
+  );
 
   if (holiday.isRecurring) {
     return holidayParts.m === targetParts.m && holidayParts.d === targetParts.d;
@@ -151,6 +175,29 @@ function holidayMatchesDate(holiday: any, date: number): boolean {
   );
 }
 
+/** Returns matching holiday for a date (Manila timezone). Used for backfilling attendance isHoliday/holidayType. */
+export function getMatchingHolidayForDate(
+  dateTs: number,
+  holidays: {
+    date: number;
+    offsetDate?: number;
+    isRecurring?: boolean;
+    year?: number;
+    type: string;
+  }[],
+): { type: "regular" | "special" | "special_working" } | null {
+  const holiday = holidays.find((entry) => holidayMatchesDate(entry, dateTs));
+  if (
+    holiday &&
+    (holiday.type === "regular" ||
+      holiday.type === "special" ||
+      holiday.type === "special_working")
+  ) {
+    return { type: holiday.type as "regular" | "special" | "special_working" };
+  }
+  return null;
+}
+
 function holidayAppliesToEmployee(holiday: any, employee: any): boolean {
   if (holiday.applyToAll !== false) return true;
   const provinces = holiday.provinces as string[] | undefined;
@@ -158,7 +205,7 @@ function holidayAppliesToEmployee(holiday: any, employee: any): boolean {
   const empProvince = (employee?.personalInfo?.province ?? "").trim();
   if (!empProvince) return false;
   return provinces.some(
-    (p) => String(p).trim().toLowerCase() === empProvince.toLowerCase()
+    (p) => String(p).trim().toLowerCase() === empProvince.toLowerCase(),
   );
 }
 
@@ -167,8 +214,20 @@ function getHolidayInfo(
   holidays: any[],
   attendanceRecord?: any,
   employee?: any,
-): { isHoliday: boolean; holidayType?: HolidayType; appliesToEmployee?: boolean } {
-  // Prefer holiday list (source of truth) so prod and local match; use Manila date matching.
+): {
+  isHoliday: boolean;
+  holidayType?: HolidayType;
+  appliesToEmployee?: boolean;
+} {
+  // Prefer attendance when it has isHoliday/holidayType (from backfill or edit) — ensures late-on-holiday categorizes correctly.
+  if (attendanceRecord?.isHoliday && attendanceRecord?.holidayType) {
+    return {
+      isHoliday: true,
+      holidayType: attendanceRecord.holidayType as HolidayType,
+      appliesToEmployee: true,
+    };
+  }
+  // Fall back to holiday list (Manila date matching).
   const holiday = holidays.find((entry) => holidayMatchesDate(entry, date));
   if (holiday) {
     const appliesToEmployee = holidayAppliesToEmployee(holiday, employee ?? {});
@@ -176,14 +235,6 @@ function getHolidayInfo(
       isHoliday: true,
       holidayType: holiday.type,
       appliesToEmployee,
-    };
-  }
-  // No matching holiday by date — use attendance if marked as holiday (e.g. one-off).
-  if (attendanceRecord?.isHoliday && attendanceRecord?.holidayType) {
-    return {
-      isHoliday: true,
-      holidayType: attendanceRecord.holidayType,
-      appliesToEmployee: true,
     };
   }
 
@@ -346,11 +397,10 @@ export function calculatePayrollBaseFromRecords(args: {
     leaveTypes,
   } = args;
 
-  const salaryType =
-    (employee.compensation.salaryType || "monthly") as
-      | "monthly"
-      | "daily"
-      | "hourly";
+  const salaryType = (employee.compensation.salaryType || "monthly") as
+    | "monthly"
+    | "daily"
+    | "hourly";
   const payDivisor = payFrequency === "monthly" ? 1 : 2;
   const cutoffStartDay = toLocalDayTimestamp(cutoffStart);
   const cutoffEndDay = toLocalDayTimestamp(cutoffEnd);
@@ -400,17 +450,25 @@ export function calculatePayrollBaseFromRecords(args: {
     includeAllowance: false,
     workingDaysPerYear: payrollRates.dailyRateWorkingDaysPerYear,
   });
+  // Absence deduction always uses (basic + allowance) × 12/261 — full daily compensation lost
+  const dailyRateForAbsence = getDailyRateForEmployee(employee, {
+    includeAllowance: true,
+    workingDaysPerYear: payrollRates.dailyRateWorkingDaysPerYear,
+  });
   // When "include allowance on daily rate" is enabled, holiday additional pay uses basic + allowance; otherwise basic only.
   const holidayPremiumBase = payrollRates.dailyRateIncludesAllowance
     ? dailyRate
     : basicDailyRate;
   const hourlyRate = dailyRate / 8;
   const basicHourlyRate = basicDailyRate / 8;
-  // Late and undertime deductions always use basic + allowance hourly rate.
-  const hourlyRateBasicPlusAllowance = getDailyRateForEmployee(employee, {
-    includeAllowance: true,
-    workingDaysPerYear: payrollRates.dailyRateWorkingDaysPerYear,
-  }) / 8;
+  // Late and undertime deductions use basic + allowance hourly rate, rounded to hundredths
+  // so per-minute rate (e.g. P3.3525) yields correct deduction (e.g. 33.525 → P33.53).
+  const hourlyRateBasicPlusAllowance = round2(
+    getDailyRateForEmployee(employee, {
+      includeAllowance: true,
+      workingDaysPerYear: payrollRates.dailyRateWorkingDaysPerYear,
+    }) / 8,
+  );
 
   let basicPay =
     salaryType === "monthly"
@@ -431,6 +489,9 @@ export function calculatePayrollBaseFromRecords(args: {
   let overtimeLegalHoliday = 0;
   let overtimeLegalHolidayExcess = 0;
   let lateDeduction = 0;
+  let lateDeductionRegularDay = 0;
+  let lateDeductionSpecialHoliday = 0;
+  let lateDeductionRegularHoliday = 0;
   let undertimeDeduction = 0;
   let absentDeduction = 0;
   let holidayPayFromRegular = 0;
@@ -448,7 +509,11 @@ export function calculatePayrollBaseFromRecords(args: {
 
       if (
         salaryType !== "monthly" &&
-        !(isRestDayForEmployee && holidayType !== "regular" && holidayType !== "special")
+        !(
+          isRestDayForEmployee &&
+          holidayType !== "regular" &&
+          holidayType !== "special"
+        )
       ) {
         basicPay += dayMultiplier * dailyRate;
       }
@@ -500,11 +565,28 @@ export function calculatePayrollBaseFromRecords(args: {
         }
       }
 
-      // Late and undertime deductions use basic + allowance hourly rate (not basic only).
+      // Late deductions: categorize by holiday type. Use employee's rate multiplier (per image 2/3):
+      // Regular Holiday: late_hours × hourly_rate × employee.regularHolidayRate (e.g. 2.0 = 200%)
+      // Special Holiday: late_hours × hourly_rate × employee.specialHolidayRate (e.g. 1.3 = 130%)
+      // Regular Day: late_hours × hourly_rate × 1.0
+      // Rates come from employee.compensation or org defaults via getEmployeePayrollRates
       const dayLateHours = getLateHoursFromAttendance(att);
       if (dayLateHours > 0) {
         lateHours += dayLateHours;
-        lateDeduction += dayLateHours * hourlyRateBasicPlusAllowance;
+        if (holidayType === "regular" && holidayApplies) {
+          lateDeductionRegularHoliday +=
+            dayLateHours *
+            hourlyRateBasicPlusAllowance *
+            payrollRates.regularHolidayRate;
+        } else if (holidayType === "special" && holidayApplies) {
+          lateDeductionSpecialHoliday +=
+            dayLateHours *
+            hourlyRateBasicPlusAllowance *
+            payrollRates.specialHolidayRate;
+        } else {
+          lateDeductionRegularDay +=
+            dayLateHours * hourlyRateBasicPlusAllowance;
+        }
       }
 
       const dayUndertimeHours = getUndertimeHoursFromAttendance(att);
@@ -514,31 +596,18 @@ export function calculatePayrollBaseFromRecords(args: {
       }
 
       if (holidayType === "regular" && holidayApplies) {
-        // Rate is actual total (e.g. 2.0 = 200% of daily); premium = (rate - 1) * base
-        // Use actual worked hours proportion — if employee is late/undertime, only pay premium for hours actually worked
-        const hoursWorked = getHoursWorkedFromAttendance(att);
-        const scheduledHours = 8 * dayMultiplier;
-        const effectiveHoursForPremium = Math.min(hoursWorked, scheduledHours);
+        // Show full holiday pay on payslip; lost portion (if late) is in lateDeductionRegularHoliday
         const rate = payrollRates.regularHolidayRate;
-        const amount =
-          (effectiveHoursForPremium / scheduledHours) *
-          holidayPremiumBase *
-          Math.max(0, rate - 1) *
-          dayMultiplier;
-        holidayPay += amount;
-        holidayPayFromRegular += amount;
+        const fullPremium =
+          holidayPremiumBase * Math.max(0, rate - 1) * dayMultiplier;
+        holidayPay += fullPremium;
+        holidayPayFromRegular += fullPremium;
       } else if (holidayType === "special" && holidayApplies) {
-        const hoursWorked = getHoursWorkedFromAttendance(att);
-        const scheduledHours = 8 * dayMultiplier;
-        const effectiveHoursForPremium = Math.min(hoursWorked, scheduledHours);
         const rate = payrollRates.specialHolidayRate;
-        const amount =
-          (effectiveHoursForPremium / scheduledHours) *
-          holidayPremiumBase *
-          Math.max(0, rate - 1) *
-          dayMultiplier;
-        holidayPay += amount;
-        holidayPayFromSpecial += amount;
+        const fullPremium =
+          holidayPremiumBase * Math.max(0, rate - 1) * dayMultiplier;
+        holidayPay += fullPremium;
+        holidayPayFromSpecial += fullPremium;
       }
 
       const dayNightDiffHours = calculateNightDiffHours(
@@ -554,10 +623,7 @@ export function calculatePayrollBaseFromRecords(args: {
     } else if (att.status === "no_work") {
       // Holiday (or similar) when employee did not work — no additional pay, no absence
       continue;
-    } else if (
-      att.status === "leave" ||
-      att.status === "leave_with_pay"
-    ) {
+    } else if (att.status === "leave" || att.status === "leave_with_pay") {
       // leave = legacy, treat as leave_with_pay
       if (isPaidLeave(att.date)) {
         daysWorked += 1;
@@ -565,10 +631,7 @@ export function calculatePayrollBaseFromRecords(args: {
           basicPay += dailyRate;
         }
       }
-    } else if (
-      att.status === "leave_without_pay" ||
-      att.status === "absent"
-    ) {
+    } else if (att.status === "leave_without_pay" || att.status === "absent") {
       if (isPaidLeave(att.date)) {
         daysWorked += 1;
         if (salaryType !== "monthly") {
@@ -578,7 +641,10 @@ export function calculatePayrollBaseFromRecords(args: {
       }
 
       const holidayInfo = getHolidayInfo(att.date, holidays, att, employee);
-      if (holidayInfo.holidayType === "regular" && holidayInfo.appliesToEmployee !== false) {
+      if (
+        holidayInfo.holidayType === "regular" &&
+        holidayInfo.appliesToEmployee !== false
+      ) {
         if (salaryType !== "monthly") {
           basicPay += dailyRate;
         }
@@ -589,7 +655,10 @@ export function calculatePayrollBaseFromRecords(args: {
         continue;
       }
 
-      if (holidayInfo.holidayType === "special" && holidayInfo.appliesToEmployee !== false) {
+      if (
+        holidayInfo.holidayType === "special" &&
+        holidayInfo.appliesToEmployee !== false
+      ) {
         if (salaryType !== "monthly") {
           basicPay += dailyRate;
         }
@@ -598,7 +667,7 @@ export function calculatePayrollBaseFromRecords(args: {
 
       absences += 1;
       if (salaryType === "monthly") {
-        absentDeduction += dailyRate;
+        absentDeduction += dailyRateForAbsence;
       }
     }
   }
@@ -624,7 +693,10 @@ export function calculatePayrollBaseFromRecords(args: {
     }
 
     const holidayInfo = getHolidayInfo(dateTs, holidays, undefined, employee);
-    if (holidayInfo.holidayType === "regular" && holidayInfo.appliesToEmployee !== false) {
+    if (
+      holidayInfo.holidayType === "regular" &&
+      holidayInfo.appliesToEmployee !== false
+    ) {
       if (salaryType !== "monthly") {
         basicPay += dailyRate;
       }
@@ -635,7 +707,10 @@ export function calculatePayrollBaseFromRecords(args: {
       continue;
     }
 
-    if (holidayInfo.holidayType === "special" && holidayInfo.appliesToEmployee !== false) {
+    if (
+      holidayInfo.holidayType === "special" &&
+      holidayInfo.appliesToEmployee !== false
+    ) {
       if (salaryType !== "monthly") {
         basicPay += dailyRate;
       }
@@ -649,10 +724,16 @@ export function calculatePayrollBaseFromRecords(args: {
     if (holidayInfo.holidayType === "special_working") {
       absences += 1;
       if (salaryType === "monthly") {
-        absentDeduction += dailyRate;
+        absentDeduction += dailyRateForAbsence;
       }
     }
   }
+
+  // Total late deduction = regular day + holiday late portions
+  lateDeduction =
+    lateDeductionRegularDay +
+    lateDeductionSpecialHoliday +
+    lateDeductionRegularHoliday;
 
   const holidayPayType =
     holidayPayFromSpecial > 0
@@ -661,28 +742,32 @@ export function calculatePayrollBaseFromRecords(args: {
         ? "regular"
         : undefined;
 
+  // Round all monetary amounts to nearest hundredths for payslip
   return {
-    basicPay,
+    basicPay: round2(basicPay),
     daysWorked,
     absences,
     lateHours,
     undertimeHours,
     overtimeHours,
-    holidayPay,
+    holidayPay: round2(holidayPay),
     holidayPayType,
-    nightDiffPay,
-    overtimeRegular,
-    overtimeRestDay,
-    overtimeRestDayExcess,
-    overtimeSpecialHoliday,
-    overtimeSpecialHolidayExcess,
-    overtimeLegalHoliday,
-    overtimeLegalHolidayExcess,
-    lateDeduction,
-    undertimeDeduction,
-    absentDeduction,
-    dailyRate,
-    hourlyRate,
+    nightDiffPay: round2(nightDiffPay),
+    overtimeRegular: round2(overtimeRegular),
+    overtimeRestDay: round2(overtimeRestDay),
+    overtimeRestDayExcess: round2(overtimeRestDayExcess),
+    overtimeSpecialHoliday: round2(overtimeSpecialHoliday),
+    overtimeSpecialHolidayExcess: round2(overtimeSpecialHolidayExcess),
+    overtimeLegalHoliday: round2(overtimeLegalHoliday),
+    overtimeLegalHolidayExcess: round2(overtimeLegalHolidayExcess),
+    lateDeduction: round2(lateDeduction),
+    lateDeductionRegularDay: round2(lateDeductionRegularDay),
+    lateDeductionSpecialHoliday: round2(lateDeductionSpecialHoliday),
+    lateDeductionRegularHoliday: round2(lateDeductionRegularHoliday),
+    undertimeDeduction: round2(undertimeDeduction),
+    absentDeduction: round2(absentDeduction),
+    dailyRate: round2(dailyRate),
+    hourlyRate: round2(hourlyRate),
     salaryType,
     payDivisor,
     payrollRates,

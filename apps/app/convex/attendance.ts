@@ -44,18 +44,52 @@ function getManilaDateParts(ts: number) {
 }
 function isDateRegularOrSpecialHoliday(
   dateTs: number,
-  holidays: { date: number; offsetDate?: number; isRecurring?: boolean; year?: number; type: string }[],
+  holidays: {
+    date: number;
+    offsetDate?: number;
+    isRecurring?: boolean;
+    year?: number;
+    type: string;
+  }[],
 ): boolean {
+  return getHolidayForDate(dateTs, holidays) != null;
+}
+
+/** Returns matching holiday (regular/special) for a date, or null. Used to auto-set isHoliday/holidayType on attendance. */
+function getHolidayForDate(
+  dateTs: number,
+  holidays: {
+    date: number;
+    offsetDate?: number;
+    isRecurring?: boolean;
+    year?: number;
+    type: string;
+  }[],
+): { type: "regular" | "special" | "special_working" } | null {
   const target = getManilaDateParts(dateTs);
   for (const h of holidays) {
     const effectiveTs = h.offsetDate ?? h.date;
-    const parts = getManilaDateParts(typeof effectiveTs === "number" ? effectiveTs : new Date(effectiveTs).getTime());
+    const parts = getManilaDateParts(
+      typeof effectiveTs === "number"
+        ? effectiveTs
+        : new Date(effectiveTs).getTime(),
+    );
     const match = h.isRecurring
       ? parts.m === target.m && parts.d === target.d
-      : (h.year == null || h.year === target.y) && parts.y === target.y && parts.m === target.m && parts.d === target.d;
-    if (match && (h.type === "regular" || h.type === "special")) return true;
+      : (h.year == null || h.year === target.y) &&
+        parts.y === target.y &&
+        parts.m === target.m &&
+        parts.d === target.d;
+    if (
+      match &&
+      (h.type === "regular" ||
+        h.type === "special" ||
+        h.type === "special_working")
+    ) {
+      return { type: h.type as "regular" | "special" | "special_working" };
+    }
   }
-  return false;
+  return null;
 }
 
 // Helper to check authorization with organization context
@@ -146,10 +180,12 @@ function getScheduledTimesForDate(
   const dateObj = new Date(date);
 
   // First check for an explicit override on this date
-  if (employeeSchedule.scheduleOverrides && Array.isArray(employeeSchedule.scheduleOverrides)) {
+  if (
+    employeeSchedule.scheduleOverrides &&
+    Array.isArray(employeeSchedule.scheduleOverrides)
+  ) {
     const override = employeeSchedule.scheduleOverrides.find(
-      (o: any) =>
-        new Date(o.date).toDateString() === dateObj.toDateString(),
+      (o: any) => new Date(o.date).toDateString() === dateObj.toDateString(),
     );
     if (override && override.in && override.out) {
       return { scheduleIn: override.in, scheduleOut: override.out };
@@ -295,7 +331,9 @@ export const createAttendance = mutation({
     // On regular/special holiday with no time in/out → no_work (no additional pay)
     let resolvedStatus = args.status;
     const holidays = await (ctx.db.query("holidays") as any)
-      .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
       .collect();
     if (
       isDateRegularOrSpecialHoliday(args.date, holidays) &&
@@ -307,7 +345,12 @@ export const createAttendance = mutation({
 
     const employee = await ctx.db.get(args.employeeId);
     const scheduleWithLunch = employee
-      ? await getScheduleWithLunch(ctx, employee, args.date, args.organizationId)
+      ? await getScheduleWithLunch(
+          ctx,
+          employee,
+          args.date,
+          args.organizationId,
+        )
       : null;
 
     const scheduleIn = scheduleWithLunch?.scheduleIn ?? args.scheduleIn;
@@ -336,6 +379,15 @@ export const createAttendance = mutation({
           : 0;
 
     const now = Date.now();
+    let isHoliday = args.isHoliday;
+    let holidayType = args.holidayType;
+    if (isHoliday === undefined && holidayType === undefined) {
+      const matchedHoliday = getHolidayForDate(args.date, holidays);
+      if (matchedHoliday) {
+        isHoliday = true;
+        holidayType = matchedHoliday.type;
+      }
+    }
     const insertPayload: Record<string, unknown> = {
       organizationId: args.organizationId,
       employeeId: args.employeeId,
@@ -347,8 +399,8 @@ export const createAttendance = mutation({
       overtime: args.overtime,
       late: calculatedLate > 0 ? calculatedLate : undefined,
       undertime: calculatedUndertime > 0 ? calculatedUndertime : undefined,
-      isHoliday: args.isHoliday,
-      holidayType: args.holidayType,
+      isHoliday,
+      holidayType,
       remarks: args.remarks,
       status: resolvedStatus,
       createdAt: now,
@@ -357,7 +409,10 @@ export const createAttendance = mutation({
     if (lunchStart != null) insertPayload.lunchStart = lunchStart;
     if (lunchEnd != null) insertPayload.lunchEnd = lunchEnd;
 
-    const attendanceId = await ctx.db.insert("attendance", insertPayload as any);
+    const attendanceId = await ctx.db.insert(
+      "attendance",
+      insertPayload as any,
+    );
 
     return attendanceId;
   },
@@ -405,11 +460,20 @@ export const updateAttendance = mutation({
 
     const employee = await ctx.db.get(attendance.employeeId);
     const scheduleWithLunch = employee
-      ? await getScheduleWithLunch(ctx, employee, attendance.date, attendance.organizationId)
+      ? await getScheduleWithLunch(
+          ctx,
+          employee,
+          attendance.date,
+          attendance.organizationId,
+        )
       : null;
 
-    const resolvedScheduleIn = scheduleWithLunch?.scheduleIn ?? args.scheduleIn ?? attendance.scheduleIn;
-    const resolvedScheduleOut = scheduleWithLunch?.scheduleOut ?? args.scheduleOut ?? attendance.scheduleOut;
+    const resolvedScheduleIn =
+      scheduleWithLunch?.scheduleIn ?? args.scheduleIn ?? attendance.scheduleIn;
+    const resolvedScheduleOut =
+      scheduleWithLunch?.scheduleOut ??
+      args.scheduleOut ??
+      attendance.scheduleOut;
     const lunchStart = scheduleWithLunch?.lunchStart ?? attendance.lunchStart;
     const lunchEnd = scheduleWithLunch?.lunchEnd ?? attendance.lunchEnd;
     const lunchMinutes = scheduleWithLunch?.lunchMinutes ?? 0;
@@ -423,8 +487,10 @@ export const updateAttendance = mutation({
     if (args.isHoliday !== undefined) updates.isHoliday = args.isHoliday;
     if (args.holidayType !== undefined) updates.holidayType = args.holidayType;
     if (args.remarks !== undefined) updates.remarks = args.remarks;
-    if (scheduleWithLunch?.lunchStart != null) updates.lunchStart = scheduleWithLunch.lunchStart;
-    if (scheduleWithLunch?.lunchEnd != null) updates.lunchEnd = scheduleWithLunch.lunchEnd;
+    if (scheduleWithLunch?.lunchStart != null)
+      updates.lunchStart = scheduleWithLunch.lunchStart;
+    if (scheduleWithLunch?.lunchEnd != null)
+      updates.lunchEnd = scheduleWithLunch.lunchEnd;
 
     const currentScheduleIn = args.scheduleIn ?? attendance.scheduleIn;
     const currentScheduleOut = args.scheduleOut ?? attendance.scheduleOut;
@@ -432,12 +498,13 @@ export const updateAttendance = mutation({
     const currentActualOut = args.actualOut ?? attendance.actualOut;
     let currentStatus = args.status ?? attendance.status;
 
+    const holidays = await (ctx.db.query("holidays") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", attendance.organizationId),
+      )
+      .collect();
+
     if (args.status === undefined) {
-      const holidays = await (ctx.db.query("holidays") as any)
-        .withIndex("by_organization", (q: any) =>
-          q.eq("organizationId", attendance.organizationId),
-        )
-        .collect();
       if (
         !currentActualIn &&
         !currentActualOut &&
@@ -448,6 +515,15 @@ export const updateAttendance = mutation({
       }
     }
     if (args.status !== undefined) updates.status = args.status;
+
+    // Auto-set isHoliday and holidayType from org holidays when date matches (so payroll categorizes late correctly)
+    if (args.isHoliday === undefined && args.holidayType === undefined) {
+      const matchedHoliday = getHolidayForDate(attendance.date, holidays);
+      if (matchedHoliday) {
+        updates.isHoliday = true;
+        updates.holidayType = matchedHoliday.type;
+      }
+    }
 
     if (args.undertimeManualOverride === true) {
       updates.undertime = args.undertime ?? 0;
@@ -552,14 +628,13 @@ export const bulkCreateAttendance = mutation({
     if (organizationId) {
       await checkAuth(ctx, organizationId, "hr");
     }
-    const holidays =
-      organizationId
-        ? await (ctx.db.query("holidays") as any)
-            .withIndex("by_organization", (q: any) =>
-              q.eq("organizationId", organizationId),
-            )
-            .collect()
-        : [];
+    const holidays = organizationId
+      ? await (ctx.db.query("holidays") as any)
+          .withIndex("by_organization", (q: any) =>
+            q.eq("organizationId", organizationId),
+          )
+          .collect()
+      : [];
 
     for (const entry of args.entries) {
       const existing = await (ctx.db.query("attendance") as any)
@@ -579,7 +654,12 @@ export const bulkCreateAttendance = mutation({
 
       const employee = await ctx.db.get(entry.employeeId);
       const scheduleWithLunch = employee
-        ? await getScheduleWithLunch(ctx, employee, entry.date, entry.organizationId)
+        ? await getScheduleWithLunch(
+            ctx,
+            employee,
+            entry.date,
+            entry.organizationId,
+          )
         : null;
       const scheduleIn = scheduleWithLunch?.scheduleIn ?? entry.scheduleIn;
       const scheduleOut = scheduleWithLunch?.scheduleOut ?? entry.scheduleOut;
@@ -595,6 +675,13 @@ export const bulkCreateAttendance = mutation({
         if (entry.isHoliday !== undefined) updates.isHoliday = entry.isHoliday;
         if (entry.holidayType !== undefined)
           updates.holidayType = entry.holidayType;
+        if (entry.isHoliday === undefined && entry.holidayType === undefined) {
+          const matchedHoliday = getHolidayForDate(entry.date, holidays);
+          if (matchedHoliday) {
+            updates.isHoliday = true;
+            updates.holidayType = matchedHoliday.type;
+          }
+        }
         if (entry.remarks !== undefined) updates.remarks = entry.remarks;
         updates.status = resolvedStatus;
         if (scheduleWithLunch) {
@@ -609,7 +696,9 @@ export const bulkCreateAttendance = mutation({
         const calculatedUndertime =
           entry.undertime !== undefined
             ? entry.undertime
-            : resolvedStatus === "present" && currentActualIn && currentActualOut
+            : resolvedStatus === "present" &&
+                currentActualIn &&
+                currentActualOut
               ? calculateUndertime(
                   scheduleIn,
                   scheduleOut,
@@ -649,6 +738,15 @@ export const bulkCreateAttendance = mutation({
               ? calculateLate(scheduleIn, entry.actualIn, lunchStart)
               : 0;
 
+        let isHoliday = entry.isHoliday;
+        let holidayType = entry.holidayType;
+        if (isHoliday === undefined && holidayType === undefined) {
+          const matchedHoliday = getHolidayForDate(entry.date, holidays);
+          if (matchedHoliday) {
+            isHoliday = true;
+            holidayType = matchedHoliday.type;
+          }
+        }
         const insertPayload: Record<string, unknown> = {
           ...entry,
           scheduleIn,
@@ -656,12 +754,17 @@ export const bulkCreateAttendance = mutation({
           status: resolvedStatus,
           late: calculatedLate > 0 ? calculatedLate : undefined,
           undertime: calculatedUndertime > 0 ? calculatedUndertime : undefined,
+          isHoliday,
+          holidayType,
           createdAt: now,
           updatedAt: now,
         };
         if (lunchStart != null) insertPayload.lunchStart = lunchStart;
         if (lunchEnd != null) insertPayload.lunchEnd = lunchEnd;
-        const attendanceId = await ctx.db.insert("attendance", insertPayload as any);
+        const attendanceId = await ctx.db.insert(
+          "attendance",
+          insertPayload as any,
+        );
         results.push({ id: attendanceId, action: "created" });
       }
     }
@@ -691,9 +794,7 @@ export const recalculateEmployeeAttendance = mutation({
     }
 
     let records = await (ctx.db.query("attendance") as any)
-      .withIndex("by_employee", (q: any) =>
-        q.eq("employeeId", args.employeeId),
-      )
+      .withIndex("by_employee", (q: any) => q.eq("employeeId", args.employeeId))
       .collect();
 
     if (records.length === 0) {
@@ -721,6 +822,12 @@ export const recalculateEmployeeAttendance = mutation({
     if (records.length === 0) {
       return { updated: 0 };
     }
+
+    const holidays = await (ctx.db.query("holidays") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .collect();
 
     const now = Date.now();
     let updatedCount = 0;
@@ -778,8 +885,15 @@ export const recalculateEmployeeAttendance = mutation({
         late: newLate,
         updatedAt: now,
       };
-      if (scheduleWithLunch?.lunchStart != null) patchPayload.lunchStart = scheduleWithLunch.lunchStart;
-      if (scheduleWithLunch?.lunchEnd != null) patchPayload.lunchEnd = scheduleWithLunch.lunchEnd;
+      const matchedHoliday = getHolidayForDate(record.date, holidays);
+      if (matchedHoliday) {
+        patchPayload.isHoliday = true;
+        patchPayload.holidayType = matchedHoliday.type;
+      }
+      if (scheduleWithLunch?.lunchStart != null)
+        patchPayload.lunchStart = scheduleWithLunch.lunchStart;
+      if (scheduleWithLunch?.lunchEnd != null)
+        patchPayload.lunchEnd = scheduleWithLunch.lunchEnd;
       await ctx.db.patch(record._id, patchPayload as any);
       updatedCount++;
     }
