@@ -170,11 +170,12 @@ export function PayrollStep4DeductionsIncentives({
           </div>
         </div>
 
-        {/* Incentives Section */}
+        {/* Additions Section (opposite of deductions: incentives, bonuses, etc.) */}
         <div className="space-y-4">
-          <Label>Enter Incentives</Label>
+          <Label>Enter Additions</Label>
           <p className="text-sm text-gray-500">
-            Add incentives, bonuses, or other earnings for each employee.
+            Add incentives, bonuses, commissions, or other additions to pay for
+            each employee.
           </p>
           <div className="space-y-6 max-h-96 overflow-y-auto">
             {selectedEmployees.map((employeeId: string) => {
@@ -197,7 +198,7 @@ export function PayrollStep4DeductionsIncentives({
                     {empIncentives.incentives.map((incentive, idx) => (
                       <div key={idx} className="flex gap-2 items-end">
                         <div className="flex-1">
-                          <Label>Incentive Name</Label>
+                          <Label>Addition Name</Label>
                           <Input
                             value={incentive.name}
                             onChange={(e) =>
@@ -255,7 +256,7 @@ export function PayrollStep4DeductionsIncentives({
                       onClick={() => onAddIncentive(employeeId)}
                     >
                       <Plus className="h-4 w-4 mr-2" />
-                      Add Incentive
+                      Add Addition
                     </Button>
                   </CardContent>
                 </Card>
