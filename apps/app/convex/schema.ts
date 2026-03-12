@@ -368,7 +368,17 @@ export default defineSchema({
     organizationId: v.id("organizations"),
     cutoffStart: v.number(),
     cutoffEnd: v.number(),
-    period: v.string(), // "2025-01-01 to 2025-01-15"
+    period: v.string(), // "2025-01-01 to 2025-01-15" or "13th Month Pay 2025"
+    /** "regular" = standard payroll; "13th_month" = 13th month pay run; "leave_conversion" = leave to cash */
+    runType: v.optional(
+      v.union(
+        v.literal("regular"),
+        v.literal("13th_month"),
+        v.literal("leave_conversion"),
+      ),
+    ),
+    /** For 13th month runs: the calendar year (e.g. 2025) */
+    year: v.optional(v.number()),
     status: v.union(
       v.literal("draft"),
       v.literal("processing"),
@@ -452,7 +462,12 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_organization", ["organizationId"])
-    .index("by_period", ["cutoffStart", "cutoffEnd"]),
+    .index("by_period", ["cutoffStart", "cutoffEnd"])
+    .index("by_organization_runType_year", [
+      "organizationId",
+      "runType",
+      "year",
+    ]),
 
   // Payslips table
   payslips: defineTable({
@@ -461,6 +476,8 @@ export default defineSchema({
     payrollRunId: v.id("payrollRuns"),
     period: v.string(),
     grossPay: v.number(),
+    /** Basic pay (regular compensation) for this period - used for 13th month computation */
+    basicPay: v.optional(v.number()),
     deductions: v.array(
       v.object({
         name: v.string(),
@@ -854,19 +871,36 @@ export default defineSchema({
     ),
     // Prorated leave: when true, annual leave is prorated by months worked (e.g. new hires get (annual/12)*months)
     proratedLeave: v.optional(v.boolean()),
+    // Max unused leave days convertible to cash (default 5)
+    maxConvertibleLeaveDays: v.optional(v.number()),
     // Base annual SIL used by leave tracker formulas
     annualSil: v.optional(v.number()),
     // When true, proration starts from regularization date; when false, from hire date
     grantLeaveUponRegularization: v.optional(v.boolean()),
     // Leave request form template (Tiptap JSON string)
     leaveRequestFormTemplate: v.optional(v.string()),
-    // Leave tracker sheet overrides keyed by employee
+    // Leave tracker sheet overrides keyed by employee (legacy, no year)
     leaveTrackerRows: v.optional(
       v.array(
         v.object({
           employeeId: v.id("employees"),
           annualSilOverride: v.optional(v.number()),
           availed: v.optional(v.number()),
+        }),
+      ),
+    ),
+    // Leave tracker by year: { year, rows[] } for historical tracking
+    leaveTrackerByYear: v.optional(
+      v.array(
+        v.object({
+          year: v.number(),
+          rows: v.array(
+            v.object({
+              employeeId: v.id("employees"),
+              annualSilOverride: v.optional(v.number()),
+              availed: v.optional(v.number()),
+            }),
+          ),
         }),
       ),
     ),

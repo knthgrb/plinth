@@ -145,13 +145,16 @@ export function isLeapYear(year: number): boolean {
 
 /**
  * Get the number of convertible leave days
- * First 5 leaves are convertible to cash
  *
  * @param totalLeave - Total leave balance
- * @returns Number of convertible days (max 5)
+ * @param maxDays - Max days convertible to cash (default 5)
+ * @returns Number of convertible days
  */
-export function getConvertibleLeaveDays(totalLeave: number): number {
-  return Math.min(5, Math.max(0, totalLeave));
+export function getConvertibleLeaveDays(
+  totalLeave: number,
+  maxDays: number = 5,
+): number {
+  return Math.min(maxDays, Math.max(0, totalLeave));
 }
 
 /**

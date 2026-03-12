@@ -30,6 +30,8 @@ export function LeaveTypesSettingsContent() {
   const [annualSil, setAnnualSil] = useState("8");
   const [grantLeaveUponRegularization, setGrantLeaveUponRegularization] =
     useState(true);
+  const [maxConvertibleLeaveDays, setMaxConvertibleLeaveDays] =
+    useState("5");
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -37,6 +39,9 @@ export function LeaveTypesSettingsContent() {
     setAnnualSil(String(settings?.annualSil ?? 8));
     setGrantLeaveUponRegularization(
       settings?.grantLeaveUponRegularization ?? true,
+    );
+    setMaxConvertibleLeaveDays(
+      String(settings?.maxConvertibleLeaveDays ?? 5),
     );
   }, [settings]);
 
@@ -51,14 +56,28 @@ export function LeaveTypesSettingsContent() {
       });
       return;
     }
+    const parsedMaxConvertible = Number(maxConvertibleLeaveDays);
+    if (
+      !Number.isFinite(parsedMaxConvertible) ||
+      parsedMaxConvertible < 0 ||
+      parsedMaxConvertible !== Math.floor(parsedMaxConvertible)
+    ) {
+      toast({
+        title: "Error",
+        description:
+          "Max convertible leave days must be a valid non-negative integer.",
+        variant: "destructive",
+      });
+      return;
+    }
     setIsSaving(true);
     try {
       await updateLeaveTypes({
         organizationId: currentOrganizationId,
-        leaveTypes: settings?.leaveTypes ?? [],
         proratedLeave,
         annualSil: parsedAnnualSil,
         grantLeaveUponRegularization,
+        maxConvertibleLeaveDays: parsedMaxConvertible,
       });
       toast({
         title: "Success",
@@ -92,6 +111,30 @@ export function LeaveTypesSettingsContent() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
+        <div className="rounded-lg border border-[#DDDDDD] bg-[rgb(250,250,250)] p-4">
+          <div className="space-y-2">
+            <Label
+              htmlFor="maxConvertibleLeaveDays"
+              className="text-sm font-medium text-[rgb(64,64,64)]"
+            >
+              Max convertible leave days
+            </Label>
+            <Input
+              id="maxConvertibleLeaveDays"
+              value={maxConvertibleLeaveDays}
+              onChange={(event) =>
+                setMaxConvertibleLeaveDays(event.target.value)
+              }
+              inputMode="numeric"
+              className="max-w-[220px] bg-white"
+            />
+            <p className="text-xs text-[rgb(133,133,133)]">
+              Maximum unused leave days convertible to cash per year. Default is
+              5.
+            </p>
+          </div>
+        </div>
+
         <div className="rounded-lg border border-[#DDDDDD] bg-[rgb(250,250,250)] p-4">
           <div className="space-y-2">
             <Label

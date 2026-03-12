@@ -66,13 +66,16 @@ export function PayrollRunsTable({
           </TableRow>
         ) : (
           payrollRuns?.map((run) => {
+            const is13thMonth = (run.runType ?? "regular") === "13th_month";
             const hasCutoffs = run.cutoffStart && run.cutoffEnd;
-            const periodDisplay = hasCutoffs
-              ? `${format(new Date(run.cutoffStart), "MMM. dd, yyyy")} - ${format(
-                  new Date(run.cutoffEnd),
-                  "MMM. dd, yyyy",
-                )}`
-              : run.period;
+            const periodDisplay = is13thMonth
+              ? run.period || `13th Month Pay ${run.year ?? ""}`
+              : hasCutoffs
+                ? `${format(new Date(run.cutoffStart), "MMM. dd, yyyy")} - ${format(
+                    new Date(run.cutoffEnd),
+                    "MMM. dd, yyyy",
+                  )}`
+                : run.period;
 
             return (
               <TableRow key={run._id}>
@@ -117,10 +120,12 @@ export function PayrollRunsTable({
                         <DropdownMenuSeparator />
                         {run.status === "draft" && (
                           <>
-                            <DropdownMenuItem onClick={() => onEdit(run)}>
-                              <Pencil className="h-4 w-4 mr-2" />
-                              Edit
-                            </DropdownMenuItem>
+                            {(run.runType ?? "regular") !== "13th_month" && (
+                              <DropdownMenuItem onClick={() => onEdit(run)}>
+                                <Pencil className="h-4 w-4 mr-2" />
+                                Edit
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem
                               onClick={() => onStatusChange(run, "finalized")}
                             >

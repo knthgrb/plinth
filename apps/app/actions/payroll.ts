@@ -52,8 +52,35 @@ export async function getEmployeePayslips(employeeId: string) {
   return PayrollService.getEmployeePayslips(employeeId);
 }
 
-export async function getPayrollRuns(organizationId: string) {
-  return PayrollService.getPayrollRuns(organizationId);
+export async function getPayrollRuns(
+  organizationId: string,
+  options?: { runType?: "regular" | "13th_month"; year?: number }
+) {
+  return PayrollService.getPayrollRuns(organizationId, options);
+}
+
+export async function compute13thMonthAmounts(data: {
+  organizationId: string;
+  year: number;
+  employeeIds?: string[];
+}) {
+  return PayrollService.compute13thMonthAmounts(data);
+}
+
+export async function create13thMonthRun(data: {
+  organizationId: string;
+  year: number;
+  employeeIds: string[];
+}) {
+  return PayrollService.create13thMonthRun(data);
+}
+
+export async function createLeaveConversionRun(data: {
+  organizationId: string;
+  year: number;
+  employeeIds: string[];
+}) {
+  return PayrollService.createLeaveConversionRun(data);
 }
 
 export async function getPayslipsByPayrollRun(payrollRunId: string) {

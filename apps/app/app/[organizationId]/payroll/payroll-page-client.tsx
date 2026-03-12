@@ -27,6 +27,7 @@ import {
 import { Stepper } from "@/components/ui/stepper";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MonthPicker } from "@/components/ui/month-picker";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Plus,
   X,
@@ -41,6 +42,8 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { PayrollRunsTable } from "./_components/payroll-runs-table";
+import { ThirteenthMonthTab } from "./_components/13th-month-tab";
+import { LeaveConversionTab } from "./_components/leave-conversion-tab";
 
 // Lazy load step components
 const PayrollStep1Dates = dynamic(
@@ -313,7 +316,6 @@ export default function PayrollPageClient({
   const [editingPayslip, setEditingPayslip] = useState<any>(null);
   const [editDeductions, setEditDeductions] = useState<Deduction[]>([]);
   const [editIncentives, setEditIncentives] = useState<Deduction[]>([]);
-  const [editNonTaxableAllowance, setEditNonTaxableAllowance] = useState(0);
   const [isSavingPayslip, setIsSavingPayslip] = useState(false);
   const [payslipConcerns, setPayslipConcerns] = useState<Record<string, any[]>>(
     {},
@@ -340,9 +342,19 @@ export default function PayrollPageClient({
   const [editEmployeeIncentives, setEditEmployeeIncentives] = useState<
     EmployeeIncentive[]
   >([]);
+  const [editPreviewData, setEditPreviewData] = useState<any[]>([]);
+  const [editPreviewDeductionOverrides, setEditPreviewDeductionOverrides] =
+    useState<Record<string, Record<string, number>>>({});
+  const [isComputingEditPreview, setIsComputingEditPreview] = useState(false);
   const [isSavingPayrollRun, setIsSavingPayrollRun] = useState(false);
+  const [editSubmitStatus, setEditSubmitStatus] = useState<
+    "idle" | "draft" | "finalized"
+  >("idle");
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [payrollRunToDelete, setPayrollRunToDelete] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState<
+    "regular" | "13th_month" | "leave_conversion"
+  >("regular");
 
   const searchParams = useSearchParams();
   const payslipIdParam = searchParams.get("payslipId");
@@ -392,16 +404,35 @@ export default function PayrollPageClient({
   };
 
   const filteredPayrollRuns = useMemo(() => {
-    if (!filterMonth) return payrollRuns;
+    let runs = payrollRuns;
+    if (activeTab === "regular") {
+      runs = runs.filter(
+        (r: any) =>
+          (r.runType ?? "regular") !== "13th_month" &&
+          (r.runType ?? "regular") !== "leave_conversion",
+      );
+    } else if (activeTab === "13th_month") {
+      runs = runs.filter((r: any) => (r.runType ?? "regular") === "13th_month");
+    } else if (activeTab === "leave_conversion") {
+      runs = runs.filter(
+        (r: any) => (r.runType ?? "regular") === "leave_conversion",
+      );
+    }
+    if (
+      !filterMonth ||
+      activeTab === "13th_month" ||
+      activeTab === "leave_conversion"
+    )
+      return runs;
     const [year, month] = filterMonth.split("-").map(Number);
-    return payrollRuns.filter((run) => {
+    return runs.filter((run) => {
       const cutoffDate = run?.cutoffStart ? new Date(run.cutoffStart) : null;
       if (!cutoffDate || Number.isNaN(cutoffDate.getTime())) return false;
       return (
         cutoffDate.getFullYear() === year && cutoffDate.getMonth() + 1 === month
       );
     });
-  }, [filterMonth, payrollRuns]);
+  }, [filterMonth, payrollRuns, activeTab]);
 
   const totalPayrollRunPages = Math.max(
     1,
@@ -645,7 +676,6 @@ export default function PayrollPageClient({
     setEditingPayslip(payslip);
     setEditDeductions([...payslip.deductions]);
     setEditIncentives([...(payslip.incentives || [])]);
-    setEditNonTaxableAllowance(payslip.nonTaxableAllowance || 0);
     setIsEditPayslipOpen(true);
   };
 
@@ -658,8 +688,6 @@ export default function PayrollPageClient({
         payslipId: editingPayslip._id,
         deductions: editDeductions,
         incentives: editIncentives.length > 0 ? editIncentives : undefined,
-        nonTaxableAllowance:
-          editNonTaxableAllowance > 0 ? editNonTaxableAllowance : undefined,
       });
 
       // Reload payslips and concerns
@@ -1175,6 +1203,240 @@ export default function PayrollPageClient({
     }
   };
 
+  const computeEditPreview = async () => {
+    if (
+      !currentOrganizationId ||
+      editSelectedEmployees.length === 0 ||
+      !editCutoffStart ||
+      !editCutoffEnd
+    )
+      return;
+
+    setIsComputingEditPreview(true);
+    try {
+      const preview: any[] = [];
+
+      for (const employeeId of editSelectedEmployees) {
+        const employee = employees?.find((e: any) => e._id === employeeId);
+        if (!employee) continue;
+
+        const cutoffStartTs = dateStringToLocalMs(editCutoffStart);
+        const cutoffEndTs = dateStringToLocalMs(editCutoffEnd);
+
+        const payroll = await computeEmployeePayroll({
+          employeeId,
+          cutoffStart: cutoffStartTs,
+          cutoffEnd: cutoffEndTs,
+        });
+
+        const deductions: Deduction[] = [];
+        const govSettings = editGovernmentDeductionSettings.find(
+          (gs) => gs.employeeId === employeeId,
+        );
+
+        const applyGovSetting = (
+          enabled: boolean | undefined,
+          frequency: "full" | "half" | undefined,
+          baseAmount: number | undefined,
+        ): number => {
+          if (!baseAmount || baseAmount <= 0) return 0;
+          if (enabled === false) return 0;
+          if (frequency === "half") return baseAmount / 2;
+          return baseAmount;
+        };
+
+        const sssAmount = applyGovSetting(
+          govSettings?.sss.enabled,
+          govSettings?.sss.frequency,
+          payroll.deductions?.sss,
+        );
+        if (sssAmount > 0)
+          deductions.push({
+            name: "SSS",
+            amount: sssAmount,
+            type: "government",
+          });
+
+        const philhealthAmount = applyGovSetting(
+          govSettings?.philhealth.enabled,
+          govSettings?.philhealth.frequency,
+          payroll.deductions?.philhealth,
+        );
+        if (philhealthAmount > 0)
+          deductions.push({
+            name: "PhilHealth",
+            amount: philhealthAmount,
+            type: "government",
+          });
+
+        const pagibigAmount = applyGovSetting(
+          govSettings?.pagibig.enabled,
+          govSettings?.pagibig.frequency,
+          payroll.deductions?.pagibig,
+        );
+        if (pagibigAmount > 0)
+          deductions.push({
+            name: "Pag-IBIG",
+            amount: pagibigAmount,
+            type: "government",
+          });
+
+        const taxAmount =
+          govSettings && govSettings.tax.enabled === false
+            ? 0
+            : payroll.deductions?.withholdingTax || 0;
+        if (taxAmount > 0)
+          deductions.push({
+            name: "Withholding Tax",
+            amount: taxAmount,
+            type: "government",
+          });
+        if (payroll.deductions?.custom && payroll.deductions.custom > 0)
+          deductions.push({
+            name: "Other Deductions",
+            amount: payroll.deductions.custom,
+            type: "custom",
+          });
+
+        const empDeductions = editEmployeeDeductions.find(
+          (ed) => ed.employeeId === employeeId,
+        );
+        if (empDeductions) deductions.push(...empDeductions.deductions);
+
+        const overrides = editPreviewDeductionOverrides[employeeId];
+        if (overrides) {
+          for (const d of deductions) {
+            if (overrides[d.name] !== undefined) d.amount = overrides[d.name];
+          }
+        }
+
+        const manualIncentives =
+          editEmployeeIncentives.find((ei) => ei.employeeId === employeeId)
+            ?.incentives || [];
+        const totalIncentives = manualIncentives.reduce(
+          (sum, incentive) => sum + incentive.amount,
+          0,
+        );
+        const incentives = manualIncentives;
+
+        const allowance = employee.compensation.allowance || 0;
+        const payDivisor =
+          currentOrganization?.salaryPaymentFrequency === "monthly" ? 1 : 2;
+        const nonTaxableAllowance = allowance / payDivisor;
+
+        const dailyRateIncludesAllowance =
+          settings?.payrollSettings?.dailyRateIncludesAllowance ?? true;
+        const dailyRateWorkingDaysPerYear =
+          settings?.payrollSettings?.dailyRateWorkingDaysPerYear ?? 261;
+
+        const salaryType = employee.compensation.salaryType || "monthly";
+        const monthlySalary = employee.compensation.basicSalary || 0;
+        const daysWorked = payroll.daysWorked || 0;
+        const absences = payroll.absences || 0;
+        const lateHours = payroll.lateHours || 0;
+        const undertimeHours = payroll.undertimeHours || 0;
+
+        let fullBasicPay = payroll.basicPay || 0;
+        let dailyRate = 0;
+        let hourlyRate = 0;
+        let basicDailyRate = 0;
+        let basicHourlyRate = 0;
+
+        if (salaryType === "monthly") {
+          fullBasicPay = monthlySalary / payDivisor;
+          const monthlyBase =
+            monthlySalary + (dailyRateIncludesAllowance ? allowance : 0);
+          dailyRate = monthlyBase * (12 / dailyRateWorkingDaysPerYear);
+          hourlyRate = dailyRate / 8;
+          basicDailyRate = monthlySalary * (12 / dailyRateWorkingDaysPerYear);
+          basicHourlyRate = basicDailyRate / 8;
+        } else if (salaryType === "daily") {
+          dailyRate = monthlySalary;
+          hourlyRate = dailyRate / 8;
+          basicDailyRate = dailyRate;
+          basicHourlyRate = hourlyRate;
+        } else if (salaryType === "hourly") {
+          dailyRate = monthlySalary * 8;
+          hourlyRate = monthlySalary;
+          basicDailyRate = dailyRate;
+          basicHourlyRate = hourlyRate;
+        }
+
+        const calculatedAbsences = absences;
+        const lateDeduction = lateHours * basicHourlyRate;
+        const undertimeDeduction = undertimeHours * basicHourlyRate;
+        const absentDeduction =
+          salaryType === "monthly"
+            ? calculatedAbsences * basicDailyRate
+            : 0;
+
+        const governmentAndCustomDeductions =
+          deductions.reduce((sum, d) => sum + d.amount, 0) || 0;
+        const rawTotalDeductions =
+          governmentAndCustomDeductions +
+          lateDeduction +
+          undertimeDeduction +
+          absentDeduction;
+
+        const grossPay =
+          (payroll.grossPay || 0) -
+          (payroll.incentiveTotal || 0) +
+          totalIncentives;
+
+        const availableEarnings = grossPay + nonTaxableAllowance;
+        const totalDeductions = Math.min(
+          rawTotalDeductions,
+          Math.max(0, availableEarnings),
+        );
+        const netPay = Math.max(0, availableEarnings - totalDeductions);
+
+        preview.push({
+          employee,
+          payroll,
+          basicPay: fullBasicPay,
+          daysWorked,
+          absences: calculatedAbsences,
+          lateHours,
+          undertimeHours,
+          overtimeHours: payroll.overtimeHours || 0,
+          holidayPay: payroll.holidayPay || 0,
+          holidayPayType: payroll.holidayPayType,
+          restDayPay: payroll.restDayPay || 0,
+          nightDiffPay: payroll.nightDiffPay || 0,
+          overtimeRegular: payroll.overtimeRegular || 0,
+          overtimeRestDay: payroll.overtimeRestDay || 0,
+          overtimeRestDayExcess: payroll.overtimeRestDayExcess || 0,
+          overtimeSpecialHoliday: payroll.overtimeSpecialHoliday || 0,
+          overtimeSpecialHolidayExcess:
+            payroll.overtimeSpecialHolidayExcess || 0,
+          overtimeLegalHoliday: payroll.overtimeLegalHoliday || 0,
+          overtimeLegalHolidayExcess: payroll.overtimeLegalHolidayExcess || 0,
+          lateDeduction,
+          undertimeDeduction,
+          absentDeduction,
+          incentives,
+          totalIncentives,
+          nonTaxableAllowance,
+          deductions,
+          totalDeductions,
+          grossPay,
+          netPay,
+        });
+      }
+      setEditPreviewData(preview);
+      setEditPayrollStep(5);
+    } catch (error) {
+      console.error("Error computing edit preview:", error);
+      toast({
+        title: "Error",
+        description: "Failed to compute preview",
+        variant: "destructive",
+      });
+    } finally {
+      setIsComputingEditPreview(false);
+    }
+  };
+
   const handleSubmit = async (status: "draft" | "finalized" = "draft") => {
     if (!currentOrganizationId) return;
 
@@ -1419,9 +1681,12 @@ export default function PayrollPageClient({
     }
   };
 
-  const handleSavePayrollRun = async () => {
+  const handleSavePayrollRun = async (
+    status: "draft" | "finalized" = "draft",
+  ) => {
     if (!editingPayrollRun || !currentOrganizationId) return;
 
+    setEditSubmitStatus(status);
     setIsSavingPayrollRun(true);
     try {
       const manualDeductions = editEmployeeDeductions.filter(
@@ -1446,12 +1711,19 @@ export default function PayrollPageClient({
         incentives: incentives.length > 0 ? incentives : undefined,
       });
 
+      if (status === "finalized") {
+        await updatePayrollRunStatus(editingPayrollRun._id, "finalized");
+      }
+
       setIsEditPayrollRunOpen(false);
       setEditingPayrollRun(null);
       await loadPayrollRuns();
       toast({
         title: "Success",
-        description: "Payroll run updated successfully!",
+        description:
+          status === "finalized"
+            ? "Payroll run updated and finalized successfully!"
+            : "Payroll run updated successfully!",
       });
     } catch (error: any) {
       console.error("Error updating payroll run:", error);
@@ -1463,6 +1735,7 @@ export default function PayrollPageClient({
       });
     } finally {
       setIsSavingPayrollRun(false);
+      setEditSubmitStatus("idle");
     }
   };
 
@@ -1476,6 +1749,7 @@ export default function PayrollPageClient({
               Manage payroll processing and payslips
             </p>
           </div>
+          {activeTab === "regular" && (
           <Dialog
             open={isDialogOpen}
             onOpenChange={(open) => {
@@ -1489,9 +1763,11 @@ export default function PayrollPageClient({
                 Process Payroll
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Process Payroll</DialogTitle>
+                <div className="mt-4 overflow-x-auto pb-2 -mx-1 min-w-0">
+                  <div className="min-w-[560px]">
                 <Stepper
                   currentStep={currentStep}
                   steps={[
@@ -1501,8 +1777,9 @@ export default function PayrollPageClient({
                     { title: "Deductions & Incentives" },
                     { title: "Preview & Confirm" },
                   ]}
-                  className="mt-4"
                 />
+                  </div>
+                </div>
               </DialogHeader>
 
               {/* Step 1: Dates */}
@@ -1723,8 +2000,42 @@ export default function PayrollPageClient({
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          )}
         </div>
 
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) =>
+            setActiveTab(
+              v === "13th_month"
+                ? "13th_month"
+                : v === "leave_conversion"
+                  ? "leave_conversion"
+                  : "regular",
+            )
+          }
+        >
+          <TabsList className="mb-4 h-8 p-1">
+            <TabsTrigger
+              value="regular"
+              className="px-2.5 py-1 text-xs"
+            >
+              Regular Payroll
+            </TabsTrigger>
+            <TabsTrigger
+              value="13th_month"
+              className="px-2.5 py-1 text-xs"
+            >
+              13th Month
+            </TabsTrigger>
+            <TabsTrigger
+              value="leave_conversion"
+              className="px-2.5 py-1 text-xs"
+            >
+              Leave Conversion
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="regular">
         <Card>
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-4 space-y-0">
             <CardTitle>Payroll Runs</CardTitle>
@@ -1785,6 +2096,36 @@ export default function PayrollPageClient({
             )}
           </CardContent>
         </Card>
+          </TabsContent>
+          <TabsContent value="13th_month">
+            {effectiveOrganizationId && (
+              <ThirteenthMonthTab
+                organizationId={effectiveOrganizationId}
+                payrollRuns={payrollRuns}
+                onLoadPayrollRuns={loadPayrollRuns}
+                onViewSummary={handleViewSummary}
+                onViewPayslips={handleViewPayslips}
+                onEdit={handleEditPayrollRun}
+                onStatusChange={handleStatusChange}
+                onDelete={handleDeletePayrollRun}
+              />
+            )}
+          </TabsContent>
+          <TabsContent value="leave_conversion">
+            {effectiveOrganizationId && (
+              <LeaveConversionTab
+                organizationId={effectiveOrganizationId}
+                payrollRuns={payrollRuns}
+                onLoadPayrollRuns={loadPayrollRuns}
+                onViewSummary={handleViewSummary}
+                onViewPayslips={handleViewPayslips}
+                onEdit={handleEditPayrollRun}
+                onStatusChange={handleStatusChange}
+                onDelete={handleDeletePayrollRun}
+              />
+            )}
+          </TabsContent>
+        </Tabs>
 
         {/* View Payslips Dialog - lazy loaded */}
         {isViewPayslipsOpen && (
@@ -1812,7 +2153,6 @@ export default function PayrollPageClient({
               editingPayslip={editingPayslip}
               editDeductions={editDeductions}
               editIncentives={editIncentives}
-              editNonTaxableAllowance={editNonTaxableAllowance}
               isSavingPayslip={isSavingPayslip}
               onAddDeduction={addEditDeduction}
               onRemoveDeduction={removeEditDeduction}
@@ -1820,7 +2160,6 @@ export default function PayrollPageClient({
               onAddIncentive={addEditIncentive}
               onRemoveIncentive={removeEditIncentive}
               onUpdateIncentive={updateEditIncentive}
-              onNonTaxableChange={setEditNonTaxableAllowance}
               onSave={handleSavePayslip}
             />
           </Suspense>
@@ -1905,6 +2244,9 @@ export default function PayrollPageClient({
                   setEditGovernmentDeductionSettings([]);
                   setEditEmployeeDeductions([]);
                   setEditEmployeeIncentives([]);
+                  setEditPreviewData([]);
+                  setEditPreviewDeductionOverrides({});
+                  setEditSubmitStatus("idle");
                 }
               }}
               employees={employees || []}
@@ -1917,6 +2259,13 @@ export default function PayrollPageClient({
               editGovernmentDeductionSettings={editGovernmentDeductionSettings}
               editEmployeeDeductions={editEmployeeDeductions}
               editEmployeeIncentives={editEmployeeIncentives}
+              editPreviewData={editPreviewData}
+              editPreviewDeductionOverrides={editPreviewDeductionOverrides}
+              setEditPreviewDeductionOverrides={setEditPreviewDeductionOverrides}
+              currentOrganization={currentOrganization}
+              canEditPreviewDeductions={canEditPreviewDeductions}
+              isComputingEditPreview={isComputingEditPreview}
+              onComputeEditPreview={computeEditPreview}
               isSavingPayrollRun={isSavingPayrollRun}
               onCutoffStartChange={setEditCutoffStart}
               onCutoffEndChange={setEditCutoffEnd}
@@ -1957,6 +2306,7 @@ export default function PayrollPageClient({
               setEditEmployeeDeductions={setEditEmployeeDeductions}
               setEditEmployeeIncentives={setEditEmployeeIncentives}
               onSavePayrollRun={handleSavePayrollRun}
+              editSubmitStatus={editSubmitStatus}
               toast={toast}
             />
           </Suspense>

@@ -28,17 +28,6 @@ export async function updatePayrollSettings(data: {
 
 export async function updateLeaveTypes(data: {
   organizationId: string;
-  leaveTypes: Array<{
-    type: string;
-    name: string;
-    defaultCredits: number;
-    isPaid: boolean;
-    requiresApproval: boolean;
-    maxConsecutiveDays?: number;
-    carryOver?: boolean;
-    maxCarryOver?: number;
-    isAnniversary?: boolean;
-  }>;
   proratedLeave?: boolean;
   annualSil?: number;
   grantLeaveUponRegularization?: boolean;

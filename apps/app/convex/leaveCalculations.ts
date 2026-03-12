@@ -126,10 +126,14 @@ export function calculateAnniversaryLeaveFromHire(
 
 /**
  * Get the number of convertible leave days
- * First 5 leaves are convertible to cash
+ * @param totalLeave - Total leave balance
+ * @param maxDays - Max days convertible to cash (default 5)
  */
-export function getConvertibleLeaveDays(totalLeave: number): number {
-  return Math.min(5, Math.max(0, totalLeave));
+export function getConvertibleLeaveDays(
+  totalLeave: number,
+  maxDays: number = 5,
+): number {
+  return Math.min(maxDays, Math.max(0, totalLeave));
 }
 
 /**

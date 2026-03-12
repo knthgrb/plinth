@@ -1422,6 +1422,7 @@ export const createPayrollRun = mutation({
         payrollRunId,
         period,
         grossPay: round2(grossPay),
+        basicPay: round2(payrollBase.basicPay),
         deductions: deductions.map((d) => ({
           ...d,
           amount: round2(d.amount),
@@ -1982,6 +1983,7 @@ export const updatePayrollRun = mutation({
           payrollRunId: args.payrollRunId,
           period,
           grossPay: round2(grossPay),
+          basicPay: round2(payrollBase.basicPay),
           deductions: deductions.map((d) => ({
             ...d,
             amount: round2(d.amount),
@@ -2550,18 +2552,513 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
 export const getPayrollRuns = query({
   args: {
     organizationId: v.id("organizations"),
+    /** Filter by run type. When "13th_month", returns only 13th month runs. */
+    runType: v.optional(v.union(v.literal("regular"), v.literal("13th_month"))),
+    /** For 13th month: filter by year (e.g. 2025) */
+    year: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
 
-    const runs = await (ctx.db.query("payrollRuns") as any)
+    let runs = await (ctx.db.query("payrollRuns") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
 
+    if (args.runType) {
+      runs = runs.filter((r: any) => (r.runType ?? "regular") === args.runType);
+    }
+    if (args.year != null) {
+      runs = runs.filter((r: any) => r.year === args.year);
+    }
+
     runs.sort((a: any, b: any) => b.createdAt - a.createdAt);
     return runs;
+  },
+});
+
+/** Derive basic pay from a payslip (for legacy payslips without basicPay stored). */
+function getBasicPayFromPayslip(p: any): number {
+  if (p.basicPay != null && p.basicPay > 0) return p.basicPay;
+  const overtime =
+    (p.overtimeRegular ?? 0) +
+    (p.overtimeRestDay ?? 0) +
+    (p.overtimeRestDayExcess ?? 0) +
+    (p.overtimeSpecialHoliday ?? 0) +
+    (p.overtimeSpecialHolidayExcess ?? 0) +
+    (p.overtimeLegalHoliday ?? 0) +
+    (p.overtimeLegalHolidayExcess ?? 0);
+  const incentives = (p.incentives ?? []).reduce(
+    (s: number, i: any) => s + (i.amount ?? 0),
+    0,
+  );
+  return (
+    (p.grossPay ?? 0) -
+    (p.holidayPay ?? 0) -
+    (p.nightDiffPay ?? 0) -
+    (p.restDayPay ?? 0) -
+    overtime -
+    incentives
+  );
+}
+
+/** Compute 13th month amounts for employees. 13th month = total basic pay for year / 12. */
+export const compute13thMonthAmounts = query({
+  args: {
+    organizationId: v.id("organizations"),
+    year: v.number(),
+    employeeIds: v.optional(v.array(v.id("employees"))),
+  },
+  handler: async (ctx, args) => {
+    await checkAuth(ctx, args.organizationId);
+    return compute13thMonthAmountsInternal(ctx, {
+      organizationId: args.organizationId,
+      year: args.year,
+      employeeIds: args.employeeIds,
+    });
+  },
+});
+
+/** Internal helper: compute 13th month amounts. Used by both query and mutation. */
+async function compute13thMonthAmountsInternal(
+  ctx: any,
+  args: {
+    organizationId: any;
+    year: number;
+    employeeIds?: any[];
+  },
+): Promise<Array<{ employeeId: any; employee: any; totalBasicPay: number; thirteenthMonthAmount: number }>> {
+  const org = await ctx.db.get(args.organizationId);
+  const payFrequency = getOrganizationPayFrequency(org);
+  const yearStart = new Date(args.year, 0, 1).getTime();
+  const yearEnd = new Date(args.year, 11, 31, 23, 59, 59, 999).getTime();
+
+  const employees = await (ctx.db.query("employees") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", args.organizationId),
+    )
+    .collect();
+
+  const employeeIds =
+    args.employeeIds && args.employeeIds.length > 0
+      ? args.employeeIds
+      : employees.map((e: any) => e._id);
+
+  const payrollRuns = await (ctx.db.query("payrollRuns") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", args.organizationId),
+    )
+    .collect();
+
+  const regularRuns = payrollRuns.filter(
+    (r: any) => (r.runType ?? "regular") !== "13th_month",
+  );
+  const runIds = new Set(regularRuns.map((r: any) => r._id));
+
+  const allPayslips = await (ctx.db.query("payslips") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", args.organizationId),
+    )
+    .collect();
+
+  const results: Array<{
+    employeeId: any;
+    employee: any;
+    totalBasicPay: number;
+    thirteenthMonthAmount: number;
+  }> = [];
+
+  const rates = await getPayrollRates(ctx, args.organizationId);
+  const holidays = await (ctx.db.query("holidays") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", args.organizationId),
+    )
+    .collect();
+  const leaveTypes = await (ctx.db.query("leaveTypes") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", args.organizationId),
+    )
+    .collect();
+
+  for (const employeeId of employeeIds) {
+    const employee = employees.find((e: any) => e._id === employeeId);
+    if (!employee) continue;
+
+    let totalBasicPay = 0;
+
+    const empPayslips = allPayslips.filter(
+      (p: any) =>
+        p.employeeId === employeeId &&
+        runIds.has(p.payrollRunId) &&
+        (() => {
+          const run = regularRuns.find((r: any) => r._id === p.payrollRunId);
+          return run && run.cutoffStart >= yearStart && run.cutoffEnd <= yearEnd;
+        })(),
+    );
+
+    if (empPayslips.length > 0) {
+      for (const p of empPayslips) {
+        totalBasicPay += Math.max(0, getBasicPayFromPayslip(p));
+      }
+    } else {
+      const cutoffs: { start: number; end: number }[] = [];
+      if (payFrequency === "monthly") {
+        for (let m = 0; m < 12; m++) {
+          cutoffs.push({
+            start: new Date(args.year, m, 1).getTime(),
+            end: new Date(args.year, m + 1, 0, 23, 59, 59, 999).getTime(),
+          });
+        }
+      } else {
+        for (let m = 0; m < 12; m++) {
+          cutoffs.push({
+            start: new Date(args.year, m, 1).getTime(),
+            end: new Date(args.year, m, 15, 23, 59, 59, 999).getTime(),
+          });
+          cutoffs.push({
+            start: new Date(args.year, m, 16).getTime(),
+            end: new Date(args.year, m + 1, 0, 23, 59, 59, 999).getTime(),
+          });
+        }
+      }
+      for (const { start, end } of cutoffs) {
+        if (end > yearEnd) continue;
+        const base = await buildEmployeePayrollBase(ctx, {
+          employee,
+          cutoffStart: start,
+          cutoffEnd: end,
+          payFrequency,
+          payrollRates: rates,
+          holidays,
+          leaveTypes,
+        });
+        totalBasicPay += base.basicPay;
+      }
+    }
+
+    const thirteenthMonthAmount = round2(totalBasicPay / 12);
+    results.push({
+      employeeId,
+      employee,
+      totalBasicPay: round2(totalBasicPay),
+      thirteenthMonthAmount,
+    });
+  }
+
+  return results;
+}
+
+/** Create a 13th month payroll run. No gov deductions for 13th month (tax exempt up to 90k). */
+export const create13thMonthRun = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    year: v.number(),
+    employeeIds: v.array(v.id("employees")),
+  },
+  handler: async (ctx, args) => {
+    const userRecord = await checkAuth(ctx, args.organizationId);
+
+    const amounts = await compute13thMonthAmountsInternal(ctx, {
+      organizationId: args.organizationId,
+      year: args.year,
+      employeeIds: args.employeeIds,
+    });
+
+    const amountMap = new Map(
+      amounts.map((a: any) => [a.employeeId, a.thirteenthMonthAmount]),
+    );
+
+    const yearStart = new Date(args.year, 0, 1).getTime();
+    const yearEnd = new Date(args.year, 11, 31, 23, 59, 59, 999).getTime();
+
+    const now = Date.now();
+    const period = `13th Month Pay ${args.year}`;
+
+    const payrollRunId = await ctx.db.insert("payrollRuns", {
+      organizationId: args.organizationId,
+      cutoffStart: yearStart,
+      cutoffEnd: yearEnd,
+      period,
+      runType: "13th_month",
+      year: args.year,
+      status: "draft",
+      processedBy: userRecord._id,
+      deductionsEnabled: false,
+      draftConfig: { employeeIds: args.employeeIds },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    for (const employeeId of args.employeeIds) {
+      const amt = amountMap.get(employeeId) ?? 0;
+      if (amt <= 0) continue;
+
+      await ctx.db.insert("payslips", {
+        organizationId: args.organizationId,
+        employeeId,
+        payrollRunId,
+        period,
+        grossPay: amt,
+        basicPay: amt,
+        deductions: [],
+        netPay: amt,
+        daysWorked: 0,
+        absences: 0,
+        lateHours: 0,
+        undertimeHours: 0,
+        overtimeHours: 0,
+        createdAt: now,
+      });
+    }
+
+    await ctx.db.patch(payrollRunId, {
+      processedAt: now,
+      updatedAt: now,
+    });
+
+    return payrollRunId;
+  },
+});
+
+async function computeLeaveConversionAmountsInternal(
+  ctx: any,
+  args: {
+    organizationId: any;
+    year: number;
+    employeeIds: any[];
+  },
+) {
+    await checkAuth(ctx, args.organizationId);
+
+    const settings = await (ctx.db.query("settings") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .first();
+
+    const employees = await (ctx.db.query("employees") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .collect();
+
+    const employeeIds =
+      args.employeeIds ??
+      employees.filter((e: any) => e.employment?.status === "active").map((e: any) => e._id);
+
+    const byYear = settings?.leaveTrackerByYear ?? [];
+    const yearData = byYear.find((e: any) => e.year === args.year);
+    const legacyRows = settings?.leaveTrackerRows ?? [];
+    const currentYear = new Date().getFullYear();
+    const rowsForYear =
+      yearData?.rows ??
+      (args.year === currentYear ? legacyRows : []);
+
+    const rowsMap = new Map(
+      rowsForYear.map((r: any) => [r.employeeId, r]),
+    );
+
+    const annualSil = settings?.annualSil ?? 8;
+    const proratedLeave = settings?.proratedLeave !== false;
+    const grantLeaveUponRegularization =
+      settings?.grantLeaveUponRegularization !== false;
+    const maxConvertibleLeaveDays = settings?.maxConvertibleLeaveDays ?? 5;
+
+    const referenceDate = new Date(args.year, 11, 31).getTime();
+
+    function getCompletedYearsSince(startDate: number | undefined, ref: number) {
+      if (!startDate) return 0;
+      const start = new Date(startDate);
+      const end = new Date(ref);
+      let years = end.getFullYear() - start.getFullYear();
+      const monthDiff = end.getMonth() - start.getMonth();
+      const dayDiff = end.getDate() - start.getDate();
+      if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) years -= 1;
+      return Math.max(0, years);
+    }
+
+    function getAccrualStartMonth(startDate: number) {
+      const date = new Date(startDate);
+      const month = date.getMonth() + 1;
+      return date.getDate() <= 15 ? month : month + 1;
+    }
+
+    function getProratedAnnualSil(
+      base: number,
+      startDate: number | undefined,
+      ref: number,
+    ) {
+      if (!startDate) return base;
+      const start = new Date(startDate);
+      const refDate = new Date(ref);
+      if (start.getFullYear() < refDate.getFullYear()) return base;
+      if (start.getFullYear() > refDate.getFullYear()) return 0;
+      const accrualStartMonth = getAccrualStartMonth(startDate);
+      if (accrualStartMonth > 12) return 0;
+      const monthsRemaining = 13 - accrualStartMonth;
+      return Math.round((base / 12) * monthsRemaining * 100) / 100;
+    }
+
+    const amounts = await compute13thMonthAmountsInternal(ctx, {
+      organizationId: args.organizationId,
+      year: args.year,
+      employeeIds,
+    });
+
+    const workingDaysPerYear = 261;
+    const results: Array<{
+      employeeId: any;
+      employee: any;
+      convertibleDays: number;
+      dailyRate: number;
+      leaveConversionAmount: number;
+    }> = [];
+
+    for (const empId of employeeIds) {
+      const employee = employees.find((e: any) => e._id === empId);
+      if (!employee) continue;
+
+      const amt13 = amounts.find((a: any) => a.employeeId === empId);
+      const totalBasicPay = amt13?.totalBasicPay ?? 0;
+      const dailyRate =
+        totalBasicPay > 0 ? totalBasicPay / workingDaysPerYear : 0;
+
+      const regDate =
+        employee?.employment?.regularizationDate ?? employee?.employment?.hireDate;
+      const hireDate = employee?.employment?.hireDate;
+      const prorationStart =
+        grantLeaveUponRegularization && regDate ? regDate : hireDate;
+
+      const formulaAnnualSil = proratedLeave
+        ? getProratedAnnualSil(annualSil, prorationStart, referenceDate)
+        : annualSil;
+      const anniversaryLeave = getCompletedYearsSince(regDate, referenceDate);
+
+      const savedRow = rowsMap.get(empId) as
+        | { annualSilOverride?: number; availed?: number }
+        | undefined;
+      const annualSilValue = savedRow?.annualSilOverride ?? formulaAnnualSil;
+      const defaultAvailed =
+        args.year < currentYear
+          ? 0
+          : (employee?.leaveCredits?.vacation?.used ?? 0) +
+            (employee?.leaveCredits?.sick?.used ?? 0);
+      const availed = savedRow?.availed ?? defaultAvailed;
+
+      const total = Math.round((annualSilValue + anniversaryLeave) * 100) / 100;
+      const balance = Math.max(0, Math.round((total - availed) * 100) / 100);
+      const convertibleDays = Math.min(maxConvertibleLeaveDays, balance);
+      const leaveConversionAmount = round2(convertibleDays * dailyRate);
+
+      results.push({
+        employeeId: empId,
+        employee,
+        convertibleDays,
+        dailyRate: round2(dailyRate),
+        leaveConversionAmount,
+      });
+    }
+
+    return results;
+}
+
+/** Compute leave conversion amounts: first 5 days of unused leave × daily rate. */
+export const computeLeaveConversionAmounts = query({
+  args: {
+    organizationId: v.id("organizations"),
+    year: v.number(),
+    employeeIds: v.optional(v.array(v.id("employees"))),
+  },
+  handler: async (ctx, args) => {
+    await checkAuth(ctx, args.organizationId);
+    const employees = await (ctx.db.query("employees") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .collect();
+    const employeeIds =
+      args.employeeIds ??
+      employees
+        .filter((e: any) => e.employment?.status === "active")
+        .map((e: any) => e._id);
+    return computeLeaveConversionAmountsInternal(ctx, {
+      organizationId: args.organizationId,
+      year: args.year,
+      employeeIds,
+    });
+  },
+});
+
+/** Create a leave conversion payroll run. No gov deductions. */
+export const createLeaveConversionRun = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    year: v.number(),
+    employeeIds: v.array(v.id("employees")),
+  },
+  handler: async (ctx, args) => {
+    const userRecord = await checkAuth(ctx, args.organizationId);
+
+    const amounts = await computeLeaveConversionAmountsInternal(ctx, {
+      organizationId: args.organizationId,
+      year: args.year,
+      employeeIds: args.employeeIds,
+    });
+
+    const amountMap = new Map(
+      amounts.map((a: any) => [a.employeeId, a.leaveConversionAmount]),
+    );
+
+    const yearStart = new Date(args.year, 0, 1).getTime();
+    const yearEnd = new Date(args.year, 11, 31, 23, 59, 59, 999).getTime();
+
+    const now = Date.now();
+    const period = `Leave Conversion ${args.year}`;
+
+    const payrollRunId = await ctx.db.insert("payrollRuns", {
+      organizationId: args.organizationId,
+      cutoffStart: yearStart,
+      cutoffEnd: yearEnd,
+      period,
+      runType: "leave_conversion",
+      year: args.year,
+      status: "draft",
+      processedBy: userRecord._id,
+      deductionsEnabled: false,
+      draftConfig: { employeeIds: args.employeeIds },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    for (const employeeId of args.employeeIds) {
+      const amt = amountMap.get(employeeId) ?? 0;
+      if (amt <= 0) continue;
+
+      await ctx.db.insert("payslips", {
+        organizationId: args.organizationId,
+        employeeId,
+        payrollRunId,
+        period,
+        grossPay: amt,
+        basicPay: amt,
+        deductions: [],
+        netPay: amt,
+        daysWorked: 0,
+        absences: 0,
+        lateHours: 0,
+        undertimeHours: 0,
+        overtimeHours: 0,
+        createdAt: now,
+      });
+    }
+
+    await ctx.db.patch(payrollRunId, {
+      processedAt: now,
+      updatedAt: now,
+    });
+
+    return payrollRunId;
   },
 });
 

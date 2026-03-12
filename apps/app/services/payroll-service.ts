@@ -100,11 +100,64 @@ export class PayrollService {
     );
   }
 
-  static async getPayrollRuns(organizationId: string) {
+  static async getPayrollRuns(
+    organizationId: string,
+    options?: { runType?: "regular" | "13th_month"; year?: number }
+  ) {
     const convex = await getAuthedConvexClient();
     return await (convex.query as any)((api as any).payroll.getPayrollRuns, {
       organizationId: organizationId as Id<"organizations">,
+      runType: options?.runType,
+      year: options?.year,
     });
+  }
+
+  static async compute13thMonthAmounts(data: {
+    organizationId: string;
+    year: number;
+    employeeIds?: string[];
+  }) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.query as any)(
+      (api as any).payroll.compute13thMonthAmounts,
+      {
+        organizationId: data.organizationId as Id<"organizations">,
+        year: data.year,
+        employeeIds: data.employeeIds?.map((id) => id as Id<"employees">),
+      }
+    );
+  }
+
+  static async create13thMonthRun(data: {
+    organizationId: string;
+    year: number;
+    employeeIds: string[];
+  }) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.mutation as any)(
+      (api as any).payroll.create13thMonthRun,
+      {
+        organizationId: data.organizationId as Id<"organizations">,
+        year: data.year,
+        employeeIds: data.employeeIds as Id<"employees">[],
+      }
+    );
+  }
+
+  static async createLeaveConversionRun(data: {
+    organizationId: string;
+    year: number;
+    employeeIds: string[];
+  }) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.mutation as any)(
+      (api as any).payroll.createLeaveConversionRun,
+      {
+        organizationId: data.organizationId as Id<"organizations">,
+        year: data.year,
+        employeeIds: data.employeeIds as Id<"employees">[],
+      }
+    );
   }
 
   static async getPayslipsByPayrollRun(payrollRunId: string) {

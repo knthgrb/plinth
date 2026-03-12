@@ -34,12 +34,17 @@ interface AdjustCreditsDialogProps {
   onSuccess?: () => void;
 }
 
+const DEFAULT_LEAVE_TYPES: OrgLeaveType[] = [
+  { type: "vacation", name: "Vacation" },
+  { type: "sick", name: "Sick" },
+];
+
 export function AdjustCreditsDialog({
   isOpen,
   onOpenChange,
   organizationId,
   employeeId,
-  leaveTypes = [],
+  leaveTypes = DEFAULT_LEAVE_TYPES,
   onSuccess,
 }: AdjustCreditsDialogProps) {
   const { toast } = useToast();
@@ -135,12 +140,7 @@ export function AdjustCreditsDialog({
         <div className="space-y-4 py-4">
           <div className="space-y-2">
             <Label htmlFor="adjustLeaveType">Leave Type</Label>
-            {leaveTypes.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No leave types configured. Add leave types in Settings.
-              </p>
-            ) : (
-              <Select
+            <Select
                 value={selectedType}
                 onValueChange={(value) =>
                   setAdjustmentData({ ...adjustmentData, selectedType: value })
@@ -157,7 +157,6 @@ export function AdjustCreditsDialog({
                   ))}
                 </SelectContent>
               </Select>
-            )}
           </div>
           <div className="space-y-2">
             <Label htmlFor="adjustment">
@@ -210,7 +209,7 @@ export function AdjustCreditsDialog({
           >
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={leaveTypes.length === 0}>
+          <Button onClick={handleSubmit}>
             Save Adjustment
           </Button>
         </DialogFooter>

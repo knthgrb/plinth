@@ -3,6 +3,13 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { useMutation } from "convex/react";
 import { RotateCcw, Save } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -64,6 +71,8 @@ interface LeaveTrackerTabProps {
   annualSil?: number;
   grantLeaveUponRegularization?: boolean;
   savedRows?: TrackerOverride[];
+  /** Rows keyed by year; used when leaveTrackerByYear is available */
+  savedRowsByYear?: Record<number, TrackerOverride[]>;
 }
 
 function roundToTwo(value: number) {
@@ -160,18 +169,28 @@ export function LeaveTrackerTab({
   annualSil = 8,
   grantLeaveUponRegularization = true,
   savedRows,
+  savedRowsByYear,
 }: LeaveTrackerTabProps) {
   const { toast } = useToast();
   const updateLeaveTracker = useMutation(api.settings.updateLeaveTracker);
+  const currentYear = new Date().getFullYear();
+  const [selectedYear, setSelectedYear] = useState(currentYear);
   const [isSaving, setIsSaving] = useState(false);
   const [draftRows, setDraftRows] = useState<Record<string, DraftRow>>({});
-  const [referenceDate] = useState(() => Date.now());
+
+  // Reference date: end of selected year for historical tracking
+  const referenceDate = useMemo(() => {
+    return new Date(selectedYear, 11, 31).getTime();
+  }, [selectedYear]);
 
   const currentMonthNumber = new Date(referenceDate).getMonth() + 1;
 
   const savedRowsMap = useMemo(() => {
-    return Object.fromEntries((savedRows || []).map((row) => [row.employeeId, row]));
-  }, [savedRows]);
+    const rows =
+      savedRowsByYear?.[selectedYear] ??
+      (selectedYear === currentYear ? savedRows ?? [] : []);
+    return Object.fromEntries((rows || []).map((row) => [row.employeeId, row]));
+  }, [savedRows, savedRowsByYear, selectedYear, currentYear]);
 
   const sortedEmployees = useMemo(() => {
     return [...(employees || [])].sort((left, right) =>
@@ -199,10 +218,14 @@ export function LeaveTrackerTab({
         regularizationDate,
         referenceDate,
       );
-      const defaultAvailed = roundToTwo(
-        Number(employee?.leaveCredits?.vacation?.used || 0) +
-          Number(employee?.leaveCredits?.sick?.used || 0),
-      );
+      // For current year use cumulative used; for past years with no saved data use 0
+      const defaultAvailed =
+        selectedYear < currentYear
+          ? 0
+          : roundToTwo(
+              Number(employee?.leaveCredits?.vacation?.used || 0) +
+                Number(employee?.leaveCredits?.sick?.used || 0),
+            );
 
       const savedRow = savedRowsMap[employeeId];
       const annualSilValue =
@@ -224,10 +247,12 @@ export function LeaveTrackerTab({
     });
   }, [
     annualSil,
+    currentYear,
     grantLeaveUponRegularization,
     proratedLeave,
     referenceDate,
     savedRowsMap,
+    selectedYear,
     sortedEmployees,
   ]);
 
@@ -343,6 +368,7 @@ export function LeaveTrackerTab({
     try {
       await updateLeaveTracker({
         organizationId: organizationId as Id<"organizations">,
+        year: selectedYear,
         rows: rowsToPersist.map((row) => ({
           employeeId: row.employeeId as Id<"employees">,
           annualSilOverride: row.annualSilOverride,
@@ -374,13 +400,22 @@ export function LeaveTrackerTab({
     );
   }
 
+  const yearOptions = useMemo(() => {
+    const years: number[] = [];
+    for (let y = currentYear; y >= currentYear - 10; y--) {
+      years.push(y);
+    }
+    return years;
+  }, [currentYear]);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 rounded-lg border border-[rgb(230,230,230)] bg-[rgb(250,250,250)] p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="space-y-1">
-          <p className="text-sm font-medium text-[rgb(64,64,64)]">
-            Leave tracker formulas
-          </p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-[rgb(64,64,64)]">
+              Leave tracker formulas
+            </p>
           <p className="text-xs text-[rgb(133,133,133)]">
             Annual SIL defaults to {formatNumber(annualSil)} from settings.
             {proratedLeave
@@ -392,6 +427,25 @@ export function LeaveTrackerTab({
             `Monthly Accrual = Total / 12`, `Accrued = Monthly Accrual x current
             month number`, and `Balance = Accrued - Availed`.
           </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-[rgb(64,64,64)]">Year</span>
+            <Select
+              value={String(selectedYear)}
+              onValueChange={(v) => setSelectedYear(Number(v))}
+            >
+              <SelectTrigger className="w-[100px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {yearOptions.map((y) => (
+                  <SelectItem key={y} value={String(y)}>
+                    {y}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
         <Button
           onClick={handleSave}

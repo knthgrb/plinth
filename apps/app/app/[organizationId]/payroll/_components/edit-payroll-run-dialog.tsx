@@ -10,11 +10,12 @@ import {
 } from "@/components/ui/dialog";
 import { Stepper } from "@/components/ui/stepper";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { EditPayrollStep1Dates } from "./edit-payroll-step-1-dates";
 import { PayrollStep2Employees } from "./payroll-step-2-employees";
 import { PayrollStep3GovernmentDeductions } from "./payroll-step-3-government-deductions";
 import { PayrollStep4DeductionsIncentives } from "./payroll-step-4-deductions-incentives";
+import { PayrollStep5Preview } from "./payroll-step-5-preview";
 
 import type { GovernmentDeductionSettings } from "./payroll-step-3-government-deductions";
 
@@ -57,7 +58,17 @@ interface EditPayrollRunDialogProps {
   ) => void;
   setEditEmployeeDeductions: (deductions: EmployeeDeduction[]) => void;
   setEditEmployeeIncentives: (incentives: EmployeeIncentive[]) => void;
-  onSavePayrollRun: () => void;
+  editPreviewData?: any[];
+  editPreviewDeductionOverrides?: Record<string, Record<string, number>>;
+  setEditPreviewDeductionOverrides?: React.Dispatch<
+    React.SetStateAction<Record<string, Record<string, number>>>
+  >;
+  currentOrganization?: any;
+  canEditPreviewDeductions?: boolean;
+  isComputingEditPreview?: boolean;
+  onComputeEditPreview?: () => Promise<void>;
+  onSavePayrollRun: (status: "draft" | "finalized") => void;
+  editSubmitStatus?: "idle" | "draft" | "finalized";
   toast: (opts: {
     title: string;
     description: string;
@@ -87,7 +98,15 @@ export function EditPayrollRunDialog({
   setEditGovernmentDeductionSettings,
   setEditEmployeeDeductions,
   setEditEmployeeIncentives,
+  editPreviewData = [],
+  editPreviewDeductionOverrides = {},
+  setEditPreviewDeductionOverrides,
+  currentOrganization,
+  canEditPreviewDeductions = false,
+  isComputingEditPreview = false,
+  onComputeEditPreview,
   onSavePayrollRun,
+  editSubmitStatus = "idle",
   toast,
 }: EditPayrollRunDialogProps) {
   const handleSelectAll = () => {
@@ -126,7 +145,7 @@ export function EditPayrollRunDialog({
     }
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (editPayrollStep === 1) {
       if (!editCutoffStart || !editCutoffEnd) {
         toast({
@@ -149,24 +168,30 @@ export function EditPayrollRunDialog({
       setEditPayrollStep(3);
     } else if (editPayrollStep === 3) {
       setEditPayrollStep(4);
+    } else if (editPayrollStep === 4) {
+      await onComputeEditPreview?.();
     }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit Payroll Run</DialogTitle>
-          <Stepper
-            currentStep={editPayrollStep}
-            steps={[
-              { title: "Select Period" },
-              { title: "Select Employees" },
-              { title: "Government Deductions" },
-              { title: "Deductions & Incentives" },
-            ]}
-            className="mt-4"
-          />
+          <div className="mt-4 overflow-x-auto pb-2 -mx-1 min-w-0">
+            <div className="min-w-[560px]">
+              <Stepper
+                currentStep={editPayrollStep}
+                steps={[
+                  { title: "Select Period" },
+                  { title: "Select Employees" },
+                  { title: "Government Deductions" },
+                  { title: "Deductions & Incentives" },
+                  { title: "Preview & Confirm" },
+                ]}
+              />
+            </div>
+          </div>
         </DialogHeader>
 
         {editPayrollStep === 1 && (
@@ -260,6 +285,86 @@ export function EditPayrollRunDialog({
               deductionsEnabled={editDeductionsEnabled}
               onDeductionsEnabledChange={setEditDeductionsEnabled}
               onUpdateGovernmentDeduction={onUpdateGovernmentDeduction}
+            />
+          </Suspense>
+        )}
+
+        {editPayrollStep === 5 && (
+          <Suspense fallback={<div className="py-4">Loading...</div>}>
+            <PayrollStep5Preview
+              previewData={editPreviewData}
+              cutoffStart={editCutoffStart}
+              cutoffEnd={editCutoffEnd}
+              currentOrganization={currentOrganization ?? {}}
+              canEditDeductions={canEditPreviewDeductions}
+              employeeDeductions={editEmployeeDeductions}
+              previewDeductionOverrides={editPreviewDeductionOverrides}
+              onAddDeduction={(employeeId: string) => {
+                const updated = editEmployeeDeductions.map((ed) => {
+                  if (ed.employeeId === employeeId) {
+                    return {
+                      ...ed,
+                      deductions: [
+                        ...ed.deductions,
+                        { name: "", amount: 0, type: "custom" },
+                      ],
+                    };
+                  }
+                  return ed;
+                });
+                if (!updated.find((ed) => ed.employeeId === employeeId)) {
+                  updated.push({
+                    employeeId,
+                    deductions: [{ name: "", amount: 0, type: "custom" }],
+                  });
+                }
+                setEditEmployeeDeductions(updated);
+              }}
+              onRemoveDeduction={(employeeId: string, index: number) => {
+                const updated = editEmployeeDeductions.map((ed) => {
+                  if (ed.employeeId === employeeId) {
+                    return {
+                      ...ed,
+                      deductions: ed.deductions.filter((_, i) => i !== index),
+                    };
+                  }
+                  return ed;
+                });
+                setEditEmployeeDeductions(updated);
+              }}
+              onUpdateDeduction={(
+                employeeId: string,
+                index: number,
+                field: "name" | "amount" | "type",
+                value: string | number,
+              ) => {
+                const updated = editEmployeeDeductions.map((ed) => {
+                  if (ed.employeeId === employeeId) {
+                    const newDeductions = [...ed.deductions];
+                    newDeductions[index] = {
+                      ...newDeductions[index],
+                      [field]: value,
+                    };
+                    return { ...ed, deductions: newDeductions };
+                  }
+                  return ed;
+                });
+                setEditEmployeeDeductions(updated);
+              }}
+              onOverrideDeductionAmount={(
+                employeeId: string,
+                deductionName: string,
+                amount: number,
+              ) => {
+                setEditPreviewDeductionOverrides?.((prev) => ({
+                  ...prev,
+                  [employeeId]: {
+                    ...(prev[employeeId] ?? {}),
+                    [deductionName]: amount,
+                  },
+                }));
+              }}
+              onRecomputePreview={onComputeEditPreview}
             />
           </Suspense>
         )}
@@ -397,24 +502,57 @@ export function EditPayrollRunDialog({
               {editPayrollStep === 1 ? "Cancel" : "Back"}
             </Button>
             <div className="flex gap-2">
-              {editPayrollStep < 4 && (
+              {editPayrollStep < 5 && (
                 <Button
                   type="button"
                   onClick={handleNext}
-                  disabled={isSavingPayrollRun}
+                  disabled={isSavingPayrollRun || isComputingEditPreview}
                 >
-                  Next
-                  <ChevronRight className="h-4 w-4 ml-2" />
+                  {editPayrollStep === 4 && isComputingEditPreview ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Generating Payslips
+                    </>
+                  ) : (
+                    <>
+                      Next
+                      <ChevronRight className="h-4 w-4 ml-2" />
+                    </>
+                  )}
                 </Button>
               )}
-              {editPayrollStep === 4 && (
-                <Button
-                  type="button"
-                  onClick={onSavePayrollRun}
-                  disabled={isSavingPayrollRun}
-                >
-                  {isSavingPayrollRun ? "Saving..." : "Save Changes"}
-                </Button>
+              {editPayrollStep === 5 && (
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => onSavePayrollRun("draft")}
+                    disabled={isSavingPayrollRun}
+                  >
+                    {editSubmitStatus === "draft" ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      "Save as Draft"
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => onSavePayrollRun("finalized")}
+                    disabled={isSavingPayrollRun}
+                  >
+                    {editSubmitStatus === "finalized" ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Finalizing...
+                      </>
+                    ) : (
+                      "Finalize Payroll"
+                    )}
+                  </Button>
+                </div>
               )}
             </div>
           </div>

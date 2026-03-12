@@ -775,6 +775,18 @@ export default function LeavePage() {
                     settings?.grantLeaveUponRegularization ?? true
                   }
                   savedRows={settings?.leaveTrackerRows ?? []}
+                  savedRowsByYear={
+                    settings?.leaveTrackerByYear?.length
+                      ? Object.fromEntries(
+                          (
+                            settings.leaveTrackerByYear as {
+                              year: number;
+                              rows: { employeeId: string; annualSilOverride?: number; availed?: number }[];
+                            }[]
+                          ).map((e) => [e.year, e.rows])
+                        )
+                      : undefined
+                  }
                 />
               </CardContent>
             </Card>

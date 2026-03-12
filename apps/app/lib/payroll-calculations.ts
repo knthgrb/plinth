@@ -515,15 +515,28 @@ export function calculatePayrollBaseFromRecords(args: {
 
       if (holidayType === "regular" && holidayApplies) {
         // Rate is actual total (e.g. 2.0 = 200% of daily); premium = (rate - 1) * base
+        // Use actual worked hours proportion — if employee is late/undertime, only pay premium for hours actually worked
+        const hoursWorked = getHoursWorkedFromAttendance(att);
+        const scheduledHours = 8 * dayMultiplier;
+        const effectiveHoursForPremium = Math.min(hoursWorked, scheduledHours);
         const rate = payrollRates.regularHolidayRate;
         const amount =
-          holidayPremiumBase * Math.max(0, rate - 1) * dayMultiplier;
+          (effectiveHoursForPremium / scheduledHours) *
+          holidayPremiumBase *
+          Math.max(0, rate - 1) *
+          dayMultiplier;
         holidayPay += amount;
         holidayPayFromRegular += amount;
       } else if (holidayType === "special" && holidayApplies) {
+        const hoursWorked = getHoursWorkedFromAttendance(att);
+        const scheduledHours = 8 * dayMultiplier;
+        const effectiveHoursForPremium = Math.min(hoursWorked, scheduledHours);
         const rate = payrollRates.specialHolidayRate;
         const amount =
-          holidayPremiumBase * Math.max(0, rate - 1) * dayMultiplier;
+          (effectiveHoursForPremium / scheduledHours) *
+          holidayPremiumBase *
+          Math.max(0, rate - 1) *
+          dayMultiplier;
         holidayPay += amount;
         holidayPayFromSpecial += amount;
       }

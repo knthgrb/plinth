@@ -17,6 +17,7 @@ interface StepperProps {
 }
 
 export function Stepper({ steps, currentStep, className }: StepperProps) {
+  const isCompact = steps.length >= 5;
   return (
     <div className={cn("w-full", className)}>
       <div className="flex items-start">
@@ -32,7 +33,8 @@ export function Stepper({ steps, currentStep, className }: StepperProps) {
               <div className="flex flex-col items-center shrink-0">
                 <div
                   className={cn(
-                    "flex h-9 w-9 items-center justify-center rounded-full border-2 transition-colors",
+                    "flex items-center justify-center rounded-full border-2 transition-colors",
+                    isCompact ? "h-8 w-8" : "h-9 w-9",
                     isCompleted &&
                       "border-emerald-500 bg-emerald-500 text-white",
                     isCurrent &&
@@ -51,13 +53,19 @@ export function Stepper({ steps, currentStep, className }: StepperProps) {
                     <span className="text-sm font-medium">{stepNumber}</span>
                   )}
                 </div>
-                <div className="mt-2 text-center min-w-0 max-w-[90px] sm:max-w-[110px]">
+                <div
+                  className={cn(
+                    "mt-2 text-center min-w-0",
+                    isCompact ? "max-w-[85px]" : "max-w-[90px] sm:max-w-[110px]",
+                  )}
+                >
                   <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                     Step {stepNumber}
                   </p>
                   <p
                     className={cn(
-                      "mt-0.5 text-xs sm:text-sm font-semibold line-clamp-2",
+                      "mt-0.5 font-semibold line-clamp-2",
+                      isCompact ? "text-xs" : "text-xs sm:text-sm",
                       isCurrent ? "text-[#695eff]" : "text-gray-900",
                     )}
                   >
@@ -80,7 +88,8 @@ export function Stepper({ steps, currentStep, className }: StepperProps) {
               {index < steps.length - 1 && (
                 <div
                   className={cn(
-                    "flex-1 h-0.5 min-w-[16px] sm:min-w-[24px] mx-1 mt-4 transition-colors",
+                    "flex-1 h-0.5 mx-1 mt-4 transition-colors",
+                    isCompact ? "min-w-[8px]" : "min-w-[16px] sm:min-w-[24px]",
                     stepNumber < currentStep ? "bg-emerald-500" : "bg-gray-200",
                   )}
                 />

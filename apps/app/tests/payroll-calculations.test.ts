@@ -117,6 +117,37 @@ describe("payroll calculations", () => {
     expect(result.holidayPay).toBeCloseTo(1379.31, 2);
   });
 
+  it("pays holiday premium proportionally to worked hours when employee is late", () => {
+    const date = localDate(2026, 1, 20);
+    // Late 5 mins: in at 09:05, out at 18:00 → 7h55m worked (minus 1h break) = 6h55m... actually 09:05-18:00 = 8h55m - 1h break = 7h55m = 7.9167h
+    const result = calculate({
+      employee: createEmployee({
+        compensation: { basicSalary: 25_000, allowance: 10_000, salaryType: "monthly" },
+      }),
+      attendance: [
+        {
+          date,
+          status: "present",
+          actualIn: "09:05",
+          actualOut: "18:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+          lunchStart: "12:00",
+          lunchEnd: "13:00",
+          isHoliday: true,
+          holidayType: "regular",
+        },
+      ],
+      holidays: [{ date, type: "regular", isRecurring: false, year: 2026 }],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    // Daily rate = (25k+10k)*12/261 = 1611.49. Worked ~7.9h (late 5min). Premium proportional to worked hours, not full daily
+    expect(result.holidayPay).toBeCloseTo(1592.43, 2);
+    // Full day premium would be 1611.49; proportional is less due to late
+    expect(result.holidayPay).toBeLessThan(1611.49);
+  });
+
   it("uses holiday list type when holiday matches by date (source of truth)", () => {
     const date = localDate(2026, 1, 20);
     const result = calculate({

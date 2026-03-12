@@ -20,7 +20,6 @@ interface EditPayslipDialogProps {
   editingPayslip: any;
   editDeductions: Deduction[];
   editIncentives: Deduction[];
-  editNonTaxableAllowance: number;
   isSavingPayslip: boolean;
   onAddDeduction: () => void;
   onRemoveDeduction: (index: number) => void;
@@ -36,7 +35,6 @@ interface EditPayslipDialogProps {
     field: "name" | "amount" | "type",
     value: string | number
   ) => void;
-  onNonTaxableChange: (value: number) => void;
   onSave: () => void;
 }
 
@@ -46,7 +44,6 @@ export function EditPayslipDialog({
   editingPayslip,
   editDeductions,
   editIncentives,
-  editNonTaxableAllowance,
   isSavingPayslip,
   onAddDeduction,
   onRemoveDeduction,
@@ -54,7 +51,6 @@ export function EditPayslipDialog({
   onAddIncentive,
   onRemoveIncentive,
   onUpdateIncentive,
-  onNonTaxableChange,
   onSave,
 }: EditPayslipDialogProps) {
   if (!editingPayslip) return null;
@@ -183,29 +179,6 @@ export function EditPayslipDialog({
               <Plus className="h-4 w-4 mr-2" />
               Add incentive
             </Button>
-          </div>
-
-          {/* Non-taxable allowance */}
-          <div className="space-y-2">
-            <Label className="text-base">Non-taxable allowance</Label>
-            <Input
-              type="number"
-              min={0}
-              step="0.01"
-              value={editNonTaxableAllowance ?? ""}
-              onChange={(e) => {
-                const val = e.target.value;
-                if (val === "" || val === "-") {
-                  onNonTaxableChange(0);
-                } else {
-                  const numVal = parseFloat(val);
-                  if (!isNaN(numVal) && numVal >= 0) {
-                    onNonTaxableChange(numVal);
-                  }
-                }
-              }}
-              placeholder="0.00"
-            />
           </div>
         </div>
 

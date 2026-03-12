@@ -118,6 +118,7 @@ export const getSettings = query({
         proratedLeave: true,
         annualSil: 8,
         grantLeaveUponRegularization: true,
+        maxConvertibleLeaveDays: 5,
         leaveRequestFormTemplate: undefined,
         leaveTrackerRows: [],
         payrollSettings: {
@@ -136,37 +137,6 @@ export const getSettings = query({
           defaultLunchStart: "12:00",
           defaultLunchEnd: "13:00",
         },
-        leaveTypes: [
-          {
-            type: "sick",
-            name: "Sick Leave",
-            defaultCredits: 4,
-            isPaid: true,
-            requiresApproval: true,
-            maxConsecutiveDays: 30,
-            carryOver: true,
-            maxCarryOver: 5,
-          },
-          {
-            type: "vacation",
-            name: "Vacation Leave",
-            defaultCredits: 4,
-            isPaid: true,
-            requiresApproval: true,
-            maxConsecutiveDays: 30,
-            carryOver: true,
-            maxCarryOver: 5,
-          },
-          {
-            type: "emergency",
-            name: "Emergency Leave",
-            defaultCredits: 5,
-            isPaid: true,
-            requiresApproval: true,
-            maxConsecutiveDays: 7,
-            carryOver: false,
-          },
-        ],
       };
     }
 
@@ -174,6 +144,12 @@ export const getSettings = query({
       settings = {
         ...settings,
         annualSil: 8,
+      };
+    }
+    if (settings.maxConvertibleLeaveDays === undefined) {
+      settings = {
+        ...settings,
+        maxConvertibleLeaveDays: 5,
       };
     }
 
@@ -279,27 +255,16 @@ export const updateAttendanceSettings = mutation({
   },
 });
 
-// Update leave types (and optional prorated leave setting)
+// Update leave tracker settings (prorated leave, annual SIL, etc.)
+// Leave types are no longer in settings; leave is managed manually on the leave page.
 export const updateLeaveTypes = mutation({
   args: {
     organizationId: v.id("organizations"),
-    leaveTypes: v.array(
-      v.object({
-        type: v.string(),
-        name: v.string(),
-        defaultCredits: v.number(),
-        isPaid: v.boolean(),
-        requiresApproval: v.boolean(),
-        maxConsecutiveDays: v.optional(v.number()),
-        carryOver: v.optional(v.boolean()),
-        maxCarryOver: v.optional(v.number()),
-        isAnniversary: v.optional(v.boolean()),
-      }),
-    ),
     proratedLeave: v.optional(v.boolean()),
     annualSil: v.optional(v.number()),
     grantLeaveUponRegularization: v.optional(v.boolean()),
     leaveRequestFormTemplate: v.optional(v.string()),
+    maxConvertibleLeaveDays: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
@@ -311,7 +276,7 @@ export const updateLeaveTypes = mutation({
       .first();
 
     const now = Date.now();
-    const patch: any = { leaveTypes: args.leaveTypes, updatedAt: now };
+    const patch: any = { updatedAt: now };
     if (args.proratedLeave !== undefined) {
       patch.proratedLeave = args.proratedLeave;
     }
@@ -324,16 +289,19 @@ export const updateLeaveTypes = mutation({
     if (args.leaveRequestFormTemplate !== undefined) {
       patch.leaveRequestFormTemplate = args.leaveRequestFormTemplate;
     }
+    if (args.maxConvertibleLeaveDays !== undefined) {
+      patch.maxConvertibleLeaveDays = args.maxConvertibleLeaveDays;
+    }
 
     if (!settings) {
       await ctx.db.insert("settings", {
         organizationId: args.organizationId,
-        leaveTypes: args.leaveTypes,
         proratedLeave: args.proratedLeave ?? true,
         annualSil: args.annualSil ?? 8,
         grantLeaveUponRegularization:
           args.grantLeaveUponRegularization ?? true,
         leaveRequestFormTemplate: args.leaveRequestFormTemplate,
+        maxConvertibleLeaveDays: args.maxConvertibleLeaveDays ?? 5,
         createdAt: now,
         updatedAt: now,
       });
@@ -348,6 +316,7 @@ export const updateLeaveTypes = mutation({
 export const updateLeaveTracker = mutation({
   args: {
     organizationId: v.id("organizations"),
+    year: v.number(),
     rows: v.array(
       v.object({
         employeeId: v.id("employees"),
@@ -366,18 +335,24 @@ export const updateLeaveTracker = mutation({
       .first();
 
     const now = Date.now();
+    const byYear = settings?.leaveTrackerByYear ?? [];
+    const otherYears = byYear.filter((e: any) => e.year !== args.year);
+    const newByYear = [
+      ...otherYears,
+      { year: args.year, rows: args.rows },
+    ].sort((a: any, b: any) => a.year - b.year);
 
     if (!settings) {
       await ctx.db.insert("settings", {
         organizationId: args.organizationId,
         annualSil: 8,
-        leaveTrackerRows: args.rows,
+        leaveTrackerByYear: newByYear,
         createdAt: now,
         updatedAt: now,
       });
     } else {
       await ctx.db.patch(settings._id, {
-        leaveTrackerRows: args.rows,
+        leaveTrackerByYear: newByYear,
         updatedAt: now,
       });
     }

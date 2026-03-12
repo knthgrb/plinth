@@ -32,17 +32,6 @@ export class SettingsService {
 
   static async updateLeaveTypes(data: {
     organizationId: string;
-    leaveTypes: Array<{
-      type: string;
-      name: string;
-      defaultCredits: number;
-      isPaid: boolean;
-      requiresApproval: boolean;
-      maxConsecutiveDays?: number;
-      carryOver?: boolean;
-      maxCarryOver?: number;
-      isAnniversary?: boolean;
-    }>;
     proratedLeave?: boolean;
     annualSil?: number;
     grantLeaveUponRegularization?: boolean;
@@ -51,7 +40,6 @@ export class SettingsService {
     const convex = await getAuthedConvexClient();
     const args: any = {
       organizationId: data.organizationId as Id<"organizations">,
-      leaveTypes: data.leaveTypes,
     };
     if (data.proratedLeave !== undefined)
       args.proratedLeave = data.proratedLeave;

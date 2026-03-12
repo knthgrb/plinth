@@ -89,7 +89,6 @@ export default function LeaveFormTemplatePage() {
     try {
       await updateLeaveTypes({
         organizationId: currentOrganizationId,
-        leaveTypes: settings.leaveTypes ?? [],
         proratedLeave: settings.proratedLeave ?? true,
         annualSil: settings.annualSil ?? 8,
         grantLeaveUponRegularization:

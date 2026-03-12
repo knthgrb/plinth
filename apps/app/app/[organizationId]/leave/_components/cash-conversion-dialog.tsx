@@ -32,6 +32,8 @@ interface CashConversionDialogProps {
     vacation?: { convertible: number };
     sick?: { convertible: number };
   };
+  /** Max days convertible to cash (from org settings, default 5) */
+  maxConvertibleLeaveDays?: number;
   onSuccess?: () => void;
 }
 
@@ -41,6 +43,7 @@ export function CashConversionDialog({
   organizationId,
   employeeId,
   convertibleCredits,
+  maxConvertibleLeaveDays = 5,
   onSuccess,
 }: CashConversionDialogProps) {
   const { toast } = useToast();
@@ -103,8 +106,8 @@ export function CashConversionDialog({
         <DialogHeader>
           <DialogTitle>Convert Leave to Cash</DialogTitle>
           <DialogDescription>
-            Convert leave credits to cash. Only the first 5 days are
-            convertible.
+            Convert leave credits to cash. Only the first {maxConvertibleLeaveDays}{" "}
+            days are convertible.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">

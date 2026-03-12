@@ -547,13 +547,9 @@ export const getEmployeeLeaveCredits = query({
         q.eq("organizationId", args.organizationId),
       )
       .first();
-    const leaveTypesConfig = settings?.leaveTypes || [];
-    const vacationConfig = leaveTypesConfig.find(
-      (t: any) => t.type === "vacation",
-    );
-    const sickConfig = leaveTypesConfig.find((t: any) => t.type === "sick");
-    const vacationMax = vacationConfig?.defaultCredits ?? 15;
-    const sickMax = sickConfig?.defaultCredits ?? 15;
+    // Leave types no longer in settings; use defaults (manage manually on leave page)
+    const vacationMax = 15;
+    const sickMax = 15;
     const proratedLeave = settings?.proratedLeave === true;
     const grantLeaveUponRegularization =
       settings?.grantLeaveUponRegularization === true;
@@ -566,19 +562,17 @@ export const getEmployeeLeaveCredits = query({
     const now = Date.now();
 
     // Build effective leave credits: use stored values, or default structure when leave tracker is source of truth
-    const base = employee.leaveCredits || {};
+    const base = (employee.leaveCredits || {}) as {
+      vacation?: { total?: number; used?: number; balance?: number };
+      sick?: { total?: number; used?: number; balance?: number };
+      custom?: Array<{ type?: string; total?: number; used?: number; balance?: number }>;
+    };
     const leaveCredits = JSON.parse(JSON.stringify({
       vacation: base.vacation ?? { total: 0, used: 0, balance: 0 },
       sick: base.sick ?? { total: 0, used: 0, balance: 0 },
       custom: base.custom ?? [],
     }));
-    const anniversaryTypes = new Set(
-      leaveTypesConfig
-        .filter(
-          (t: any) => t.isAnniversary === true || t.type === "anniversary",
-        )
-        .map((t: any) => t.type),
-    );
+    const anniversaryTypes = new Set<string>();
     if (leaveCredits.custom && Array.isArray(leaveCredits.custom)) {
       for (const c of leaveCredits.custom) {
         if (anniversaryTypes.has(c.type)) {
@@ -589,12 +583,14 @@ export const getEmployeeLeaveCredits = query({
       }
     }
 
-    // Calculate convertible leave days (first 5 are convertible)
+    const maxConvertible = settings?.maxConvertibleLeaveDays ?? 5;
     const vacationConvertible = getConvertibleLeaveDays(
       leaveCredits.vacation?.balance ?? 0,
+      maxConvertible,
     );
     const sickConvertible = getConvertibleLeaveDays(
       leaveCredits.sick?.balance ?? 0,
+      maxConvertible,
     );
 
     const vacationProrated = proratedLeave
@@ -787,11 +783,19 @@ export const convertLeaveToCash = mutation({
       );
     }
 
-    // Check if the days to convert are within the convertible limit (first 5)
-    const convertibleDays = getConvertibleLeaveDays(targetLeave.balance);
+    const settings = await (ctx.db.query("settings") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .first();
+    const maxConvertible = settings?.maxConvertibleLeaveDays ?? 5;
+    const convertibleDays = getConvertibleLeaveDays(
+      targetLeave.balance,
+      maxConvertible,
+    );
     if (args.daysToConvert > convertibleDays) {
       throw new Error(
-        `Only the first 5 leave days are convertible to cash. Convertible: ${convertibleDays} days`,
+        `Only the first ${maxConvertible} leave days are convertible to cash. Convertible: ${convertibleDays} days`,
       );
     }
 
