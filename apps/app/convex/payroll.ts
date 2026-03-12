@@ -1005,7 +1005,13 @@ export const createPayrollRun = mutation({
             d.name !== "Undertime" &&
             !d.name.startsWith("Absent "),
         );
-        deductions = [...nonAttendance];
+        // When run has government deductions disabled, exclude them from override deductions
+        deductions =
+          deductionsEnabled === false
+            ? nonAttendance.filter(
+                (d: { name: string }) => !GOV_DEDUCTION_NAMES_CREATE.has(d.name),
+              )
+            : [...nonAttendance];
       } else {
         const monthlyBasicForTax = getMonthlyBasicForTax(
           employee,
@@ -1592,7 +1598,13 @@ export const updatePayrollRun = mutation({
               d.name !== "Undertime" &&
               !d.name.startsWith("Absent "),
           );
-          deductions = [...nonAttendance];
+          // When run has government deductions disabled, exclude them from override deductions
+          deductions =
+            runDeductionsEnabled === false
+              ? nonAttendance.filter(
+                  (d: { name: string }) => !GOV_DEDUCTION_NAMES.has(d.name),
+                )
+              : [...nonAttendance];
         } else {
           const monthlyBasicForTax = getMonthlyBasicForTax(
             employee,
