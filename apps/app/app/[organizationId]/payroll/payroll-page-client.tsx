@@ -24,6 +24,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Stepper } from "@/components/ui/stepper";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MonthPicker } from "@/components/ui/month-picker";
 import {
@@ -1491,14 +1492,17 @@ export default function PayrollPageClient({
             <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Process Payroll</DialogTitle>
-                <DialogDescription>
-                  Step {currentStep} of 5:{" "}
-                  {currentStep === 1 && "Select Period"}
-                  {currentStep === 2 && "Select Employees"}
-                  {currentStep === 3 && "Government Deductions"}
-                  {currentStep === 4 && "Deductions & Incentives"}
-                  {currentStep === 5 && "Preview & Confirm"}
-                </DialogDescription>
+                <Stepper
+                  currentStep={currentStep}
+                  steps={[
+                    { title: "Select Period" },
+                    { title: "Select Employees" },
+                    { title: "Government Deductions" },
+                    { title: "Deductions & Incentives" },
+                    { title: "Preview & Confirm" },
+                  ]}
+                  className="mt-4"
+                />
               </DialogHeader>
 
               {/* Step 1: Dates */}
@@ -1668,8 +1672,17 @@ export default function PayrollPageClient({
                         }}
                         disabled={isProcessing}
                       >
-                        Next
-                        <ChevronRight className="h-4 w-4 ml-2" />
+                        {currentStep === 4 && isProcessing ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Generating Payslips
+                          </>
+                        ) : (
+                          <>
+                            Next
+                            <ChevronRight className="h-4 w-4 ml-2" />
+                          </>
+                        )}
                       </Button>
                     )}
                     {currentStep === 5 && (

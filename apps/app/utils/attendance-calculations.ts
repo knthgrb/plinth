@@ -32,39 +32,19 @@ export function calculateLate(
 
 /**
  * Calculate undertime in hours.
- * Without lunch: early departure only (scheduleOut - actualOut).
- * With lunch: Undertime = (Required work - Actual paid work). Required = (scheduleOut - scheduleIn - lunchMinutes). Actual = (actualOut - actualIn - breakDeducted). Break deducted = overlap of [actualIn, actualOut] with [lunchStart, lunchEnd], or full lunch if worked through.
+ * Policy: Undertime = early departure only (when time out is earlier than scheduled time out).
+ * Late arrival (time in) is handled separately and is NOT counted as undertime.
  */
 export function calculateUndertime(
-  scheduleIn: string,
+  _scheduleIn: string,
   scheduleOut: string,
-  actualIn: string | undefined,
+  _actualIn: string | undefined,
   actualOut: string | undefined,
-  lunchStart?: string,
-  lunchEnd?: string,
-  lunchMinutes?: number,
 ): number {
   if (!actualOut) return 0;
 
-  const scheduleInM = timeToMins(scheduleIn);
   const scheduleOutM = timeToMins(scheduleOut);
-  const actualInM = actualIn ? timeToMins(actualIn) : 0;
   const actualOutM = timeToMins(actualOut);
-
-  if (lunchStart != null && lunchEnd != null && (lunchMinutes ?? 0) > 0) {
-    const lunchStartM = timeToMins(lunchStart);
-    const lunchEndM = timeToMins(lunchEnd);
-    const breakMins = Math.max(lunchMinutes ?? 0, Math.max(0, lunchEndM - lunchStartM));
-    const requiredWorkMins = Math.max(0, (scheduleOutM - scheduleInM) - breakMins);
-    // If they clock in at or after lunch end, do not deduct any break from their actual time (lunch is not included in their span).
-    const breakDeducted =
-      actualInM >= lunchEndM
-        ? 0
-        : Math.max(0, Math.min(actualOutM, lunchEndM) - Math.max(actualInM, lunchStartM));
-    const actualWorkMins = Math.max(0, (actualOutM - actualInM) - breakDeducted);
-    const undertimeMins = Math.max(0, requiredWorkMins - actualWorkMins);
-    return undertimeMins / 60;
-  }
 
   const undertimeMinutes = Math.max(0, scheduleOutM - actualOutM);
   return undertimeMinutes / 60;

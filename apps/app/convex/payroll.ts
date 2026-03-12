@@ -246,22 +246,26 @@ type PayFrequency = "monthly" | "bimonthly";
 type DeductionFrequency = "full" | "half";
 type HolidayType = "regular" | "special" | "special_working";
 
-/** TRAIN tax table (annual taxable income, basic pay only, no allowance). */
-function computeAnnualTaxFromBasic(annualBasic: number): number {
-  if (annualBasic <= 250_000) return 0;
-  if (annualBasic <= 400_000) {
-    return 0.15 * (annualBasic - 250_000);
+/**
+ * TRAIN Law individual income tax table (2025 rates).
+ * Taxable income = gross income - mandatory contributions (SSS, PhilHealth, Pag-IBIG).
+ * First 250,000 exempt; 13th month & benefits exempt up to 90,000.
+ */
+function computeAnnualTaxFromBasic(annualTaxableIncome: number): number {
+  if (annualTaxableIncome <= 250_000) return 0;
+  if (annualTaxableIncome <= 400_000) {
+    return 0.2 * (annualTaxableIncome - 250_000);
   }
-  if (annualBasic <= 800_000) {
-    return 22_500 + 0.2 * (annualBasic - 400_000);
+  if (annualTaxableIncome <= 800_000) {
+    return 30_000 + 0.25 * (annualTaxableIncome - 400_000);
   }
-  if (annualBasic <= 2_000_000) {
-    return 102_500 + 0.25 * (annualBasic - 800_000);
+  if (annualTaxableIncome <= 2_000_000) {
+    return 130_000 + 0.3 * (annualTaxableIncome - 800_000);
   }
-  if (annualBasic <= 8_000_000) {
-    return 402_500 + 0.3 * (annualBasic - 2_000_000);
+  if (annualTaxableIncome <= 8_000_000) {
+    return 490_000 + 0.32 * (annualTaxableIncome - 2_000_000);
   }
-  return 2_205_500 + 0.35 * (annualBasic - 8_000_000);
+  return 2_410_000 + 0.35 * (annualTaxableIncome - 8_000_000);
 }
 
 /** Resolve organization pay frequency with sensible default (bimonthly). */
@@ -753,16 +757,24 @@ export const computeEmployeePayroll = query({
     const hasWorkedAtLeastOneDay = payrollBase.daysWorked > 0;
 
     // Government deductions: based on monthly amounts, split per cutoff by pay frequency.
-    // Tax uses TRAIN brackets on annual basic pay (no allowance).
+    // Tax uses TRAIN 2025 brackets; taxable income = basic - SSS - PhilHealth - Pag-IBIG.
     const monthlyBasicForTax = getMonthlyBasicForTax(
       employee,
       payrollBase.payrollRates.dailyRateWorkingDaysPerYear,
     );
 
-    const annualTax = computeAnnualTaxFromBasic(monthlyBasicForTax * 12);
+    const sssMonthly = getSSSContribution(monthlyBasicForTax);
+    const annualBasic = monthlyBasicForTax * 12;
+    const annualSSS = sssMonthly.employeeShare * 12;
+    const annualPhilhealth = PHILHEALTH_EMPLOYEE_MONTHLY * 12;
+    const annualPagibig = PAGIBIG_EMPLOYEE_MONTHLY * 12;
+    const annualTaxableIncome = Math.max(
+      0,
+      annualBasic - annualSSS - annualPhilhealth - annualPagibig,
+    );
+    const annualTax = computeAnnualTaxFromBasic(annualTaxableIncome);
     const monthlyTax = round2(annualTax / 12);
 
-    const sssMonthly = getSSSContribution(monthlyBasicForTax);
     const sssAmount = getGovDeductionAmount(
       sssMonthly.employeeShare,
       args.cutoffStart,
@@ -827,7 +839,7 @@ export const computeEmployeePayroll = query({
       }
     }
 
-    // Tax: 12% of basic when monthly basic >= 23k
+    // Tax: TRAIN 2025 brackets on taxable income (basic - SSS - PhilHealth - Pag-IBIG)
     if (hasWorkedAtLeastOneDay) {
       totalDeductions += withholdingTaxAmount;
     } else {
@@ -1053,7 +1065,8 @@ export const createPayrollRun = mutation({
         [];
 
       if (hasOverrideDeductionsCreate) {
-        // Use saved/edited deductions as-is (e.g. from "Edit deductions" in preview); only refresh attendance-based ones
+        // Manual override: use saved/edited deduction amounts as-is (from "Edit deductions" in preview).
+        // Override values for SSS, PhilHealth, Pag-IBIG, Withholding Tax are used directly in computation.
         const nonAttendance = (manualDeductionEntry!.deductions as any[]).filter(
           (d: { name: string }) =>
             d.name !== "Late" &&
@@ -1072,9 +1085,6 @@ export const createPayrollRun = mutation({
           employee,
           payrollBase.payrollRates.dailyRateWorkingDaysPerYear,
         );
-
-        const annualTax = computeAnnualTaxFromBasic(monthlyBasicForTax * 12);
-        const monthlyTax = round2(annualTax / 12);
 
         const sssContribution = getSSSContribution(monthlyBasicForTax);
         const sssEmployeeMonthly = sssContribution.employeeShare;
@@ -1099,6 +1109,19 @@ export const createPayrollRun = mutation({
           args.cutoffStart,
           payFrequency,
         );
+
+        // TRAIN: taxable income = gross - mandatory contributions (SSS, PhilHealth, Pag-IBIG)
+        const annualBasic = monthlyBasicForTax * 12;
+        const annualSSS = sssEmployeeMonthly * 12;
+        const annualPhilhealth = philhealthEmployeeMonthly * 12;
+        const annualPagibig = pagibigEmployeeMonthly * 12;
+        const annualTaxableIncome = Math.max(
+          0,
+          annualBasic - annualSSS - annualPhilhealth - annualPagibig,
+        );
+        const annualTax = computeAnnualTaxFromBasic(annualTaxableIncome);
+        const monthlyTax = round2(annualTax / 12);
+
         const taxAmount = getTaxDeductionAmount(
           monthlyTax,
           args.cutoffStart,
@@ -1671,8 +1694,6 @@ export const updatePayrollRun = mutation({
             employee,
             payrollBase.payrollRates.dailyRateWorkingDaysPerYear,
           );
-          const annualTax = computeAnnualTaxFromBasic(monthlyBasicForTax * 12);
-          const monthlyTax = round2(annualTax / 12);
           const sssContribution = getSSSContribution(monthlyBasicForTax);
 
           const sssEmployeeAmount = getGovDeductionAmount(
@@ -1690,6 +1711,19 @@ export const updatePayrollRun = mutation({
             cutoffStart,
             payFrequencyUpdate,
           );
+
+          // TRAIN: taxable income = basic - SSS - PhilHealth - Pag-IBIG
+          const annualBasic = monthlyBasicForTax * 12;
+          const annualSSS = sssContribution.employeeShare * 12;
+          const annualPhilhealth = PHILHEALTH_EMPLOYEE_MONTHLY * 12;
+          const annualPagibig = PAGIBIG_EMPLOYEE_MONTHLY * 12;
+          const annualTaxableIncome = Math.max(
+            0,
+            annualBasic - annualSSS - annualPhilhealth - annualPagibig,
+          );
+          const annualTax = computeAnnualTaxFromBasic(annualTaxableIncome);
+          const monthlyTax = round2(annualTax / 12);
+
           const taxAmount = getTaxDeductionAmount(
             monthlyTax,
             cutoffStart,
@@ -2377,7 +2411,7 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
   }
 
   // Employee deduction expense items: use ONLY amounts from payslips (no fallbacks).
-  // This avoids doubled amounts and ensures tax is 0 when employee is not taxable (e.g. basic < 23k).
+  // This avoids doubled amounts; tax is 0 when taxable income ≤ 250k (TRAIN exemption).
   let totalEmployeeSSS = 0;
   let totalEmployeePagIbig = 0;
   let totalEmployeePhilHealth = 0;
@@ -2711,7 +2745,8 @@ export const getPayrollRunSummary = query({
         ): number => {
           if (!actualIn || !actualOut) return 0;
           if (!scheduleIn || !scheduleOut) {
-            return calculateNightDiffHoursFallback(actualIn, actualOut);
+            // No schedule: cannot verify shift overlaps 10pm-6am, so no night diff.
+            return 0;
           }
 
           const norm = (start: number, end: number) => {
@@ -2741,27 +2776,6 @@ export const getPayrollRunSummary = query({
 
           const overlapStart = Math.max(schedNightStart, actNightStart);
           const overlapEnd = Math.min(schedNightEnd, actNightEnd);
-          if (overlapEnd <= overlapStart) return 0;
-          return (overlapEnd - overlapStart) / 60;
-        };
-
-        const calculateNightDiffHoursFallback = (
-          timeIn?: string,
-          timeOut?: string,
-        ): number => {
-          if (!timeIn || !timeOut) return 0;
-          let startMinutes = timeToMinutes(timeIn);
-          let endMinutes = timeToMinutes(timeOut);
-          if (startMinutes < 6 * 60) {
-            startMinutes += 24 * 60;
-            endMinutes += 24 * 60;
-          } else if (endMinutes <= startMinutes) {
-            endMinutes += 24 * 60;
-          }
-          const nightStart = 22 * 60;
-          const nightEnd = 24 * 60 + 6 * 60;
-          const overlapStart = Math.max(startMinutes, nightStart);
-          const overlapEnd = Math.min(endMinutes, nightEnd);
           if (overlapEnd <= overlapStart) return 0;
           return (overlapEnd - overlapStart) / 60;
         };

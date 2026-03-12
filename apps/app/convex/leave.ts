@@ -97,6 +97,7 @@ function getCreditType(
 }
 
 function getBalanceForType(leaveCredits: any, creditType: string): number {
+  if (!leaveCredits) return 0;
   if (creditType === "vacation") return leaveCredits.vacation?.balance ?? 0;
   if (creditType === "sick") return leaveCredits.sick?.balance ?? 0;
   const custom = leaveCredits.custom?.find((c: any) => c.type === creditType);
@@ -104,6 +105,7 @@ function getBalanceForType(leaveCredits: any, creditType: string): number {
 }
 
 function hasTrackedCreditType(leaveCredits: any, creditType: string): boolean {
+  if (!leaveCredits) return false;
   if (creditType === "vacation") return !!leaveCredits.vacation;
   if (creditType === "sick") return !!leaveCredits.sick;
   return Boolean(leaveCredits.custom?.some((c: any) => c.type === creditType));
@@ -374,7 +376,9 @@ export const approveLeaveRequest = mutation({
     const employee = await ctx.db.get(request.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    const leaveCredits = JSON.parse(JSON.stringify(employee.leaveCredits));
+    const leaveCredits = JSON.parse(
+      JSON.stringify(employee.leaveCredits || {}),
+    );
     const creditType = getCreditType(
       request.leaveType,
       request.customLeaveType,
@@ -561,8 +565,13 @@ export const getEmployeeLeaveCredits = query({
         : hireDate;
     const now = Date.now();
 
-    // Build effective leave credits: use stored values, but compute anniversary from hire date
-    const leaveCredits = JSON.parse(JSON.stringify(employee.leaveCredits));
+    // Build effective leave credits: use stored values, or default structure when leave tracker is source of truth
+    const base = employee.leaveCredits || {};
+    const leaveCredits = JSON.parse(JSON.stringify({
+      vacation: base.vacation ?? { total: 0, used: 0, balance: 0 },
+      sick: base.sick ?? { total: 0, used: 0, balance: 0 },
+      custom: base.custom ?? [],
+    }));
     const anniversaryTypes = new Set(
       leaveTypesConfig
         .filter(
@@ -664,7 +673,14 @@ export const updateEmployeeLeaveCredits = mutation({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    const leaveCredits = { ...employee.leaveCredits };
+    const leaveCredits = {
+      vacation: { total: 0, used: 0, balance: 0 },
+      sick: { total: 0, used: 0, balance: 0 },
+      ...employee.leaveCredits,
+    };
+    if (!leaveCredits.vacation)
+      leaveCredits.vacation = { total: 0, used: 0, balance: 0 };
+    if (!leaveCredits.sick) leaveCredits.sick = { total: 0, used: 0, balance: 0 };
 
     if (args.leaveType === "vacation") {
       if (args.total !== undefined) {
@@ -754,8 +770,15 @@ export const convertLeaveToCash = mutation({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    const leaveCredits = { ...employee.leaveCredits };
+    const leaveCredits = {
+      vacation: { total: 0, used: 0, balance: 0 },
+      sick: { total: 0, used: 0, balance: 0 },
+      ...employee.leaveCredits,
+    };
     const targetLeave = leaveCredits[args.leaveType];
+    if (!targetLeave) {
+      throw new Error(`Leave type ${args.leaveType} not found for employee`);
+    }
 
     // Check if employee has enough balance
     if (targetLeave.balance < args.daysToConvert) {

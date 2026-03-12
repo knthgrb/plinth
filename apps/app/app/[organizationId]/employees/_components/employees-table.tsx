@@ -40,6 +40,7 @@ type EmployeeColumnId =
 
 interface EmployeesTableProps {
   employees: any[] | undefined;
+  isLoading?: boolean;
   isCreatingEmployee: boolean;
   isAdmin: boolean;
   updatingStatus: string | null;
@@ -71,6 +72,7 @@ interface EmployeesTableProps {
 
 export function EmployeesTable({
   employees,
+  isLoading = false,
   isCreatingEmployee,
   isAdmin,
   updatingStatus,
@@ -150,7 +152,50 @@ export function EmployeesTable({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {paginatedEmployees.length === 0 ? (
+                {isLoading ? (
+                  Array.from({ length: 5 }).map((_, i) => (
+                    <TableRow key={i} className="h-9">
+                      {visibleColumns.includes("name") && (
+                        <TableCell className="py-1.5 px-3">
+                          <div className="h-4 w-24 bg-gray-200 rounded animate-pulse" />
+                        </TableCell>
+                      )}
+                      {visibleColumns.includes("email") && (
+                        <TableCell className="hidden sm:table-cell py-1.5 px-3">
+                          <div className="h-4 w-32 bg-gray-200 rounded animate-pulse" />
+                        </TableCell>
+                      )}
+                      {visibleColumns.includes("position") && (
+                        <TableCell className="py-1.5 px-3">
+                          <div className="h-4 w-20 bg-gray-200 rounded animate-pulse" />
+                        </TableCell>
+                      )}
+                      {visibleColumns.includes("department") && (
+                        <TableCell className="hidden md:table-cell py-1.5 px-3">
+                          <div className="h-4 w-16 bg-gray-200 rounded animate-pulse" />
+                        </TableCell>
+                      )}
+                      {visibleColumns.includes("phone") && (
+                        <TableCell className="hidden lg:table-cell py-1.5 px-3">
+                          <div className="h-4 w-20 bg-gray-200 rounded animate-pulse" />
+                        </TableCell>
+                      )}
+                      {visibleColumns.includes("createdAt") && (
+                        <TableCell className="hidden lg:table-cell py-1.5 px-3">
+                          <div className="h-4 w-16 bg-gray-200 rounded animate-pulse" />
+                        </TableCell>
+                      )}
+                      {visibleColumns.includes("status") && (
+                        <TableCell className="py-1.5 px-3">
+                          <div className="h-5 w-14 bg-gray-200 rounded animate-pulse" />
+                        </TableCell>
+                      )}
+                      <TableCell className="text-right py-1.5 pr-3">
+                        <div className="h-6 w-6 bg-gray-200 rounded animate-pulse ml-auto" />
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : paginatedEmployees.length === 0 ? (
                   <TableRow>
                     <TableCell
                       colSpan={6}

@@ -117,29 +117,13 @@ export function EditAttendanceDialog({
           ? Math.round(record.undertime * 60).toString()
           : "",
       );
-      // Restore manual override state from explicit flags or stored values (including 0)
-      setUseManualLate(
-        record.lateManualOverride === true ||
-          (record.late !== undefined && record.late !== null),
-      );
-      setUseManualUndertime(
-        record.undertimeManualOverride === true ||
-          (record.undertime !== undefined && record.undertime !== null),
-      );
+      // Restore manual override state from explicit flags only
+      setUseManualLate(record.lateManualOverride === true);
+      setUseManualUndertime(record.undertimeManualOverride === true);
     }
   }, [record, employee, isOpen]);
 
-  // Lunch from record (from shift or org default when record was created/updated) so undertime/late match server
   const lunchStart = record?.lunchStart;
-  const lunchEnd = record?.lunchEnd;
-  const lunchMinutes =
-    lunchStart && lunchEnd
-      ? (() => {
-          const [lh, lm] = lunchStart.split(":").map(Number);
-          const [eh, em] = lunchEnd.split(":").map(Number);
-          return Math.max(0, (eh * 60 + em) - (lh * 60 + lm));
-        })()
-      : undefined;
 
   const calculatedLate = useMemo(() => {
     if (!editScheduleIn || !editTimeIn || editStatus !== "present") return 0;
@@ -147,33 +131,14 @@ export function EditAttendanceDialog({
   }, [editScheduleIn, editTimeIn, editStatus, lunchStart]);
 
   const calculatedUndertime = useMemo(() => {
-    if (
-      !editScheduleIn ||
-      !editScheduleOut ||
-      !editTimeIn ||
-      !editTimeOut ||
-      editStatus !== "present"
-    )
-      return 0;
+    if (!editScheduleOut || !editTimeOut || editStatus !== "present") return 0;
     return calculateUndertime(
       editScheduleIn,
       editScheduleOut,
       editTimeIn,
       editTimeOut,
-      lunchStart,
-      lunchEnd,
-      lunchMinutes,
     );
-  }, [
-    editScheduleIn,
-    editScheduleOut,
-    editTimeIn,
-    editTimeOut,
-    editStatus,
-    lunchStart,
-    lunchEnd,
-    lunchMinutes,
-  ]);
+  }, [editScheduleIn, editScheduleOut, editTimeIn, editTimeOut, editStatus]);
 
   // Use manual values if enabled, otherwise use calculated
   const finalLate = useManualLate
@@ -208,17 +173,6 @@ export function EditAttendanceDialog({
           ? parseFloat(editOvertime)
           : undefined;
 
-      // When manual override is used, append specific note(s): "Late manually overridden." and/or "Undertime manually overridden."
-      const overrideNotes: string[] = [];
-      if (useManualLate) overrideNotes.push("Late manually overridden.");
-      if (useManualUndertime) overrideNotes.push("Undertime manually overridden.");
-      let remarksToSave = editRemarks?.trim() || "";
-      for (const phrase of overrideNotes) {
-        if (!remarksToSave.includes(phrase)) {
-          remarksToSave = remarksToSave ? `${remarksToSave} ${phrase}` : phrase;
-        }
-      }
-
       await updateAttendanceMutation({
         attendanceId: record._id as Id<"attendance">,
         scheduleIn: editScheduleIn || undefined,
@@ -230,7 +184,7 @@ export function EditAttendanceDialog({
         undertime: useManualUndertime ? finalUndertime : null,
         lateManualOverride: useManualLate ? true : undefined,
         undertimeManualOverride: useManualUndertime ? true : undefined,
-        remarks: remarksToSave || undefined,
+        remarks: editRemarks?.trim() || undefined,
         status: editStatus,
       });
       onOpenChange(false);
@@ -452,7 +406,7 @@ export function EditAttendanceDialog({
                       <p className="text-xs text-gray-500">
                         {useManualUndertime
                           ? "Manually enter undertime minutes (set to 0 to remove undertime)"
-                          : `Calculated: ${Math.round(calculatedUndertime * 60)} min from scheduled time out (${formatTime12Hour(editScheduleOut)}). Update scheduled times above if they don't match this employee's work schedule.`}
+                          : `Calculated: ${Math.round(calculatedUndertime * 60)} min (time out earlier than scheduled ${formatTime12Hour(editScheduleOut)}). Late is from time in only.`}
                       </p>
                     </div>
                   </div>

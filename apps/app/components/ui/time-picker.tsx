@@ -20,6 +20,8 @@ interface TimePickerProps {
   className?: string;
   required?: boolean;
   showLabel?: boolean;
+  /** Compact mode for use in tables - smaller height, tighter padding, integrated icon */
+  compact?: boolean;
 }
 
 // Convert 24-hour format (HH:mm) to 12-hour format with AM/PM
@@ -61,6 +63,7 @@ export function TimePicker({
   className,
   required = false,
   showLabel = true,
+  compact = false,
 }: TimePickerProps) {
   const [open, setOpen] = useState(false);
   const inputId = label?.toLowerCase().replace(/\s+/g, "-") || "time-input";
@@ -92,7 +95,7 @@ export function TimePicker({
   const displayValue = value ? formatTimeDisplay(value) : "";
 
   return (
-    <div className={cn("space-y-2", className)}>
+    <div className={cn(!compact && "space-y-2", className)}>
       {showLabel && label && (
         <Label htmlFor={inputId}>
           {label}
@@ -106,18 +109,21 @@ export function TimePicker({
             role="combobox"
             aria-expanded={open}
             className={cn(
-              "w-full justify-start text-left font-normal h-9",
+              "w-full justify-between text-left font-normal whitespace-nowrap overflow-hidden",
+              compact ? "h-8 px-2 text-xs gap-1" : "h-9 px-3 gap-2",
               !value && "text-gray-500",
               disabled && "cursor-not-allowed opacity-50"
             )}
             disabled={disabled}
             type="button"
           >
-            <Clock className="mr-2 h-4 w-4 shrink-0" />
-            <span className="flex-1 text-left truncate">
-              {displayValue || placeholder}
+            <span className="flex min-w-0 flex-1 items-center gap-1 truncate">
+              <Clock className={cn("shrink-0", compact ? "h-3.5 w-3.5" : "h-4 w-4")} />
+              <span className="truncate">
+                {displayValue || placeholder}
+              </span>
             </span>
-            <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            <ChevronDown className={cn("shrink-0 opacity-50", compact ? "h-3.5 w-3.5" : "h-4 w-4")} />
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-auto p-3" align="start" sideOffset={4}>

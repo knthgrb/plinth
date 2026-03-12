@@ -193,28 +193,31 @@ export default defineSchema({
         ),
       ),
     }),
-    leaveCredits: v.object({
-      vacation: v.object({
-        total: v.number(),
-        used: v.number(),
-        balance: v.number(),
-      }),
-      sick: v.object({
-        total: v.number(),
-        used: v.number(),
-        balance: v.number(),
-      }),
-      custom: v.optional(
-        v.array(
-          v.object({
-            type: v.string(),
-            total: v.number(),
-            used: v.number(),
-            balance: v.number(),
-          }),
+    // Leave credits moved to leave tracker; optional for backward compatibility
+    leaveCredits: v.optional(
+      v.object({
+        vacation: v.object({
+          total: v.number(),
+          used: v.number(),
+          balance: v.number(),
+        }),
+        sick: v.object({
+          total: v.number(),
+          used: v.number(),
+          balance: v.number(),
+        }),
+        custom: v.optional(
+          v.array(
+            v.object({
+              type: v.string(),
+              total: v.number(),
+              used: v.number(),
+              balance: v.number(),
+            }),
+          ),
         ),
-      ),
-    }),
+      }),
+    ),
     requirements: v.optional(
       v.array(
         v.object({

@@ -1,6 +1,6 @@
 import * as React from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
-import { Check, ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
+import { Check, ChevronDown, ChevronUp } from "lucide-react";
 
 import { cn } from "@/utils/utils";
 
@@ -14,19 +14,21 @@ const SelectTrigger = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Trigger>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>
 >(({ className, children, ...props }, ref) => (
-  <SelectPrimitive.Trigger
-    ref={ref}
-    className={cn(
-      "flex h-9 w-full items-center justify-between whitespace-nowrap rounded-lg border border-[#DDDDDD] hover:border-[rgb(120,120,120)] bg-[rgb(250,250,250)] px-3 py-2 text-sm font-semibold shadow-sm ring-offset-white placeholder:text-[rgb(133,133,133)] focus:outline-none focus:ring-1 focus:ring-[#695eff] focus:border-[#695eff] disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1 text-[rgb(64,64,64)]",
-      className
-    )}
-    {...props}
-  >
-    {children}
-    <SelectPrimitive.Icon asChild>
-      <ChevronsUpDown className="h-4 w-4 shrink-0 text-[rgb(64,64,64)]" />
-    </SelectPrimitive.Icon>
-  </SelectPrimitive.Trigger>
+    <SelectPrimitive.Trigger
+      ref={ref}
+      className={cn(
+        "flex h-9 w-full min-w-0 items-center gap-2 rounded-lg border border-[#DDDDDD] hover:border-[rgb(120,120,120)] bg-[rgb(250,250,250)] px-3 py-2 text-sm font-semibold shadow-sm ring-offset-white placeholder:text-[rgb(133,133,133)] focus:outline-none focus:ring-1 focus:ring-[#695eff] focus:border-[#695eff] disabled:cursor-not-allowed disabled:opacity-50 text-[rgb(64,64,64)]",
+        "[&>span:first-child]:min-w-0 [&>span:first-child]:flex-1 [&>span:first-child]:truncate [&>span:first-child]:text-left",
+        "[&>span:last-child]:shrink-0",
+        className
+      )}
+      {...props}
+    >
+      {children}
+      <SelectPrimitive.Icon asChild>
+        <ChevronDown className="h-4 w-4 shrink-0 opacity-50 text-[rgb(64,64,64)]" />
+      </SelectPrimitive.Icon>
+    </SelectPrimitive.Trigger>
 ));
 SelectTrigger.displayName = SelectPrimitive.Trigger.displayName;
 

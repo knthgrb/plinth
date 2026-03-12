@@ -22,34 +22,17 @@ function calculateLate(
   return lateMinutes > 0 ? lateMinutes : 0;
 }
 
-// Undertime: with lunch = (required work - actual paid work); without = early departure only (scheduleOut - actualOut).
+// Undertime = early departure only (when time out is earlier than scheduled time out).
+// Late arrival is handled separately and is NOT counted as undertime.
 function calculateUndertime(
-  scheduleIn: string,
+  _scheduleIn: string,
   scheduleOut: string,
-  actualIn: string | undefined,
+  _actualIn: string | undefined,
   actualOut: string | undefined,
-  lunchStart?: string,
-  lunchEnd?: string,
-  lunchMinutes?: number,
 ): number {
   if (!actualOut) return 0;
-  const scheduleInM = timeToMins(scheduleIn);
   const scheduleOutM = timeToMins(scheduleOut);
-  const actualInM = actualIn ? timeToMins(actualIn) : 0;
   const actualOutM = timeToMins(actualOut);
-  if (lunchStart != null && lunchEnd != null && (lunchMinutes ?? 0) > 0) {
-    const lunchStartM = timeToMins(lunchStart);
-    const lunchEndM = timeToMins(lunchEnd);
-    const breakMins = Math.max(lunchMinutes ?? 0, Math.max(0, lunchEndM - lunchStartM));
-    const requiredWorkMins = Math.max(0, scheduleOutM - scheduleInM - breakMins);
-    const breakDeducted =
-      actualInM >= lunchEndM
-        ? 0
-        : Math.max(0, Math.min(actualOutM, lunchEndM) - Math.max(actualInM, lunchStartM));
-    const actualWorkMins = Math.max(0, actualOutM - actualInM - breakDeducted);
-    const undertimeMins = Math.max(0, requiredWorkMins - actualWorkMins);
-    return undertimeMins / 60;
-  }
   const undertimeMinutes = Math.max(0, scheduleOutM - actualOutM);
   return undertimeMinutes / 60;
 }
@@ -342,9 +325,6 @@ export const createAttendance = mutation({
               scheduleOut,
               args.actualIn,
               args.actualOut,
-              lunchStart,
-              lunchEnd,
-              lunchMinutes,
             )
           : 0;
 
@@ -480,14 +460,11 @@ export const updateAttendance = mutation({
               resolvedScheduleOut,
               currentActualIn,
               currentActualOut,
-              lunchStart,
-              lunchEnd,
-              lunchMinutes,
             )
           : 0;
       updates.undertime =
         calculatedUndertime > 0 ? calculatedUndertime : undefined;
-      updates.undertimeManualOverride = undefined;
+      updates.undertimeManualOverride = false;
     } else if (args.undertime !== undefined && args.undertime !== null) {
       updates.undertime = args.undertime;
       updates.undertimeManualOverride = true;
@@ -502,7 +479,7 @@ export const updateAttendance = mutation({
           ? calculateLate(resolvedScheduleIn, currentActualIn, lunchStart)
           : 0;
       updates.late = calculatedLate > 0 ? calculatedLate : undefined;
-      updates.lateManualOverride = undefined;
+      updates.lateManualOverride = false;
     } else if (args.late !== undefined && args.late !== null) {
       updates.late = args.late;
       updates.lateManualOverride = true;
@@ -638,9 +615,6 @@ export const bulkCreateAttendance = mutation({
                   scheduleOut,
                   currentActualIn,
                   currentActualOut,
-                  lunchStart,
-                  lunchEnd,
-                  lunchMinutes,
                 )
               : 0;
         const calculatedLate =
@@ -666,9 +640,6 @@ export const bulkCreateAttendance = mutation({
                   scheduleOut,
                   entry.actualIn,
                   entry.actualOut,
-                  lunchStart,
-                  lunchEnd,
-                  lunchMinutes,
                 )
               : 0;
         const calculatedLate =
@@ -790,9 +761,6 @@ export const recalculateEmployeeAttendance = mutation({
           scheduleOut,
           actualIn,
           actualOut,
-          lunchStart,
-          lunchEnd,
-          lunchMinutes,
         );
         newUndertime = undertime > 0 ? undertime : undefined;
 

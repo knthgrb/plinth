@@ -914,16 +914,81 @@ export default function AttendancePage() {
             </div>
           </CardHeader>
           <CardContent className="flex-1 overflow-hidden flex flex-col">
-            {!selectedEmployeeFilter ||
+            {employees === undefined ? (
+              <div className="h-full overflow-y-auto overflow-x-auto -mx-4 sm:mx-0">
+                <div className="min-w-full inline-block align-middle">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-white z-10">
+                      <TableRow>
+                        <TableHead className="min-w-[140px] sm:min-w-[180px] h-8 py-1.5">
+                          Date
+                        </TableHead>
+                        <TableHead className="min-w-[80px] sm:min-w-[100px] h-8 py-1.5">
+                          Time In
+                        </TableHead>
+                        <TableHead className="min-w-[80px] sm:min-w-[100px] h-8 py-1.5">
+                          Time Out
+                        </TableHead>
+                        <TableHead className="min-w-[80px] sm:min-w-[100px] h-8 py-1.5">
+                          Status
+                        </TableHead>
+                        <TableHead className="min-w-[70px] sm:min-w-[80px] hidden sm:table-cell h-8 py-1.5">
+                          Late
+                        </TableHead>
+                        <TableHead className="min-w-[80px] sm:min-w-[100px] hidden md:table-cell h-8 py-1.5">
+                          Undertime
+                        </TableHead>
+                        <TableHead className="min-w-[80px] sm:min-w-[100px] hidden md:table-cell h-8 py-1.5">
+                          Overtime
+                        </TableHead>
+                        <TableHead className="min-w-[70px] sm:min-w-[80px] h-8 py-1.5">
+                          Actions
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {Array.from({ length: 8 }).map((_, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="py-2 px-3">
+                            <div className="h-4 w-20 bg-gray-200 rounded animate-pulse" />
+                          </TableCell>
+                          <TableCell className="py-2 px-3">
+                            <div className="h-4 w-14 bg-gray-200 rounded animate-pulse" />
+                          </TableCell>
+                          <TableCell className="py-2 px-3">
+                            <div className="h-4 w-14 bg-gray-200 rounded animate-pulse" />
+                          </TableCell>
+                          <TableCell className="py-2 px-3">
+                            <div className="h-5 w-16 bg-gray-200 rounded animate-pulse" />
+                          </TableCell>
+                          <TableCell className="hidden sm:table-cell py-2 px-3">
+                            <div className="h-4 w-10 bg-gray-200 rounded animate-pulse" />
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell py-2 px-3">
+                            <div className="h-4 w-10 bg-gray-200 rounded animate-pulse" />
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell py-2 px-3">
+                            <div className="h-4 w-10 bg-gray-200 rounded animate-pulse" />
+                          </TableCell>
+                          <TableCell className="py-2 px-3">
+                            <div className="h-6 w-6 bg-gray-200 rounded animate-pulse" />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            ) : !selectedEmployeeFilter ||
             selectedEmployeeFilter === "__create__" ? (
               <div className="text-center py-12 text-gray-500">
                 <p className="text-lg font-medium mb-2">
-                  {employees && employees.length === 0
+                  {employees.length === 0
                     ? "No employees yet"
                     : "Please select an employee"}
                 </p>
                 <p className="text-sm">
-                  {employees && employees.length === 0
+                  {employees.length === 0
                     ? "Use the dropdown above to create an employee, then view their attendance here."
                     : "Choose an employee from the list to view their attendance records"}
                 </p>
@@ -1404,7 +1469,7 @@ export default function AttendancePage() {
               </div>
             </DialogHeader>
             <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-              {allAttendance === undefined ? (
+              {allAttendance === undefined || employees === undefined ? (
                 <div className="flex items-center justify-center flex-1 py-12">
                   <div className="text-center">
                     <Loader2 className="h-8 w-8 animate-spin text-[#695eff] mx-auto mb-2" />

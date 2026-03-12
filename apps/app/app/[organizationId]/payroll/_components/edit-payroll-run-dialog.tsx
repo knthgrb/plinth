@@ -4,11 +4,11 @@ import { Suspense } from "react";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Stepper } from "@/components/ui/stepper";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { EditPayrollStep1Dates } from "./edit-payroll-step-1-dates";
@@ -157,13 +157,16 @@ export function EditPayrollRunDialog({
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit Payroll Run</DialogTitle>
-          <DialogDescription>
-            Step {editPayrollStep} of 4:{" "}
-            {editPayrollStep === 1 && "Select Period"}
-            {editPayrollStep === 2 && "Select Employees"}
-            {editPayrollStep === 3 && "Government Deductions"}
-            {editPayrollStep === 4 && "Deductions & Incentives"}
-          </DialogDescription>
+          <Stepper
+            currentStep={editPayrollStep}
+            steps={[
+              { title: "Select Period" },
+              { title: "Select Employees" },
+              { title: "Government Deductions" },
+              { title: "Deductions & Incentives" },
+            ]}
+            className="mt-4"
+          />
         </DialogHeader>
 
         {editPayrollStep === 1 && (

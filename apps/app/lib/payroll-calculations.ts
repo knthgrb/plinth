@@ -217,8 +217,9 @@ function calculateNightDiffHours(
 
   if (actualStart === null || actualEnd === null) return 0;
   if (scheduleStart === null || scheduleEnd === null) {
-    // Fallback: if no schedule, use old behavior (actual ∩ night) for backward compat
-    return calculateNightDiffHoursFallback(actualIn, actualOut);
+    // No schedule: cannot verify shift overlaps 10pm-6am, so no night diff.
+    // (Avoids incorrect night diff for day-shift employees when schedule is missing.)
+    return 0;
   }
 
   const nightStart = 22 * 60;
@@ -254,27 +255,6 @@ function calculateNightDiffHours(
   return (overlapEnd - overlapStart) / 60;
 }
 
-function calculateNightDiffHoursFallback(
-  actualIn: string | undefined,
-  actualOut: string | undefined,
-): number {
-  let startMinutes = timeStringToMinutes(actualIn);
-  let endMinutes = timeStringToMinutes(actualOut);
-  if (startMinutes === null || endMinutes === null) return 0;
-  if (startMinutes < 6 * 60) {
-    startMinutes += 24 * 60;
-    endMinutes += 24 * 60;
-  } else if (endMinutes <= startMinutes) {
-    endMinutes += 24 * 60;
-  }
-  const nightStart = 22 * 60;
-  const nightEnd = 30 * 60;
-  const overlapStart = Math.max(startMinutes, nightStart);
-  const overlapEnd = Math.min(endMinutes, nightEnd);
-  if (overlapEnd <= overlapStart) return 0;
-  return (overlapEnd - overlapStart) / 60;
-}
-
 function getLateHoursFromAttendance(att: {
   actualIn?: string;
   scheduleIn?: string;
@@ -301,14 +281,10 @@ function getLateHoursFromAttendance(att: {
 }
 
 function getUndertimeHoursFromAttendance(att: {
-  actualIn?: string;
   actualOut?: string;
-  scheduleIn?: string;
   scheduleOut?: string;
   undertime?: number;
   undertimeManualOverride?: boolean;
-  lunchStart?: string;
-  lunchEnd?: string;
 }): number {
   if (att.undertimeManualOverride === true) {
     return att.undertime ?? 0;
@@ -317,29 +293,6 @@ function getUndertimeHoursFromAttendance(att: {
   const scheduleOutM = timeStringToMinutes(att.scheduleOut);
   const actualOutM = timeStringToMinutes(att.actualOut);
   if (scheduleOutM === null || actualOutM === null) return 0;
-
-  const lunchStartM = att.lunchStart != null ? timeStringToMinutes(att.lunchStart) : null;
-  const lunchEndM = att.lunchEnd != null ? timeStringToMinutes(att.lunchEnd) : null;
-  const scheduleInM = timeStringToMinutes(att.scheduleIn);
-  const actualInM = timeStringToMinutes(att.actualIn);
-
-  if (
-    lunchStartM !== null &&
-    lunchEndM !== null &&
-    scheduleInM !== null &&
-    actualInM !== null &&
-    lunchEndM > lunchStartM
-  ) {
-    const breakMins = lunchEndM - lunchStartM;
-    const requiredWorkMins = Math.max(0, scheduleOutM - scheduleInM - breakMins);
-    const breakDeducted =
-      actualInM >= lunchEndM
-        ? 0
-        : Math.max(0, Math.min(actualOutM, lunchEndM) - Math.max(actualInM, lunchStartM));
-    const actualWorkMins = Math.max(0, actualOutM - actualInM - breakDeducted);
-    const undertimeMins = Math.max(0, requiredWorkMins - actualWorkMins);
-    return undertimeMins / 60;
-  }
 
   return Math.max(0, scheduleOutM - actualOutM) / 60;
 }

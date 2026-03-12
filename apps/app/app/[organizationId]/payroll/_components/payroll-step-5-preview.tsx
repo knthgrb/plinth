@@ -263,6 +263,15 @@ function EditDeductionsForm({
       ? `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`
       : "Employee";
 
+  // Manual deductions already in the preview (from last compute)
+  const manualCountInPreview = previewDeductions.filter(
+    (d) => !isGovOrOtherDeduction(d)
+  ).length;
+  // Newly added deductions not yet in the preview (need to be shown immediately)
+  const newManualDeductions = empDeductions.deductions.slice(
+    manualCountInPreview
+  );
+
   let manualIndex = 0;
   return (
     <div className="space-y-3">
@@ -337,6 +346,67 @@ function EditDeductionsForm({
                 </Button>
               )}
               {isGovOrOther && <div className="w-9" />}
+            </div>
+          );
+        })}
+        {/* Newly added deductions (not yet in preview) - fully editable */}
+        {newManualDeductions.map((deduction, idx) => {
+          const actualIndex = manualCountInPreview + idx;
+          return (
+            <div key={`new-${actualIndex}`} className="flex gap-2 items-end">
+              <div className="flex-1">
+                <Label>Name</Label>
+                <Input
+                  value={deduction.name}
+                  onChange={(e) =>
+                    onUpdateDeduction(
+                      employeeId,
+                      actualIndex,
+                      "name",
+                      e.target.value
+                    )
+                  }
+                  placeholder="Deduction name"
+                  className="h-9"
+                />
+              </div>
+              <div className="w-28">
+                <Label>Amount</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={deduction.amount ?? ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const numVal =
+                      val === "" || val === "-" ? 0 : parseFloat(val);
+                    if (numVal >= 0 && !isNaN(numVal)) {
+                      onUpdateDeduction(
+                        employeeId,
+                        actualIndex,
+                        "amount",
+                        numVal
+                      );
+                    }
+                  }}
+                  placeholder="0.00"
+                />
+              </div>
+              <div className="w-24">
+                <Label>Type</Label>
+                <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
+                  {deduction.type || "custom"}
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => onRemoveDeduction(employeeId, actualIndex)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
             </div>
           );
         })}

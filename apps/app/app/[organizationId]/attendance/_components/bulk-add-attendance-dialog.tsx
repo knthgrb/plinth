@@ -959,43 +959,47 @@ export function BulkAddAttendanceDialog({
           Bulk Add Attendance
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-[95vw] sm:max-w-3xl md:max-w-4xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-[min(92vw,1400px)] max-h-[90vh] p-0 flex flex-col overflow-hidden">
-        <DialogHeader className="px-4 sm:px-6 pt-4 sm:pt-6 pb-3 sm:pb-4 shrink-0 border-b border-gray-200">
-          <DialogTitle className="text-base sm:text-lg md:text-xl">
-            Bulk Add Attendance Records
-          </DialogTitle>
-          <DialogDescription className="text-xs sm:text-sm text-gray-600 mt-1.5 sm:mt-2">
-            {bulkMode === "manual"
-              ? "Add attendance records for an employee across a date range. Only workdays based on the employee's schedule will be included."
-              : "Upload a CSV file to import attendance in bulk. Use the template for the correct format."}
-          </DialogDescription>
-          <div className="flex items-center gap-1 p-0.5 bg-gray-100 rounded-lg w-fit mt-3">
-            <button
-              type="button"
-              onClick={() => setBulkMode("manual")}
-              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                bulkMode === "manual"
-                  ? "bg-white text-gray-900 shadow-sm"
-                  : "text-gray-600 hover:text-gray-900"
-              }`}
-            >
-              Manual
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setBulkMode("csv");
-                setCsvParseError(null);
-                setCsvPreviewRows([]);
-              }}
-              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                bulkMode === "csv"
-                  ? "bg-white text-gray-900 shadow-sm"
-                  : "text-gray-600 hover:text-gray-900"
-              }`}
-            >
-              Import CSV
-            </button>
+      <DialogContent className="max-w-[95vw] sm:max-w-4xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-[min(92vw,1400px)] max-h-[90vh] p-0 flex flex-col overflow-hidden">
+        <DialogHeader className="px-5 sm:px-6 pt-5 pb-4 shrink-0 border-b border-gray-200/80">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+            <div>
+              <DialogTitle className="text-lg font-semibold">
+                Bulk Add Attendance Records
+              </DialogTitle>
+              <DialogDescription className="text-sm text-gray-500 mt-1">
+                {bulkMode === "manual"
+                  ? "Add attendance for an employee across a date range. Workdays only."
+                  : "Upload a CSV to import attendance in bulk."}
+              </DialogDescription>
+            </div>
+            <div className="flex rounded-lg border border-gray-200 bg-gray-50/50 p-0.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setBulkMode("manual")}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  bulkMode === "manual"
+                    ? "bg-white text-gray-900 shadow-sm border border-gray-200"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Manual
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkMode("csv");
+                  setCsvParseError(null);
+                  setCsvPreviewRows([]);
+                }}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  bulkMode === "csv"
+                    ? "bg-white text-gray-900 shadow-sm border border-gray-200"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Import CSV
+              </button>
+            </div>
           </div>
         </DialogHeader>
         {bulkMode === "csv" ? (
@@ -1190,17 +1194,14 @@ export function BulkAddAttendanceDialog({
           onSubmit={handleBulkSubmit}
           className="flex flex-col flex-1 min-h-0 overflow-hidden"
         >
-          <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 min-w-0">
+          <div className="flex-1 overflow-y-auto overflow-x-auto px-5 sm:px-6 py-4 min-w-0">
             <fieldset
               disabled={isSubmittingBulk}
-              className="space-y-3 sm:space-y-4"
+              className="space-y-4"
             >
-              <div className="grid gap-3 sm:gap-4 py-1 sm:py-2">
-                <div className="space-y-1.5 sm:space-y-2 min-w-0 max-w-full sm:max-w-md">
-                  <Label
-                    htmlFor="bulkEmployee"
-                    className="text-xs sm:text-sm font-medium"
-                  >
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="space-y-1.5 min-w-0">
+                  <Label htmlFor="bulkEmployee" className="text-sm font-medium">
                     Employee *
                   </Label>
                   <EmployeeSelect
@@ -1210,124 +1211,102 @@ export function BulkAddAttendanceDialog({
                     disabled={isSubmittingBulk}
                   />
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 max-w-full sm:max-w-md">
-                  <div className="space-y-1.5 sm:space-y-2 min-w-0">
-                    <Label
-                      htmlFor="bulkStartDate"
-                      className="text-xs sm:text-sm font-medium"
-                    >
-                      Start Date *
-                    </Label>
-                    <DatePicker
-                      value={bulkStartDate}
-                      onValueChange={setBulkStartDate}
-                      placeholder="Select start date"
-                    />
-                  </div>
-                  <div className="space-y-1.5 sm:space-y-2 min-w-0">
-                    <Label
-                      htmlFor="bulkEndDate"
-                      className="text-xs sm:text-sm font-medium"
-                    >
-                      End Date *
-                    </Label>
-                    <DatePicker
-                      value={bulkEndDate}
-                      onValueChange={setBulkEndDate}
-                      placeholder="Select end date"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-1.5 sm:space-y-2 min-w-0">
-                  <Label className="text-xs sm:text-sm font-medium">
-                    Include Weekends
+                <div className="space-y-1.5 min-w-0">
+                  <Label htmlFor="bulkStartDate" className="text-sm font-medium">
+                    Start Date *
                   </Label>
-                  <div className="flex flex-wrap gap-3 sm:gap-4">
-                    <div className="flex items-center space-x-2">
+                  <DatePicker
+                    value={bulkStartDate}
+                    onValueChange={setBulkStartDate}
+                    placeholder="Select start date"
+                  />
+                </div>
+                <div className="space-y-1.5 min-w-0">
+                  <Label htmlFor="bulkEndDate" className="text-sm font-medium">
+                    End Date *
+                  </Label>
+                  <DatePicker
+                    value={bulkEndDate}
+                    onValueChange={setBulkEndDate}
+                    placeholder="Select end date"
+                  />
+                </div>
+                <div className="space-y-1.5 min-w-0">
+                  <Label className="text-sm font-medium">Weekends</Label>
+                  <div className="flex items-center gap-4 h-10">
+                    <label className="flex items-center gap-2 cursor-pointer text-sm">
                       <input
                         type="checkbox"
-                        id="includeSaturday"
                         checked={includeSaturday}
                         onChange={(e) => setIncludeSaturday(e.target.checked)}
                         className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                       />
-                      <Label
-                        htmlFor="includeSaturday"
-                        className="text-xs sm:text-sm font-normal cursor-pointer"
-                      >
-                        Saturday
-                      </Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
+                      Saturday
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-sm">
                       <input
                         type="checkbox"
-                        id="includeSunday"
                         checked={includeSunday}
                         onChange={(e) => setIncludeSunday(e.target.checked)}
                         className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                       />
-                      <Label
-                        htmlFor="includeSunday"
-                        className="text-xs sm:text-sm font-normal cursor-pointer"
-                      >
-                        Sunday
-                      </Label>
-                    </div>
+                      Sunday
+                    </label>
                   </div>
                 </div>
               </div>
               {bulkSelectedEmployee && bulkStartDate && bulkEndDate && (
-                <div className="space-y-2 sm:space-y-3 min-w-0 w-full">
-                  <Label className="text-xs sm:text-sm font-medium">
-                    Enter Time In/Out for Each Day *
+                <div className="space-y-2 w-full min-w-0">
+                  <Label className="text-sm font-medium">
+                    Time In/Out for Each Day *
                   </Label>
-                  <div className="border rounded-lg overflow-hidden -mx-2 sm:mx-0 w-full min-w-0">
-                    <div className="overflow-x-auto overflow-y-auto max-h-[300px] sm:max-h-[350px] md:max-h-96 w-full min-w-0">
-                      <Table className="w-full min-w-[880px] table-fixed">
-                        <TableHeader className="sticky top-0 bg-gray-50 z-10">
+                  <div className="rounded-lg border border-gray-200 overflow-hidden">
+                    <div className="overflow-auto max-h-[340px] sm:max-h-[400px] w-full">
+                      <table className="w-full min-w-[1150px] table-fixed caption-bottom text-sm">
+                        <TableHeader className="sticky top-0 bg-gray-50 z-10 border-b border-gray-200">
                           <TableRow>
-                            <TableHead className="text-[10px] sm:text-xs md:text-sm px-2 sm:px-3 whitespace-nowrap w-[90px] min-w-[90px]">
+                            <TableHead className="text-xs sm:text-sm px-3 py-3 whitespace-nowrap w-[100px]">
                               Date
                             </TableHead>
-                            <TableHead className="hidden sm:table-cell text-[10px] sm:text-xs md:text-sm px-2 sm:px-3 whitespace-nowrap w-[56px] min-w-[56px]">
+                            <TableHead className="hidden sm:table-cell text-xs sm:text-sm px-3 py-3 whitespace-nowrap w-[72px]">
                               Day
                             </TableHead>
-                            <TableHead className="text-[10px] sm:text-xs md:text-sm px-2 sm:px-3 whitespace-nowrap w-[76px] min-w-[76px]">
+                            <TableHead className="text-xs sm:text-sm px-3 py-3 whitespace-nowrap w-[120px]">
                               In
                             </TableHead>
-                            <TableHead className="text-[10px] sm:text-xs md:text-sm px-2 sm:px-3 whitespace-nowrap w-[76px] min-w-[76px]">
+                            <TableHead className="text-xs sm:text-sm px-3 py-3 whitespace-nowrap w-[120px]">
                               Out
                             </TableHead>
-                            <TableHead className="text-[10px] sm:text-xs md:text-sm px-2 sm:px-3 whitespace-nowrap w-[72px] min-w-[72px]">
+                            <TableHead className="text-xs sm:text-sm px-3 py-2.5 whitespace-nowrap w-[120px]">
                               Status
                             </TableHead>
                             <TableHead
-                              className="text-[10px] sm:text-xs px-2 sm:px-3 whitespace-nowrap w-[84px] min-w-[84px]"
+                              className="text-xs sm:text-sm px-3 py-3 whitespace-nowrap w-[110px]"
                               title="Late (minutes)"
                             >
                               Late
                             </TableHead>
                             <TableHead
-                              className="text-[10px] sm:text-xs px-2 sm:px-3 whitespace-nowrap w-[76px] min-w-[76px]"
+                              className="text-xs sm:text-sm px-3 py-3 whitespace-nowrap w-[110px]"
                               title="Undertime (minutes)"
                             >
                               UT
                             </TableHead>
                             <TableHead
-                              className="text-[10px] sm:text-xs px-2 sm:px-3 whitespace-nowrap w-[76px] min-w-[76px]"
+                              className="text-xs sm:text-sm px-3 py-3 whitespace-nowrap w-[110px]"
                               title="Overtime (hours)"
                             >
                               OT
                             </TableHead>
-                            <TableHead className="text-[10px] sm:text-xs md:text-sm px-2 sm:px-3 whitespace-nowrap w-[110px] min-w-[110px]">
+                            <TableHead className="text-xs sm:text-sm px-3 py-3 whitespace-nowrap w-[130px]">
                               Notes
                             </TableHead>
-                            <TableHead className="text-[10px] sm:text-xs md:text-sm px-2 sm:px-3 whitespace-nowrap w-[48px] min-w-[48px]">
+                            <TableHead className="text-xs sm:text-sm px-3 py-3 whitespace-nowrap w-[56px]">
                               Actions
                             </TableHead>
                           </TableRow>
                         </TableHeader>
-                        <TableBody>
+                        <tbody>
                           {getBulkDates().map((dateInfo) => {
                             const employee = employees?.find(
                               (e: any) => e._id === bulkSelectedEmployee,
@@ -1387,7 +1366,7 @@ export function BulkAddAttendanceDialog({
 
                             return (
                               <TableRow key={dateInfo.timestamp}>
-                                <TableCell className="font-medium text-xs sm:text-sm">
+                                <TableCell className="font-medium text-xs sm:text-sm px-3 py-3 align-middle w-[100px]">
                                   <div className="flex flex-col">
                                     <span>
                                       {format(dateInfo.date, "MMM dd, yyyy")}
@@ -1397,11 +1376,12 @@ export function BulkAddAttendanceDialog({
                                     </span>
                                   </div>
                                 </TableCell>
-                                <TableCell className="text-gray-600 capitalize text-xs sm:text-sm hidden sm:table-cell">
+                                <TableCell className="text-gray-600 capitalize text-xs sm:text-sm hidden sm:table-cell px-3 py-3 align-middle w-[72px]">
                                   {dateInfo.dayName}
                                 </TableCell>
-                                <TableCell>
+                                <TableCell className="px-3 py-3 align-middle w-[120px]">
                                   <TimePicker
+                                    compact
                                     value={dayTimes.timeIn}
                                     onValueChange={(value) =>
                                       setBulkDayTimes((prev) => ({
@@ -1447,11 +1427,12 @@ export function BulkAddAttendanceDialog({
                                     }
                                     placeholder="Time in"
                                     showLabel={false}
-                                    className="w-full text-xs"
+                                    className="w-full min-w-0"
                                   />
                                 </TableCell>
-                                <TableCell className="px-2 sm:px-4 py-2 sm:py-3">
+                                <TableCell className="px-3 py-3 align-middle w-[120px]">
                                   <TimePicker
+                                    compact
                                     value={dayTimes.timeOut}
                                     onValueChange={(value) =>
                                       setBulkDayTimes((prev) => ({
@@ -1497,10 +1478,10 @@ export function BulkAddAttendanceDialog({
                                     }
                                     placeholder="Time out"
                                     showLabel={false}
-                                    className="w-full"
+                                    className="w-full min-w-0"
                                   />
                                 </TableCell>
-                                <TableCell>
+                                <TableCell className="px-3 py-2.5 align-middle w-[120px]">
                                   <Select
                                     value={dayTimes.status}
                                     onValueChange={(value: any) => {
@@ -1585,7 +1566,7 @@ export function BulkAddAttendanceDialog({
                                       });
                                     }}
                                   >
-                                    <SelectTrigger className="w-full text-xs h-8 sm:h-9">
+                                    <SelectTrigger className="w-full h-8 text-xs">
                                       <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -1607,11 +1588,11 @@ export function BulkAddAttendanceDialog({
                                     </SelectContent>
                                   </Select>
                                 </TableCell>
-                                <TableCell className="px-2 sm:px-4 py-2 sm:py-3 w-[84px] min-w-[84px]">
+                                <TableCell className="px-3 py-3 w-[110px] align-middle">
                                   {dayTimes.status === "present" &&
                                   daySchedule ? (
                                     <div className="space-y-1">
-                                      <div className="flex items-center gap-1 min-w-0">
+                                      <div className="flex items-center gap-2 min-w-0">
                                         <Input
                                           type="number"
                                           step="1"
@@ -1627,7 +1608,7 @@ export function BulkAddAttendanceDialog({
                                               },
                                             }));
                                           }}
-                                          className={`min-w-[3rem] w-14 flex-1 text-xs ${!dayTimes.useManualLate ? "bg-gray-50" : ""}`}
+                                          className={`h-8 w-14 shrink-0 text-xs ${!dayTimes.useManualLate ? "bg-gray-50" : ""}`}
                                           placeholder="0"
                                           disabled={isSubmittingBulk}
                                           readOnly={!dayTimes.useManualLate}
@@ -1644,7 +1625,7 @@ export function BulkAddAttendanceDialog({
                                             }
                                           }}
                                         />
-                                        <label className="flex items-center gap-0.5 text-[10px] text-gray-600 whitespace-nowrap">
+                                        <label className="inline-flex items-center gap-1 shrink-0 cursor-pointer leading-none">
                                           <input
                                             type="checkbox"
                                             checked={
@@ -1665,7 +1646,7 @@ export function BulkAddAttendanceDialog({
                                                 },
                                               }));
                                             }}
-                                            className="h-2.5 w-2.5 rounded border-gray-300"
+                                            className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 align-middle"
                                             disabled={isSubmittingBulk}
                                             title="Manual override"
                                           />
@@ -1685,11 +1666,11 @@ export function BulkAddAttendanceDialog({
                                     </span>
                                   )}
                                 </TableCell>
-                                <TableCell className="px-2 sm:px-4 py-2 sm:py-3 w-[76px] min-w-[76px]">
+                                <TableCell className="px-3 py-3 w-[110px] align-middle">
                                   {dayTimes.status === "present" &&
                                   daySchedule ? (
                                       <div className="space-y-1">
-                                      <div className="flex items-center gap-1 min-w-0">
+                                      <div className="flex items-center gap-2 min-w-0">
                                         <Input
                                           type="number"
                                           step="1"
@@ -1705,7 +1686,7 @@ export function BulkAddAttendanceDialog({
                                               },
                                             }));
                                           }}
-                                          className={`min-w-[3rem] w-14 flex-1 text-xs ${!dayTimes.useManualUndertime ? "bg-gray-50" : ""}`}
+                                          className={`h-8 w-14 shrink-0 text-xs ${!dayTimes.useManualUndertime ? "bg-gray-50" : ""}`}
                                           placeholder="0"
                                           disabled={isSubmittingBulk}
                                           readOnly={
@@ -1726,7 +1707,7 @@ export function BulkAddAttendanceDialog({
                                             }
                                           }}
                                         />
-                                        <label className="flex items-center gap-0.5 text-[10px] text-gray-600 whitespace-nowrap">
+                                        <label className="inline-flex items-center gap-1 shrink-0 cursor-pointer leading-none">
                                           <input
                                             type="checkbox"
                                             checked={
@@ -1750,7 +1731,7 @@ export function BulkAddAttendanceDialog({
                                                 },
                                               }));
                                             }}
-                                            className="h-2.5 w-2.5 rounded border-gray-300"
+                                            className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 align-middle"
                                             disabled={isSubmittingBulk}
                                             title="Manual override"
                                           />
@@ -1770,7 +1751,7 @@ export function BulkAddAttendanceDialog({
                                     </span>
                                   )}
                                 </TableCell>
-                                <TableCell className="px-2 sm:px-4 py-2 sm:py-3 w-[76px] min-w-[76px]">
+                                <TableCell className="px-3 py-3 w-[110px] align-middle">
                                   <div className="space-y-1">
                                     <div className="flex items-center gap-2 min-w-0">
                                       <Input
@@ -1812,7 +1793,7 @@ export function BulkAddAttendanceDialog({
                                             },
                                           }));
                                         }}
-                                        className={`min-w-[3rem] w-14 flex-1 text-xs ${!dayTimes.useManualOvertime ? "bg-gray-50" : ""}`}
+                                        className={`h-8 w-14 shrink-0 text-xs ${!dayTimes.useManualOvertime ? "bg-gray-50" : ""}`}
                                         placeholder="0.00"
                                         disabled={
                                           dayTimes.status === "absent" ||
@@ -1840,7 +1821,7 @@ export function BulkAddAttendanceDialog({
                                       />
                                       {dayTimes.status === "present" &&
                                         daySchedule && (
-                                          <label className="flex items-center gap-0.5 text-[10px] text-gray-600 whitespace-nowrap">
+                                          <label className="inline-flex items-center gap-1 shrink-0 cursor-pointer leading-none">
                                             <input
                                               type="checkbox"
                                               checked={
@@ -1861,7 +1842,7 @@ export function BulkAddAttendanceDialog({
                                                   },
                                                 }));
                                               }}
-                                              className="h-2.5 w-2.5 rounded border-gray-300"
+                                              className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 align-middle"
                                               disabled={isSubmittingBulk}
                                               title="Manual override"
                                             />
@@ -1873,7 +1854,7 @@ export function BulkAddAttendanceDialog({
                                     </div>
                                   </div>
                                 </TableCell>
-                                <TableCell className="px-2 sm:px-4 py-2 sm:py-3 w-[110px] min-w-[110px]">
+                                <TableCell className="px-3 py-3 w-[130px] align-middle">
                                   <Input
                                     value={dayTimes.notes ?? ""}
                                     onChange={(e) =>
@@ -1887,10 +1868,10 @@ export function BulkAddAttendanceDialog({
                                     }
                                     placeholder="Note"
                                     disabled={isSubmittingBulk}
-                                    className="w-full min-w-[4rem] text-xs"
+                                    className="w-full min-w-0 text-xs"
                                   />
                                 </TableCell>
-                                <TableCell className="text-[10px] sm:text-xs md:text-sm px-2 sm:px-4 py-2 sm:py-3">
+                                <TableCell className="px-3 py-3 align-middle w-[56px]">
                                   <Button
                                     type="button"
                                     variant="ghost"
@@ -1911,8 +1892,8 @@ export function BulkAddAttendanceDialog({
                               </TableRow>
                             );
                           })}
-                        </TableBody>
-                      </Table>
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                   {getBulkDates().length === 0 &&

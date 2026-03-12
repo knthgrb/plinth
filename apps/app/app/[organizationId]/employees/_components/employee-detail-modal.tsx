@@ -36,10 +36,6 @@ function safeDate(value: unknown): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 import { updateEmployee } from "@/actions/employees";
-import {
-  updateEmployeeLeaveCredits,
-  getEmployeeLeaveCredits,
-} from "@/actions/leave";
 import { Id } from "@/convex/_generated/dataModel";
 import { useOrganization } from "@/hooks/organization-context";
 import { EmploymentTypeSelect } from "@/components/ui/employment-type-select";
@@ -126,14 +122,6 @@ export function EmployeeDetailModal({
     reset,
   } = editForm;
 
-  const [vacationTotal, setVacationTotal] = useState("");
-  const [sickTotal, setSickTotal] = useState("");
-  const [effectiveLeaveCredits, setEffectiveLeaveCredits] = useState<{
-    vacation?: { balance: number; total: number };
-    sick?: { balance: number; total: number };
-    custom?: Array<{ type: string; balance: number; total: number }>;
-  } | null>(null);
-
   const [scheduleType, setScheduleType] = useState<"one-time" | "regular">(
     "one-time",
   );
@@ -210,30 +198,6 @@ export function EmployeeDetailModal({
           }))
         : (settings.departments as { name: string; color: string }[])
       : [];
-
-  // Fetch effective leave credits (computed anniversary, proration) when viewing employee
-  useEffect(() => {
-    if (!open || !employeeId || !currentOrganizationId) {
-      setEffectiveLeaveCredits(null);
-      return;
-    }
-    let cancelled = false;
-    getEmployeeLeaveCredits(currentOrganizationId, employeeId)
-      .then((credits) => {
-        if (cancelled) return;
-        setEffectiveLeaveCredits({
-          vacation: credits?.vacation,
-          sick: credits?.sick,
-          custom: credits?.custom,
-        });
-      })
-      .catch(() => {
-        if (!cancelled) setEffectiveLeaveCredits(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, employeeId, currentOrganizationId]);
 
   // Populate edit form when opening in edit mode
   useEffect(() => {
@@ -382,8 +346,6 @@ export function EmployeeDetailModal({
       regularHolidayOtRate: (employeeRegularHolidayOtDecimal * 100).toString(),
       specialHolidayOtRate: (employeeSpecialHolidayOtDecimal * 100).toString(),
     });
-    setVacationTotal(employee.leaveCredits?.vacation?.total?.toString() || "");
-    setSickTotal(employee.leaveCredits?.sick?.total?.toString() || "");
   }, [open, mode, employee, settings, reset]);
 
   const onValidSave = async (data: EmployeeFormValues) => {
@@ -557,29 +519,6 @@ export function EmployeeDetailModal({
         },
         shiftId: !editShiftId || editShiftId === SHIFT_NONE ? null : (editShiftId as Id<"shifts">),
       });
-
-      // Optionally update leave credits totals if changed
-      if (currentOrganizationId) {
-        const vacTotal = parseFloat(vacationTotal);
-        if (!Number.isNaN(vacTotal)) {
-          await updateEmployeeLeaveCredits({
-            organizationId: currentOrganizationId,
-            employeeId,
-            leaveType: "vacation",
-            total: vacTotal,
-          });
-        }
-
-        const sickTotalVal = parseFloat(sickTotal);
-        if (!Number.isNaN(sickTotalVal)) {
-          await updateEmployeeLeaveCredits({
-            organizationId: currentOrganizationId,
-            employeeId,
-            leaveType: "sick",
-            total: sickTotalVal,
-          });
-        }
-      }
 
       // Recalculate attendance records based on the updated schedule
       if (currentOrganizationId) {
@@ -1550,114 +1489,6 @@ export function EmployeeDetailModal({
                   </div>
                 </CardContent>
               </Card>
-            )}
-
-            {/* Leave Credits */}
-            {(employee.leaveCredits || effectiveLeaveCredits) && (
-              <div>
-                {!isEditing ? (
-                  <Card className="border-gray-100">
-                    <CardHeader className="py-2.5 px-3 sm:px-4">
-                      <CardTitle className="text-sm font-medium flex items-center gap-2">
-                        <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-                        Leave Credits
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="pt-0 px-3 sm:px-4 pb-3 sm:pb-4">
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        {(effectiveLeaveCredits ?? employee.leaveCredits)
-                          ?.vacation != null && (
-                          <div className="rounded-lg border border-gray-100 bg-gray-50/50 p-2.5 space-y-0.5">
-                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              Vacation Leave
-                            </p>
-                            <p className="text-sm font-semibold">
-                              {(effectiveLeaveCredits ?? employee.leaveCredits)
-                                .vacation?.balance ?? 0}{" "}
-                              /{" "}
-                              {(effectiveLeaveCredits ?? employee.leaveCredits)
-                                .vacation?.total ?? 0}{" "}
-                              days
-                            </p>
-                          </div>
-                        )}
-                        {(effectiveLeaveCredits ?? employee.leaveCredits)
-                          ?.sick != null && (
-                          <div className="rounded-lg border border-gray-100 bg-gray-50/50 p-2.5 space-y-0.5">
-                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              Sick Leave
-                            </p>
-                            <p className="text-sm font-semibold">
-                              {(effectiveLeaveCredits ?? employee.leaveCredits)
-                                .sick?.balance ?? 0}{" "}
-                              /{" "}
-                              {(effectiveLeaveCredits ?? employee.leaveCredits)
-                                .sick?.total ?? 0}{" "}
-                              days
-                            </p>
-                          </div>
-                        )}
-                        {(effectiveLeaveCredits?.custom ??
-                          employee.leaveCredits?.custom)?.map((c: any) => {
-                          const name =
-                            (settings?.leaveTypes as any[])?.find(
-                              (lt: any) => lt.type === c.type
-                            )?.name ?? c.type;
-                          return (
-                            <div
-                              key={c.type}
-                              className="rounded-lg border border-gray-100 bg-gray-50/50 p-2.5 space-y-0.5"
-                            >
-                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                                {name}
-                              </p>
-                              <p className="text-sm font-semibold">
-                                {c.balance ?? 0} / {c.total ?? 0} days
-                              </p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <div className="space-y-2">
-                    <h3 className="text-sm font-semibold text-gray-900">
-                      Leave Credits
-                    </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="edit-vacationTotal" className="text-sm">
-                          Vacation Leave Total (days)
-                        </Label>
-                        <Input
-                          id="edit-vacationTotal"
-                          type="number"
-                          step="0.1"
-                          value={vacationTotal}
-                          onChange={(e) => setVacationTotal(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="edit-sickTotal" className="text-sm">
-                          Sick Leave Total (days)
-                        </Label>
-                        <Input
-                          id="edit-sickTotal"
-                          type="number"
-                          step="0.1"
-                          value={sickTotal}
-                          onChange={(e) => setSickTotal(e.target.value)}
-                        />
-                      </div>
-                      <p className="col-span-1 sm:col-span-2 text-xs text-gray-500">
-                        Balances will be recalculated automatically from totals
-                        and used days.
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
             )}
 
             {!isEditing && <div className="border-t border-gray-100" />}

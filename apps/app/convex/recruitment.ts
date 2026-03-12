@@ -1,10 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
-import {
-  calculateProratedLeave,
-  calculateAnniversaryLeaveFromHire,
-} from "./leaveCalculations";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -553,100 +549,6 @@ export const convertApplicantToEmployee = mutation({
     // Create employee record
     const now = Date.now();
 
-    // Get organization settings for default leave credits
-    const settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", applicant.organizationId),
-      )
-      .first();
-
-    // Use settings leaveTypes if they exist, otherwise use defaults (same as getSettings query)
-    const leaveTypes = settings?.leaveTypes || [
-      {
-        type: "vacation",
-        name: "Vacation Leave",
-        defaultCredits: 15,
-        isPaid: true,
-        requiresApproval: true,
-        maxConsecutiveDays: 30,
-        carryOver: true,
-        maxCarryOver: 5,
-      },
-      {
-        type: "sick",
-        name: "Sick Leave",
-        defaultCredits: 15,
-        isPaid: true,
-        requiresApproval: true,
-        maxConsecutiveDays: 30,
-        carryOver: true,
-        maxCarryOver: 5,
-      },
-      {
-        type: "emergency",
-        name: "Emergency Leave",
-        defaultCredits: 5,
-        isPaid: true,
-        requiresApproval: true,
-        maxConsecutiveDays: 7,
-        carryOver: false,
-      },
-    ];
-
-    const proratedLeave = settings?.proratedLeave === true;
-    const grantLeaveUponRegularization =
-      settings?.grantLeaveUponRegularization === true;
-    const hireDate = args.employeeData.hireDate;
-    const regularizationDate = (args.employeeData as any).regularizationDate;
-    const prorationStartDate =
-      grantLeaveUponRegularization && regularizationDate
-        ? regularizationDate
-        : hireDate;
-
-    const leaveCredits: any = {
-      vacation: { total: 0, used: 0, balance: 0 },
-      sick: { total: 0, used: 0, balance: 0 },
-    };
-    const customCredits: Array<{
-      type: string;
-      total: number;
-      used: number;
-      balance: number;
-    }> = [];
-
-    for (const lt of leaveTypes) {
-      const type = (lt as any).type;
-      const defaultCredits = (lt as any).defaultCredits ?? 0;
-      const isAnniversary =
-        (lt as any).isAnniversary === true || type === "anniversary";
-
-      let total: number;
-      if (isAnniversary) {
-        total = calculateAnniversaryLeaveFromHire(hireDate, now);
-      } else if (proratedLeave) {
-        total =
-          Math.round(
-            calculateProratedLeave(defaultCredits, prorationStartDate, now) *
-              100,
-          ) / 100;
-      } else {
-        total = defaultCredits;
-      }
-
-      const entry = { total, used: 0, balance: total };
-      if (type === "vacation") {
-        leaveCredits.vacation = entry;
-      } else if (type === "sick") {
-        leaveCredits.sick = entry;
-      } else {
-        customCredits.push({ ...entry, type });
-      }
-    }
-
-    if (customCredits.length > 0) {
-      leaveCredits.custom = customCredits;
-    }
-
     const employeeId = await ctx.db.insert("employees", {
       organizationId: applicant.organizationId,
       personalInfo: {
@@ -678,7 +580,6 @@ export const convertApplicantToEmployee = mutation({
           sunday: { in: "09:00", out: "18:00", isWorkday: false },
         },
       },
-      leaveCredits,
       requirements: [],
       deductions: [],
       incentives: [],
