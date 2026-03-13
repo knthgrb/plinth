@@ -8,6 +8,8 @@ import {
 import {
   calculatePayrollBaseFromRecords,
   getMatchingHolidayForDate,
+  holidayAppliesToEmployee,
+  holidayMatchesDate as holidayMatchesDateLib,
 } from "@/lib/payroll-calculations";
 
 function buildDraftPayrollConfig(args: {
@@ -1029,23 +1031,25 @@ export const createPayrollRun = mutation({
       )
       .collect();
 
-    // Backfill isHoliday/holidayType on attendance so late-on-holiday is categorized correctly.
-    // Sync attendance to current holidays: set when match found, clear when holiday was deleted.
+    // Backfill isHoliday/holidayType on attendance. Only set when holiday applies to this employee's province.
     for (const employeeId of args.employeeIds) {
+      const employee = await ctx.db.get(employeeId);
       const attendance = await (ctx.db.query("attendance") as any)
         .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
         .collect();
       for (const rec of attendance) {
         if (rec.date >= args.cutoffStart && rec.date <= args.cutoffEnd) {
-          const matched = getMatchingHolidayForDate(rec.date, holidays);
-          if (matched) {
+          const holiday = holidays.find((h: any) =>
+            holidayMatchesDateLib(h, rec.date),
+          );
+          if (holiday && employee && holidayAppliesToEmployee(holiday, employee)) {
             await ctx.db.patch(rec._id, {
               isHoliday: true,
-              holidayType: matched.type,
+              holidayType: holiday.type,
               updatedAt: now,
             });
           } else if (rec.isHoliday || rec.holidayType) {
-            // Holiday was deleted — clear so payroll doesn't treat it as holiday
+            // Holiday deleted or doesn't apply to this employee's province — clear
             await ctx.db.patch(rec._id, {
               isHoliday: false,
               holidayType: undefined,
@@ -1757,15 +1761,17 @@ export const updatePayrollRun = mutation({
           .collect();
         for (const rec of attendance) {
           if (rec.date >= cutoffStart && rec.date <= cutoffEnd) {
-            const matched = getMatchingHolidayForDate(rec.date, holidays);
-            if (matched) {
+            const holiday = holidays.find((h: any) =>
+              holidayMatchesDateLib(h, rec.date),
+            );
+            const emp = (await ctx.db.get(employeeId)) as any;
+            if (holiday && emp && holidayAppliesToEmployee(holiday, emp)) {
               await ctx.db.patch(rec._id, {
                 isHoliday: true,
-                holidayType: matched.type,
+                holidayType: holiday.type,
                 updatedAt: nowUpdate,
               });
             } else if (rec.isHoliday || rec.holidayType) {
-              // Holiday was deleted — clear so payroll doesn't treat it as holiday
               await ctx.db.patch(rec._id, {
                 isHoliday: false,
                 holidayType: undefined,

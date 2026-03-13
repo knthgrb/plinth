@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { holidayAppliesToEmployee } from "@/lib/payroll-calculations";
 import { getScheduleWithLunch } from "./shifts";
 
 function timeToMins(t: string): number {
@@ -66,6 +67,23 @@ function getHolidayForDate(
     type: string;
   }[],
 ): { type: "regular" | "special" | "special_working" } | null {
+  const entry = getMatchingHolidayEntryForDate(dateTs, holidays);
+  return entry ? { type: entry.type as "regular" | "special" | "special_working" } : null;
+}
+
+/** Returns the full matching holiday entry for a date, or null. */
+function getMatchingHolidayEntryForDate(
+  dateTs: number,
+  holidays: {
+    date: number;
+    offsetDate?: number;
+    isRecurring?: boolean;
+    year?: number;
+    type: string;
+    applyToAll?: boolean;
+    provinces?: string[];
+  }[],
+): (typeof holidays)[0] | null {
   const target = getManilaDateParts(dateTs);
   for (const h of holidays) {
     const effectiveTs = h.offsetDate ?? h.date;
@@ -86,7 +104,7 @@ function getHolidayForDate(
         h.type === "special" ||
         h.type === "special_working")
     ) {
-      return { type: h.type as "regular" | "special" | "special_working" };
+      return h;
     }
   }
   return null;
@@ -335,15 +353,22 @@ export const createAttendance = mutation({
         q.eq("organizationId", args.organizationId),
       )
       .collect();
-    if (
-      isDateRegularOrSpecialHoliday(args.date, holidays) &&
-      !args.actualIn &&
-      !args.actualOut
-    ) {
-      resolvedStatus = "no_work";
-    }
 
     const employee = await ctx.db.get(args.employeeId);
+    if (
+      !args.actualIn &&
+      !args.actualOut &&
+      employee
+    ) {
+      const holidayEntry = getMatchingHolidayEntryForDate(args.date, holidays);
+      if (
+        holidayEntry &&
+        (holidayEntry.type === "regular" || holidayEntry.type === "special") &&
+        holidayAppliesToEmployee(holidayEntry, employee)
+      ) {
+        resolvedStatus = "no_work";
+      }
+    }
     const scheduleWithLunch = employee
       ? await getScheduleWithLunch(
           ctx,
@@ -382,10 +407,14 @@ export const createAttendance = mutation({
     let isHoliday = args.isHoliday;
     let holidayType = args.holidayType;
     if (isHoliday === undefined && holidayType === undefined) {
-      const matchedHoliday = getHolidayForDate(args.date, holidays);
-      if (matchedHoliday) {
+      const holidayEntry = getMatchingHolidayEntryForDate(args.date, holidays);
+      if (
+        holidayEntry &&
+        employee &&
+        holidayAppliesToEmployee(holidayEntry, employee)
+      ) {
         isHoliday = true;
-        holidayType = matchedHoliday.type;
+        holidayType = holidayEntry.type as "regular" | "special" | "special_working";
       }
     }
     const insertPayload: Record<string, unknown> = {
@@ -505,23 +534,30 @@ export const updateAttendance = mutation({
       .collect();
 
     if (args.status === undefined) {
-      if (
-        !currentActualIn &&
-        !currentActualOut &&
-        isDateRegularOrSpecialHoliday(attendance.date, holidays)
-      ) {
-        currentStatus = "no_work";
-        updates.status = "no_work";
+      if (!currentActualIn && !currentActualOut && employee) {
+        const holidayEntry = getMatchingHolidayEntryForDate(attendance.date, holidays);
+        if (
+          holidayEntry &&
+          (holidayEntry.type === "regular" || holidayEntry.type === "special") &&
+          holidayAppliesToEmployee(holidayEntry, employee)
+        ) {
+          currentStatus = "no_work";
+          updates.status = "no_work";
+        }
       }
     }
     if (args.status !== undefined) updates.status = args.status;
 
-    // Auto-set isHoliday and holidayType from org holidays when date matches (so payroll categorizes late correctly)
+    // Auto-set isHoliday and holidayType only when holiday applies to this employee's province
     if (args.isHoliday === undefined && args.holidayType === undefined) {
-      const matchedHoliday = getHolidayForDate(attendance.date, holidays);
-      if (matchedHoliday) {
+      const holidayEntry = getMatchingHolidayEntryForDate(attendance.date, holidays);
+      if (
+        holidayEntry &&
+        employee &&
+        holidayAppliesToEmployee(holidayEntry, employee)
+      ) {
         updates.isHoliday = true;
-        updates.holidayType = matchedHoliday.type;
+        updates.holidayType = holidayEntry.type;
       }
     }
 
@@ -676,10 +712,14 @@ export const bulkCreateAttendance = mutation({
         if (entry.holidayType !== undefined)
           updates.holidayType = entry.holidayType;
         if (entry.isHoliday === undefined && entry.holidayType === undefined) {
-          const matchedHoliday = getHolidayForDate(entry.date, holidays);
-          if (matchedHoliday) {
+          const holidayEntry = getMatchingHolidayEntryForDate(entry.date, holidays);
+          if (
+            holidayEntry &&
+            employee &&
+            holidayAppliesToEmployee(holidayEntry, employee)
+          ) {
             updates.isHoliday = true;
-            updates.holidayType = matchedHoliday.type;
+            updates.holidayType = holidayEntry.type;
           }
         }
         if (entry.remarks !== undefined) updates.remarks = entry.remarks;
@@ -741,10 +781,14 @@ export const bulkCreateAttendance = mutation({
         let isHoliday = entry.isHoliday;
         let holidayType = entry.holidayType;
         if (isHoliday === undefined && holidayType === undefined) {
-          const matchedHoliday = getHolidayForDate(entry.date, holidays);
-          if (matchedHoliday) {
+          const holidayEntry = getMatchingHolidayEntryForDate(entry.date, holidays);
+          if (
+            holidayEntry &&
+            employee &&
+            holidayAppliesToEmployee(holidayEntry, employee)
+          ) {
             isHoliday = true;
-            holidayType = matchedHoliday.type;
+            holidayType = holidayEntry.type;
           }
         }
         const insertPayload: Record<string, unknown> = {
@@ -885,10 +929,13 @@ export const recalculateEmployeeAttendance = mutation({
         late: newLate,
         updatedAt: now,
       };
-      const matchedHoliday = getHolidayForDate(record.date, holidays);
-      if (matchedHoliday) {
+      const holidayEntry = getMatchingHolidayEntryForDate(record.date, holidays);
+      if (
+        holidayEntry &&
+        holidayAppliesToEmployee(holidayEntry, employee)
+      ) {
         patchPayload.isHoliday = true;
-        patchPayload.holidayType = matchedHoliday.type;
+        patchPayload.holidayType = holidayEntry.type;
       }
       if (scheduleWithLunch?.lunchStart != null)
         patchPayload.lunchStart = scheduleWithLunch.lunchStart;

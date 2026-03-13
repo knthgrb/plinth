@@ -55,6 +55,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useOrganization } from "@/hooks/organization-context";
+import { holidayAppliesToEmployee } from "@/lib/payroll-calculations";
 import {
   getAttendanceStatusLabel,
   getStatusBadgeClass,
@@ -488,9 +489,16 @@ export default function AttendancePage() {
     const undertimes: { date: number; minutes: number }[] = [];
     const overtimes: { date: number; start: string; end: string }[] = [];
 
+    const selectedEmployee = selectedEmployeeFilter
+      ? (employees as any[])?.find((e: any) => e._id === selectedEmployeeFilter)
+      : null;
+
     individualAttendance.forEach((record: any) => {
       const dayKey = startOfDay(new Date(record.date)).getTime();
-      const dayHolidays = holidaysByDateForMonth[dayKey] || [];
+      const dayHolidays = (holidaysByDateForMonth[dayKey] || []).filter(
+        (h: any) =>
+          !selectedEmployee || holidayAppliesToEmployee(h, selectedEmployee),
+      );
 
       const noTimeRecorded = !record.actualIn && !record.actualOut;
       const isRegularOrSpecialHoliday = dayHolidays.some(
@@ -553,7 +561,7 @@ export default function AttendancePage() {
     overtimes.sort((a, b) => a.date - b.date);
 
     return { lates, absences, undertimes, overtimes };
-  }, [individualAttendance, holidaysByDateForMonth, selectedEmployeeFilter]);
+  }, [individualAttendance, holidaysByDateForMonth, selectedEmployeeFilter, employees]);
 
   return (
     <MainLayout>
@@ -1054,8 +1062,18 @@ export default function AttendancePage() {
                             const dayKey = startOfDay(
                               new Date(record.date),
                             ).getTime();
-                            const dayHolidays =
-                              holidaysByDateForMonth[dayKey] || [];
+                            const selectedEmployee = selectedEmployeeFilter
+                              ? (employees as any[])?.find(
+                                  (e: any) => e._id === selectedEmployeeFilter,
+                                )
+                              : null;
+                            const dayHolidays = (
+                              holidaysByDateForMonth[dayKey] || []
+                            ).filter(
+                              (h: any) =>
+                                !selectedEmployee ||
+                                holidayAppliesToEmployee(h, selectedEmployee),
+                            );
                             // Holiday with no time in/out: absent for special_working; regular/special → no_work; else present
                             const noTimeRecorded =
                               !record.actualIn && !record.actualOut;
@@ -1634,9 +1652,11 @@ export default function AttendancePage() {
                                     const holidayKey = startOfDay(
                                       date,
                                     ).getTime();
-                                    const dayHolidays =
-                                      holidaysByDateForSummary[holidayKey] ||
-                                      [];
+                                    const dayHolidays = (
+                                      holidaysByDateForSummary[holidayKey] || []
+                                    ).filter((h: any) =>
+                                      holidayAppliesToEmployee(h, employee),
+                                    );
                                     const record = empAttendance[dateTimestamp];
                                     const isLast =
                                       index === summaryMonthDates.length - 1;

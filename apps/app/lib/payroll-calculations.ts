@@ -198,7 +198,7 @@ export function getMatchingHolidayForDate(
   return null;
 }
 
-function holidayAppliesToEmployee(holiday: any, employee: any): boolean {
+export function holidayAppliesToEmployee(holiday: any, employee: any): boolean {
   if (holiday.applyToAll !== false) return true;
   const provinces = holiday.provinces as string[] | undefined;
   if (!provinces || provinces.length === 0) return true;
@@ -219,26 +219,20 @@ function getHolidayInfo(
   holidayType?: HolidayType;
   appliesToEmployee?: boolean;
 } {
-  // Prefer attendance when it has isHoliday/holidayType (from backfill or edit) — ensures late-on-holiday categorizes correctly.
-  if (attendanceRecord?.isHoliday && attendanceRecord?.holidayType) {
-    return {
-      isHoliday: true,
-      holidayType: attendanceRecord.holidayType as HolidayType,
-      appliesToEmployee: true,
-    };
-  }
-  // Fall back to holiday list (Manila date matching).
   const holiday = holidays.find((entry) => holidayMatchesDate(entry, date));
-  if (holiday) {
-    const appliesToEmployee = holidayAppliesToEmployee(holiday, employee ?? {});
-    return {
-      isHoliday: true,
-      holidayType: holiday.type,
-      appliesToEmployee,
-    };
-  }
-
-  return { isHoliday: false };
+  if (!holiday) return { isHoliday: false };
+  const appliesToEmployee = holidayAppliesToEmployee(holiday, employee ?? {});
+  if (!appliesToEmployee) return { isHoliday: false };
+  // Use attendance's type when set (from backfill/edit), so per-record classification is preserved.
+  const type =
+    attendanceRecord?.isHoliday && attendanceRecord?.holidayType
+      ? (attendanceRecord.holidayType as HolidayType)
+      : holiday.type;
+  return {
+    isHoliday: true,
+    holidayType: type,
+    appliesToEmployee: true,
+  };
 }
 
 function timeStringToMinutes(time: string | undefined): number | null {
