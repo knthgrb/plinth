@@ -557,7 +557,7 @@ export const updateAttendance = mutation({
         holidayAppliesToEmployee(holidayEntry, employee)
       ) {
         updates.isHoliday = true;
-        updates.holidayType = holidayEntry.type;
+        updates.holidayType = holidayEntry.type as "regular" | "special" | "special_working";
       }
     }
 
@@ -719,7 +719,7 @@ export const bulkCreateAttendance = mutation({
             holidayAppliesToEmployee(holidayEntry, employee)
           ) {
             updates.isHoliday = true;
-            updates.holidayType = holidayEntry.type;
+            updates.holidayType = holidayEntry.type as "regular" | "special" | "special_working";
           }
         }
         if (entry.remarks !== undefined) updates.remarks = entry.remarks;
@@ -788,7 +788,7 @@ export const bulkCreateAttendance = mutation({
             holidayAppliesToEmployee(holidayEntry, employee)
           ) {
             isHoliday = true;
-            holidayType = holidayEntry.type;
+            holidayType = holidayEntry.type as "regular" | "special" | "special_working";
           }
         }
         const insertPayload: Record<string, unknown> = {
@@ -935,7 +935,7 @@ export const recalculateEmployeeAttendance = mutation({
         holidayAppliesToEmployee(holidayEntry, employee)
       ) {
         patchPayload.isHoliday = true;
-        patchPayload.holidayType = holidayEntry.type;
+        patchPayload.holidayType = holidayEntry.type as "regular" | "special" | "special_working";
       }
       if (scheduleWithLunch?.lunchStart != null)
         patchPayload.lunchStart = scheduleWithLunch.lunchStart;
