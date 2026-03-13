@@ -43,6 +43,7 @@ import { SalaryTypeSelect } from "@/components/ui/salary-type-select";
 import { DepartmentSelect } from "@/components/ui/department-select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { PH_PROVINCES } from "@/utils/ph-provinces";
+import { formatTime12Hour } from "@/utils/attendance-calculations";
 import { TimePicker } from "@/components/ui/time-picker";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -1503,61 +1504,95 @@ export function EmployeeDetailModal({
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3 pt-0 px-3 sm:px-4 pb-3 sm:pb-4">
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-1">
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                          Workdays
-                        </p>
-                        <p className="text-sm font-medium">
-                          {(
-                            [
-                              "monday",
-                              "tuesday",
-                              "wednesday",
-                              "thursday",
-                              "friday",
-                              "saturday",
-                              "sunday",
-                            ] as const
-                          )
-                            .filter(
-                              (day) =>
-                                employee.schedule.defaultSchedule[day].isWorkday
-                            )
-                            .map((day) => day.slice(0, 3).toUpperCase())
-                            .join(", ") || "None"}
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                          Time
-                        </p>
-                        <p className="text-sm font-medium">
-                          {(() => {
-                            const daysOrder = [
-                              "monday",
-                              "tuesday",
-                              "wednesday",
-                              "thursday",
-                              "friday",
-                              "saturday",
-                              "sunday",
-                            ] as const;
-                            const firstWorkday =
-                              (daysOrder.find(
-                                (day) =>
-                                  employee.schedule.defaultSchedule[day]
-                                    .isWorkday
-                              ) as (typeof daysOrder)[number]) ?? "monday";
-                            const sched =
-                              employee.schedule.defaultSchedule[firstWorkday];
-                            return sched?.in && sched?.out
-                              ? `${sched.in} – ${sched.out}`
-                              : "—";
-                          })()}
-                        </p>
-                      </div>
-                    </div>
+                    {(() => {
+                      const daysOrder = [
+                        "monday",
+                        "tuesday",
+                        "wednesday",
+                        "thursday",
+                        "friday",
+                        "saturday",
+                        "sunday",
+                      ] as const;
+                      const workdays = daysOrder.filter(
+                        (day) =>
+                          employee.schedule.defaultSchedule[day].isWorkday
+                      );
+                      const workdaySchedules = workdays.map((day) => ({
+                        day,
+                        ...employee.schedule.defaultSchedule[day],
+                      }));
+                      const firstIn =
+                        workdaySchedules[0]?.in;
+                      const firstOut =
+                        workdaySchedules[0]?.out;
+                      const sameTimeEveryDay =
+                        workdaySchedules.length > 0 &&
+                        workdaySchedules.every(
+                          (s) => s.in === firstIn && s.out === firstOut
+                        );
+
+                      if (workdays.length === 0) {
+                        return (
+                          <p className="text-sm text-muted-foreground">
+                            No workdays set
+                          </p>
+                        );
+                      }
+
+                      if (sameTimeEveryDay) {
+                        return (
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <div className="space-y-1">
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                                Workdays
+                              </p>
+                              <p className="text-sm font-medium">
+                                {workdays
+                                  .map((day) => day.slice(0, 3).toUpperCase())
+                                  .join(", ")}
+                              </p>
+                            </div>
+                            <div className="space-y-1">
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                                Time
+                              </p>
+                              <p className="text-sm font-medium">
+                                {firstIn && firstOut
+                                  ? `${formatTime12Hour(firstIn)} – ${formatTime12Hour(firstOut)}`
+                                  : "—"}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                            Schedule per day
+                          </p>
+                          <ul className="text-sm font-medium space-y-1.5">
+                            {workdaySchedules.map(
+                              ({ day, in: inTime, out: outTime }) =>
+                                inTime && outTime ? (
+                                  <li
+                                    key={day}
+                                    className="flex flex-wrap items-center gap-x-2 gap-y-0.5"
+                                  >
+                                    <span className="capitalize min-w-[5.5rem]">
+                                      {day}
+                                    </span>
+                                    <span className="text-muted-foreground">
+                                      {formatTime12Hour(inTime)} – {formatTime12Hour(outTime)}
+                                    </span>
+                                  </li>
+                                ) : null
+                            )}
+                          </ul>
+                        </div>
+                      );
+                    })()}
                   </CardContent>
                 </Card>
               ) : (

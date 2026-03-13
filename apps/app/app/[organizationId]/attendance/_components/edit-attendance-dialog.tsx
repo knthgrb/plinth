@@ -41,21 +41,32 @@ interface EditAttendanceDialogProps {
   onSuccess?: () => void;
 }
 
+const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+
 function getScheduledTimesForDate(
   employee: any,
   dateTs: number,
 ): { scheduleIn: string; scheduleOut: string } | null {
   if (!employee?.schedule?.defaultSchedule) return null;
   const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
-  const dateObj = new Date(dateTs);
-  const dayName = dayNames[dateObj.getDay()];
+  // Use Manila timezone so the correct per-day schedule is used regardless of user's timezone
+  const manilaDay = new Date(dateTs + MANILA_OFFSET_MS).getUTCDay();
+  const dayName = dayNames[manilaDay];
   const daySchedule = employee.schedule.defaultSchedule[dayName];
   if (!daySchedule?.in || !daySchedule?.out) return null;
   const scheduleOverrides = employee.schedule?.scheduleOverrides;
   if (Array.isArray(scheduleOverrides)) {
-    const override = scheduleOverrides.find(
-      (o: any) => o.date != null && new Date(o.date).toDateString() === dateObj.toDateString(),
-    );
+    const manilaParts = (ts: number) => {
+      const d = new Date(ts + MANILA_OFFSET_MS);
+      return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate() };
+    };
+    const targetParts = manilaParts(dateTs);
+    const override = scheduleOverrides.find((o: any) => {
+      if (o.date == null) return false;
+      const oTs = typeof o.date === "number" ? o.date : new Date(o.date).getTime();
+      const oParts = manilaParts(oTs);
+      return oParts.y === targetParts.y && oParts.m === targetParts.m && oParts.d === targetParts.d;
+    });
     if (override?.in && override?.out) return { scheduleIn: override.in, scheduleOut: override.out };
   }
   return { scheduleIn: daySchedule.in, scheduleOut: daySchedule.out };

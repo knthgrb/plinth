@@ -245,59 +245,39 @@ function timeStringToMinutes(time: string | undefined): number | null {
 }
 
 /**
- * Calculate night diff hours: overlap of (scheduled shift ∩ 10pm-6am) ∩ actual worked.
- * Night diff applies only when the employee's SCHEDULED shift includes the 10pm-6am
- * window. Early clock-in (e.g. 5:40am when scheduled 6am) does not qualify.
+ * Calculate night diff hours: actual worked time that falls in the 10pm–6am window.
+ * Uses only attendance in the cutoff: for each day, count hours the employee actually
+ * worked beyond 10pm (or in 12am–6am). No schedule overlap requirement.
  */
 function calculateNightDiffHours(
   actualIn: string | undefined,
   actualOut: string | undefined,
-  scheduleIn: string | undefined,
-  scheduleOut: string | undefined,
+  _scheduleIn?: string,
+  _scheduleOut?: string,
 ): number {
   const actualStart = timeStringToMinutes(actualIn);
   const actualEnd = timeStringToMinutes(actualOut);
-  const scheduleStart = timeStringToMinutes(scheduleIn);
-  const scheduleEnd = timeStringToMinutes(scheduleOut);
 
   if (actualStart === null || actualEnd === null) return 0;
-  if (scheduleStart === null || scheduleEnd === null) {
-    // No schedule: cannot verify shift overlaps 10pm-6am, so no night diff.
-    // (Avoids incorrect night diff for day-shift employees when schedule is missing.)
-    return 0;
+
+  const nightStart = 22 * 60; // 10:00 PM
+  const nightEnd = 24 * 60 + 6 * 60; // 6:00 AM next day (1800 min from midnight)
+
+  // Normalize actual span to handle overnight (e.g. 22:00–06:00)
+  let s = actualStart;
+  let e = actualEnd;
+  if (s < 6 * 60) {
+    s += 24 * 60;
+    e += 24 * 60;
+  } else if (e <= s) {
+    e += 24 * 60;
   }
 
-  const nightStart = 22 * 60;
-  const nightEnd = 30 * 60; // 6:00 AM next day
-
-  // Normalize times to handle overnight shifts (e.g. 22:00-06:00)
-  const norm = (start: number, end: number) => {
-    let s = start;
-    let e = end;
-    if (s < 6 * 60) {
-      s += 24 * 60;
-      e += 24 * 60;
-    } else if (e <= s) {
-      e += 24 * 60;
-    }
-    return { start: s, end: e };
-  };
-
-  const sched = norm(scheduleStart, scheduleEnd);
-  const schedNightStart = Math.max(sched.start, nightStart);
-  const schedNightEnd = Math.min(sched.end, nightEnd);
-  if (schedNightEnd <= schedNightStart) return 0;
-  // Scheduled shift has no overlap with 10pm-6am → no night diff
-
-  const act = norm(actualStart, actualEnd);
-  const actNightStart = Math.max(act.start, nightStart);
-  const actNightEnd = Math.min(act.end, nightEnd);
+  const actNightStart = Math.max(s, nightStart);
+  const actNightEnd = Math.min(e, nightEnd);
   if (actNightEnd <= actNightStart) return 0;
 
-  const overlapStart = Math.max(schedNightStart, actNightStart);
-  const overlapEnd = Math.min(schedNightEnd, actNightEnd);
-  if (overlapEnd <= overlapStart) return 0;
-  return (overlapEnd - overlapStart) / 60;
+  return (actNightEnd - actNightStart) / 60;
 }
 
 function getLateHoursFromAttendance(att: {
@@ -611,8 +591,9 @@ export function calculatePayrollBaseFromRecords(args: {
         att.scheduleOut,
       );
       if (dayNightDiffHours > 0) {
+        // Use same hourly rate as other earnings (basic + allowance) for 10% night diff
         nightDiffPay +=
-          dayNightDiffHours * basicHourlyRate * payrollRates.nightDiffRate;
+          dayNightDiffHours * hourlyRateBasicPlusAllowance * payrollRates.nightDiffRate;
       }
     } else if (att.status === "no_work") {
       // Holiday (or similar) when employee did not work — no additional pay, no absence

@@ -43,6 +43,10 @@ function getManilaDateParts(ts: number) {
   const d = new Date(ts + MANILA_OFFSET_MS);
   return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate() };
 }
+/** Day of week in Manila (0 = Sunday, 6 = Saturday) so schedule uses correct day regardless of server TZ. */
+function getManilaDayOfWeek(ts: number): number {
+  return new Date(ts + MANILA_OFFSET_MS).getUTCDay();
+}
 function isDateRegularOrSpecialHoliday(
   dateTs: number,
   holidays: {
@@ -177,6 +181,7 @@ async function checkAuth(
 
 // Helper to get the employee's scheduled in/out time for a specific date,
 // taking into account defaultSchedule and any scheduleOverrides.
+// Uses Manila timezone for day-of-week so the correct per-day schedule is used.
 function getScheduledTimesForDate(
   date: number,
   employeeSchedule: any,
@@ -195,23 +200,32 @@ function getScheduledTimesForDate(
     "saturday",
   ] as const;
 
-  const dateObj = new Date(date);
+  const manilaParts = getManilaDateParts(date);
 
-  // First check for an explicit override on this date
+  // First check for an explicit override on this date (compare in Manila calendar)
   if (
     employeeSchedule.scheduleOverrides &&
     Array.isArray(employeeSchedule.scheduleOverrides)
   ) {
-    const override = employeeSchedule.scheduleOverrides.find(
-      (o: any) => new Date(o.date).toDateString() === dateObj.toDateString(),
-    );
+    const override = employeeSchedule.scheduleOverrides.find((o: any) => {
+      if (o.date == null) return false;
+      const oParts = getManilaDateParts(
+        typeof o.date === "number" ? o.date : new Date(o.date).getTime(),
+      );
+      return (
+        oParts.y === manilaParts.y &&
+        oParts.m === manilaParts.m &&
+        oParts.d === manilaParts.d
+      );
+    });
     if (override && override.in && override.out) {
       return { scheduleIn: override.in, scheduleOut: override.out };
     }
   }
 
-  // Fall back to defaultSchedule based on day of week
-  const dayName = dayNames[dateObj.getDay()];
+  // Fall back to defaultSchedule based on day of week in Manila
+  const manilaDay = getManilaDayOfWeek(date);
+  const dayName = dayNames[manilaDay];
   const daySchedule =
     employeeSchedule.defaultSchedule[
       dayName as keyof typeof employeeSchedule.defaultSchedule
@@ -426,8 +440,8 @@ export const createAttendance = mutation({
       actualIn: args.actualIn,
       actualOut: args.actualOut,
       overtime: args.overtime,
-      late: calculatedLate > 0 ? calculatedLate : undefined,
-      undertime: calculatedUndertime > 0 ? calculatedUndertime : undefined,
+      late: calculatedLate > 0 ? calculatedLate : 0,
+      undertime: calculatedUndertime > 0 ? calculatedUndertime : 0,
       isHoliday,
       holidayType,
       remarks: args.remarks,
@@ -508,6 +522,9 @@ export const updateAttendance = mutation({
     const lunchMinutes = scheduleWithLunch?.lunchMinutes ?? 0;
 
     const updates: any = { updatedAt: Date.now() };
+    // Always refresh schedule from employee's per-day schedule when available, so record reflects correct day
+    if (resolvedScheduleIn != null) updates.scheduleIn = resolvedScheduleIn;
+    if (resolvedScheduleOut != null) updates.scheduleOut = resolvedScheduleOut;
     if (args.scheduleIn !== undefined) updates.scheduleIn = args.scheduleIn;
     if (args.scheduleOut !== undefined) updates.scheduleOut = args.scheduleOut;
     if (args.actualIn !== undefined) updates.actualIn = args.actualIn;
@@ -575,7 +592,7 @@ export const updateAttendance = mutation({
             )
           : 0;
       updates.undertime =
-        calculatedUndertime > 0 ? calculatedUndertime : undefined;
+        calculatedUndertime > 0 ? calculatedUndertime : 0;
       updates.undertimeManualOverride = false;
     } else if (args.undertime !== undefined && args.undertime !== null) {
       updates.undertime = args.undertime;
@@ -590,7 +607,7 @@ export const updateAttendance = mutation({
         currentStatus === "present" && currentActualIn
           ? calculateLate(resolvedScheduleIn, currentActualIn, lunchStart)
           : 0;
-      updates.late = calculatedLate > 0 ? calculatedLate : undefined;
+      updates.late = calculatedLate > 0 ? calculatedLate : 0;
       updates.lateManualOverride = false;
     } else if (args.late !== undefined && args.late !== null) {
       updates.late = args.late;
@@ -754,8 +771,8 @@ export const bulkCreateAttendance = mutation({
               : 0;
 
         updates.undertime =
-          calculatedUndertime > 0 ? calculatedUndertime : undefined;
-        updates.late = calculatedLate > 0 ? calculatedLate : undefined;
+          calculatedUndertime > 0 ? calculatedUndertime : 0;
+        updates.late = calculatedLate > 0 ? calculatedLate : 0;
 
         await ctx.db.patch(existing._id, updates);
         results.push({ id: existing._id, action: "updated" });
@@ -796,8 +813,8 @@ export const bulkCreateAttendance = mutation({
           scheduleIn,
           scheduleOut,
           status: resolvedStatus,
-          late: calculatedLate > 0 ? calculatedLate : undefined,
-          undertime: calculatedUndertime > 0 ? calculatedUndertime : undefined,
+          late: calculatedLate > 0 ? calculatedLate : 0,
+          undertime: calculatedUndertime > 0 ? calculatedUndertime : 0,
           isHoliday,
           holidayType,
           createdAt: now,
@@ -913,13 +930,13 @@ export const recalculateEmployeeAttendance = mutation({
           actualIn,
           actualOut,
         );
-        newUndertime = undertime > 0 ? undertime : undefined;
+        newUndertime = undertime > 0 ? undertime : 0;
 
         const late = calculateLate(scheduleIn, actualIn, lunchStart);
-        newLate = late > 0 ? late : undefined;
+        newLate = late > 0 ? late : 0;
       } else {
-        newUndertime = undefined;
-        newLate = undefined;
+        newUndertime = 0;
+        newLate = 0;
       }
 
       const patchPayload: Record<string, unknown> = {

@@ -368,7 +368,7 @@ export default function AttendancePage() {
   };
 
   const formatTime = (minutes: number | null): string => {
-    if (minutes === null || minutes === 0) return "-";
+    if (minutes === null || minutes === 0) return "--";
     if (timeFormat === "hours") {
       const hours = (minutes / 60).toFixed(2);
       return `${hours} hrs`;

@@ -3468,51 +3468,29 @@ export const getPayrollRunSummary = query({
         };
 
         // Helper to calculate night differential hours (Philippines: 10pm-6am).
-        // Only counts when SCHEDULED shift overlaps 10pm-6am (early clock-in doesn't qualify).
+        // Counts actual worked time in 10pm-6am (no schedule gate).
         const calculateNightDiffHours = (
           actualIn?: string,
           actualOut?: string,
-          scheduleIn?: string,
-          scheduleOut?: string,
         ): number => {
           if (!actualIn || !actualOut) return 0;
-          if (!scheduleIn || !scheduleOut) {
-            // No schedule: cannot verify shift overlaps 10pm-6am, so no night diff.
-            return 0;
-          }
-
-          const norm = (start: number, end: number) => {
-            let s = start;
-            let e = end;
-            if (s < 6 * 60) {
-              s += 24 * 60;
-              e += 24 * 60;
-            } else if (e <= s) {
-              e += 24 * 60;
-            }
-            return { start: s, end: e };
-          };
 
           const nightStart = 22 * 60;
           const nightEnd = 24 * 60 + 6 * 60;
 
-          const sched = norm(
-            timeToMinutes(scheduleIn),
-            timeToMinutes(scheduleOut),
-          );
-          const schedNightStart = Math.max(sched.start, nightStart);
-          const schedNightEnd = Math.min(sched.end, nightEnd);
-          if (schedNightEnd <= schedNightStart) return 0;
+          let s = timeToMinutes(actualIn);
+          let e = timeToMinutes(actualOut);
+          if (s < 6 * 60) {
+            s += 24 * 60;
+            e += 24 * 60;
+          } else if (e <= s) {
+            e += 24 * 60;
+          }
 
-          const act = norm(timeToMinutes(actualIn), timeToMinutes(actualOut));
-          const actNightStart = Math.max(act.start, nightStart);
-          const actNightEnd = Math.min(act.end, nightEnd);
+          const actNightStart = Math.max(s, nightStart);
+          const actNightEnd = Math.min(e, nightEnd);
           if (actNightEnd <= actNightStart) return 0;
-
-          const overlapStart = Math.max(schedNightStart, actNightStart);
-          const overlapEnd = Math.min(schedNightEnd, actNightEnd);
-          if (overlapEnd <= overlapStart) return 0;
-          return (overlapEnd - overlapStart) / 60;
+          return (actNightEnd - actNightStart) / 60;
         };
 
         // Build daily attendance data (match by 24h window so attendance aligns with summary dates)
@@ -3588,13 +3566,11 @@ export const getPayrollRunSummary = query({
             }
           }
 
-          // Calculate night differential: scheduled shift ∩ 10pm-6am ∩ actual worked
+          // Calculate night differential: actual worked time in 10pm-6am
           if (att.status === "present") {
             nightDiffHours = calculateNightDiffHours(
               att.actualIn,
               att.actualOut,
-              att.scheduleIn,
-              att.scheduleOut,
             );
             totalNightDiffHours += nightDiffHours;
           }

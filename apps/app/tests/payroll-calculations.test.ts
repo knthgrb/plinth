@@ -598,18 +598,18 @@ describe("payroll calculations", () => {
       cutoffStart: date,
       cutoffEnd: date,
     });
-    // 8 hrs in night window, hourlyRate ≈ 172.41, 10% = 110.34
-    expect(result.nightDiffPay).toBeCloseTo(110.34, 2);
+    // 8 hrs in night window, hourly (basic+allowance) ≈ 172.41, 10% = 137.93
+    expect(result.nightDiffPay).toBeCloseTo(137.93, 2);
   });
 
-  it("no night diff when scheduled 6am-3pm even if employee clocks in early at 5:40am", () => {
+  it("no night diff when actual work is 6am-3pm (no time in 10pm-6am window)", () => {
     const date = localDate(2026, 1, 23); // Friday
     const result = calculate({
       attendance: [
         {
           date,
           status: "present",
-          actualIn: "05:40",
+          actualIn: "06:00",
           actualOut: "15:00",
           scheduleIn: "06:00",
           scheduleOut: "15:00",
@@ -618,7 +618,7 @@ describe("payroll calculations", () => {
       cutoffStart: date,
       cutoffEnd: date,
     });
-    // Schedule 6am-3pm has no overlap with 10pm-6am → 0 night diff
+    // Actual 6am-3pm has no overlap with 10pm-6am → 0 night diff
     expect(result.nightDiffPay).toBe(0);
   });
 
@@ -638,8 +638,8 @@ describe("payroll calculations", () => {
       cutoffStart: date,
       cutoffEnd: date,
     });
-    // 5:30-6:00 = 30 min in night window. basicHourlyRate = basic only ≈ 137.93, 0.5 * 137.93 * 0.1 ≈ 6.90
-    expect(result.nightDiffPay).toBeCloseTo(6.9, 2);
+    // 5:30-6:00 = 30 min in night window. hourly (basic+allowance) ≈ 172.41, 0.5 * 172.41 * 0.1 ≈ 8.62
+    expect(result.nightDiffPay).toBeCloseTo(8.62, 2);
   });
 
   it("uses manual late overrides when present (late = basic+allowance hourly rate)", () => {

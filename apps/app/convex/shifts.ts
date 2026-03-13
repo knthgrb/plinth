@@ -26,20 +26,31 @@ async function checkAuth(ctx: any, organizationId: any, requiredRole?: "owner" |
   return { ...userRecord, role: userRole, organizationId };
 }
 
+const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 const dayNames = [
   "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
 ] as const;
 
+function getManilaDateParts(ts: number) {
+  const d = new Date(ts + MANILA_OFFSET_MS);
+  return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate() };
+}
+
+/** Get employee's scheduled in/out for a date. Uses Manila timezone so the correct per-day schedule is used. */
 function getScheduledTimesForDate(date: number, employeeSchedule: any): { scheduleIn: string | null; scheduleOut: string | null } {
   if (!employeeSchedule?.defaultSchedule) return { scheduleIn: null, scheduleOut: null };
-  const dateObj = new Date(date);
+  const manilaParts = getManilaDateParts(date);
   if (employeeSchedule.scheduleOverrides && Array.isArray(employeeSchedule.scheduleOverrides)) {
-    const override = employeeSchedule.scheduleOverrides.find(
-      (o: any) => new Date(o.date).toDateString() === dateObj.toDateString(),
-    );
+    const override = employeeSchedule.scheduleOverrides.find((o: any) => {
+      if (o.date == null) return false;
+      const oTs = typeof o.date === "number" ? o.date : new Date(o.date).getTime();
+      const oParts = getManilaDateParts(oTs);
+      return oParts.y === manilaParts.y && oParts.m === manilaParts.m && oParts.d === manilaParts.d;
+    });
     if (override?.in && override?.out) return { scheduleIn: override.in, scheduleOut: override.out };
   }
-  const dayName = dayNames[dateObj.getDay()];
+  const manilaDay = new Date(date + MANILA_OFFSET_MS).getUTCDay();
+  const dayName = dayNames[manilaDay];
   const daySchedule = employeeSchedule.defaultSchedule[dayName as keyof typeof employeeSchedule.defaultSchedule];
   if (!daySchedule?.in || !daySchedule?.out) return { scheduleIn: null, scheduleOut: null };
   return { scheduleIn: daySchedule.in, scheduleOut: daySchedule.out };

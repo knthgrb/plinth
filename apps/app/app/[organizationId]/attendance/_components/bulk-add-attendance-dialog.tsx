@@ -316,18 +316,23 @@ export function BulkAddAttendanceDialog({
   const [includeSaturdayCsv, setIncludeSaturdayCsv] = useState(false);
   const [includeSundayCsv, setIncludeSundayCsv] = useState(false);
 
-  const getDayName = (date: Date): string => {
-    const days = [
-      "sunday",
-      "monday",
-      "tuesday",
-      "wednesday",
-      "thursday",
-      "friday",
-      "saturday",
-    ];
-    return days[date.getDay()];
-  };
+  const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+  const dayNamesList = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+  ];
+
+  /** Day name for a date in Manila timezone so schedule lookup matches backend. */
+  const getDayNameInManila = (timestamp: number): string =>
+    dayNamesList[new Date(timestamp + MANILA_OFFSET_MS).getUTCDay()];
+
+  const getDayName = (date: Date): string =>
+    dayNamesList[date.getDay()];
 
   // Generate list of all dates that could be included (before filtering excluded ones)
   const getAllBulkDates = () => {
@@ -344,7 +349,11 @@ export function BulkAddAttendanceDialog({
 
     const currentDate = new Date(startDate);
     while (currentDate <= endDate) {
-      const dayName = getDayName(currentDate);
+      const dateTimestamp = new Date(currentDate);
+      dateTimestamp.setHours(0, 0, 0, 0);
+      const ts = dateTimestamp.getTime();
+      // Use Manila day so per-day schedule matches backend
+      const dayName = getDayNameInManila(ts);
       const daySchedule =
         employee.schedule.defaultSchedule[
           dayName as keyof typeof employee.schedule.defaultSchedule
@@ -353,16 +362,14 @@ export function BulkAddAttendanceDialog({
       const isSaturday = dayName === "saturday";
       const isSunday = dayName === "sunday";
       const shouldInclude =
-        daySchedule.isWorkday ||
+        daySchedule?.isWorkday ||
         (isSaturday && includeSaturday) ||
         (isSunday && includeSunday);
 
       if (shouldInclude) {
-        const dateTimestamp = new Date(currentDate);
-        dateTimestamp.setHours(0, 0, 0, 0);
         dates.push({
           date: new Date(currentDate),
-          timestamp: dateTimestamp.getTime(),
+          timestamp: ts,
           dayName,
         });
       }
@@ -379,16 +386,6 @@ export function BulkAddAttendanceDialog({
       (dateInfo) => !excludedDates.has(dateInfo.timestamp),
     );
   };
-
-  const dayNames = [
-    "sunday",
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
-  ] as const;
 
   const normalize = (s: string) =>
     (s ?? "")
@@ -449,7 +446,7 @@ export function BulkAddAttendanceDialog({
           let scheduleIn = "09:00";
           let scheduleOut = "18:00";
           if (emp?.schedule?.defaultSchedule && dateTs > 0) {
-            const dayName = dayNames[new Date(dateTs).getDay()];
+            const dayName = getDayNameInManila(dateTs);
             const daySched = emp.schedule.defaultSchedule[dayName];
             if (daySched?.isWorkday && daySched?.in && daySched?.out) {
               scheduleIn = daySched.in;
@@ -461,7 +458,7 @@ export function BulkAddAttendanceDialog({
           if (!emp) error = "Employee not found";
           else if (dateStr && dateTs === 0) error = "Invalid date";
 
-          const day = dateTs > 0 ? new Date(dateTs).getDay() : -1;
+          const day = dateTs > 0 ? new Date(dateTs + MANILA_OFFSET_MS).getUTCDay() : -1;
           const isWeekendExcluded =
             (day === 6 && !includeSaturdayCsv) || (day === 0 && !includeSundayCsv);
           const row: CsvPreviewRow = {
@@ -552,7 +549,7 @@ export function BulkAddAttendanceDialog({
         let scheduleIn = "09:00";
         let scheduleOut = "18:00";
         if (emp?.schedule?.defaultSchedule && dateTs > 0) {
-          const dayName = dayNames[new Date(dateTs).getDay()];
+          const dayName = getDayNameInManila(dateTs);
           const daySched = emp.schedule.defaultSchedule[dayName];
           if (daySched?.isWorkday && daySched?.in && daySched?.out) {
             scheduleIn = daySched.in;
@@ -565,7 +562,7 @@ export function BulkAddAttendanceDialog({
         else if (dateStr && dateTs === 0) error = "Invalid date";
         else if (status === "present" && !actualIn && !actualOut) error = "Time In/Out required for present";
 
-        const day = dateTs > 0 ? new Date(dateTs).getDay() : -1;
+        const day = dateTs > 0 ? new Date(dateTs + MANILA_OFFSET_MS).getUTCDay() : -1;
         const isWeekendExcluded =
           (day === 6 && !includeSaturdayCsv) || (day === 0 && !includeSundayCsv);
         preview.push({
