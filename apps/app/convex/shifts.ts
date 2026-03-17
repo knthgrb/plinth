@@ -56,7 +56,13 @@ function getScheduledTimesForDate(date: number, employeeSchedule: any): { schedu
   return { scheduleIn: daySchedule.in, scheduleOut: daySchedule.out };
 }
 
-/** Get schedule + lunch for an employee on a date. If employee has shiftId, use shift; else use defaultSchedule + org default lunch. */
+/** Get schedule + lunch for an employee on a date.
+ * When the employee has both a shift and a per-day schedule (defaultSchedule/scheduleOverrides),
+ * the per-day schedule for this date is used first so late/undertime match the actual day (e.g. Mon 2–11 vs Tue 1–10).
+ * For lunch when using per-day schedule: auto-match an org shift whose scheduleIn/scheduleOut equal this day's in/out
+ * and use that shift's lunch; else fall back to the employee's tied shift lunch, then org default.
+ * Only when there is no per-day schedule for the date do we fall back to the shift (e.g. UK 2–11).
+ */
 export async function getScheduleWithLunch(
   ctx: any,
   employee: { shiftId?: any; schedule?: any },
@@ -68,7 +74,47 @@ export async function getScheduleWithLunch(
   let lunchStart: string;
   let lunchEnd: string;
 
-  if (employee.shiftId) {
+  const fromPerDay =
+    employee.schedule != null
+      ? getScheduledTimesForDate(date, employee.schedule)
+      : null;
+
+  if (fromPerDay?.scheduleIn && fromPerDay?.scheduleOut) {
+    scheduleIn = fromPerDay.scheduleIn;
+    scheduleOut = fromPerDay.scheduleOut;
+    // Resolve lunch for this day: match org shift by schedule times so each day gets correct lunch (late/undertime).
+    const orgShifts = await (ctx.db.query("shifts") as any)
+      .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
+      .collect();
+    const matchingShift = orgShifts.find(
+      (s: any) =>
+        s.scheduleIn === scheduleIn && s.scheduleOut === scheduleOut,
+    );
+    if (matchingShift) {
+      lunchStart = matchingShift.lunchStart;
+      lunchEnd = matchingShift.lunchEnd;
+    } else if (employee.shiftId) {
+      const fallbackShift = await ctx.db.get(employee.shiftId);
+      if (fallbackShift && fallbackShift.organizationId === organizationId) {
+        lunchStart = fallbackShift.lunchStart;
+        lunchEnd = fallbackShift.lunchEnd;
+      } else {
+        const settings = await (ctx.db.query("settings") as any)
+          .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
+          .first();
+        const att = settings?.attendanceSettings;
+        lunchStart = att?.defaultLunchStart ?? "12:00";
+        lunchEnd = att?.defaultLunchEnd ?? "13:00";
+      }
+    } else {
+      const settings = await (ctx.db.query("settings") as any)
+        .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
+        .first();
+      const att = settings?.attendanceSettings;
+      lunchStart = att?.defaultLunchStart ?? "12:00";
+      lunchEnd = att?.defaultLunchEnd ?? "13:00";
+    }
+  } else if (employee.shiftId) {
     const shift = await ctx.db.get(employee.shiftId);
     if (!shift || shift.organizationId !== organizationId)
       return null;
@@ -77,21 +123,15 @@ export async function getScheduleWithLunch(
     lunchStart = shift.lunchStart;
     lunchEnd = shift.lunchEnd;
   } else {
-    const fromSchedule = getScheduledTimesForDate(date, employee.schedule);
-    if (!fromSchedule.scheduleIn || !fromSchedule.scheduleOut) return null;
-    scheduleIn = fromSchedule.scheduleIn;
-    scheduleOut = fromSchedule.scheduleOut;
-    const settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
-      .first();
-    const att = settings?.attendanceSettings;
-    lunchStart = att?.defaultLunchStart ?? "12:00";
-    lunchEnd = att?.defaultLunchEnd ?? "13:00";
+    return null;
   }
 
   const [lsH, lsM] = lunchStart.split(":").map(Number);
   const [leH, leM] = lunchEnd.split(":").map(Number);
-  const lunchMinutes = (leH * 60 + leM) - (lsH * 60 + lsM);
+  const startM = (lsH ?? 0) * 60 + (lsM ?? 0);
+  const endM = (leH ?? 0) * 60 + (leM ?? 0);
+  let lunchMinutes = endM - startM;
+  if (lunchMinutes < 0) lunchMinutes += 24 * 60; // lunch crosses midnight (e.g. 23:00–00:00)
   return { scheduleIn, scheduleOut, lunchStart, lunchEnd, lunchMinutes: Math.max(0, lunchMinutes) };
 }
 

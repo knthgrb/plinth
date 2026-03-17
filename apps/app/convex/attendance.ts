@@ -23,17 +23,33 @@ function calculateLate(
   return lateMinutes > 0 ? lateMinutes : 0;
 }
 
+// When actualOut is earlier in the day than scheduleOut (e.g. schedule 23:00, actual 00:00),
+// treat actualOut as next-day so overtime is not counted as undertime.
+function actualOutMinutesForComparison(
+  scheduleIn: string,
+  scheduleOut: string,
+  actualOut: string,
+): number {
+  const scheduleInM = timeToMins(scheduleIn);
+  const scheduleOutM = timeToMins(scheduleOut);
+  let actualOutM = timeToMins(actualOut);
+  if (scheduleInM < scheduleOutM && actualOutM < scheduleOutM && actualOutM <= 12 * 60) {
+    actualOutM += 24 * 60;
+  }
+  return actualOutM;
+}
+
 // Undertime = early departure only (when time out is earlier than scheduled time out).
-// Late arrival is handled separately and is NOT counted as undertime.
+// Clock-out after midnight (e.g. 00:00 when schedule out is 23:00) is treated as next day → no undertime.
 function calculateUndertime(
-  _scheduleIn: string,
+  scheduleIn: string,
   scheduleOut: string,
   _actualIn: string | undefined,
   actualOut: string | undefined,
 ): number {
   if (!actualOut) return 0;
   const scheduleOutM = timeToMins(scheduleOut);
-  const actualOutM = timeToMins(actualOut);
+  const actualOutM = actualOutMinutesForComparison(scheduleIn, scheduleOut, actualOut);
   const undertimeMinutes = Math.max(0, scheduleOutM - actualOutM);
   return undertimeMinutes / 60;
 }

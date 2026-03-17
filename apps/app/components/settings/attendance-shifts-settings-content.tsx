@@ -26,6 +26,8 @@ import {
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { useOrganization } from "@/hooks/organization-context";
 import { useToast } from "@/components/ui/use-toast";
+import { formatTime12Hour } from "@/utils/attendance-calculations";
+import { TimePicker } from "@/components/ui/time-picker";
 
 export function AttendanceShiftsSettingsContent() {
   const { currentOrganizationId } = useOrganization();
@@ -119,8 +121,72 @@ export function AttendanceShiftsSettingsContent() {
     setShiftDialogOpen(true);
   };
 
+  /** Parse "HH:mm" to minutes since midnight (0–1439). */
+  const timeToMinutes = (t: string): number => {
+    const [h, m] = t.split(":").map(Number);
+    return (h ?? 0) * 60 + (m ?? 0);
+  };
+
+  /**
+   * Validate that lunch period falls within schedule in/out.
+   * Same-day: scheduleIn <= lunchStart < lunchEnd <= scheduleOut.
+   * Overnight (scheduleOut < scheduleIn, e.g. 18:00–03:00): lunch can be in [scheduleIn, 24:00), or [0, scheduleOut], or cross midnight (e.g. 23:00–00:00).
+   */
+  const getShiftLunchValidationError = (): string | null => {
+    const inMin = timeToMinutes(shiftForm.scheduleIn);
+    const outMin = timeToMinutes(shiftForm.scheduleOut);
+    const startMin = timeToMinutes(shiftForm.lunchStart);
+    const endMin = timeToMinutes(shiftForm.lunchEnd);
+    const isOvernight = outMin <= inMin;
+
+    // "Lunch start before lunch end": for same-day we require start < end; for overnight, lunch can cross midnight (e.g. 23:00–00:00)
+    if (startMin >= endMin) {
+      if (!isOvernight) {
+        return "Lunch start must be before lunch end.";
+      }
+      // Overnight: 00:00 is next day, so 23:00–00:00 is valid. Reject only if "end" would be before "start" even on next day (impossible with 0–1439).
+      // So for overnight we allow startMin >= endMin when endMin is small (midnight) and startMin is large (evening).
+    }
+
+    if (!isOvernight) {
+      // Same-day shift
+      if (startMin < inMin) {
+        return "Lunch start must not be before schedule in.";
+      }
+      if (endMin > outMin) {
+        return "Lunch end must not be after schedule out.";
+      }
+    } else {
+      // Overnight shift: lunch either (a) entirely in evening [inMin, 24:00), (b) entirely in morning [0, outMin], or (c) crosses midnight [start in evening, end in morning]
+      const midnight = 24 * 60;
+      const lunchCrossesMidnight = endMin < startMin;
+      if (lunchCrossesMidnight) {
+        // e.g. 23:00–00:00: start must be in evening part, end must be in morning part
+        if (startMin < inMin) {
+          return "Lunch start must not be before schedule in.";
+        }
+        if (endMin > outMin) {
+          return "Lunch end must not be after schedule out.";
+        }
+      } else {
+        const inEvening = startMin >= inMin && endMin <= midnight;
+        const inMorning = startMin >= 0 && endMin <= outMin;
+        if (!inEvening && !inMorning) {
+          return "Lunch must fall between schedule in and schedule out (within the shift).";
+        }
+      }
+    }
+    return null;
+  };
+
+  const shiftLunchError = getShiftLunchValidationError();
+
   const handleSaveShift = async () => {
     if (!currentOrganizationId || !shiftForm.name.trim()) return;
+    if (shiftLunchError) {
+      toast({ title: "Invalid lunch period", description: shiftLunchError, variant: "destructive" });
+      return;
+    }
     setSavingShift(true);
     try {
       if (editingShift) {
@@ -179,19 +245,21 @@ export function AttendanceShiftsSettingsContent() {
           </p>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label>Lunch start (HH:mm)</Label>
-              <Input
-                type="time"
+              <Label>Lunch start</Label>
+              <TimePicker
                 value={defaultLunchStart}
-                onChange={(e) => setDefaultLunchStart(e.target.value || "12:00")}
+                onValueChange={(v) => setDefaultLunchStart(v || "12:00")}
+                label=""
+                showLabel={false}
               />
             </div>
             <div className="space-y-2">
-              <Label>Lunch end (HH:mm)</Label>
-              <Input
-                type="time"
+              <Label>Lunch end</Label>
+              <TimePicker
                 value={defaultLunchEnd}
-                onChange={(e) => setDefaultLunchEnd(e.target.value || "13:00")}
+                onValueChange={(v) => setDefaultLunchEnd(v || "13:00")}
+                label=""
+                showLabel={false}
               />
             </div>
           </div>
@@ -229,8 +297,12 @@ export function AttendanceShiftsSettingsContent() {
                 {shifts.map((s: any) => (
                   <TableRow key={s._id}>
                     <TableCell className="font-medium">{s.name}</TableCell>
-                    <TableCell>{s.scheduleIn} – {s.scheduleOut}</TableCell>
-                    <TableCell>{s.lunchStart} – {s.lunchEnd}</TableCell>
+                    <TableCell>
+                      {formatTime12Hour(s.scheduleIn)} – {formatTime12Hour(s.scheduleOut)}
+                    </TableCell>
+                    <TableCell>
+                      {formatTime12Hour(s.lunchStart)} – {formatTime12Hour(s.lunchEnd)}
+                    </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <Button
@@ -279,43 +351,52 @@ export function AttendanceShiftsSettingsContent() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Schedule in</Label>
-                <Input
-                  type="time"
+                <TimePicker
                   value={shiftForm.scheduleIn}
-                  onChange={(e) => setShiftForm((f) => ({ ...f, scheduleIn: e.target.value || "09:00" }))}
+                  onValueChange={(v) => setShiftForm((f) => ({ ...f, scheduleIn: v || "09:00" }))}
+                  label=""
+                  showLabel={false}
                 />
               </div>
               <div className="space-y-2">
                 <Label>Schedule out</Label>
-                <Input
-                  type="time"
+                <TimePicker
                   value={shiftForm.scheduleOut}
-                  onChange={(e) => setShiftForm((f) => ({ ...f, scheduleOut: e.target.value || "18:00" }))}
+                  onValueChange={(v) => setShiftForm((f) => ({ ...f, scheduleOut: v || "18:00" }))}
+                  label=""
+                  showLabel={false}
                 />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Lunch start</Label>
-                <Input
-                  type="time"
+                <TimePicker
                   value={shiftForm.lunchStart}
-                  onChange={(e) => setShiftForm((f) => ({ ...f, lunchStart: e.target.value || "12:00" }))}
+                  onValueChange={(v) => setShiftForm((f) => ({ ...f, lunchStart: v || "12:00" }))}
+                  label=""
+                  showLabel={false}
+                  className={shiftLunchError ? "[&_button]:border-red-500" : undefined}
                 />
               </div>
               <div className="space-y-2">
                 <Label>Lunch end</Label>
-                <Input
-                  type="time"
+                <TimePicker
                   value={shiftForm.lunchEnd}
-                  onChange={(e) => setShiftForm((f) => ({ ...f, lunchEnd: e.target.value || "13:00" }))}
+                  onValueChange={(v) => setShiftForm((f) => ({ ...f, lunchEnd: v || "13:00" }))}
+                  label=""
+                  showLabel={false}
+                  className={shiftLunchError ? "[&_button]:border-red-500" : undefined}
                 />
               </div>
             </div>
+            {shiftLunchError && (
+              <p className="text-sm text-red-600">{shiftLunchError}</p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShiftDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSaveShift} disabled={savingShift || !shiftForm.name.trim()}>
+            <Button onClick={handleSaveShift} disabled={savingShift || !shiftForm.name.trim() || !!shiftLunchError}>
               {savingShift ? "Saving…" : editingShift ? "Update" : "Add"}
             </Button>
           </DialogFooter>

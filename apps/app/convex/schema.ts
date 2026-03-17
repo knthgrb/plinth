@@ -139,6 +139,11 @@ export default defineSchema({
       regularHolidayRate: v.optional(v.number()), // Actual rate for regular holidays (default 2.0 = 200% of daily)
       specialHolidayRate: v.optional(v.number()), // Actual rate for special holidays (default 1.3 = 130% of daily)
       nightDiffPercent: v.optional(v.number()), // Night differential override (default from settings)
+      nightDiffOnOtRate: v.optional(v.number()),
+      nightDiffRegularHolidayRate: v.optional(v.number()),
+      nightDiffSpecialHolidayRate: v.optional(v.number()),
+      nightDiffRegularHolidayOtRate: v.optional(v.number()),
+      nightDiffSpecialHolidayOtRate: v.optional(v.number()),
       overtimeRegularRate: v.optional(v.number()), // Regular OT override (default from settings)
       overtimeRestDayRate: v.optional(v.number()), // Rest day OT override (default from settings)
       regularHolidayOtRate: v.optional(v.number()), // Regular holiday OT override (default from settings)
@@ -830,13 +835,19 @@ export default defineSchema({
     // Payroll configurations
     payrollSettings: v.optional(
       v.object({
-        nightDiffPercent: v.optional(v.number()), // Night differential: additional % per hour from 10 PM (default 0.1 = 10%)
+        nightDiffPercent: v.optional(v.number()), // Night differential: full rate for 10 PM–6 AM (default 1.1 = 110%, same convention as other night diff rates)
         regularHolidayRate: v.optional(v.number()), // Actual rate for regular holidays (default 2.0 = 200% of daily)
         specialHolidayRate: v.optional(v.number()), // Actual rate for special holidays (default 1.3 = 130% of daily)
         overtimeRegularRate: v.optional(v.number()), // Regular day OT multiplier (default 1.25 = 125% per hour)
         overtimeRestDayRate: v.optional(v.number()), // Rest day OT multiplier (default 1.69 = 169%)
         regularHolidayOtRate: v.optional(v.number()), // Regular holiday OT multiplier (default 2.0 = 200%)
         specialHolidayOtRate: v.optional(v.number()), // Special holiday OT multiplier (default 1.69 = 169%)
+        // Night differential rates (apply to hours in 10pm–6am; holiday rates apply only to hours on the holiday calendar day)
+        nightDiffOnOtRate: v.optional(v.number()), // Night diff on top of OT (default 1.375 = 137.5% of hourly)
+        nightDiffRegularHolidayRate: v.optional(v.number()), // Night hours on regular holiday (default 2.2 = 220%)
+        nightDiffSpecialHolidayRate: v.optional(v.number()), // Night hours on special non-working holiday (default 1.43 = 143%)
+        nightDiffRegularHolidayOtRate: v.optional(v.number()), // Regular holiday + OT + night (default 2.86 = 286%)
+        nightDiffSpecialHolidayOtRate: v.optional(v.number()), // Special holiday + OT + night (default 1.859 = 185.9%)
         // Daily rate from monthly: (basic + allowance?) × (12 / workingDaysPerYear)
         dailyRateIncludesAllowance: v.optional(v.boolean()), // If true, daily rate = (basic + allowance) × 12/261 (default true)
         dailyRateWorkingDaysPerYear: v.optional(v.number()), // Working days per year for daily rate (default 261)

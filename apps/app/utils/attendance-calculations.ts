@@ -31,12 +31,31 @@ export function calculateLate(
 }
 
 /**
+ * When actualOut is earlier in the day than scheduleOut (e.g. out 23:00, actual 00:00),
+ * treat actualOut as next-day so we don't count overtime as undertime.
+ * Same-day shift: scheduleIn < scheduleOut. If actualOut is in early morning (e.g. 00:00–noon), treat as next day.
+ */
+function actualOutMinutesForComparison(
+  scheduleIn: string,
+  scheduleOut: string,
+  actualOut: string,
+): number {
+  const scheduleInM = timeToMins(scheduleIn);
+  const scheduleOutM = timeToMins(scheduleOut);
+  let actualOutM = timeToMins(actualOut);
+  if (scheduleInM < scheduleOutM && actualOutM < scheduleOutM && actualOutM <= 12 * 60) {
+    actualOutM += 24 * 60;
+  }
+  return actualOutM;
+}
+
+/**
  * Calculate undertime in hours.
  * Policy: Undertime = early departure only (when time out is earlier than scheduled time out).
- * Late arrival (time in) is handled separately and is NOT counted as undertime.
+ * Clock-out after midnight (e.g. 00:00 when schedule out is 23:00) is treated as next day, so no undertime.
  */
 export function calculateUndertime(
-  _scheduleIn: string,
+  scheduleIn: string,
   scheduleOut: string,
   _actualIn: string | undefined,
   actualOut: string | undefined,
@@ -44,7 +63,7 @@ export function calculateUndertime(
   if (!actualOut) return 0;
 
   const scheduleOutM = timeToMins(scheduleOut);
-  const actualOutM = timeToMins(actualOut);
+  const actualOutM = actualOutMinutesForComparison(scheduleIn, scheduleOut, actualOut);
 
   const undertimeMinutes = Math.max(0, scheduleOutM - actualOutM);
   return undertimeMinutes / 60;
@@ -59,28 +78,29 @@ export function timeToMinutes(time: string): number {
 }
 
 /**
- * Calculate overtime in hours
- * Overtime is calculated when actual time out is after scheduled time out
- * @param scheduleOut - Scheduled time out (HH:mm format)
- * @param actualOut - Actual time out (HH:mm format)
- * @returns Hours overtime, or 0 if no overtime
+ * Calculate overtime in hours.
+ * When actual time out is after scheduled time out (e.g. schedule 23:00, actual 00:00 next day), returns positive hours.
  */
 export function calculateOvertime(
   scheduleOut: string,
   actualOut: string | undefined,
+  scheduleIn?: string,
 ): number {
   if (!actualOut) return 0;
 
-  const [scheduleOutHour, scheduleOutMin] = scheduleOut.split(":").map(Number);
-  const [actualOutHour, actualOutMin] = actualOut.split(":").map(Number);
+  const scheduleOutM = timeToMins(scheduleOut);
+  let actualOutM = timeToMins(actualOut);
+  if (scheduleIn != null) {
+    const scheduleInM = timeToMins(scheduleIn);
+    if (scheduleInM < scheduleOutM && actualOutM < scheduleOutM && actualOutM <= 12 * 60) {
+      actualOutM += 24 * 60;
+    }
+  } else if (actualOutM < scheduleOutM && actualOutM <= 12 * 60) {
+    actualOutM += 24 * 60;
+  }
 
-  const scheduleOutMinutes = scheduleOutHour * 60 + scheduleOutMin;
-  const actualOutMinutes = actualOutHour * 60 + actualOutMin;
-
-  const overtimeMinutes = actualOutMinutes - scheduleOutMinutes;
-  const overtimeHours = overtimeMinutes / 60;
-
-  return overtimeHours > 0 ? overtimeHours : 0;
+  const overtimeMinutes = actualOutM - scheduleOutM;
+  return overtimeMinutes > 0 ? overtimeMinutes / 60 : 0;
 }
 
 /**

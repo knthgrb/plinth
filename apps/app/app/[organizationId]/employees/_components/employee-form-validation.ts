@@ -89,22 +89,6 @@ export const employeeFormSchema = z.object({
       (value) => !value || !Number.isNaN(Number(value)),
       { message: "Overtime rest day rate must be a valid number" }
     ),
-  regularHolidayOtRate: z
-    .string()
-    .trim()
-    .optional()
-    .refine(
-      (value) => !value || !Number.isNaN(Number(value)),
-      { message: "Regular holiday OT rate must be a valid number" }
-    ),
-  specialHolidayOtRate: z
-    .string()
-    .trim()
-    .optional()
-    .refine(
-      (value) => !value || !Number.isNaN(Number(value)),
-      { message: "Special non-working holiday OT rate must be a valid number" }
-    ),
   salaryType: z
     .string()
     .trim()

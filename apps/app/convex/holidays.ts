@@ -220,6 +220,29 @@ export const updateHoliday = mutation({
       updates.year = nextYear;
 
       await ctx.db.patch(args.holidayId, updates);
+
+      // Sync matching attendance so payroll and attendance UI stay in sync with holiday type/date.
+      if (args.type !== undefined || args.date !== undefined) {
+        const updatedHoliday = await ctx.db.get(args.holidayId);
+        if (updatedHoliday) {
+          const attendance = await (ctx.db.query("attendance") as any)
+            .withIndex("by_organization", (q: any) =>
+              q.eq("organizationId", updatedHoliday.organizationId),
+            )
+            .collect();
+          const now = Date.now();
+          for (const rec of attendance) {
+            if (holidayMatchesDate(updatedHoliday, rec.date)) {
+              await ctx.db.patch(rec._id, {
+                isHoliday: true,
+                holidayType: updatedHoliday.type as "regular" | "special" | "special_working",
+                updatedAt: now,
+              });
+            }
+          }
+        }
+      }
+
       return { success: true };
     } catch (err) {
       if (err instanceof ConvexError) throw err;

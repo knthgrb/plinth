@@ -340,13 +340,6 @@ export default function EmployeesPage() {
     regularizationDate: "",
     basicSalary: "",
     allowance: "",
-    regularHolidayRate: "",
-    specialHolidayRate: "",
-    nightDiffPercent: "",
-    overtimeRegularRate: "",
-    overtimeRestDayRate: "",
-    regularHolidayOtRate: "",
-    specialHolidayOtRate: "",
     salaryType: "monthly",
   };
   const addEmployeeForm = useForm<EmployeeFormValues>({
@@ -796,37 +789,17 @@ export default function EmployeesPage() {
       const orgSpecialRateDecimal =
         settings?.payrollSettings?.specialHolidayRate ?? 1.3;
       const orgNightDiffDecimal =
-        settings?.payrollSettings?.nightDiffPercent ?? 0.1;
+        settings?.payrollSettings?.nightDiffPercent ?? 1.1;
       const orgOvertimeRegularDecimal =
         settings?.payrollSettings?.overtimeRegularRate ?? 1.25;
       const orgOvertimeRestDayDecimal =
-        settings?.payrollSettings?.overtimeRestDayRate ?? 1.69;
-      const orgRegularHolidayOtDecimal =
-        settings?.payrollSettings?.regularHolidayOtRate ?? 2.0;
-      const orgSpecialHolidayOtDecimal =
-        settings?.payrollSettings?.specialHolidayOtRate ?? 1.69;
+        settings?.payrollSettings?.overtimeRestDayRate ?? 1.3;
 
-      const regularHolidayRateDecimal = data.regularHolidayRate
-        ? parseFloat(data.regularHolidayRate) / 100
-        : orgRegularRateDecimal;
-      const specialHolidayRateDecimal = data.specialHolidayRate
-        ? parseFloat(data.specialHolidayRate) / 100
-        : orgSpecialRateDecimal;
-      const nightDiffPercentDecimal = data.nightDiffPercent
-        ? parseFloat(data.nightDiffPercent) / 100
-        : orgNightDiffDecimal;
-      const overtimeRegularRateDecimal = data.overtimeRegularRate
-        ? parseFloat(data.overtimeRegularRate) / 100
-        : orgOvertimeRegularDecimal;
-      const overtimeRestDayRateDecimal = data.overtimeRestDayRate
-        ? parseFloat(data.overtimeRestDayRate) / 100
-        : orgOvertimeRestDayDecimal;
-      const regularHolidayOtRateDecimal = data.regularHolidayOtRate
-        ? parseFloat(data.regularHolidayOtRate) / 100
-        : orgRegularHolidayOtDecimal;
-      const specialHolidayOtRateDecimal = data.specialHolidayOtRate
-        ? parseFloat(data.specialHolidayOtRate) / 100
-        : orgSpecialHolidayOtDecimal;
+      const regularHolidayRateDecimal = orgRegularRateDecimal;
+      const specialHolidayRateDecimal = orgSpecialRateDecimal;
+      const nightDiffPercentDecimal = orgNightDiffDecimal;
+      const overtimeRegularRateDecimal = orgOvertimeRegularDecimal;
+      const overtimeRestDayRateDecimal = orgOvertimeRestDayDecimal;
 
       await createEmployee({
         organizationId: currentOrganizationId,
@@ -860,8 +833,6 @@ export default function EmployeesPage() {
           nightDiffPercent: nightDiffPercentDecimal,
           overtimeRegularRate: overtimeRegularRateDecimal,
           overtimeRestDayRate: overtimeRestDayRateDecimal,
-          regularHolidayOtRate: regularHolidayOtRateDecimal,
-          specialHolidayOtRate: specialHolidayOtRateDecimal,
         },
         schedule: enableSchedule
           ? {
@@ -1270,161 +1241,7 @@ export default function EmployeesPage() {
                           </p>
                         </div>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="regularHolidayRate">
-                            Regular Holiday Rate (%)
-                          </Label>
-                          <Input
-                            id="regularHolidayRate"
-                            type="number"
-                            step="0.01"
-                            placeholder={(
-                              (settings?.payrollSettings?.regularHolidayRate ??
-                                2.0) * 100
-                            ).toString()}
-                            {...registerAdd("regularHolidayRate")}
-                            className={cn(addFormErrors.regularHolidayRate && "border-red-500 focus-visible:ring-red-500")}
-                          />
-                          {addFormErrors.regularHolidayRate?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.regularHolidayRate.message}
-                            </p>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="specialHolidayRate">
-                            Special non-working holiday rate (%)
-                          </Label>
-                          <Input
-                            id="specialHolidayRate"
-                            type="number"
-                            step="0.01"
-                            placeholder={(
-                              (settings?.payrollSettings?.specialHolidayRate ??
-                                1.3) * 100
-                            ).toString()}
-                            {...registerAdd("specialHolidayRate")}
-                            className={cn(addFormErrors.specialHolidayRate && "border-red-500 focus-visible:ring-red-500")}
-                          />
-                          {addFormErrors.specialHolidayRate?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.specialHolidayRate.message}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="nightDiffPercent">
-                            Night Differential (%)
-                          </Label>
-                          <Input
-                            id="nightDiffPercent"
-                            type="number"
-                            step="0.01"
-                            placeholder={(
-                              (settings?.payrollSettings?.nightDiffPercent ??
-                                0.1) * 100
-                            ).toString()}
-                            {...registerAdd("nightDiffPercent")}
-                            className={cn(addFormErrors.nightDiffPercent && "border-red-500 focus-visible:ring-red-500")}
-                          />
-                          {addFormErrors.nightDiffPercent?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.nightDiffPercent.message}
-                            </p>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="overtimeRegularRate">
-                            Overtime Regular Rate (%)
-                          </Label>
-                          <Input
-                            id="overtimeRegularRate"
-                            type="number"
-                            step="0.01"
-                            placeholder={(
-                              (settings?.payrollSettings?.overtimeRegularRate ??
-                                1.25) * 100
-                            ).toString()}
-                            {...registerAdd("overtimeRegularRate")}
-                            className={cn(addFormErrors.overtimeRegularRate && "border-red-500 focus-visible:ring-red-500")}
-                          />
-                          {addFormErrors.overtimeRegularRate?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.overtimeRegularRate.message}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="overtimeRestDayRate">
-                            Overtime Rest Day Rate (%)
-                          </Label>
-                          <Input
-                            id="overtimeRestDayRate"
-                            type="number"
-                            step="0.01"
-                            placeholder={(
-                              (settings?.payrollSettings?.overtimeRestDayRate ??
-                                1.69) * 100
-                            ).toString()}
-                            {...registerAdd("overtimeRestDayRate")}
-                            className={cn(addFormErrors.overtimeRestDayRate && "border-red-500 focus-visible:ring-red-500")}
-                          />
-                          {addFormErrors.overtimeRestDayRate?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.overtimeRestDayRate.message}
-                            </p>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="regularHolidayOtRate">
-                            Regular Holiday OT Rate (%)
-                          </Label>
-                          <Input
-                            id="regularHolidayOtRate"
-                            type="number"
-                            step="0.01"
-                            placeholder={(
-                              (settings?.payrollSettings
-                                ?.regularHolidayOtRate ?? 2.0) * 100
-                            ).toString()}
-                            {...registerAdd("regularHolidayOtRate")}
-                            className={cn(addFormErrors.regularHolidayOtRate && "border-red-500 focus-visible:ring-red-500")}
-                          />
-                          {addFormErrors.regularHolidayOtRate?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.regularHolidayOtRate.message}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="specialHolidayOtRate">
-                            Special non-working holiday OT rate (%)
-                          </Label>
-                          <Input
-                            id="specialHolidayOtRate"
-                            type="number"
-                            step="0.01"
-                            placeholder={(
-                              (settings?.payrollSettings
-                                ?.specialHolidayOtRate ?? 1.69) * 100
-                            ).toString()}
-                            {...registerAdd("specialHolidayOtRate")}
-                            className={cn(addFormErrors.specialHolidayOtRate && "border-red-500 focus-visible:ring-red-500")}
-                          />
-                          {addFormErrors.specialHolidayOtRate?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.specialHolidayOtRate.message}
-                            </p>
-                          )}
-                        </div>
-                      </div>
+                      {/* Pay rates use org settings on add; overrides available in Edit Employee. */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label htmlFor="salaryType" required>

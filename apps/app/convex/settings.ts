@@ -122,14 +122,13 @@ export const getSettings = query({
         leaveRequestFormTemplate: undefined,
         leaveTrackerRows: [],
         payrollSettings: {
-          nightDiffPercent: 0.1, // 10% per hour from 10 PM
-          regularHolidayRate: 2.0, // 200% = actual rate (2× daily pay for regular holiday)
-          specialHolidayRate: 1.3, // 130% = actual rate (1.3× daily pay for special holiday)
-          overtimeRegularRate: 1.25, // Regular day OT: 125% per hour (25% additional)
-          overtimeRestDayRate: 1.69, // Rest day OT: 169% per hour
-          regularHolidayOtRate: 2.0, // Regular holiday OT: 200% per hour
-          specialHolidayOtRate: 1.69, // Special holiday OT: 169% per hour
-          dailyRateIncludesAllowance: true, // Daily rate from basic + allowance (set false for basic only) × 12/261
+          // Base configs only; compound rates (night diff on OT/holiday, holiday OT, etc.) are derived in payroll.
+          nightDiffPercent: 1.1, // NIGHT_DIFF 110%
+          regularHolidayRate: 2.0, // REGULAR_HOLIDAY 200%
+          specialHolidayRate: 1.3, // SPECIAL_HOLIDAY 130%
+          overtimeRegularRate: 1.25, // OT_REGULAR 125%
+          overtimeRestDayRate: 1.3, // REST_DAY_PREMIUM 130%; first 8h at 130%, excess at 169%; holiday OT +30%
+          dailyRateIncludesAllowance: true,
           dailyRateWorkingDaysPerYear: 261,
           taxDeductionFrequency: "twice_per_month",
           taxDeductOnPay: "first",
@@ -165,6 +164,11 @@ export const updatePayrollSettings = mutation({
     organizationId: v.id("organizations"),
     payrollSettings: v.object({
       nightDiffPercent: v.optional(v.number()),
+      nightDiffOnOtRate: v.optional(v.number()),
+      nightDiffRegularHolidayRate: v.optional(v.number()),
+      nightDiffSpecialHolidayRate: v.optional(v.number()),
+      nightDiffRegularHolidayOtRate: v.optional(v.number()),
+      nightDiffSpecialHolidayOtRate: v.optional(v.number()),
       regularHolidayRate: v.optional(v.number()),
       specialHolidayRate: v.optional(v.number()),
       overtimeRegularRate: v.optional(v.number()),
@@ -174,10 +178,7 @@ export const updatePayrollSettings = mutation({
       dailyRateIncludesAllowance: v.optional(v.boolean()),
       dailyRateWorkingDaysPerYear: v.optional(v.number()),
       taxDeductionFrequency: v.optional(
-        v.union(
-          v.literal("once_per_month"),
-          v.literal("twice_per_month"),
-        ),
+        v.union(v.literal("once_per_month"), v.literal("twice_per_month")),
       ),
       taxDeductOnPay: v.optional(
         v.union(v.literal("first"), v.literal("second")),
@@ -300,8 +301,7 @@ export const updateLeaveTypes = mutation({
         organizationId: args.organizationId,
         proratedLeave: args.proratedLeave ?? true,
         annualSil: args.annualSil ?? 8,
-        grantLeaveUponRegularization:
-          args.grantLeaveUponRegularization ?? true,
+        grantLeaveUponRegularization: args.grantLeaveUponRegularization ?? true,
         leaveRequestFormTemplate: args.leaveRequestFormTemplate,
         maxConvertibleLeaveDays: args.maxConvertibleLeaveDays ?? 5,
         createdAt: now,

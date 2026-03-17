@@ -5,11 +5,13 @@ import {
   getSSSContribution,
   getSSSContributionByEmployeeDeduction,
 } from "./sss";
+import { getScheduleWithLunch } from "./shifts";
 import {
   calculatePayrollBaseFromRecords,
   getMatchingHolidayForDate,
   holidayAppliesToEmployee,
   holidayMatchesDate as holidayMatchesDateLib,
+  type PayrollBaseResult,
 } from "@/lib/payroll-calculations";
 
 function buildDraftPayrollConfig(args: {
@@ -327,19 +329,77 @@ function getTaxDeductionAmount(
 
 // Default OT/holiday rates (used when org settings not set)
 const DEFAULT_REGULAR_OT = 1.25;
-const DEFAULT_SPECIAL_HOLIDAY_OT = 1.69;
-const DEFAULT_REGULAR_HOLIDAY_OT = 2.0;
-const DEFAULT_REST_DAY_OT = 1.69;
-const DEFAULT_NIGHT_DIFF_RATE = 0.1;
+const DEFAULT_NIGHT_DIFF_RATE = 1.1; // 110% (NIGHT_DIFF)
+const DEFAULT_REGULAR_HOLIDAY = 2.0; // 200%
+const DEFAULT_SPECIAL_HOLIDAY = 1.3; // 130%
+const DEFAULT_REST_DAY_PREMIUM = 1.3; // 130% (REST_DAY_PREMIUM); OT on rest day/holiday = +30% on top
 
 const DEFAULT_DAILY_RATE_WORKING_DAYS_PER_YEAR = 261;
 
+// 30% on top for rest day OT and holiday OT (per PH labor: 25% regular day OT, 30% rest day/holiday OT)
+const OT_PREMIUM_REST_DAY_AND_HOLIDAY = 1.3;
+
+export type BasePayrollConfig = {
+  nightDiffPercent: number; // 1.10 = 110%
+  regularHolidayRate: number; // 2.0 = 200%
+  specialHolidayRate: number; // 1.3 = 130%
+  overtimeRegularRate: number; // 1.25 = 125%
+  // REST_DAY_PREMIUM = 130%. Stored as overtimeRestDayRate for backward compat. First 8h on rest day at 130%; excess at 130%×1.30=169%. Holiday OT = holiday%×1.30.
+  overtimeRestDayRate: number;
+  dailyRateIncludesAllowance: boolean;
+  dailyRateWorkingDaysPerYear: number;
+};
+
+function derivePayrollRatesFromBase(base: BasePayrollConfig): PayrollRates {
+  const nd = base.nightDiffPercent ?? DEFAULT_NIGHT_DIFF_RATE;
+  const regHol = base.regularHolidayRate ?? DEFAULT_REGULAR_HOLIDAY;
+  const specHol = base.specialHolidayRate ?? DEFAULT_SPECIAL_HOLIDAY;
+  const otReg = base.overtimeRegularRate ?? DEFAULT_REGULAR_OT;
+  // Backward compat: value > 1.5 treated as legacy rest day OT rate (169%); infer premium = value/1.30
+  const rawRest = base.overtimeRestDayRate ?? DEFAULT_REST_DAY_PREMIUM;
+  const restDayPremiumRate =
+    rawRest > 1.5 ? rawRest / OT_PREMIUM_REST_DAY_AND_HOLIDAY : rawRest;
+
+  return {
+    regularOt: otReg,
+    restDayPremiumRate,
+    restDayOt: restDayPremiumRate * OT_PREMIUM_REST_DAY_AND_HOLIDAY,
+    regularHolidayOt: regHol * OT_PREMIUM_REST_DAY_AND_HOLIDAY,
+    specialHolidayOt: specHol * OT_PREMIUM_REST_DAY_AND_HOLIDAY,
+    nightDiffRate: nd,
+    nightDiffOnOtRate: otReg * nd,
+    nightDiffRegularHolidayRate: regHol * nd,
+    nightDiffSpecialHolidayRate: specHol * nd,
+    nightDiffRegularHolidayOtRate:
+      regHol * OT_PREMIUM_REST_DAY_AND_HOLIDAY * nd,
+    nightDiffSpecialHolidayOtRate:
+      specHol * OT_PREMIUM_REST_DAY_AND_HOLIDAY * nd,
+    nightDiffRestDayRate: restDayPremiumRate * nd,
+    nightDiffRestDayOtRate:
+      restDayPremiumRate * OT_PREMIUM_REST_DAY_AND_HOLIDAY * nd,
+    dailyRateIncludesAllowance: base.dailyRateIncludesAllowance ?? true,
+    dailyRateWorkingDaysPerYear:
+      base.dailyRateWorkingDaysPerYear ??
+      DEFAULT_DAILY_RATE_WORKING_DAYS_PER_YEAR,
+    regularHolidayRate: regHol,
+    specialHolidayRate: specHol,
+  };
+}
+
 export type PayrollRates = {
   regularOt: number;
+  restDayPremiumRate: number;
+  restDayOt: number;
   specialHolidayOt: number;
   regularHolidayOt: number;
-  restDayOt: number;
   nightDiffRate: number;
+  nightDiffOnOtRate: number;
+  nightDiffRegularHolidayRate: number;
+  nightDiffSpecialHolidayRate: number;
+  nightDiffRegularHolidayOtRate: number;
+  nightDiffSpecialHolidayOtRate: number;
+  nightDiffRestDayRate: number;
+  nightDiffRestDayOtRate: number;
   dailyRateIncludesAllowance: boolean;
   dailyRateWorkingDaysPerYear: number;
   regularHolidayRate: number;
@@ -366,67 +426,54 @@ async function getTaxDeductionSettings(
   };
 }
 
-/** Load payroll rates from organization settings (with defaults). */
 async function getPayrollRates(
   ctx: any,
   organizationId: any,
-): Promise<PayrollRates> {
+): Promise<{ rates: PayrollRates; base: BasePayrollConfig }> {
   const settings = await (ctx.db.query("settings") as any)
     .withIndex("by_organization", (q: any) =>
       q.eq("organizationId", organizationId),
     )
     .first();
-  const ps = settings?.payrollSettings;
-  return {
-    regularOt: ps?.overtimeRegularRate ?? DEFAULT_REGULAR_OT,
-    specialHolidayOt: ps?.specialHolidayOtRate ?? DEFAULT_SPECIAL_HOLIDAY_OT,
-    regularHolidayOt: ps?.regularHolidayOtRate ?? DEFAULT_REGULAR_HOLIDAY_OT,
-    restDayOt: ps?.overtimeRestDayRate ?? DEFAULT_REST_DAY_OT,
-    nightDiffRate: ps?.nightDiffPercent ?? DEFAULT_NIGHT_DIFF_RATE,
-    dailyRateIncludesAllowance: ps?.dailyRateIncludesAllowance ?? true,
+  const ps = settings?.payrollSettings ?? {};
+  const base: BasePayrollConfig = {
+    nightDiffPercent: ps.nightDiffPercent ?? DEFAULT_NIGHT_DIFF_RATE,
+    regularHolidayRate: ps.regularHolidayRate ?? DEFAULT_REGULAR_HOLIDAY,
+    specialHolidayRate: ps.specialHolidayRate ?? DEFAULT_SPECIAL_HOLIDAY,
+    overtimeRegularRate: ps.overtimeRegularRate ?? DEFAULT_REGULAR_OT,
+    overtimeRestDayRate: ps.overtimeRestDayRate ?? DEFAULT_REST_DAY_PREMIUM,
+    dailyRateIncludesAllowance: ps.dailyRateIncludesAllowance ?? true,
     dailyRateWorkingDaysPerYear:
-      ps?.dailyRateWorkingDaysPerYear ??
+      ps.dailyRateWorkingDaysPerYear ??
       DEFAULT_DAILY_RATE_WORKING_DAYS_PER_YEAR,
-    regularHolidayRate: ps?.regularHolidayRate ?? 2.0,
-    specialHolidayRate: ps?.specialHolidayRate ?? 1.3,
   };
+  return { rates: derivePayrollRatesFromBase(base), base };
 }
 
 /**
- * Merge organization payroll settings with employee-specific compensation overrides.
+ * Merge employee's 5 base config overrides with org base, then derive full payroll rates.
  */
 function getEmployeePayrollRates(
   employee: any,
-  organizationRates: PayrollRates,
-): PayrollRates & {
-  regularHolidayRate: number;
-  specialHolidayRate: number;
-} {
-  const compensation = employee.compensation || {};
-  let regularHolidayRate =
-    compensation.regularHolidayRate ?? organizationRates.regularHolidayRate;
-  let specialHolidayRate =
-    compensation.specialHolidayRate ?? organizationRates.specialHolidayRate;
-  // Backward compatibility: legacy "additional" values (1.0=100% add, 0.3=30% add) → actual rates (2.0, 1.3)
+  orgBase: BasePayrollConfig,
+): PayrollRates {
+  const c = employee.compensation || {};
+  let regularHolidayRate = c.regularHolidayRate ?? orgBase.regularHolidayRate;
+  let specialHolidayRate = c.specialHolidayRate ?? orgBase.specialHolidayRate;
   if (regularHolidayRate <= 1.5) regularHolidayRate = 2.0;
   if (specialHolidayRate <= 0.5) specialHolidayRate = 1.3;
   regularHolidayRate = Math.max(regularHolidayRate, 1.0);
 
-  return {
-    ...organizationRates,
-    regularOt: compensation.overtimeRegularRate ?? organizationRates.regularOt,
-    specialHolidayOt:
-      compensation.specialHolidayOtRate ?? organizationRates.specialHolidayOt,
-    regularHolidayOt:
-      compensation.regularHolidayOtRate ?? organizationRates.regularHolidayOt,
-    restDayOt: compensation.overtimeRestDayRate ?? organizationRates.restDayOt,
-    nightDiffRate:
-      compensation.nightDiffPercent ?? organizationRates.nightDiffRate,
-    // Legal/regular holidays should never pay less than an additional 100%
-    // of the basic daily rate, even if legacy employee data was misconfigured.
+  const mergedBase: BasePayrollConfig = {
+    nightDiffPercent: c.nightDiffPercent ?? orgBase.nightDiffPercent,
     regularHolidayRate,
     specialHolidayRate,
+    overtimeRegularRate: c.overtimeRegularRate ?? orgBase.overtimeRegularRate,
+    overtimeRestDayRate: c.overtimeRestDayRate ?? orgBase.overtimeRestDayRate,
+    dailyRateIncludesAllowance: orgBase.dailyRateIncludesAllowance,
+    dailyRateWorkingDaysPerYear: orgBase.dailyRateWorkingDaysPerYear,
   };
+  return derivePayrollRatesFromBase(mergedBase);
 }
 
 function toLocalDayTimestamp(date: number): number {
@@ -466,25 +513,13 @@ function holidayMatchesDate(holiday: any, date: number): boolean {
 function getHolidayInfo(
   date: number,
   holidays: any[],
-  attendanceRecord?: any,
+  _attendanceRecord?: any,
 ): { isHoliday: boolean; holidayType?: HolidayType } {
-  // Prefer the encoded attendance holiday classification when present.
-  // This keeps payroll aligned with the employee's reviewed attendance record.
-  if (attendanceRecord?.isHoliday && attendanceRecord?.holidayType) {
-    return {
-      isHoliday: true,
-      holidayType: attendanceRecord.holidayType,
-    };
-  }
-
+  // Use holiday list as source of truth so editing holiday type (special ↔ regular) applies to payroll.
   const holiday = holidays.find((entry) => holidayMatchesDate(entry, date));
   if (holiday) {
-    return {
-      isHoliday: true,
-      holidayType: holiday.type,
-    };
+    return { isHoliday: true, holidayType: holiday.type };
   }
-
   return { isHoliday: false };
 }
 
@@ -540,11 +575,20 @@ function getUndertimeHoursFromAttendance(att: {
   const actualOutM = timeStringToMinutes(att.actualOut);
   if (scheduleOutM === null || actualOutM === null) return 0;
 
+  // Clock-out after midnight (e.g. 00:00 when schedule out is 23:00) → treat as next day so OT is not undertime.
+  const scheduleInM = timeStringToMinutes(att.scheduleIn);
+  const actualOutAdjusted =
+    scheduleInM !== null &&
+    scheduleInM < scheduleOutM &&
+    actualOutM < scheduleOutM &&
+    actualOutM <= 12 * 60
+      ? actualOutM + 24 * 60
+      : actualOutM;
+
   const lunchStartM =
     att.lunchStart != null ? timeStringToMinutes(att.lunchStart) : null;
   const lunchEndM =
     att.lunchEnd != null ? timeStringToMinutes(att.lunchEnd) : null;
-  const scheduleInM = timeStringToMinutes(att.scheduleIn);
   const actualInM = timeStringToMinutes(att.actualIn);
 
   if (
@@ -564,14 +608,18 @@ function getUndertimeHoursFromAttendance(att: {
         ? 0
         : Math.max(
             0,
-            Math.min(actualOutM, lunchEndM) - Math.max(actualInM, lunchStartM),
+            Math.min(actualOutAdjusted, lunchEndM) -
+              Math.max(actualInM, lunchStartM),
           );
-    const actualWorkMins = Math.max(0, actualOutM - actualInM - breakDeducted);
+    const actualWorkMins = Math.max(
+      0,
+      actualOutAdjusted - actualInM - breakDeducted,
+    );
     const undertimeMins = Math.max(0, requiredWorkMins - actualWorkMins);
     return undertimeMins / 60;
   }
 
-  return Math.max(0, scheduleOutM - actualOutM) / 60;
+  return Math.max(0, scheduleOutM - actualOutAdjusted) / 60;
 }
 
 function getMonthlyBasicForTax(
@@ -593,39 +641,6 @@ function getMonthlyBasicForTax(
   return dailyRateNoAllowance * (workingDaysPerYear / 12);
 }
 
-type PayrollBaseResult = {
-  basicPay: number;
-  daysWorked: number;
-  absences: number;
-  lateHours: number;
-  undertimeHours: number;
-  overtimeHours: number;
-  holidayPay: number;
-  holidayPayType?: "regular" | "special";
-  nightDiffPay: number;
-  overtimeRegular: number;
-  overtimeRestDay: number;
-  overtimeRestDayExcess: number;
-  overtimeSpecialHoliday: number;
-  overtimeSpecialHolidayExcess: number;
-  overtimeLegalHoliday: number;
-  overtimeLegalHolidayExcess: number;
-  lateDeduction: number;
-  lateDeductionRegularDay: number;
-  lateDeductionSpecialHoliday: number;
-  lateDeductionRegularHoliday: number;
-  undertimeDeduction: number;
-  absentDeduction: number;
-  dailyRate: number;
-  hourlyRate: number;
-  salaryType: "monthly" | "daily" | "hourly";
-  payDivisor: number;
-  payrollRates: PayrollRates & {
-    regularHolidayRate: number;
-    specialHolidayRate: number;
-  };
-};
-
 async function buildEmployeePayrollBase(
   ctx: any,
   args: {
@@ -639,9 +654,13 @@ async function buildEmployeePayrollBase(
   },
 ): Promise<PayrollBaseResult> {
   const { employee, cutoffStart, cutoffEnd, payFrequency } = args;
-  const organizationRates =
-    args.payrollRates ?? (await getPayrollRates(ctx, employee.organizationId));
-  const payrollRates = getEmployeePayrollRates(employee, organizationRates);
+  let payrollRates: PayrollRates;
+  if (args.payrollRates) {
+    payrollRates = args.payrollRates;
+  } else {
+    const res = await getPayrollRates(ctx, employee.organizationId);
+    payrollRates = getEmployeePayrollRates(employee, res.base);
+  }
 
   const attendance = await (ctx.db.query("attendance") as any)
     .withIndex("by_employee", (q: any) => q.eq("employeeId", employee._id))
@@ -672,13 +691,65 @@ async function buildEmployeePayrollBase(
         q.eq("organizationId", employee.organizationId),
       )
       .collect());
+
+  // Enrich attendance with lunch and schedule when missing (for night diff and break exclusion).
+  // Schedule fallback lets "early in / late timeout" records still get night diff from the scheduled shift.
+  const attendanceEnriched = await Promise.all(
+    attendance.map(async (att: any) => {
+      let lunchStart: string | null = att.lunchStart ?? null;
+      let lunchEnd: string | null = att.lunchEnd ?? null;
+      let scheduleIn: string | null = att.scheduleIn ?? null;
+      let scheduleOut: string | null = att.scheduleOut ?? null;
+
+      const scheduleWithLunch = await getScheduleWithLunch(
+        ctx,
+        employee,
+        att.date,
+        employee.organizationId,
+      );
+      if (scheduleWithLunch) {
+        lunchStart = lunchStart ?? scheduleWithLunch.lunchStart;
+        lunchEnd = lunchEnd ?? scheduleWithLunch.lunchEnd;
+        scheduleIn = scheduleIn ?? scheduleWithLunch.scheduleIn;
+        scheduleOut = scheduleOut ?? scheduleWithLunch.scheduleOut;
+      }
+      if ((lunchStart == null || lunchEnd == null || scheduleIn == null || scheduleOut == null) && employee.shiftId) {
+        const shift = await ctx.db.get(employee.shiftId);
+        if (shift) {
+          lunchStart = lunchStart ?? shift.lunchStart ?? null;
+          lunchEnd = lunchEnd ?? shift.lunchEnd ?? null;
+          scheduleIn = scheduleIn ?? shift.scheduleIn ?? null;
+          scheduleOut = scheduleOut ?? shift.scheduleOut ?? null;
+        }
+      }
+      if (lunchStart == null || lunchEnd == null) {
+        const settings = await (ctx.db.query("settings") as any)
+          .withIndex("by_organization", (q: any) =>
+            q.eq("organizationId", employee.organizationId),
+          )
+          .first();
+        const attSettings = settings?.attendanceSettings;
+        lunchStart = lunchStart ?? attSettings?.defaultLunchStart ?? "12:00";
+        lunchEnd = lunchEnd ?? attSettings?.defaultLunchEnd ?? "13:00";
+      }
+
+      const updates: Record<string, unknown> = {};
+      if (att.lunchStart == null && lunchStart != null) updates.lunchStart = lunchStart;
+      if (att.lunchEnd == null && lunchEnd != null) updates.lunchEnd = lunchEnd;
+      if (att.scheduleIn == null && scheduleIn != null) updates.scheduleIn = scheduleIn;
+      if (att.scheduleOut == null && scheduleOut != null) updates.scheduleOut = scheduleOut;
+      if (Object.keys(updates).length === 0) return att;
+      return { ...att, ...updates };
+    }),
+  );
+
   return calculatePayrollBaseFromRecords({
     employee,
     cutoffStart,
     cutoffEnd,
     payFrequency,
     payrollRates,
-    attendance,
+    attendance: attendanceEnriched,
     holidays,
     leaveRequests: approvedLeaves,
     leaveTypes,
@@ -891,7 +962,7 @@ export const computeEmployeePayroll = query({
       overtimeHours: payrollBase.overtimeHours,
       holidayPay: payrollBase.holidayPay,
       holidayPayType: payrollBase.holidayPayType,
-      restDayPay: 0,
+      restDayPay: payrollBase.restDayPremiumPay ?? 0,
       nightDiffPay: payrollBase.nightDiffPay,
       overtimeRegular: payrollBase.overtimeRegular,
       overtimeRestDay: payrollBase.overtimeRestDay,
@@ -1023,7 +1094,7 @@ export const createPayrollRun = mutation({
       updatedAt: now,
     });
 
-    const rates = await getPayrollRates(ctx, args.organizationId);
+    const { rates } = await getPayrollRates(ctx, args.organizationId);
     const taxSettings = await getTaxDeductionSettings(ctx, args.organizationId);
     const holidays = await (ctx.db.query("holidays") as any)
       .withIndex("by_organization", (q: any) =>
@@ -1042,7 +1113,11 @@ export const createPayrollRun = mutation({
           const holiday = holidays.find((h: any) =>
             holidayMatchesDateLib(h, rec.date),
           );
-          if (holiday && employee && holidayAppliesToEmployee(holiday, employee)) {
+          if (
+            holiday &&
+            employee &&
+            holidayAppliesToEmployee(holiday, employee)
+          ) {
             await ctx.db.patch(rec._id, {
               isHoliday: true,
               holidayType: holiday.type,
@@ -1558,6 +1633,10 @@ export const createPayrollRun = mutation({
           payrollBase.nightDiffPay > 0
             ? round2(payrollBase.nightDiffPay)
             : undefined,
+        restDayPay:
+          (payrollBase.restDayPremiumPay ?? 0) > 0
+            ? round2(payrollBase.restDayPremiumPay!)
+            : undefined,
         overtimeRegular:
           payrollBase.overtimeRegular > 0
             ? round2(payrollBase.overtimeRegular)
@@ -1735,7 +1814,7 @@ export const updatePayrollRun = mutation({
       const cutoffStart = args.cutoffStart ?? payrollRun.cutoffStart;
       const cutoffEnd = args.cutoffEnd ?? payrollRun.cutoffEnd;
 
-      const rates = await getPayrollRates(ctx, payrollRun.organizationId);
+      const { rates } = await getPayrollRates(ctx, payrollRun.organizationId);
       const taxSettingsUpdate = await getTaxDeductionSettings(
         ctx,
         payrollRun.organizationId,
@@ -2230,6 +2309,10 @@ export const updatePayrollRun = mutation({
           nightDiffPay:
             payrollBase.nightDiffPay > 0
               ? round2(payrollBase.nightDiffPay)
+              : undefined,
+          restDayPay:
+            (payrollBase.restDayPremiumPay ?? 0) > 0
+              ? round2(payrollBase.restDayPremiumPay!)
               : undefined,
           overtimeRegular:
             payrollBase.overtimeRegular > 0
@@ -2902,7 +2985,7 @@ async function compute13thMonthAmountsInternal(
     thirteenthMonthAmount: number;
   }> = [];
 
-  const rates = await getPayrollRates(ctx, args.organizationId);
+  const { rates } = await getPayrollRates(ctx, args.organizationId);
   const holidays = await (ctx.db.query("holidays") as any)
     .withIndex("by_organization", (q: any) =>
       q.eq("organizationId", args.organizationId),
@@ -3356,7 +3439,7 @@ export const getPayrollRunSummary = query({
     }
 
     // Get payroll rates from organization settings (night diff, OT rates, etc.)
-    const rates = await getPayrollRates(ctx, payrollRun.organizationId);
+    const { rates } = await getPayrollRates(ctx, payrollRun.organizationId);
 
     // Get all approved leave requests for all employees in the period
     const allLeaveRequests = await (ctx.db.query("leaveRequests") as any)
@@ -3546,10 +3629,21 @@ export const getPayrollRunSummary = query({
               if (undertimeMinutes > 0)
                 totalUndertimeMinutes += undertimeMinutes;
             } else if (att.actualOut && att.scheduleOut) {
-              const scheduleMinutes = timeToMinutes(att.scheduleOut);
-              const actualMinutes = timeToMinutes(att.actualOut);
-              if (actualMinutes < scheduleMinutes) {
-                undertimeMinutes = scheduleMinutes - actualMinutes;
+              const scheduleInMin = att.scheduleIn
+                ? timeToMinutes(att.scheduleIn)
+                : null;
+              const scheduleOutMin = timeToMinutes(att.scheduleOut);
+              let actualOutMin = timeToMinutes(att.actualOut);
+              if (
+                scheduleInMin !== null &&
+                scheduleInMin < scheduleOutMin &&
+                actualOutMin < scheduleOutMin &&
+                actualOutMin <= 12 * 60
+              ) {
+                actualOutMin += 24 * 60;
+              }
+              if (actualOutMin < scheduleOutMin) {
+                undertimeMinutes = scheduleOutMin - actualOutMin;
                 totalUndertimeMinutes += undertimeMinutes;
               }
             }

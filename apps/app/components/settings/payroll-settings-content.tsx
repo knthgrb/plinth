@@ -76,36 +76,43 @@ export function PayrollSettingsContent() {
 
   const [formData, setFormData] = useState({
     nightDiffPercent: 10,
-    regularHolidayRate: 200,
-    specialHolidayRate: 130,
-    overtimeRegularRate: 125,
-    overtimeRestDayRate: 169,
-    regularHolidayOtRate: 200,
-    specialHolidayOtRate: 169,
+    regularHolidayRate: 100,
+    specialHolidayRate: 30,
+    overtimeRegularRate: 25,
+    overtimeRestDayRate: 30,
     dailyRateIncludesAllowance: true,
     dailyRateWorkingDaysPerYear: 261,
     salaryPaymentFrequency: "bimonthly" as "monthly" | "bimonthly",
     firstPayDate: 15,
     secondPayDate: 30,
-    taxDeductionFrequency: "twice_per_month" as "once_per_month" | "twice_per_month",
+    taxDeductionFrequency: "twice_per_month" as
+      | "once_per_month"
+      | "twice_per_month",
     taxDeductOnPay: "first" as "first" | "second",
   });
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     const ps = settings?.payrollSettings;
-    const taxFreq =
-      ps?.taxDeductionFrequency ?? "twice_per_month";
+    const taxFreq = ps?.taxDeductionFrequency ?? "twice_per_month";
     const taxPay = ps?.taxDeductOnPay ?? "first";
     if (ps) {
       setFormData({
-        nightDiffPercent: (ps.nightDiffPercent || 0.1) * 100,
-        regularHolidayRate: (ps.regularHolidayRate ?? 2.0) * 100,
-        specialHolidayRate: (ps.specialHolidayRate ?? 1.3) * 100,
-        overtimeRegularRate: (ps.overtimeRegularRate || 1.25) * 100,
-        overtimeRestDayRate: (ps.overtimeRestDayRate || 1.69) * 100,
-        regularHolidayOtRate: (ps.regularHolidayOtRate ?? 2.0) * 100,
-        specialHolidayOtRate: (ps.specialHolidayOtRate ?? 1.69) * 100,
+        nightDiffPercent: parseFloat(
+          (((ps.nightDiffPercent ?? 1.1) - 1) * 100).toFixed(2),
+        ),
+        regularHolidayRate: parseFloat(
+          (((ps.regularHolidayRate ?? 2.0) - 1) * 100).toFixed(2),
+        ),
+        specialHolidayRate: parseFloat(
+          (((ps.specialHolidayRate ?? 1.3) - 1) * 100).toFixed(2),
+        ),
+        overtimeRegularRate: parseFloat(
+          (((ps.overtimeRegularRate ?? 1.25) - 1) * 100).toFixed(2),
+        ),
+        overtimeRestDayRate: parseFloat(
+          (((ps.overtimeRestDayRate ?? 1.3) - 1) * 100).toFixed(2),
+        ),
         dailyRateIncludesAllowance: ps.dailyRateIncludesAllowance ?? true,
         dailyRateWorkingDaysPerYear: ps.dailyRateWorkingDaysPerYear ?? 261,
         salaryPaymentFrequency:
@@ -139,13 +146,11 @@ export function PayrollSettingsContent() {
       await updatePayrollSettings({
         organizationId: currentOrganizationId,
         payrollSettings: {
-          nightDiffPercent: formData.nightDiffPercent / 100,
-          regularHolidayRate: formData.regularHolidayRate / 100,
-          specialHolidayRate: formData.specialHolidayRate / 100,
-          overtimeRegularRate: formData.overtimeRegularRate / 100,
-          overtimeRestDayRate: formData.overtimeRestDayRate / 100,
-          regularHolidayOtRate: formData.regularHolidayOtRate / 100,
-          specialHolidayOtRate: formData.specialHolidayOtRate / 100,
+          nightDiffPercent: 1 + formData.nightDiffPercent / 100,
+          regularHolidayRate: 1 + formData.regularHolidayRate / 100,
+          specialHolidayRate: 1 + formData.specialHolidayRate / 100,
+          overtimeRegularRate: 1 + formData.overtimeRegularRate / 100,
+          overtimeRestDayRate: 1 + formData.overtimeRestDayRate / 100,
           dailyRateIncludesAllowance: formData.dailyRateIncludesAllowance,
           dailyRateWorkingDaysPerYear: formData.dailyRateWorkingDaysPerYear,
           taxDeductionFrequency: formData.taxDeductionFrequency,
@@ -184,138 +189,103 @@ export function PayrollSettingsContent() {
         <CardTitle>Payroll Configuration</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="grid gap-6 md:grid-cols-2">
-          <div className="space-y-2">
-            <LabelWithHelp
-              id="nightDiff"
-              label="Night Differential (%)"
-              tooltip="Night diff pay = hourly rate × 10% × no. of hours worked between 10 PM–6 AM (added on top of regular pay)."
-            />
-            <Input
-              id="nightDiff"
-              type="number"
-              value={formData.nightDiffPercent}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  nightDiffPercent: parseFloat(e.target.value) || 0,
-                })
-              }
-            />
-          </div>
-
-          <div className="space-y-2">
-            <LabelWithHelp
-              id="regularHoliday"
-              label="Regular Holiday Rate (%)"
-              tooltip='200% × daily rate. If "Include allowance in daily rate" is unchecked, the rate is applied to basic daily pay only (200% × basic daily pay).'
-            />
-            <Input
-              id="regularHoliday"
-              type="number"
-              value={formData.regularHolidayRate}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  regularHolidayRate: parseFloat(e.target.value) || 0,
-                })
-              }
-            />
-          </div>
-
-          <div className="space-y-2">
-            <LabelWithHelp
-              id="specialHoliday"
-              label="Special non-working holiday rate (%)"
-              tooltip='130% × daily rate. If "Include allowance in daily rate" is unchecked, the rate is applied to basic daily pay only (130% × basic daily pay).'
-            />
-            <Input
-              id="specialHoliday"
-              type="number"
-              value={formData.specialHolidayRate}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  specialHolidayRate: parseFloat(e.target.value) || 0,
-                })
-              }
-            />
-          </div>
-
-          <div className="space-y-2">
-            <LabelWithHelp
-              id="overtimeRegular"
-              label="Overtime Regular Rate (%)"
-              tooltip="OT pay = hourly rate × 125% × no. of OT hours (added on top of regular day pay)."
-            />
-            <Input
-              id="overtimeRegular"
-              type="number"
-              value={formData.overtimeRegularRate}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  overtimeRegularRate: parseFloat(e.target.value) || 0,
-                })
-              }
-            />
-          </div>
-
-          <div className="space-y-2">
-            <LabelWithHelp
-              id="overtimeRestDay"
-              label="Overtime Rest Day Rate (%)"
-              tooltip="OT pay on rest day = hourly rate × 169% × no. of OT hours on the rest day."
-            />
-            <Input
-              id="overtimeRestDay"
-              type="number"
-              value={formData.overtimeRestDayRate}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  overtimeRestDayRate: parseFloat(e.target.value) || 0,
-                })
-              }
-            />
-          </div>
-
-          <div className="space-y-2">
-            <LabelWithHelp
-              id="regularHolidayOt"
-              label="Regular Holiday OT Rate (%)"
-              tooltip="OT pay on regular holiday = hourly rate × 200% × no. of OT hours on the regular holiday."
-            />
-            <Input
-              id="regularHolidayOt"
-              type="number"
-              value={formData.regularHolidayOtRate}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  regularHolidayOtRate: parseFloat(e.target.value) || 0,
-                })
-              }
-            />
-          </div>
-
-          <div className="space-y-2">
-            <LabelWithHelp
-              id="specialHolidayOt"
-              label="Special non-working holiday OT rate (%)"
-              tooltip="OT pay on special non-working holiday = hourly rate × 169% × no. of OT hours on the special non-working holiday."
-            />
-            <Input
-              id="specialHolidayOt"
-              type="number"
-              value={formData.specialHolidayOtRate}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  specialHolidayOtRate: parseFloat(e.target.value) || 0,
-                })
-              }
-            />
+        <div className="space-y-4">
+          <h4 className="font-medium">BASE CONFIGS</h4>
+          <p className="text-sm text-muted-foreground">
+            Enter the <strong>additional</strong> percentage paid on top of
+            regular rate for each case (e.g. 10 = 10% additional).
+          </p>
+          <div className="grid gap-6 md:grid-cols-2">
+            <div className="space-y-2">
+              <LabelWithHelp
+                id="nightDiff"
+                label="Night Differential (% additional)"
+                tooltip="Additional pay for hours 10 PM–6 AM. Example: 10 = 10% on top of regular rate."
+              />
+              <Input
+                id="nightDiff"
+                type="number"
+                value={formData.nightDiffPercent}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    nightDiffPercent: parseFloat(e.target.value) || 0,
+                  })
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <LabelWithHelp
+                id="regularHoliday"
+                label="Regular Holiday (% additional)"
+                tooltip="Additional pay for regular (legal) holiday. Example: 100 = 100% on top of daily rate (double pay)."
+              />
+              <Input
+                id="regularHoliday"
+                type="number"
+                value={formData.regularHolidayRate}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    regularHolidayRate: parseFloat(e.target.value) || 0,
+                  })
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <LabelWithHelp
+                id="specialHoliday"
+                label="Special non-working holiday (% additional)"
+                tooltip="Additional pay for special non-working holiday. Example: 30 = 30% on top of daily rate."
+              />
+              <Input
+                id="specialHoliday"
+                type="number"
+                value={formData.specialHolidayRate}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    specialHolidayRate: parseFloat(e.target.value) || 0,
+                  })
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <LabelWithHelp
+                id="overtimeRegular"
+                label="Overtime Regular (% additional)"
+                tooltip="Additional pay for overtime on a regular day. Example: 25 = 25% on top of hourly rate."
+              />
+              <Input
+                id="overtimeRegular"
+                type="number"
+                value={formData.overtimeRegularRate}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    overtimeRegularRate: parseFloat(e.target.value) || 0,
+                  })
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <LabelWithHelp
+                id="overtimeRestDay"
+                label="Rest Day Premium (% additional)"
+                tooltip="Additional pay for rest day work (first 8h) and the extra for rest day/holiday OT. Example: 30 = 30% on top of base rate."
+              />
+              <Input
+                id="overtimeRestDay"
+                type="number"
+                value={formData.overtimeRestDayRate}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    overtimeRestDayRate: parseFloat(e.target.value) || 0,
+                  })
+                }
+              />
+            </div>
           </div>
         </div>
 
@@ -384,19 +354,14 @@ export function PayrollSettingsContent() {
               </Label>
               <Select
                 value={formData.taxDeductionFrequency || "twice_per_month"}
-                onValueChange={(
-                  value: "once_per_month" | "twice_per_month",
-                ) =>
+                onValueChange={(value: "once_per_month" | "twice_per_month") =>
                   setFormData({
                     ...formData,
                     taxDeductionFrequency: value,
                   })
                 }
               >
-                <SelectTrigger
-                  id="taxDeductionFrequency"
-                  className="max-w-xs"
-                >
+                <SelectTrigger id="taxDeductionFrequency" className="max-w-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -427,7 +392,9 @@ export function PayrollSettingsContent() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="first">1st pay (e.g. 1st–15th)</SelectItem>
+                    <SelectItem value="first">
+                      1st pay (e.g. 1st–15th)
+                    </SelectItem>
                     <SelectItem value="second">
                       2nd pay (e.g. 16th–30th/31st)
                     </SelectItem>

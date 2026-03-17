@@ -90,7 +90,7 @@ export function BulkAddEmployeesDialog({
 
     const orgRegularRate = settings?.payrollSettings?.regularHolidayRate ?? 2.0;
     const orgSpecialRate = settings?.payrollSettings?.specialHolidayRate ?? 1.3;
-    const orgNightDiff = settings?.payrollSettings?.nightDiffPercent ?? 0.1;
+    const orgNightDiff = settings?.payrollSettings?.nightDiffPercent ?? 1.1;
     const orgOtRegular = settings?.payrollSettings?.overtimeRegularRate ?? 1.25;
     const orgOtRestDay = settings?.payrollSettings?.overtimeRestDayRate ?? 1.69;
     const orgRegHolidayOt = settings?.payrollSettings?.regularHolidayOtRate ?? 2.0;

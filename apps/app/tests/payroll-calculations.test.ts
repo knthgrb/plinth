@@ -17,10 +17,16 @@ function localDate(
 
 const baseRates: ResolvedPayrollRates = {
   regularOt: 1.25,
+  restDayPremiumRate: 1.3,
+  restDayOt: 1.69,
   specialHolidayOt: 1.69,
   regularHolidayOt: 2.0,
-  restDayOt: 1.69,
-  nightDiffRate: 0.1,
+  nightDiffRate: 1.1,
+  nightDiffOnOtRate: 1.375,
+  nightDiffRegularHolidayRate: 2.2,
+  nightDiffSpecialHolidayRate: 1.43,
+  nightDiffRegularHolidayOtRate: 2.86,
+  nightDiffSpecialHolidayOtRate: 1.859,
   dailyRateIncludesAllowance: true,
   dailyRateWorkingDaysPerYear: 261,
   regularHolidayRate: 2.0, // 200% actual rate (2× daily)
@@ -345,7 +351,7 @@ describe("payroll calculations", () => {
     expect(result.lateDeductionRegularHoliday).toBe(0);
   });
 
-  it("uses attendance isHoliday/holidayType when set (from backfill or edit)", () => {
+  it("uses holiday list type when list has match (list is source of truth over attendance)", () => {
     const date = localDate(2026, 1, 20);
     const result = calculate({
       attendance: [
@@ -372,8 +378,8 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
 
-    // Attendance holiday type wins when set (from backfill/edit); regular = 100% premium
-    expect(result.holidayPay).toBeCloseTo(1379.31, 2);
+    // List type wins so editing holiday (special ↔ regular) in settings applies to payroll; special = 30% premium
+    expect(result.holidayPay).toBeCloseTo(413.79, 2);
   });
 
   it("uses holiday list type when attendance has no isHoliday/holidayType", () => {
@@ -460,7 +466,7 @@ describe("payroll calculations", () => {
     expect(result.holidayPay).toBeCloseTo(1103.45, 2);
   });
 
-  it("calculates regular day overtime from the basic hourly rate", () => {
+  it("calculates regular day overtime using same hourly rate as daily rate (basic+allowance when enabled)", () => {
     const date = localDate(2026, 1, 19);
     const result = calculate({
       attendance: [
@@ -478,11 +484,11 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
 
-    expect(result.overtimeRegular).toBeCloseTo(344.83, 2);
+    expect(result.overtimeRegular).toBeCloseTo(431.03, 2);
   });
 
-  it("calculates rest day work using the configured rest day rate", () => {
-    // Use UTC so Feb 21 00:00 UTC is Saturday (payroll uses UTC for day-of-week)
+  it("calculates rest day work: premium (first 8h at 130%) and OT (excess at 169%)", () => {
+    // Use UTC so Feb 21 00:00 UTC is Saturday. actualIn 09:00, actualOut 20:00 → 10h worked (minus 1h lunch).
     const date = Date.UTC(2026, 1, 21);
     const result = calculate({
       attendance: [
@@ -500,7 +506,9 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
 
-    expect(result.overtimeRestDay).toBeCloseTo(2913.79, 2);
+    // 8h at 130% + 2h at 169%. Hourly ≈ 172.41 (30k×12/261/8).
+    expect(result.restDayPremiumPay).toBeCloseTo(1793.06, 1);
+    expect(result.overtimeRestDay).toBeCloseTo(582.76, 1);
   });
 
   it("calculates regular holiday overtime separately from the holiday premium", () => {
@@ -532,7 +540,7 @@ describe("payroll calculations", () => {
     });
 
     expect(result.holidayPay).toBeCloseTo(1379.31, 2);
-    expect(result.overtimeLegalHoliday).toBeCloseTo(551.72, 2);
+    expect(result.overtimeLegalHoliday).toBeCloseTo(689.66, 2);
   });
 
   it("calculates special holiday overtime separately from the holiday premium", () => {
@@ -564,7 +572,7 @@ describe("payroll calculations", () => {
     });
 
     expect(result.holidayPay).toBeCloseTo(413.79, 2);
-    expect(result.overtimeSpecialHoliday).toBeCloseTo(466.21, 2);
+    expect(result.overtimeSpecialHoliday).toBeCloseTo(582.76, 2);
   });
 
   it("calculates night differential only when scheduled shift overlaps 10pm-6am", () => {
@@ -640,6 +648,201 @@ describe("payroll calculations", () => {
     });
     // 5:30-6:00 = 30 min in night window. hourly (basic+allowance) ≈ 172.41, 0.5 * 172.41 * 0.1 ≈ 8.62
     expect(result.nightDiffPay).toBeCloseTo(8.62, 2);
+  });
+
+  it("applies night diff on OT rate (137.5%) for OT hours in 10pm-6am", () => {
+    const date = localDate(2026, 1, 23); // Friday
+    // Schedule to 8pm, worked until 11pm → 3h OT. 8-10pm = 2h at 125%, 10-11pm = 1h at 137.5%
+    // Night diff block adds premium (1.375 - 1.25) * hourly * 1h = 0.125 * 172.41 ≈ 21.55
+    const result = calculate({
+      attendance: [
+        {
+          date,
+          status: "present",
+          actualIn: "20:00",
+          actualOut: "23:00",
+          scheduleIn: "09:00",
+          scheduleOut: "20:00",
+          overtime: 3,
+        },
+      ],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    expect(result.nightDiffPay).toBeCloseTo(21.55, 2);
+  });
+
+  it("overnight shift 6pm-3am with lunch 11pm-12am: night diff on both calendar days (1h + 3h = 4h)", () => {
+    const date = localDate(2026, 2, 18); // Mar 18 2026
+    const result = calculate({
+      attendance: [
+        {
+          date,
+          status: "present",
+          actualIn: "18:00",
+          actualOut: "03:00",
+          scheduleIn: "18:00",
+          scheduleOut: "03:00",
+          lunchStart: "23:00",
+          lunchEnd: "00:00",
+        },
+      ],
+      cutoffStart: date,
+      cutoffEnd: date + 24 * 60 * 60 * 1000, // include Mar 19 so both segments count
+    });
+    const hourly = (30_000 * 12) / 261 / 8;
+    const premiumPerHour = hourly * 0.1; // 10% night diff
+    const nightHoursFirstDay = 1; // 22:00-23:00 (before lunch)
+    const nightHoursNextDay = 3; // 00:00-03:00
+    const expected = (nightHoursFirstDay + nightHoursNextDay) * premiumPerHour;
+    expect(result.nightDiffPay).toBeCloseTo(expected, 1);
+    expect(result.nightDiffPay).toBeGreaterThan(60); // must be > 1 day only (~17.24)
+  });
+
+  it("two days overnight 6pm-3am with lunch 11pm-12am: 8h night diff total (4h per day)", () => {
+    const day1 = localDate(2026, 2, 18); // Mar 18
+    const day2 = localDate(2026, 2, 19); // Mar 19
+    const cutoffEnd = day2 + 24 * 60 * 60 * 1000 - 1; // end of Mar 19
+    const result = calculate({
+      attendance: [
+        {
+          date: day1,
+          status: "present",
+          actualIn: "18:00",
+          actualOut: "03:00",
+          scheduleIn: "18:00",
+          scheduleOut: "03:00",
+          lunchStart: "23:00",
+          lunchEnd: "00:00",
+        },
+        {
+          date: day2,
+          status: "present",
+          actualIn: "18:00",
+          actualOut: "03:00",
+          scheduleIn: "18:00",
+          scheduleOut: "03:00",
+          lunchStart: "23:00",
+          lunchEnd: "00:00",
+        },
+      ],
+      cutoffStart: day1,
+      cutoffEnd,
+    });
+    const hourly = (30_000 * 12) / 261 / 8;
+    const premiumPerHour = hourly * 0.1; // 10% night diff
+    const expected = 8 * premiumPerHour; // 4h + 4h
+    expect(result.nightDiffPay).toBeCloseTo(expected, 1);
+    expect(result.nightDiffPay).toBeCloseTo(137.93, 1); // 8 * 17.24
+  });
+
+  it("night diff uses schedule when actual is early in / late timeout (no night hours): second day still gets 4h", () => {
+    const day1 = localDate(2026, 2, 18);
+    const day2 = localDate(2026, 2, 19);
+    const cutoffEnd = day2 + 24 * 60 * 60 * 1000 - 1;
+    const result = calculate({
+      attendance: [
+        { date: day1, status: "present", actualIn: "18:00", actualOut: "03:00", scheduleIn: "18:00", scheduleOut: "03:00", lunchStart: "23:00", lunchEnd: "00:00" },
+        // Second day: actual 11:00-12:00 (no night overlap); schedule 18:00-03:00 → fallback gives 4h night diff
+        { date: day2, status: "present", actualIn: "11:00", actualOut: "12:00", scheduleIn: "18:00", scheduleOut: "03:00", lunchStart: "23:00", lunchEnd: "00:00" },
+      ],
+      cutoffStart: day1,
+      cutoffEnd,
+    });
+    const hourly = (30_000 * 12) / 261 / 8;
+    const expected = 8 * hourly * 0.1; // 4h + 4h from schedule fallback
+    expect(result.nightDiffPay).toBeCloseTo(expected, 1);
+    expect(result.nightDiffPay).toBeCloseTo(137.93, 1);
+  });
+
+  it("applies holiday night rate (220%) only to hours on holiday calendar day", () => {
+    const date = localDate(2026, 1, 20); // Feb 20 2026 = Friday (holiday); next day Feb 21 = Saturday = rest day
+    // Shift 18:00-02:00: 18-24 on holiday (6h), 0-2 next day (2h). Night on holiday = 22-24 (2h), night on next day = 0-2 (2h).
+    // Night diff on holiday = 220% - 200% = 20% of base. Next day is Saturday (rest day) so rest day night diff = 130%×110% - 130% = 13%.
+    const result = calculate({
+      attendance: [
+        {
+          date,
+          status: "present",
+          actualIn: "18:00",
+          actualOut: "02:00",
+          scheduleIn: "18:00",
+          scheduleOut: "02:00",
+          isHoliday: true,
+          holidayType: "regular",
+        },
+      ],
+      holidays: [{ date, type: "regular", isRecurring: false, year: 2026 }],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    const hourly = (30_000 * 12) / 261 / 8;
+    const nightDiffPremiumOnHoliday = 2.2 - 2.0; // 20% on top of 200% holiday
+    const nightOnHoliday = 2 * nightDiffPremiumOnHoliday * hourly;
+    const nightDiffPremiumRestDay = 1.3 * 1.1 - 1.3; // 13% (rest day × night diff - rest day)
+    const nightNextDay = 2 * nightDiffPremiumRestDay * hourly;
+    expect(result.nightDiffPay).toBeCloseTo(nightOnHoliday + nightNextDay, 1);
+  });
+
+  it("regular holiday 6pm-3am with lunch 11pm-12am: only 10-11pm gets holiday night (20%), 12-3am next day gets regular/rest day rate", () => {
+    const date = localDate(2026, 1, 20); // Feb 20 = Friday (holiday); Feb 21 = Saturday = rest day
+    const result = calculate({
+      attendance: [
+        {
+          date,
+          status: "present",
+          actualIn: "18:00",
+          actualOut: "03:00",
+          scheduleIn: "18:00",
+          scheduleOut: "03:00",
+          lunchStart: "23:00",
+          lunchEnd: "00:00",
+          isHoliday: true,
+          holidayType: "regular",
+        },
+      ],
+      holidays: [{ date, type: "regular", isRecurring: false, year: 2026 }],
+      cutoffStart: date,
+      cutoffEnd: date + 24 * 60 * 60 * 1000 - 1,
+    });
+    const hourly = (30_000 * 12) / 261 / 8;
+    const nightOnHoliday = 1 * (2.2 - 2.0) * hourly; // 1h 22:00-23:00 on holiday day only
+    const nightDiffPremiumRestDay = 1.3 * 1.1 - 1.3; // 13% (next day is Saturday = rest day)
+    const nightNextDay = 3 * nightDiffPremiumRestDay * hourly; // 3h 00:00-03:00 next day
+    expect(result.nightDiffPay).toBeCloseTo(nightOnHoliday + nightNextDay, 1);
+    expect(result.nightDiffPay).toBeCloseTo(101.72, 1);
+  });
+
+  it("regular holiday night diff: 1h at 20% + 3h at 10% = P100.58 (hourly P201.15, next day weekday)", () => {
+    // Exact scenario from corrected breakdown: only 10–11pm holiday, 12–3am regular.
+    const monthly = 201.15 * 8 * 261 / 12; // ~35k so hourly = 201.15
+    const employee = createEmployee({
+      compensation: {
+        basicSalary: Math.round(monthly * 0.7),
+        allowance: Math.round(monthly * 0.3),
+        salaryType: "monthly",
+      },
+    });
+    const date = localDate(2026, 1, 18); // Wed Feb 18 (holiday); Thu Feb 19 = weekday
+    const result = calculate({
+      employee,
+      attendance: [
+        {
+          date,
+          status: "present",
+          actualIn: "18:00",
+          actualOut: "03:00",
+          scheduleIn: "18:00",
+          scheduleOut: "03:00",
+          lunchStart: "23:00",
+          lunchEnd: "00:00",
+        },
+      ],
+      holidays: [{ date, type: "regular", isRecurring: false, year: 2026 }],
+      cutoffStart: date,
+      cutoffEnd: date + 24 * 60 * 60 * 1000 - 1,
+    });
+    expect(result.nightDiffPay).toBeCloseTo(100.58, 2);
   });
 
   it("uses manual late overrides when present (late = basic+allowance hourly rate)", () => {

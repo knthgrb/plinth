@@ -540,7 +540,12 @@ export default function AttendancePage() {
             ? Math.round((record.undertime ?? 0) * 60)
             : record.undertime != null
               ? Math.round(record.undertime * 60)
-              : calculateUndertime(record.scheduleOut, record.actualOut);
+              : calculateUndertime(
+                record.scheduleIn,
+                record.scheduleOut,
+                record.actualIn,
+                record.actualOut,
+              );
         if (undertimeMinutes && undertimeMinutes > 0) {
           undertimes.push({ date: record.date, minutes: undertimeMinutes });
         }
@@ -1114,7 +1119,9 @@ export default function AttendancePage() {
                                 : record.undertime != null
                                   ? Math.round(record.undertime * 60) // stored in hours, display in mins
                                   : calculateUndertime(
+                                      record.scheduleIn,
                                       record.scheduleOut,
+                                      record.actualIn,
                                       record.actualOut,
                                     );
                             const hasLate = late !== null && late > 0;
@@ -1618,7 +1625,9 @@ export default function AttendancePage() {
                                         : record.undertime != null
                                           ? Math.round(record.undertime * 60)
                                           : calculateUndertime(
+                                              record.scheduleIn,
                                               record.scheduleOut,
+                                              record.actualIn,
                                               record.actualOut,
                                             );
                                     if (late) {
@@ -1688,7 +1697,9 @@ export default function AttendancePage() {
                                           : record.undertime != null
                                             ? Math.round(record.undertime * 60)
                                             : calculateUndertime(
+                                                record.scheduleIn,
                                                 record.scheduleOut,
+                                                record.actualIn,
                                                 record.actualOut,
                                               )
                                         : null;

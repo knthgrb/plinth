@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "convex/react";
@@ -61,6 +61,38 @@ import { cn } from "@/utils/utils";
 import { recalculateEmployeeAttendance } from "@/actions/attendance";
 import { useToast } from "@/components/ui/use-toast";
 
+// BASE CONFIGS: 5 rates as % additional (on top of regular). Stored as multiplier in DB; UI shows additional.
+const BASE_RATE_FIELD_CONFIG: Record<
+  string,
+  { label: string; placeholder: string; step: string }
+> = {
+  nightDiffPercent: {
+    label: "Night Differential (% additional)",
+    placeholder: "10",
+    step: "0.01",
+  },
+  regularHolidayRate: {
+    label: "Regular Holiday (% additional)",
+    placeholder: "100",
+    step: "0.01",
+  },
+  specialHolidayRate: {
+    label: "Special non-working holiday (% additional)",
+    placeholder: "30",
+    step: "0.01",
+  },
+  overtimeRegularRate: {
+    label: "Overtime Regular (% additional)",
+    placeholder: "25",
+    step: "0.01",
+  },
+  overtimeRestDayRate: {
+    label: "Rest Day Premium (% additional)",
+    placeholder: "30",
+    step: "0.01",
+  },
+};
+
 interface EmployeeDetailModalProps {
   employeeId: string | null;
   open: boolean;
@@ -106,8 +138,6 @@ export function EmployeeDetailModal({
     nightDiffPercent: "",
     overtimeRegularRate: "",
     overtimeRestDayRate: "",
-    regularHolidayOtRate: "",
-    specialHolidayOtRate: "",
     salaryType: "monthly",
   };
 
@@ -150,18 +180,18 @@ export function EmployeeDetailModal({
     saturday: { start: "09:00", end: "18:00", workday: false },
     sunday: { start: "09:00", end: "18:00", workday: false },
   });
-
   const SHIFT_NONE = "__none__";
   const [editShiftId, setEditShiftId] = useState<string | null>(null);
 
   const [isSaving, setIsSaving] = useState(false);
+  const [showAllRateFields, setShowAllRateFields] = useState(false);
 
   // Use pre-fetched data if available, otherwise fetch
   const fetchedEmployee = useQuery(
     (api as any).employees.getEmployee,
     employeeData || !employeeId
       ? "skip"
-      : { employeeId: employeeId as Id<"employees"> }
+      : { employeeId: employeeId as Id<"employees"> },
   );
   const employee = employeeData || fetchedEmployee;
 
@@ -174,12 +204,70 @@ export function EmployeeDetailModal({
       : "skip",
   );
 
+  const orgRates = {
+    regularHolidayRate: settings?.payrollSettings?.regularHolidayRate ?? 2.0,
+    specialHolidayRate: settings?.payrollSettings?.specialHolidayRate ?? 1.3,
+    nightDiffPercent: settings?.payrollSettings?.nightDiffPercent ?? 1.1,
+    overtimeRegularRate: settings?.payrollSettings?.overtimeRegularRate ?? 1.25,
+    overtimeRestDayRate: settings?.payrollSettings?.overtimeRestDayRate ?? 1.3,
+  };
+
+  const BASE_RATE_KEYS = [
+    "regularHolidayRate",
+    "specialHolidayRate",
+    "nightDiffPercent",
+    "overtimeRegularRate",
+    "overtimeRestDayRate",
+  ] as const;
+
+  const overriddenRateKeys: (keyof typeof orgRates)[] = employee
+    ? BASE_RATE_KEYS.filter((key) => {
+        const empVal = (employee.compensation as any)[key];
+        if (empVal == null) return false;
+        const orgVal = orgRates[key];
+        return Math.abs(Number(empVal) - Number(orgVal)) > 0.0001;
+      })
+    : [];
+  const hasAnyOverrides = overriddenRateKeys.length > 0;
+
   const shifts = useQuery(
     (api as any).shifts.listShifts,
     employee && currentOrganizationId
       ? { organizationId: currentOrganizationId as Id<"organizations"> }
       : "skip",
   );
+
+  // When "Different time per day", workdays without a matching shift get red border + error (no lunch context).
+  const daysWithoutMatchingShift = useMemo(() => {
+    const out: Record<string, boolean> = {};
+    if (scheduleType !== "regular" || !shifts) return out;
+    const days: Array<
+      | "monday"
+      | "tuesday"
+      | "wednesday"
+      | "thursday"
+      | "friday"
+      | "saturday"
+      | "sunday"
+    > = [
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday",
+      "sunday",
+    ];
+    for (const day of days) {
+      const { start, end, workday } = scheduleForm[day];
+      if (!workday) continue;
+      const matched = shifts.find(
+        (s: any) => s.scheduleIn === start && s.scheduleOut === end,
+      );
+      if (!matched) out[day] = true;
+    }
+    return out;
+  }, [scheduleType, scheduleForm, shifts]);
 
   const departments =
     settings?.departments && settings.departments.length > 0
@@ -291,15 +379,11 @@ export function EmployeeDetailModal({
     const orgSpecialRateDecimal =
       settings?.payrollSettings?.specialHolidayRate ?? 1.3;
     const orgNightDiffDecimal =
-      settings?.payrollSettings?.nightDiffPercent ?? 0.1;
+      settings?.payrollSettings?.nightDiffPercent ?? 1.1;
     const orgOvertimeRegularDecimal =
       settings?.payrollSettings?.overtimeRegularRate ?? 1.25;
     const orgOvertimeRestDayDecimal =
-      settings?.payrollSettings?.overtimeRestDayRate ?? 1.69;
-    const orgRegularHolidayOtDecimal =
-      settings?.payrollSettings?.regularHolidayOtRate ?? 2.0;
-    const orgSpecialHolidayOtDecimal =
-      settings?.payrollSettings?.specialHolidayOtRate ?? 1.69;
+      settings?.payrollSettings?.overtimeRestDayRate ?? 1.3;
 
     const employeeRegularDecimal =
       employee.compensation.regularHolidayRate ?? orgRegularRateDecimal;
@@ -311,11 +395,6 @@ export function EmployeeDetailModal({
       employee.compensation.overtimeRegularRate ?? orgOvertimeRegularDecimal;
     const employeeOvertimeRestDayDecimal =
       employee.compensation.overtimeRestDayRate ?? orgOvertimeRestDayDecimal;
-    const employeeRegularHolidayOtDecimal =
-      employee.compensation.regularHolidayOtRate ?? orgRegularHolidayOtDecimal;
-    const employeeSpecialHolidayOtDecimal =
-      employee.compensation.specialHolidayOtRate ??
-      orgSpecialHolidayOtDecimal;
 
     const hireDate = safeDate(employee.employment.hireDate);
     const regularizationDate = safeDate(employee.employment.regularizationDate);
@@ -339,67 +418,111 @@ export function EmployeeDetailModal({
       basicSalary: employee.compensation.basicSalary.toString(),
       allowance: (employee.compensation.allowance || 0).toString(),
       salaryType: employee.compensation.salaryType,
-      regularHolidayRate: (employeeRegularDecimal * 100).toString(),
-      specialHolidayRate: (employeeSpecialDecimal * 100).toString(),
-      nightDiffPercent: (employeeNightDiffDecimal * 100).toString(),
-      overtimeRegularRate: (employeeOvertimeRegularDecimal * 100).toString(),
-      overtimeRestDayRate: (employeeOvertimeRestDayDecimal * 100).toString(),
-      regularHolidayOtRate: (employeeRegularHolidayOtDecimal * 100).toString(),
-      specialHolidayOtRate: (employeeSpecialHolidayOtDecimal * 100).toString(),
+      regularHolidayRate: Math.round(
+        (employeeRegularDecimal - 1) * 100,
+      ).toString(),
+      specialHolidayRate: Math.round(
+        (employeeSpecialDecimal - 1) * 100,
+      ).toString(),
+      nightDiffPercent: Math.round(
+        (employeeNightDiffDecimal - 1) * 100,
+      ).toString(),
+      overtimeRegularRate: Math.round(
+        (employeeOvertimeRegularDecimal - 1) * 100,
+      ).toString(),
+      overtimeRestDayRate: Math.round(
+        (employeeOvertimeRestDayDecimal - 1) * 100,
+      ).toString(),
     });
   }, [open, mode, employee, settings, reset]);
+
+  useEffect(() => {
+    if (!open) setShowAllRateFields(false);
+  }, [open]);
 
   const onValidSave = async (data: EmployeeFormValues) => {
     if (!employeeId || !employee) return;
 
     try {
+      // When using different time per day, every workday must have a shift whose
+      // start/end times match, so lunch (and late/undertime) are well-defined.
+      if (scheduleType === "regular") {
+        const days: Array<
+          | "monday"
+          | "tuesday"
+          | "wednesday"
+          | "thursday"
+          | "friday"
+          | "saturday"
+          | "sunday"
+        > = [
+          "monday",
+          "tuesday",
+          "wednesday",
+          "thursday",
+          "friday",
+          "saturday",
+          "sunday",
+        ];
+        const nextErrors: Record<string, boolean> = {};
+        let hasError = false;
+
+        for (const day of days) {
+          const { start, end, workday } = scheduleForm[day];
+          if (!workday) continue;
+          const matchedShift = (shifts ?? []).find(
+            (s: any) => s.scheduleIn === start && s.scheduleOut === end,
+          );
+          if (!matchedShift) {
+            nextErrors[day] = true;
+            hasError = true;
+          }
+        }
+
+        if (hasError) {
+          toast({
+            variant: "destructive",
+            title: "Missing shift for some workdays",
+            description:
+              "One or more workdays have start/end times that do not match any shift. Open Attendance → Shifts in Settings and add a shift that matches each schedule.",
+          });
+          return;
+        }
+      }
+
       setIsSaving(true);
       const orgRegularRateDecimal =
         settings?.payrollSettings?.regularHolidayRate ?? 2.0;
       const orgSpecialRateDecimal =
         settings?.payrollSettings?.specialHolidayRate ?? 1.3;
       const orgNightDiffDecimal =
-        settings?.payrollSettings?.nightDiffPercent ?? 0.1;
+        settings?.payrollSettings?.nightDiffPercent ?? 1.1;
       const orgOvertimeRegularDecimal =
         settings?.payrollSettings?.overtimeRegularRate ?? 1.25;
       const orgOvertimeRestDayDecimal =
-        settings?.payrollSettings?.overtimeRestDayRate ?? 1.69;
-      const orgRegularHolidayOtDecimal =
-        settings?.payrollSettings?.regularHolidayOtRate ?? 2.0;
-      const orgSpecialHolidayOtDecimal =
-        settings?.payrollSettings?.specialHolidayOtRate ?? 1.69;
+        settings?.payrollSettings?.overtimeRestDayRate ?? 1.3;
 
       const regularHolidayRateDecimal = data.regularHolidayRate
-        ? parseFloat(data.regularHolidayRate) / 100
-        : employee.compensation.regularHolidayRate ?? orgRegularRateDecimal;
+        ? 1 + parseFloat(data.regularHolidayRate) / 100
+        : (employee.compensation.regularHolidayRate ?? orgRegularRateDecimal);
 
       const specialHolidayRateDecimal = data.specialHolidayRate
-        ? parseFloat(data.specialHolidayRate) / 100
-        : employee.compensation.specialHolidayRate ?? orgSpecialRateDecimal;
+        ? 1 + parseFloat(data.specialHolidayRate) / 100
+        : (employee.compensation.specialHolidayRate ?? orgSpecialRateDecimal);
 
       const nightDiffPercentDecimal = data.nightDiffPercent
-        ? parseFloat(data.nightDiffPercent) / 100
-        : employee.compensation.nightDiffPercent ?? orgNightDiffDecimal;
+        ? 1 + parseFloat(data.nightDiffPercent) / 100
+        : (employee.compensation.nightDiffPercent ?? orgNightDiffDecimal);
 
       const overtimeRegularRateDecimal = data.overtimeRegularRate
-        ? parseFloat(data.overtimeRegularRate) / 100
-        : employee.compensation.overtimeRegularRate ??
-          orgOvertimeRegularDecimal;
+        ? 1 + parseFloat(data.overtimeRegularRate) / 100
+        : (employee.compensation.overtimeRegularRate ??
+          orgOvertimeRegularDecimal);
 
       const overtimeRestDayRateDecimal = data.overtimeRestDayRate
-        ? parseFloat(data.overtimeRestDayRate) / 100
-        : employee.compensation.overtimeRestDayRate ??
-          orgOvertimeRestDayDecimal;
-
-      const regularHolidayOtRateDecimal = data.regularHolidayOtRate
-        ? parseFloat(data.regularHolidayOtRate) / 100
-        : employee.compensation.regularHolidayOtRate ??
-          orgRegularHolidayOtDecimal;
-
-      const specialHolidayOtRateDecimal = data.specialHolidayOtRate
-        ? parseFloat(data.specialHolidayOtRate) / 100
-        : employee.compensation.specialHolidayOtRate ??
-          orgSpecialHolidayOtDecimal;
+        ? 1 + parseFloat(data.overtimeRestDayRate) / 100
+        : (employee.compensation.overtimeRestDayRate ??
+          orgOvertimeRestDayDecimal);
 
       const newDefaultSchedule =
         scheduleType === "one-time"
@@ -491,7 +614,11 @@ export function EmployeeDetailModal({
           ...employee.employment,
           position: data.position,
           department: data.department,
-          employmentType: data.employmentType as "regular" | "probationary" | "contractual" | "part-time",
+          employmentType: data.employmentType as
+            | "regular"
+            | "probationary"
+            | "contractual"
+            | "part-time",
           hireDate: data.hireDate
             ? new Date(data.hireDate).getTime()
             : employee.employment.hireDate,
@@ -502,23 +629,22 @@ export function EmployeeDetailModal({
         compensation: {
           ...employee.compensation,
           basicSalary: parseFloat(data.basicSalary),
-          allowance: data.allowance
-            ? parseFloat(data.allowance)
-            : undefined,
+          allowance: data.allowance ? parseFloat(data.allowance) : undefined,
           salaryType: data.salaryType as "monthly" | "daily" | "hourly",
           regularHolidayRate: regularHolidayRateDecimal,
           specialHolidayRate: specialHolidayRateDecimal,
           nightDiffPercent: nightDiffPercentDecimal,
           overtimeRegularRate: overtimeRegularRateDecimal,
           overtimeRestDayRate: overtimeRestDayRateDecimal,
-          regularHolidayOtRate: regularHolidayOtRateDecimal,
-          specialHolidayOtRate: specialHolidayOtRateDecimal,
         },
         schedule: {
           ...employee.schedule,
           defaultSchedule: newDefaultSchedule,
         },
-        shiftId: !editShiftId || editShiftId === SHIFT_NONE ? null : (editShiftId as Id<"shifts">),
+        shiftId:
+          !editShiftId || editShiftId === SHIFT_NONE
+            ? null
+            : (editShiftId as Id<"shifts">),
       });
 
       // Recalculate attendance records based on the updated schedule
@@ -758,10 +884,10 @@ export function EmployeeDetailModal({
                               </p>
                               <p className="text-sm">
                                 {(() => {
-                                  const d = safeDate(employee.personalInfo.dateOfBirth);
-                                  return d
-                                    ? format(d, "MMM dd, yyyy")
-                                    : "—";
+                                  const d = safeDate(
+                                    employee.personalInfo.dateOfBirth,
+                                  );
+                                  return d ? format(d, "MMM dd, yyyy") : "—";
                                 })()}
                               </p>
                             </div>
@@ -806,20 +932,22 @@ export function EmployeeDetailModal({
                       <Input
                         id="edit-firstName"
                         {...register("firstName")}
-                        className={cn(errors.firstName && "border-red-500 focus-visible:ring-red-500")}
+                        className={cn(
+                          errors.firstName &&
+                            "border-red-500 focus-visible:ring-red-500",
+                        )}
                       />
                       {errors.firstName?.message && (
-                        <p className="text-xs text-red-600">{errors.firstName.message}</p>
+                        <p className="text-xs text-red-600">
+                          {errors.firstName.message}
+                        </p>
                       )}
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="edit-middleName" className="text-sm">
                         Middle Name
                       </Label>
-                      <Input
-                        id="edit-middleName"
-                        {...register("middleName")}
-                      />
+                      <Input id="edit-middleName" {...register("middleName")} />
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="edit-lastName" className="text-sm">
@@ -828,10 +956,15 @@ export function EmployeeDetailModal({
                       <Input
                         id="edit-lastName"
                         {...register("lastName")}
-                        className={cn(errors.lastName && "border-red-500 focus-visible:ring-red-500")}
+                        className={cn(
+                          errors.lastName &&
+                            "border-red-500 focus-visible:ring-red-500",
+                        )}
                       />
                       {errors.lastName?.message && (
-                        <p className="text-xs text-red-600">{errors.lastName.message}</p>
+                        <p className="text-xs text-red-600">
+                          {errors.lastName.message}
+                        </p>
                       )}
                     </div>
                   </div>
@@ -846,17 +979,21 @@ export function EmployeeDetailModal({
                         {...register("email")}
                         disabled={hasUserAccount}
                         className={cn(
-                          errors.email && "border-red-500 focus-visible:ring-red-500",
-                          hasUserAccount && "bg-muted cursor-not-allowed"
+                          errors.email &&
+                            "border-red-500 focus-visible:ring-red-500",
+                          hasUserAccount && "bg-muted cursor-not-allowed",
                         )}
                       />
                       {hasUserAccount && (
                         <p className="text-xs text-muted-foreground">
-                          Email cannot be changed because a user account is linked to this employee.
+                          Email cannot be changed because a user account is
+                          linked to this employee.
                         </p>
                       )}
                       {errors.email?.message && (
-                        <p className="text-xs text-red-600">{errors.email.message}</p>
+                        <p className="text-xs text-red-600">
+                          {errors.email.message}
+                        </p>
                       )}
                     </div>
                     <div className="space-y-1.5">
@@ -879,7 +1016,9 @@ export function EmployeeDetailModal({
                         render={({ field }) => (
                           <Select
                             value={field.value || "none"}
-                            onValueChange={(v) => field.onChange(v === "none" ? "" : v)}
+                            onValueChange={(v) =>
+                              field.onChange(v === "none" ? "" : v)
+                            }
                           >
                             <SelectTrigger id="edit-province">
                               <SelectValue placeholder="Select province (optional)" />
@@ -896,7 +1035,8 @@ export function EmployeeDetailModal({
                         )}
                       />
                       <p className="text-xs text-muted-foreground">
-                        For province-specific holiday pay (e.g. Cebu-only holidays).
+                        For province-specific holiday pay (e.g. Cebu-only
+                        holidays).
                       </p>
                     </div>
                   </div>
@@ -978,9 +1118,7 @@ export function EmployeeDetailModal({
                           <p className="text-sm">
                             {(() => {
                               const d = safeDate(employee.employment.hireDate);
-                              return d
-                                ? format(d, "MMM dd, yyyy")
-                                : "—";
+                              return d ? format(d, "MMM dd, yyyy") : "—";
                             })()}
                           </p>
                         </div>
@@ -1000,11 +1138,9 @@ export function EmployeeDetailModal({
                             <p className="text-sm">
                               {(() => {
                                 const d = safeDate(
-                                  employee.employment.regularizationDate
+                                  employee.employment.regularizationDate,
                                 );
-                                return d
-                                  ? format(d, "MMM dd, yyyy")
-                                  : "—";
+                                return d ? format(d, "MMM dd, yyyy") : "—";
                               })()}
                             </p>
                           </div>
@@ -1023,10 +1159,15 @@ export function EmployeeDetailModal({
                       <Input
                         id="edit-position"
                         {...register("position")}
-                        className={cn(errors.position && "border-red-500 focus-visible:ring-red-500")}
+                        className={cn(
+                          errors.position &&
+                            "border-red-500 focus-visible:ring-red-500",
+                        )}
                       />
                       {errors.position?.message && (
-                        <p className="text-xs text-red-600">{errors.position.message}</p>
+                        <p className="text-xs text-red-600">
+                          {errors.position.message}
+                        </p>
                       )}
                     </div>
                     <div className="space-y-1.5">
@@ -1045,7 +1186,9 @@ export function EmployeeDetailModal({
                         )}
                       />
                       {errors.department?.message && (
-                        <p className="text-xs text-red-600">{errors.department.message}</p>
+                        <p className="text-xs text-red-600">
+                          {errors.department.message}
+                        </p>
                       )}
                     </div>
                   </div>
@@ -1059,13 +1202,21 @@ export function EmployeeDetailModal({
                         control={control}
                         render={({ field }) => (
                           <EmploymentTypeSelect
-                            value={field.value as "regular" | "probationary" | "contractual" | "part-time"}
+                            value={
+                              field.value as
+                                | "regular"
+                                | "probationary"
+                                | "contractual"
+                                | "part-time"
+                            }
                             onValueChange={field.onChange}
                           />
                         )}
                       />
                       {errors.employmentType?.message && (
-                        <p className="text-xs text-red-600">{errors.employmentType.message}</p>
+                        <p className="text-xs text-red-600">
+                          {errors.employmentType.message}
+                        </p>
                       )}
                     </div>
                     <div className="space-y-1.5">
@@ -1084,11 +1235,16 @@ export function EmployeeDetailModal({
                         )}
                       />
                       {errors.hireDate?.message && (
-                        <p className="text-xs text-red-600">{errors.hireDate.message}</p>
+                        <p className="text-xs text-red-600">
+                          {errors.hireDate.message}
+                        </p>
                       )}
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="edit-regularizationDate" className="text-sm">
+                      <Label
+                        htmlFor="edit-regularizationDate"
+                        className="text-sm"
+                      >
                         Date of regularization
                       </Label>
                       <Controller
@@ -1103,7 +1259,8 @@ export function EmployeeDetailModal({
                         )}
                       />
                       <p className="text-xs text-muted-foreground">
-                        Optional. Affects leave proration when enabled in Leave settings.
+                        Optional. Affects leave proration when enabled in Leave
+                        settings.
                       </p>
                     </div>
                   </div>
@@ -1152,89 +1309,75 @@ export function EmployeeDetailModal({
                         </p>
                       </div>
                     )}
-                    <div className="grid gap-3 sm:grid-cols-2 pt-2 border-t border-gray-100">
-                      <div className="space-y-0.5">
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                          Regular Holiday Rate
-                        </p>
-                        <p className="text-sm">
-                          {(
-                            (employee.compensation.regularHolidayRate ?? 2.0) *
-                            100
-                          ).toFixed(0)}
-                          %
-                        </p>
-                      </div>
-                      <div className="space-y-0.5">
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                          Special non-working holiday rate
-                        </p>
-                        <p className="text-sm">
-                          {(
-                            (employee.compensation.specialHolidayRate ?? 1.3) *
-                            100
-                          ).toFixed(0)}
-                          %
-                        </p>
-                      </div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider pt-2 border-t border-gray-100">
+                      BASE CONFIGS (% additional)
+                    </p>
+                    <div className="grid gap-3 sm:grid-cols-2 pt-2">
                       <div className="space-y-0.5">
                         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                           Night Differential
                         </p>
                         <p className="text-sm">
                           {(
-                            (employee.compensation.nightDiffPercent ?? 0.1) *
+                            ((employee.compensation.nightDiffPercent ?? 1.1) -
+                              1) *
                             100
                           ).toFixed(0)}
-                          %
+                          % additional
                         </p>
                       </div>
                       <div className="space-y-0.5">
                         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                          Overtime Regular Rate
+                          Regular Holiday
                         </p>
                         <p className="text-sm">
                           {(
-                            (employee.compensation.overtimeRegularRate ?? 1.25) *
+                            ((employee.compensation.regularHolidayRate ?? 2.0) -
+                              1) *
                             100
                           ).toFixed(0)}
-                          %
+                          % additional
                         </p>
                       </div>
                       <div className="space-y-0.5">
                         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                          Overtime Rest Day Rate
+                          Special non-working holiday
                         </p>
                         <p className="text-sm">
                           {(
-                            (employee.compensation.overtimeRestDayRate ?? 1.69) *
+                            ((employee.compensation.specialHolidayRate ?? 1.3) -
+                              1) *
                             100
                           ).toFixed(0)}
-                          %
+                          % additional
                         </p>
                       </div>
                       <div className="space-y-0.5">
                         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                          Regular Holiday OT Rate
+                          Overtime Regular
                         </p>
                         <p className="text-sm">
                           {(
-                            (employee.compensation.regularHolidayOtRate ?? 2.0) *
+                            ((employee.compensation.overtimeRegularRate ??
+                              1.25) -
+                              1) *
                             100
                           ).toFixed(0)}
-                          %
+                          % additional
                         </p>
                       </div>
                       <div className="space-y-0.5">
                         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                          Special non-working holiday OT rate
+                          Rest Day Premium
                         </p>
                         <p className="text-sm">
                           {(
-                            (employee.compensation.specialHolidayOtRate ?? 1.69) *
+                            ((employee.compensation.overtimeRestDayRate ??
+                              1.3) -
+                              1) *
                             100
                           ).toFixed(0)}
-                          %
+                          % additional
                         </p>
                       </div>
                     </div>
@@ -1254,10 +1397,15 @@ export function EmployeeDetailModal({
                       type="number"
                       step="0.01"
                       {...register("basicSalary")}
-                      className={cn(errors.basicSalary && "border-red-500 focus-visible:ring-red-500")}
+                      className={cn(
+                        errors.basicSalary &&
+                          "border-red-500 focus-visible:ring-red-500",
+                      )}
                     />
                     {errors.basicSalary?.message && (
-                      <p className="text-xs text-red-600">{errors.basicSalary.message}</p>
+                      <p className="text-xs text-red-600">
+                        {errors.basicSalary.message}
+                      </p>
                     )}
                   </div>
                   <div className="space-y-1.5">
@@ -1270,10 +1418,15 @@ export function EmployeeDetailModal({
                       step="0.01"
                       {...register("allowance")}
                       placeholder="0.00"
-                      className={cn(errors.allowance && "border-red-500 focus-visible:ring-red-500")}
+                      className={cn(
+                        errors.allowance &&
+                          "border-red-500 focus-visible:ring-red-500",
+                      )}
                     />
                     {errors.allowance?.message && (
-                      <p className="text-xs text-red-600">{errors.allowance.message}</p>
+                      <p className="text-xs text-red-600">
+                        {errors.allowance.message}
+                      </p>
                     )}
                     <p className="text-xs text-gray-500">
                       Optional: Non-taxable allowance (e.g., transportation,
@@ -1295,157 +1448,156 @@ export function EmployeeDetailModal({
                       )}
                     />
                     {errors.salaryType?.message && (
-                      <p className="text-xs text-red-600">{errors.salaryType.message}</p>
+                      <p className="text-xs text-red-600">
+                        {errors.salaryType.message}
+                      </p>
                     )}
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label
-                        htmlFor="edit-regularHolidayRate"
-                        className="text-sm"
-                      >
-                        Regular Holiday Rate (%)
-                      </Label>
-                      <Input
-                        id="edit-regularHolidayRate"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        {...register("regularHolidayRate")}
-                        placeholder="200"
-                        className={cn(errors.regularHolidayRate && "border-red-500 focus-visible:ring-red-500")}
-                      />
-                      {errors.regularHolidayRate?.message && (
-                        <p className="text-xs text-red-600">{errors.regularHolidayRate.message}</p>
-                      )}
+                  {!showAllRateFields && (
+                    <button
+                      type="button"
+                      className="text-sm text-brand-purple underline hover:no-underline hover:text-brand-purple-hover"
+                      onClick={() => setShowAllRateFields(true)}
+                    >
+                      {hasAnyOverrides
+                        ? "Edit pay rates"
+                        : "Override pay rates"}
+                    </button>
+                  )}
+                  {showAllRateFields && (
+                    <div className="space-y-3">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        BASE CONFIGS (% additional)
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+                        <div className="space-y-1.5">
+                          <Label
+                            htmlFor="edit-nightDiffPercent"
+                            className="text-sm"
+                          >
+                            Night Differential (% additional)
+                          </Label>
+                          <Input
+                            id="edit-nightDiffPercent"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            {...register("nightDiffPercent")}
+                            placeholder="10"
+                            className={cn(
+                              errors.nightDiffPercent &&
+                                "border-red-500 focus-visible:ring-red-500",
+                            )}
+                          />
+                          {errors.nightDiffPercent?.message && (
+                            <p className="text-xs text-red-600">
+                              {errors.nightDiffPercent.message}
+                            </p>
+                          )}
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label
+                            htmlFor="edit-regularHolidayRate"
+                            className="text-sm"
+                          >
+                            Regular Holiday (% additional)
+                          </Label>
+                          <Input
+                            id="edit-regularHolidayRate"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            {...register("regularHolidayRate")}
+                            placeholder="100"
+                            className={cn(
+                              errors.regularHolidayRate &&
+                                "border-red-500 focus-visible:ring-red-500",
+                            )}
+                          />
+                          {errors.regularHolidayRate?.message && (
+                            <p className="text-xs text-red-600">
+                              {errors.regularHolidayRate.message}
+                            </p>
+                          )}
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label
+                            htmlFor="edit-specialHolidayRate"
+                            className="text-sm"
+                          >
+                            Special non-working holiday (% additional)
+                          </Label>
+                          <Input
+                            id="edit-specialHolidayRate"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            {...register("specialHolidayRate")}
+                            placeholder="30"
+                            className={cn(
+                              errors.specialHolidayRate &&
+                                "border-red-500 focus-visible:ring-red-500",
+                            )}
+                          />
+                          {errors.specialHolidayRate?.message && (
+                            <p className="text-xs text-red-600">
+                              {errors.specialHolidayRate.message}
+                            </p>
+                          )}
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label
+                            htmlFor="edit-overtimeRegularRate"
+                            className="text-sm"
+                          >
+                            Overtime Regular (% additional)
+                          </Label>
+                          <Input
+                            id="edit-overtimeRegularRate"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            {...register("overtimeRegularRate")}
+                            placeholder="25"
+                            className={cn(
+                              errors.overtimeRegularRate &&
+                                "border-red-500 focus-visible:ring-red-500",
+                            )}
+                          />
+                          {errors.overtimeRegularRate?.message && (
+                            <p className="text-xs text-red-600">
+                              {errors.overtimeRegularRate.message}
+                            </p>
+                          )}
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label
+                            htmlFor="edit-overtimeRestDayRate"
+                            className="text-sm"
+                          >
+                            Rest Day Premium (% additional)
+                          </Label>
+                          <Input
+                            id="edit-overtimeRestDayRate"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            {...register("overtimeRestDayRate")}
+                            placeholder="30"
+                            className={cn(
+                              errors.overtimeRestDayRate &&
+                                "border-red-500 focus-visible:ring-red-500",
+                            )}
+                          />
+                          {errors.overtimeRestDayRate?.message && (
+                            <p className="text-xs text-red-600">
+                              {errors.overtimeRestDayRate.message}
+                            </p>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <div className="space-y-1.5">
-                      <Label
-                        htmlFor="edit-specialHolidayRate"
-                        className="text-sm"
-                      >
-                        Special non-working holiday rate (%)
-                      </Label>
-                      <Input
-                        id="edit-specialHolidayRate"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        {...register("specialHolidayRate")}
-                        placeholder="130"
-                        className={cn(errors.specialHolidayRate && "border-red-500 focus-visible:ring-red-500")}
-                      />
-                      {errors.specialHolidayRate?.message && (
-                        <p className="text-xs text-red-600">{errors.specialHolidayRate.message}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label
-                        htmlFor="edit-nightDiffPercent"
-                        className="text-sm"
-                      >
-                        Night Differential (%)
-                      </Label>
-                      <Input
-                        id="edit-nightDiffPercent"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        {...register("nightDiffPercent")}
-                        placeholder="10"
-                        className={cn(errors.nightDiffPercent && "border-red-500 focus-visible:ring-red-500")}
-                      />
-                      {errors.nightDiffPercent?.message && (
-                        <p className="text-xs text-red-600">{errors.nightDiffPercent.message}</p>
-                      )}
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label
-                        htmlFor="edit-overtimeRegularRate"
-                        className="text-sm"
-                      >
-                        Overtime Regular Rate (%)
-                      </Label>
-                      <Input
-                        id="edit-overtimeRegularRate"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        {...register("overtimeRegularRate")}
-                        placeholder="125"
-                        className={cn(errors.overtimeRegularRate && "border-red-500 focus-visible:ring-red-500")}
-                      />
-                      {errors.overtimeRegularRate?.message && (
-                        <p className="text-xs text-red-600">{errors.overtimeRegularRate.message}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label
-                        htmlFor="edit-overtimeRestDayRate"
-                        className="text-sm"
-                      >
-                        Overtime Rest Day Rate (%)
-                      </Label>
-                      <Input
-                        id="edit-overtimeRestDayRate"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        {...register("overtimeRestDayRate")}
-                        placeholder="169"
-                        className={cn(errors.overtimeRestDayRate && "border-red-500 focus-visible:ring-red-500")}
-                      />
-                      {errors.overtimeRestDayRate?.message && (
-                        <p className="text-xs text-red-600">{errors.overtimeRestDayRate.message}</p>
-                      )}
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label
-                        htmlFor="edit-regularHolidayOtRate"
-                        className="text-sm"
-                      >
-                        Regular Holiday OT Rate (%)
-                      </Label>
-                      <Input
-                        id="edit-regularHolidayOtRate"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        {...register("regularHolidayOtRate")}
-                        placeholder="200"
-                        className={cn(errors.regularHolidayOtRate && "border-red-500 focus-visible:ring-red-500")}
-                      />
-                      {errors.regularHolidayOtRate?.message && (
-                        <p className="text-xs text-red-600">{errors.regularHolidayOtRate.message}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label
-                        htmlFor="edit-specialHolidayOtRate"
-                        className="text-sm"
-                      >
-                        Special non-working holiday OT rate (%)
-                      </Label>
-                      <Input
-                        id="edit-specialHolidayOtRate"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        {...register("specialHolidayOtRate")}
-                        placeholder="169"
-                        className={cn(errors.specialHolidayOtRate && "border-red-500 focus-visible:ring-red-500")}
-                      />
-                      {errors.specialHolidayOtRate?.message && (
-                        <p className="text-xs text-red-600">{errors.specialHolidayOtRate.message}</p>
-                      )}
-                    </div>
-                  </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1516,20 +1668,18 @@ export function EmployeeDetailModal({
                       ] as const;
                       const workdays = daysOrder.filter(
                         (day) =>
-                          employee.schedule.defaultSchedule[day].isWorkday
+                          employee.schedule.defaultSchedule[day].isWorkday,
                       );
                       const workdaySchedules = workdays.map((day) => ({
                         day,
                         ...employee.schedule.defaultSchedule[day],
                       }));
-                      const firstIn =
-                        workdaySchedules[0]?.in;
-                      const firstOut =
-                        workdaySchedules[0]?.out;
+                      const firstIn = workdaySchedules[0]?.in;
+                      const firstOut = workdaySchedules[0]?.out;
                       const sameTimeEveryDay =
                         workdaySchedules.length > 0 &&
                         workdaySchedules.every(
-                          (s) => s.in === firstIn && s.out === firstOut
+                          (s) => s.in === firstIn && s.out === firstOut,
                         );
 
                       if (workdays.length === 0) {
@@ -1584,10 +1734,11 @@ export function EmployeeDetailModal({
                                       {day}
                                     </span>
                                     <span className="text-muted-foreground">
-                                      {formatTime12Hour(inTime)} – {formatTime12Hour(outTime)}
+                                      {formatTime12Hour(inTime)} –{" "}
+                                      {formatTime12Hour(outTime)}
                                     </span>
                                   </li>
-                                ) : null
+                                ) : null,
                             )}
                           </ul>
                         </div>
@@ -1604,35 +1755,57 @@ export function EmployeeDetailModal({
                     Choose whether this employee has the same time for all work
                     days or different times per day.
                   </p>
+                  <p className="text-xs text-gray-500">
+                    When using different time per day, each day’s lunch is
+                    auto-matched from a shift with the same start/end (from
+                    Settings). Otherwise the shift below is used as fallback.
+                  </p>
                   <div className="space-y-2">
-                    <Label className="text-sm">Shift (lunch window for late/undertime)</Label>
+                    <Label className="text-sm">
+                      Shift (default lunch / fallback when no match)
+                    </Label>
                     <Select
                       value={editShiftId ?? SHIFT_NONE}
-                      onValueChange={(v) => setEditShiftId(v === SHIFT_NONE ? null : v)}
+                      onValueChange={(v) =>
+                        setEditShiftId(v === SHIFT_NONE ? null : v)
+                      }
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="None (use default lunch)" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value={SHIFT_NONE}>None (use default lunch)</SelectItem>
+                        <SelectItem value={SHIFT_NONE}>
+                          None (use default lunch)
+                        </SelectItem>
                         {(shifts ?? []).map((s: any) => (
                           <SelectItem key={String(s._id)} value={String(s._id)}>
-                            {s.name} ({s.scheduleIn}–{s.scheduleOut}, lunch {s.lunchStart}–{s.lunchEnd})
+                            {s.name} ({s.scheduleIn}–{s.scheduleOut}, lunch{" "}
+                            {s.lunchStart}–{s.lunchEnd})
                           </SelectItem>
                         ))}
-                        {editShiftId && editShiftId !== SHIFT_NONE && !(shifts ?? []).some((s: any) => String(s._id) === editShiftId) && (
-                          <SelectItem value={editShiftId}>Unknown shift (no longer in list)</SelectItem>
-                        )}
+                        {editShiftId &&
+                          editShiftId !== SHIFT_NONE &&
+                          !(shifts ?? []).some(
+                            (s: any) => String(s._id) === editShiftId,
+                          ) && (
+                            <SelectItem value={editShiftId}>
+                              Unknown shift (no longer in list)
+                            </SelectItem>
+                          )}
                       </SelectContent>
                     </Select>
-                    {editShiftId && editShiftId !== SHIFT_NONE && (() => {
-                      const selected = (shifts ?? []).find((s: any) => String(s._id) === editShiftId);
-                      return selected ? (
-                        <p className="text-xs text-muted-foreground">
-                          Lunch: {selected.lunchStart} – {selected.lunchEnd}
-                        </p>
-                      ) : null;
-                    })()}
+                    {editShiftId &&
+                      editShiftId !== SHIFT_NONE &&
+                      (() => {
+                        const selected = (shifts ?? []).find(
+                          (s: any) => String(s._id) === editShiftId,
+                        );
+                        return selected ? (
+                          <p className="text-xs text-muted-foreground">
+                            Lunch: {selected.lunchStart} – {selected.lunchEnd}
+                          </p>
+                        ) : null;
+                      })()}
                   </div>
                   <div className="space-y-2">
                     <Label className="text-sm">Schedule Type</Label>
@@ -1745,7 +1918,12 @@ export function EmployeeDetailModal({
                       ).map((day) => (
                         <div
                           key={day}
-                          className="space-y-2 p-3 border rounded-lg"
+                          className={cn(
+                            "space-y-2 p-3 border rounded-lg",
+                            scheduleForm[day].workday &&
+                              daysWithoutMatchingShift[day] &&
+                              "border-red-500",
+                          )}
                         >
                           <div className="flex items-center space-x-2 mb-2">
                             <Checkbox
@@ -1769,37 +1947,64 @@ export function EmployeeDetailModal({
                             </Label>
                           </div>
                           {scheduleForm[day].workday && (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-6">
-                              <TimePicker
-                                value={scheduleForm[day].start}
-                                onValueChange={(value) =>
-                                  setScheduleForm({
-                                    ...scheduleForm,
-                                    [day]: {
-                                      ...scheduleForm[day],
-                                      start: value,
-                                    },
-                                  })
+                            <div className="space-y-1 pl-6">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <TimePicker
+                                  value={scheduleForm[day].start}
+                                  onValueChange={(value) =>
+                                    setScheduleForm({
+                                      ...scheduleForm,
+                                      [day]: {
+                                        ...scheduleForm[day],
+                                        start: value,
+                                      },
+                                    })
+                                  }
+                                  label="Start Time"
+                                  placeholder="Select start time"
+                                  showLabel={true}
+                                />
+                                <TimePicker
+                                  value={scheduleForm[day].end}
+                                  onValueChange={(value) =>
+                                    setScheduleForm({
+                                      ...scheduleForm,
+                                      [day]: {
+                                        ...scheduleForm[day],
+                                        end: value,
+                                      },
+                                    })
+                                  }
+                                  label="End Time"
+                                  placeholder="Select end time"
+                                  showLabel={true}
+                                />
+                              </div>
+                              {(() => {
+                                const matched = (shifts ?? []).find(
+                                  (s: any) =>
+                                    s.scheduleIn === scheduleForm[day].start &&
+                                    s.scheduleOut === scheduleForm[day].end,
+                                );
+                                if (matched) {
+                                  return (
+                                    <p className="text-xs text-muted-foreground">
+                                      Lunch: {matched.lunchStart}–
+                                      {matched.lunchEnd} ({matched.name})
+                                    </p>
+                                  );
                                 }
-                                label="Start Time"
-                                placeholder="Select start time"
-                                showLabel={true}
-                              />
-                              <TimePicker
-                                value={scheduleForm[day].end}
-                                onValueChange={(value) =>
-                                  setScheduleForm({
-                                    ...scheduleForm,
-                                    [day]: {
-                                      ...scheduleForm[day],
-                                      end: value,
-                                    },
-                                  })
+                                if (daysWithoutMatchingShift[day]) {
+                                  return (
+                                    <p className="text-xs text-red-600">
+                                      No shift matches this start/end time. Open
+                                      Attendance → Shifts in Settings and add a
+                                      shift that matches this schedule.
+                                    </p>
+                                  );
                                 }
-                                label="End Time"
-                                placeholder="Select end time"
-                                showLabel={true}
-                              />
+                                return null;
+                              })()}
                             </div>
                           )}
                         </div>

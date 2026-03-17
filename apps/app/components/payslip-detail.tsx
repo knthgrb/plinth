@@ -390,6 +390,7 @@ export function PayslipDetail({
   const hasOtherEarnings =
     (payslip.nightDiffPay ?? 0) > 0 ||
     (payslip.holidayPay ?? 0) > 0 ||
+    (payslip.restDayPay ?? 0) > 0 ||
     (payslip.overtimeRegular ?? 0) > 0 ||
     (payslip.overtimeRestDay ?? 0) > 0 ||
     (payslip.overtimeRestDayExcess ?? 0) > 0 ||
@@ -559,6 +560,18 @@ export function PayslipDetail({
                         <span>
                           ₱
                           {payslip.holidayPay!.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {(payslip.restDayPay ?? 0) > 0 && (
+                      <div className="flex justify-between">
+                        <span>Rest Day Premium</span>
+                        <span>
+                          ₱
+                          {payslip.restDayPay!.toLocaleString("en-US", {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}
