@@ -357,13 +357,31 @@ export default function AttendancePage() {
   };
 
   const calculateUndertime = (
+    scheduleIn: string | undefined,
     scheduleOut: string,
+    actualIn?: string,
     actualOut?: string,
   ): number | null => {
     if (!actualOut) return null;
-    const scheduleMinutes = timeToMinutes(scheduleOut);
-    const actualMinutes = timeToMinutes(actualOut);
-    const undertime = scheduleMinutes - actualMinutes;
+    const scheduleOutMinutes = timeToMinutes(scheduleOut);
+    const scheduleInMinutes = scheduleIn
+      ? timeToMinutes(scheduleIn)
+      : null;
+    let actualOutMinutes = timeToMinutes(actualOut);
+
+    // If shift is same-day (e.g. 9am–6pm) and actual out is after midnight (00:00–12:00)
+    // and earlier than schedule out in raw minutes, treat actual out as next day so we
+    // don't mis-count OT as undertime.
+    if (
+      scheduleInMinutes !== null &&
+      scheduleInMinutes < scheduleOutMinutes &&
+      actualOutMinutes < scheduleOutMinutes &&
+      actualOutMinutes <= 12 * 60
+    ) {
+      actualOutMinutes += 24 * 60;
+    }
+
+    const undertime = scheduleOutMinutes - actualOutMinutes;
     return undertime > 0 ? undertime : null;
   };
 

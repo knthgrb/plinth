@@ -15,13 +15,12 @@ export const EMPLOYEE_CSV_HEADERS = [
   "basicSalary",
   "allowance",
   "salaryType",
+  // Base configs (% additional) — values like 100, 30, 10, 25, 30.
   "regularHolidayRate",
   "specialHolidayRate",
   "nightDiffPercent",
   "overtimeRegularRate",
   "overtimeRestDayRate",
-  "regularHolidayOtRate",
-  "specialHolidayOtRate",
 ] as const;
 
 export type EmployeeCsvHeader = (typeof EMPLOYEE_CSV_HEADERS)[number];
@@ -58,17 +57,15 @@ export function getEmployeeCsvTemplate(): string {
     "Software Engineer",
     "IT Department",
     "probationary",
-    "2025-01-15",
-    "50000",
-    "5000",
+    "2025-01-15", // hireDate
+    "50000", // basicSalary
+    "5000", // allowance
     "monthly",
-    "100",
-    "30",
-    "10",
-    "125",
-    "169",
-    "200",
-    "169",
+    "100", // Regular holiday: 100% additional (→ 2.0)
+    "30", // Special holiday: 30% additional (→ 1.3)
+    "10", // Night diff: 10% additional (→ 1.1)
+    "25", // Regular OT: 25% additional (→ 1.25)
+    "30", // Rest day premium: 30% additional (→ 1.3)
   ].map(escapeCsvCell).join(",");
   return [headerLine, sampleRow].join("\n");
 }
@@ -143,8 +140,6 @@ export function parseEmployeeCsv(csvText: string): ParsedEmployeeRow[] {
       nightDiffPercent: raw.nightDiffPercent ?? "",
       overtimeRegularRate: raw.overtimeRegularRate ?? "",
       overtimeRestDayRate: raw.overtimeRestDayRate ?? "",
-      regularHolidayOtRate: raw.regularHolidayOtRate ?? "",
-      specialHolidayOtRate: raw.specialHolidayOtRate ?? "",
     };
 
     const errors = validateEmployeeForm(values);

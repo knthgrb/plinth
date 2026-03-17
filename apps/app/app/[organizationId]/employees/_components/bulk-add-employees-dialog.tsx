@@ -88,13 +88,18 @@ export function BulkAddEmployeesDialog({
   const handleBulkAdd = async () => {
     if (!organizationId || validRows.length === 0 || isUploading) return;
 
-    const orgRegularRate = settings?.payrollSettings?.regularHolidayRate ?? 2.0;
-    const orgSpecialRate = settings?.payrollSettings?.specialHolidayRate ?? 1.3;
-    const orgNightDiff = settings?.payrollSettings?.nightDiffPercent ?? 1.1;
-    const orgOtRegular = settings?.payrollSettings?.overtimeRegularRate ?? 1.25;
-    const orgOtRestDay = settings?.payrollSettings?.overtimeRestDayRate ?? 1.69;
-    const orgRegHolidayOt = settings?.payrollSettings?.regularHolidayOtRate ?? 2.0;
-    const orgSpecHolidayOt = settings?.payrollSettings?.specialHolidayOtRate ?? 1.69;
+    // Organization base configs (% additional stored as multipliers, e.g. 2.0 = 100% additional).
+    const orgRegularRate =
+      settings?.payrollSettings?.regularHolidayRate ?? 2.0;
+    const orgSpecialRate =
+      settings?.payrollSettings?.specialHolidayRate ?? 1.3;
+    const orgNightDiff =
+      settings?.payrollSettings?.nightDiffPercent ?? 1.1;
+    const orgOtRegular =
+      settings?.payrollSettings?.overtimeRegularRate ?? 1.25;
+    // REST_DAY_PREMIUM (base config) – stored as 1.3 = 30% additional.
+    const orgOtRestDay =
+      settings?.payrollSettings?.overtimeRestDayRate ?? 1.3;
 
     setIsUploading(true);
     const errors: string[] = [];
@@ -104,27 +109,23 @@ export function BulkAddEmployeesDialog({
       const row = validRows[i];
       const v = row.values;
       try {
+        // CSV columns are "% additional" (e.g. 100 for 100% additional, 10 for 10% night diff).
+        // Convert to multipliers stored in compensation: 1 + (input / 100).
         const regularHolidayRateDecimal = v.regularHolidayRate
-          ? parseFloat(v.regularHolidayRate) / 100
+          ? 1 + parseFloat(v.regularHolidayRate) / 100
           : orgRegularRate;
         const specialHolidayRateDecimal = v.specialHolidayRate
-          ? parseFloat(v.specialHolidayRate) / 100
+          ? 1 + parseFloat(v.specialHolidayRate) / 100
           : orgSpecialRate;
         const nightDiffPercentDecimal = v.nightDiffPercent
-          ? parseFloat(v.nightDiffPercent) / 100
+          ? 1 + parseFloat(v.nightDiffPercent) / 100
           : orgNightDiff;
         const overtimeRegularRateDecimal = v.overtimeRegularRate
-          ? parseFloat(v.overtimeRegularRate) / 100
+          ? 1 + parseFloat(v.overtimeRegularRate) / 100
           : orgOtRegular;
         const overtimeRestDayRateDecimal = v.overtimeRestDayRate
-          ? parseFloat(v.overtimeRestDayRate) / 100
+          ? 1 + parseFloat(v.overtimeRestDayRate) / 100
           : orgOtRestDay;
-        const regularHolidayOtRateDecimal = v.regularHolidayOtRate
-          ? parseFloat(v.regularHolidayOtRate) / 100
-          : orgRegHolidayOt;
-        const specialHolidayOtRateDecimal = v.specialHolidayOtRate
-          ? parseFloat(v.specialHolidayOtRate) / 100
-          : orgSpecHolidayOt;
 
         await createEmployee({
           organizationId,
@@ -152,8 +153,6 @@ export function BulkAddEmployeesDialog({
             nightDiffPercent: nightDiffPercentDecimal,
             overtimeRegularRate: overtimeRegularRateDecimal,
             overtimeRestDayRate: overtimeRestDayRateDecimal,
-            regularHolidayOtRate: regularHolidayOtRateDecimal,
-            specialHolidayOtRate: specialHolidayOtRateDecimal,
           },
           schedule: {
             defaultSchedule: DEFAULT_BULK_SCHEDULE,
