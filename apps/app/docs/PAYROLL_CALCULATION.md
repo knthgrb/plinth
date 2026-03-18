@@ -27,13 +27,13 @@ OT hours are **user-entered** per attendance record (not auto-derived from clock
 
 ## 3. Night differential (10 PM–6 AM)
 
-Night diff applies to **actual worked time** that falls in the window **10:00 PM–6:00 AM**. Work is split by **Manila calendar day** so that “current day” rules apply correctly (e.g. holiday rates only for hours on the holiday day).
+Night diff applies to worked time in **10:00 PM–6:00 AM** that also falls **inside the employee’s scheduled shift** for that day. **Same-day example:** schedule **2 PM–11 PM** → 1 hour night (10–11 PM). Schedule **1 PM–10 PM** → **0** night unless **overtime** is recorded: only minutes that are **both** after 10 PM **and** inside the **OT window** (last *N* hours before clock-out) get night diff—e.g. **1h OT** to **11 PM** → one hour of **night-on-OT** (137.5% stack); **1h OT** to **midnight** → only **11 PM–12 AM** counts (not 10–11 PM). **Overnight** (e.g. 6 PM–3 AM): post–scheduled-out morning minutes follow the same OT rule. **Regular holiday overnight:** night diff uses the **holiday night rate** (e.g. 220% stack on 200%), including **12 AM–scheduled end** next day; lunch (e.g. **11 PM–12 AM**) is excluded so night = **10–11 PM** + **12 AM–3 AM**.
 
 ### 3.1 Base night diff (regular, non-OT)
 
 - **Rate**: 10% (configurable: **Night Differential %** in org settings).
-- **Formula**: `night diff pay = hours in 10pm–6am × hourly rate × (nightDiffRate)`.
-- **Example**: Worked 9 AM–11 PM. Night hours = 1 (10–11 PM). Pay = 1 × hourly × 0.10.
+- **Formula**: `night diff pay = eligible hours in 10pm–6am × hourly rate × (nightDiffRate − 1)` (premium on top of base pay already earned).
+- **Example**: Schedule 2 PM–11 PM, worked until 11:15 PM, OT = 0 → only 10–11 PM counts (1 h). Friday schedule to 10 PM → no night diff for 10–10:30 PM.
 
 ### 3.2 Night diff on top of OT (137.5%)
 
@@ -45,26 +45,23 @@ Night diff applies to **actual worked time** that falls in the window **10:00 PM
 ### 3.3 Night diff on regular holiday (220%)
 
 - **Rate**: 220% of hourly (configurable: **Night diff on regular holiday %**).
-- **When**: Night hours (10 PM–6 AM) on a **regular (legal) holiday**.
-- **Same calendar day only**: Only hours on the **holiday date** get this rate. Hours after midnight (next day) use the base 10% night diff.
-- **Example**: Today is a regular holiday; schedule 6 PM–3 AM. 6 PM–12 AM = 6 h on holiday (2 h night: 10–12 PM at 220%). 12 AM–3 AM = 3 h on next day = 3 h at 10% night diff.
+- **When**: Night hours on a **regular (legal) holiday**.
+- **Overnight shift from a holiday**: If the shift **starts** on a regular holiday and crosses midnight (overnight schedule), night hours **after midnight until scheduled end** still use the regular-holiday night stack (not “next calendar day only”).
 
 ### 3.4 Night diff on special non-working holiday (143%)
 
 - **Rate**: 143% of hourly (configurable: **Night diff on special holiday %**).
-- **When**: Night hours on a **special non-working holiday**.
-- **Same calendar day only**: Same “current day” rule as above.
+- **When**: Night hours on a **special non-working holiday**, including the post-midnight portion of an overnight shift that **started** on that special holiday.
 
 ### 3.5 Regular holiday + OT + night (286%)
 
 - **Rate**: 286% of hourly (configurable: **Regular holiday + OT + night %**).
-- **When**: OT hours that fall in 10 PM–6 AM on a **regular holiday**, and only on the holiday calendar day.
-- **Example**: Regular holiday, schedule 6 PM–2 AM, 2 h OT. 12 AM–2 AM is next day → only 10% night diff. 10 PM–12 AM on the holiday = 2 h at 286% if those 2 h are OT.
+- **When**: OT hours in 10 PM–6 AM while on regular holiday (including continuation after midnight on the same overnight shift).
 
 ### 3.6 Special holiday + OT + night (185.9%)
 
 - **Rate**: 185.9% of hourly (configurable: **Special holiday + OT + night %**).
-- **When**: OT hours in 10 PM–6 AM on a **special non-working holiday**, same calendar day only.
+- **When**: OT hours in 10 PM–6 AM on a special holiday (including overnight continuation).
 
 ---
 

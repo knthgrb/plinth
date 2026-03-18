@@ -7,6 +7,7 @@ import {
 } from "./sss";
 import { getScheduleWithLunch } from "./shifts";
 import {
+  calculateNightDiffHoursForPayroll,
   calculatePayrollBaseFromRecords,
   getMatchingHolidayForDate,
   holidayAppliesToEmployee,
@@ -3550,32 +3551,6 @@ export const getPayrollRunSummary = query({
           return hours * 60 + minutes;
         };
 
-        // Helper to calculate night differential hours (Philippines: 10pm-6am).
-        // Counts actual worked time in 10pm-6am (no schedule gate).
-        const calculateNightDiffHours = (
-          actualIn?: string,
-          actualOut?: string,
-        ): number => {
-          if (!actualIn || !actualOut) return 0;
-
-          const nightStart = 22 * 60;
-          const nightEnd = 24 * 60 + 6 * 60;
-
-          let s = timeToMinutes(actualIn);
-          let e = timeToMinutes(actualOut);
-          if (s < 6 * 60) {
-            s += 24 * 60;
-            e += 24 * 60;
-          } else if (e <= s) {
-            e += 24 * 60;
-          }
-
-          const actNightStart = Math.max(s, nightStart);
-          const actNightEnd = Math.min(e, nightEnd);
-          if (actNightEnd <= actNightStart) return 0;
-          return (actNightEnd - actNightStart) / 60;
-        };
-
         // Build daily attendance data (match by 24h window so attendance aligns with summary dates)
         const dailyData = dates.map((dateTimestamp) => {
           const windowEnd = dateTimestamp + ONE_DAY_MS;
@@ -3660,11 +3635,17 @@ export const getPayrollRunSummary = query({
             }
           }
 
-          // Calculate night differential: actual worked time in 10pm-6am
+          // Night diff hours: 10pm–6am intersected with scheduled shift (matches payslip)
           if (att.status === "present") {
-            nightDiffHours = calculateNightDiffHours(
+            nightDiffHours = calculateNightDiffHoursForPayroll(
               att.actualIn,
               att.actualOut,
+              att.date,
+              att.scheduleIn,
+              att.scheduleOut,
+              att.overtime,
+              att.lunchStart,
+              att.lunchEnd,
             );
             totalNightDiffHours += nightDiffHours;
           }
