@@ -93,15 +93,12 @@ export function AddAttendanceDialog({
   // Calculate late and undertime automatically
   const calculatedLate = useMemo(() => {
     if (!employeeSchedule || !timeIn || status !== "present") return 0;
-    const calculatedUndertime = calculateUndertime(
+    return calculateLate(
       employeeSchedule.in,
-      employeeSchedule.out,
       timeIn,
-      timeOut,
+      employeeSchedule.lunchStart,
     );
-    // If employee has undertime, don't count as late
-    return calculateLate(employeeSchedule.in, timeIn);
-  }, [employeeSchedule, timeIn, timeOut, status]);
+  }, [employeeSchedule, timeIn, status]);
 
   const calculatedUndertime = useMemo(() => {
     if (!employeeSchedule || !timeIn || !timeOut || status !== "present")
@@ -111,6 +108,8 @@ export function AddAttendanceDialog({
       employeeSchedule.out,
       timeIn,
       timeOut,
+      employeeSchedule.lunchStart,
+      employeeSchedule.lunchEnd,
     );
   }, [employeeSchedule, timeIn, timeOut, status]);
 

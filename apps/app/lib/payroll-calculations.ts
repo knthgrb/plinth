@@ -650,9 +650,13 @@ function getLateHoursFromAttendance(att: {
   if (scheduleMinutes === null || actualMinutes === null) return 0;
   if (att.lunchStart != null) {
     const lunchStartM = timeStringToMinutes(att.lunchStart);
-    if (lunchStartM !== null && actualMinutes >= lunchStartM) return 0; // Time in after lunch = not late
+    if (lunchStartM !== null && actualMinutes >= lunchStartM) return 0;
   }
-  return Math.max(0, actualMinutes - scheduleMinutes) / 60;
+  const lateMinutes = actualMinutes - scheduleMinutes;
+  if (lateMinutes <= 0) return 0;
+  // Match UI/attendance rule: more than 60 minutes late is treated entirely as undertime (late = 0).
+  if (lateMinutes > 60) return 0;
+  return lateMinutes / 60;
 }
 
 /** When actualOut is after midnight (e.g. 00:00) and shift is same-day (e.g. out 23:00), treat actualOut as next day so we don't count OT as undertime. */
@@ -679,6 +683,8 @@ function getUndertimeHoursFromAttendance(att: {
   scheduleOut?: string;
   undertime?: number;
   undertimeManualOverride?: boolean;
+  lunchStart?: string;
+  lunchEnd?: string;
 }): number {
   if (att.undertimeManualOverride === true) {
     return att.undertime ?? 0;
@@ -686,15 +692,64 @@ function getUndertimeHoursFromAttendance(att: {
 
   const scheduleInM = timeStringToMinutes(att.scheduleIn);
   const scheduleOutM = timeStringToMinutes(att.scheduleOut);
+  const actualInM = timeStringToMinutes(att.actualIn);
   const actualOutM = timeStringToMinutes(att.actualOut);
-  if (scheduleOutM === null || actualOutM === null) return 0;
+  if (
+    scheduleInM === null ||
+    scheduleOutM === null ||
+    actualInM === null ||
+    actualOutM === null
+  )
+    return 0;
 
   const actualOutAdjusted = actualOutMinutesForUndertime(
     scheduleInM,
     scheduleOutM,
     actualOutM,
   );
-  return Math.max(0, scheduleOutM - actualOutAdjusted) / 60;
+
+  // Scheduled work, excluding lunch.
+  let scheduledWorkMinutes = Math.max(0, scheduleOutM - scheduleInM);
+  if (att.lunchStart != null && att.lunchEnd != null) {
+    const ls = timeStringToMinutes(att.lunchStart);
+    const le = timeStringToMinutes(att.lunchEnd);
+    if (ls !== null && le !== null && ls < le) {
+      const overlapStart = Math.max(scheduleInM, ls);
+      const overlapEnd = Math.min(scheduleOutM, le);
+      const lunchOverlap = Math.max(0, overlapEnd - overlapStart);
+      scheduledWorkMinutes = Math.max(
+        0,
+        scheduledWorkMinutes - lunchOverlap,
+      );
+    }
+  }
+
+  // Actual work, excluding lunch.
+  let actualWorkMinutes = Math.max(0, actualOutAdjusted - actualInM);
+  if (att.lunchStart != null && att.lunchEnd != null) {
+    const ls = timeStringToMinutes(att.lunchStart);
+    const le = timeStringToMinutes(att.lunchEnd);
+    if (ls !== null && le !== null && ls < le) {
+      const overlapStart = Math.max(actualInM, ls);
+      const overlapEnd = Math.min(actualOutAdjusted, le);
+      const lunchOverlap = Math.max(0, overlapEnd - overlapStart);
+      actualWorkMinutes = Math.max(0, actualWorkMinutes - lunchOverlap);
+    }
+  }
+
+  const rawUndertimeMinutes = Math.max(
+    0,
+    scheduledWorkMinutes - actualWorkMinutes,
+  );
+
+  // Do not charge undertime for "small" late that is already counted as late.
+  const lateHours = getLateHoursFromAttendance(att);
+  const undertimeMinutes = Math.max(
+    0,
+    rawUndertimeMinutes - lateHours * 60,
+  );
+
+  return undertimeMinutes / 60;
 }
 
 function getHoursWorkedFromAttendance(att: {

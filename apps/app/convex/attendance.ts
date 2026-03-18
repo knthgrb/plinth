@@ -39,18 +39,64 @@ function actualOutMinutesForComparison(
   return actualOutM;
 }
 
-// Undertime = early departure only (when time out is earlier than scheduled time out).
-// Clock-out after midnight (e.g. 00:00 when schedule out is 23:00) is treated as next day → no undertime.
+// Undertime = missing scheduled work (early out and, for big tardiness or AM absence, missing hours before lunch).
+// Clock-out after midnight (e.g. 00:00 when schedule out is 23:00) is treated as next day → no undertime on OT.
 function calculateUndertime(
   scheduleIn: string,
   scheduleOut: string,
-  _actualIn: string | undefined,
+  actualIn: string | undefined,
   actualOut: string | undefined,
+  lunchStart?: string,
+  lunchEnd?: string,
 ): number {
-  if (!actualOut) return 0;
+  if (!actualIn || !actualOut) return 0;
+  const scheduleInM = timeToMins(scheduleIn);
   const scheduleOutM = timeToMins(scheduleOut);
-  const actualOutM = actualOutMinutesForComparison(scheduleIn, scheduleOut, actualOut);
-  const undertimeMinutes = Math.max(0, scheduleOutM - actualOutM);
+  const actualInM = timeToMins(actualIn);
+  const actualOutM = actualOutMinutesForComparison(
+    scheduleIn,
+    scheduleOut,
+    actualOut,
+  );
+
+  // Scheduled work minutes, excluding lunch when provided.
+  let scheduledWorkMinutes = Math.max(0, scheduleOutM - scheduleInM);
+  if (lunchStart != null && lunchEnd != null) {
+    const ls = timeToMins(lunchStart);
+    const le = timeToMins(lunchEnd);
+    if (ls < le) {
+      const overlapStart = Math.max(scheduleInM, ls);
+      const overlapEnd = Math.min(scheduleOutM, le);
+      const lunchOverlap = Math.max(0, overlapEnd - overlapStart);
+      scheduledWorkMinutes = Math.max(
+        0,
+        scheduledWorkMinutes - lunchOverlap,
+      );
+    }
+  }
+
+  // Actual work minutes, excluding lunch overlap.
+  let actualWorkMinutes = Math.max(0, actualOutM - actualInM);
+  if (lunchStart != null && lunchEnd != null) {
+    const ls = timeToMins(lunchStart);
+    const le = timeToMins(lunchEnd);
+    if (ls < le) {
+      const overlapStart = Math.max(actualInM, ls);
+      const overlapEnd = Math.min(actualOutM, le);
+      const lunchOverlap = Math.max(0, overlapEnd - overlapStart);
+      actualWorkMinutes = Math.max(0, actualWorkMinutes - lunchOverlap);
+    }
+  }
+
+  const rawUndertimeMinutes = Math.max(
+    0,
+    scheduledWorkMinutes - actualWorkMinutes,
+  );
+
+  // Mirror late policy: minutes counted as "late" (up to 60) are not also undertime.
+  const lateForDay = calculateLate(scheduleIn, actualIn, lunchStart);
+  const undertimeMinutes = Math.max(0, rawUndertimeMinutes - lateForDay);
+
   return undertimeMinutes / 60;
 }
 
@@ -605,6 +651,8 @@ export const updateAttendance = mutation({
               resolvedScheduleOut,
               currentActualIn,
               currentActualOut,
+              lunchStart,
+              attendance.lunchEnd,
             )
           : 0;
       updates.undertime =
@@ -777,6 +825,8 @@ export const bulkCreateAttendance = mutation({
                   scheduleOut,
                   currentActualIn,
                   currentActualOut,
+                  lunchStart,
+                  lunchEnd,
                 )
               : 0;
         const calculatedLate =
@@ -802,6 +852,8 @@ export const bulkCreateAttendance = mutation({
                   scheduleOut,
                   entry.actualIn,
                   entry.actualOut,
+                  lunchStart,
+                  lunchEnd,
                 )
               : 0;
         const calculatedLate =

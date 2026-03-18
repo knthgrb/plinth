@@ -61,7 +61,11 @@ import {
   getStatusBadgeClass,
   getStatusBadgeStyle,
 } from "@/utils/colors";
-import { formatTime12Hour } from "@/utils/attendance-calculations";
+import {
+  formatTime12Hour,
+  calculateLate as attendanceCalculateLate,
+  calculateUndertime as attendanceCalculateUndertime,
+} from "@/utils/attendance-calculations";
 
 // Lazy load modal components
 const AddAttendanceDialog = lazy(() =>
@@ -348,11 +352,10 @@ export default function AttendancePage() {
   const calculateLate = (
     scheduleIn: string,
     actualIn?: string,
+    lunchStart?: string,
   ): number | null => {
     if (!actualIn) return null;
-    const scheduleMinutes = timeToMinutes(scheduleIn);
-    const actualMinutes = timeToMinutes(actualIn);
-    const late = actualMinutes - scheduleMinutes;
+    const late = attendanceCalculateLate(scheduleIn, actualIn, lunchStart);
     return late > 0 ? late : null;
   };
 
@@ -361,28 +364,25 @@ export default function AttendancePage() {
     scheduleOut: string,
     actualIn?: string,
     actualOut?: string,
+    lunchStart?: string,
+    lunchEnd?: string,
   ): number | null => {
-    if (!actualOut) return null;
-    const scheduleOutMinutes = timeToMinutes(scheduleOut);
-    const scheduleInMinutes = scheduleIn
-      ? timeToMinutes(scheduleIn)
-      : null;
-    let actualOutMinutes = timeToMinutes(actualOut);
-
-    // If shift is same-day (e.g. 9am–6pm) and actual out is after midnight (00:00–12:00)
-    // and earlier than schedule out in raw minutes, treat actual out as next day so we
-    // don't mis-count OT as undertime.
     if (
-      scheduleInMinutes !== null &&
-      scheduleInMinutes < scheduleOutMinutes &&
-      actualOutMinutes < scheduleOutMinutes &&
-      actualOutMinutes <= 12 * 60
-    ) {
-      actualOutMinutes += 24 * 60;
-    }
-
-    const undertime = scheduleOutMinutes - actualOutMinutes;
-    return undertime > 0 ? undertime : null;
+      !scheduleIn ||
+      !actualIn ||
+      !actualOut
+    )
+      return null;
+    const undertimeHours = attendanceCalculateUndertime(
+      scheduleIn,
+      scheduleOut,
+      actualIn,
+      actualOut,
+      lunchStart,
+      lunchEnd,
+    );
+    const undertimeMinutes = Math.round(undertimeHours * 60);
+    return undertimeMinutes > 0 ? undertimeMinutes : null;
   };
 
   const formatTime = (minutes: number | null): string => {
@@ -548,7 +548,11 @@ export default function AttendancePage() {
             ? (record.late ?? 0)
             : record.late != null
               ? record.late
-              : calculateLate(record.scheduleIn, record.actualIn);
+              : calculateLate(
+                  record.scheduleIn,
+                  record.actualIn,
+                  record.lunchStart,
+                );
         if (late && late > 0) {
           lates.push({ date: record.date, minutes: late });
         }
@@ -559,11 +563,13 @@ export default function AttendancePage() {
             : record.undertime != null
               ? Math.round(record.undertime * 60)
               : calculateUndertime(
-                record.scheduleIn,
-                record.scheduleOut,
-                record.actualIn,
-                record.actualOut,
-              );
+                  record.scheduleIn,
+                  record.scheduleOut,
+                  record.actualIn,
+                  record.actualOut,
+                  record.lunchStart,
+                  record.lunchEnd,
+                );
         if (undertimeMinutes && undertimeMinutes > 0) {
           undertimes.push({ date: record.date, minutes: undertimeMinutes });
         }

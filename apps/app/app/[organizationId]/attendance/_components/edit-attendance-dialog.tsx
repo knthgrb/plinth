@@ -135,6 +135,7 @@ export function EditAttendanceDialog({
   }, [record, employee, isOpen]);
 
   const lunchStart = record?.lunchStart;
+  const lunchEnd = record?.lunchEnd;
 
   const calculatedLate = useMemo(() => {
     if (!editScheduleIn || !editTimeIn || editStatus !== "present") return 0;
@@ -142,14 +143,31 @@ export function EditAttendanceDialog({
   }, [editScheduleIn, editTimeIn, editStatus, lunchStart]);
 
   const calculatedUndertime = useMemo(() => {
-    if (!editScheduleOut || !editTimeOut || editStatus !== "present") return 0;
+    if (
+      !editScheduleIn ||
+      !editScheduleOut ||
+      !editTimeIn ||
+      !editTimeOut ||
+      editStatus !== "present"
+    )
+      return 0;
     return calculateUndertime(
       editScheduleIn,
       editScheduleOut,
       editTimeIn,
       editTimeOut,
+      lunchStart,
+      lunchEnd,
     );
-  }, [editScheduleIn, editScheduleOut, editTimeIn, editTimeOut, editStatus]);
+  }, [
+    editScheduleIn,
+    editScheduleOut,
+    editTimeIn,
+    editTimeOut,
+    editStatus,
+    lunchStart,
+    lunchEnd,
+  ]);
 
   // Use manual values if enabled, otherwise use calculated
   const finalLate = useManualLate
