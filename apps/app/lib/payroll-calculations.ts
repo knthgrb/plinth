@@ -281,22 +281,34 @@ function timeStringToMinutes(time: string | undefined): number | null {
 }
 
 /**
- * Calculate night diff hours: actual worked time that falls in the 10pm–6am window.
- * (Used for backward compatibility / total hours; pay uses calculateNightDiffPay.)
+ * Total hours in 10pm–6am that qualify for night differential.
+ * Currently mirrors the legacy calculation used for night diff pay hours,
+ * so the summary \"Total Night Diff (hrs)\" stays consistent with payroll.
  */
+export function calculateNightDiffHoursForPayroll(
+  actualIn: string | undefined,
+  actualOut: string | undefined,
+  _attDate: number,
+  _scheduleIn: string | undefined,
+  _scheduleOut: string | undefined,
+  _overtimeHours?: number,
+  _lunchStart?: string,
+  _lunchEnd?: string,
+): number {
+  return calculateNightDiffHours(actualIn, actualOut);
+}
+
 function calculateNightDiffHours(
   actualIn: string | undefined,
   actualOut: string | undefined,
   _scheduleIn?: string,
   _scheduleOut?: string,
 ): number {
-  const actualStart = timeStringToMinutes(actualIn);
-  const actualEnd = timeStringToMinutes(actualOut);
-  if (actualStart === null || actualEnd === null) return 0;
+  if (!actualIn || !actualOut) return 0;
+  let s = timeStringToMinutes(actualIn) ?? 0;
+  let e = timeStringToMinutes(actualOut) ?? 0;
   const nightStart = 22 * 60;
   const nightEnd = 24 * 60 + 6 * 60;
-  let s = actualStart;
-  let e = actualEnd;
   if (s < 6 * 60) {
     s += 24 * 60;
     e += 24 * 60;
