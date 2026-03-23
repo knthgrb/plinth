@@ -1,6 +1,19 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { decryptUtf8, isEncryptedPayload } from "./chatMessageBodyCrypto";
+import { getChatMasterSecret, unwrapSessionKey } from "./chatSessionKey";
+import {
+  encryptPayslipRowForDb,
+  decryptPayslipRowFromDb,
+  encryptPayslipPartialForDb,
+} from "./payslipCrypto";
+import {
+  encryptDraftConfigForDb,
+  decryptDraftConfigFromDb,
+  decryptPayrollRunFromDb,
+} from "./payrollRunCrypto";
+import { decryptEmployeeFromDb } from "./employeeCompensationCrypto";
 import {
   getSSSContribution,
   getSSSContributionByEmployeeDeduction,
@@ -715,7 +728,8 @@ async function buildEmployeePayrollBase(
     leaveTypes?: any[];
   },
 ): Promise<PayrollBaseResult> {
-  const { employee, cutoffStart, cutoffEnd, payFrequency } = args;
+  const { cutoffStart, cutoffEnd, payFrequency } = args;
+  const employee = decryptEmployeeFromDb(args.employee);
   let payrollRates: PayrollRates;
   if (args.payrollRates) {
     payrollRates = args.payrollRates;
@@ -815,8 +829,9 @@ export const computeEmployeePayroll = query({
     cutoffEnd: v.number(),
   },
   handler: async (ctx, args) => {
-    const employee = await ctx.db.get(args.employeeId);
-    if (!employee) throw new Error("Employee not found");
+    const employeeRaw = await ctx.db.get(args.employeeId);
+    if (!employeeRaw) throw new Error("Employee not found");
+    const employee = decryptEmployeeFromDb(employeeRaw);
 
     await checkAuth(ctx, employee.organizationId);
 
@@ -1103,12 +1118,14 @@ export const createPayrollRun = mutation({
       status: "draft",
       processedBy: userRecord._id,
       deductionsEnabled,
-      draftConfig: buildDraftPayrollConfig({
-        employeeIds: args.employeeIds,
-        manualDeductions: args.manualDeductions,
-        incentives: args.incentives,
-        governmentDeductionSettings: args.governmentDeductionSettings,
-      }),
+      draftConfig: encryptDraftConfigForDb(
+        buildDraftPayrollConfig({
+          employeeIds: args.employeeIds,
+          manualDeductions: args.manualDeductions,
+          incentives: args.incentives,
+          governmentDeductionSettings: args.governmentDeductionSettings,
+        }),
+      ),
       createdAt: now,
       updatedAt: now,
     });
@@ -1123,7 +1140,10 @@ export const createPayrollRun = mutation({
 
     // Backfill isHoliday/holidayType on attendance. Only set when holiday applies to this employee's province.
     for (const employeeId of args.employeeIds) {
-      const employee = await ctx.db.get(employeeId);
+      const employeeRow = await ctx.db.get(employeeId);
+      const employee = employeeRow
+        ? decryptEmployeeFromDb(employeeRow)
+        : null;
       const attendance = await (ctx.db.query("attendance") as any)
         .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
         .collect();
@@ -1161,13 +1181,14 @@ export const createPayrollRun = mutation({
 
     // Compute and create payslips for each employee
     for (const employeeId of args.employeeIds) {
-      const employee = await ctx.db.get(employeeId);
-      if (!employee || employee.organizationId !== args.organizationId) {
+      const employeeRow = await ctx.db.get(employeeId);
+      if (!employeeRow || employeeRow.organizationId !== args.organizationId) {
         continue;
       }
+      const employee = decryptEmployeeFromDb(employeeRow);
 
       const payrollBase = await buildEmployeePayrollBase(ctx, {
-        employee,
+        employee: employeeRow,
         cutoffStart: args.cutoffStart,
         cutoffEnd: args.cutoffEnd,
         payFrequency,
@@ -1480,9 +1501,12 @@ export const createPayrollRun = mutation({
       const currentYear = cutoffStartForPending.getFullYear();
 
       // Find previous payslips in the same month
-      const previousPayslips = await (ctx.db.query("payslips") as any)
+      const previousPayslipsRaw = await (ctx.db.query("payslips") as any)
         .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
         .collect();
+      const previousPayslips = previousPayslipsRaw.map((p: any) =>
+        decryptPayslipRowFromDb(p),
+      );
 
       const sameMonthPreviousPayslips = previousPayslips.filter((p: any) => {
         // Parse period string to get start date
@@ -1623,76 +1647,79 @@ export const createPayrollRun = mutation({
       if (employeePagibigAmount > 0) {
         employerContributions.pagibig = round2(employeePagibigAmount);
       }
-      await ctx.db.insert("payslips", {
-        organizationId: args.organizationId,
-        employeeId,
-        payrollRunId,
-        period,
-        grossPay: round2(grossPay),
-        basicPay: round2(payrollBase.basicPay),
-        deductions: deductions.map((d) => ({
-          ...d,
-          amount: round2(d.amount),
-        })),
-        incentives: incentives.length > 0 ? incentives : undefined,
-        nonTaxableAllowance:
-          nonTaxableAllowance > 0 ? round2(nonTaxableAllowance) : undefined,
-        netPay: round2(netPay),
-        daysWorked: payrollBase.daysWorked,
-        absences: payrollBase.absences,
-        lateHours: payrollBase.lateHours,
-        undertimeHours: payrollBase.undertimeHours,
-        overtimeHours: payrollBase.overtimeHours,
-        holidayPay:
-          payrollBase.holidayPay > 0
-            ? round2(payrollBase.holidayPay)
-            : undefined,
-        holidayPayType: payrollBase.holidayPayType,
-        nightDiffPay:
-          payrollBase.nightDiffPay > 0
-            ? round2(payrollBase.nightDiffPay)
-            : undefined,
-        restDayPay:
-          (payrollBase.restDayPremiumPay ?? 0) > 0
-            ? round2(payrollBase.restDayPremiumPay!)
-            : undefined,
-        overtimeRegular:
-          payrollBase.overtimeRegular > 0
-            ? round2(payrollBase.overtimeRegular)
-            : undefined,
-        overtimeRestDay:
-          payrollBase.overtimeRestDay > 0
-            ? round2(payrollBase.overtimeRestDay)
-            : undefined,
-        overtimeRestDayExcess:
-          payrollBase.overtimeRestDayExcess > 0
-            ? round2(payrollBase.overtimeRestDayExcess)
-            : undefined,
-        overtimeSpecialHoliday:
-          payrollBase.overtimeSpecialHoliday > 0
-            ? round2(payrollBase.overtimeSpecialHoliday)
-            : undefined,
-        overtimeSpecialHolidayExcess:
-          payrollBase.overtimeSpecialHolidayExcess > 0
-            ? round2(payrollBase.overtimeSpecialHolidayExcess)
-            : undefined,
-        overtimeLegalHoliday:
-          payrollBase.overtimeLegalHoliday > 0
-            ? round2(payrollBase.overtimeLegalHoliday)
-            : undefined,
-        overtimeLegalHolidayExcess:
-          payrollBase.overtimeLegalHolidayExcess > 0
-            ? round2(payrollBase.overtimeLegalHolidayExcess)
-            : undefined,
-        pendingDeductions:
-          pendingDeductions > 0 ? round2(pendingDeductions) : undefined,
-        hasWorkedAtLeastOneDay,
-        employerContributions:
-          Object.keys(employerContributions).length > 0
-            ? employerContributions
-            : undefined,
-        createdAt: now,
-      });
+      await ctx.db.insert(
+        "payslips",
+        encryptPayslipRowForDb({
+          organizationId: args.organizationId,
+          employeeId,
+          payrollRunId,
+          period,
+          grossPay: round2(grossPay),
+          basicPay: round2(payrollBase.basicPay),
+          deductions: deductions.map((d) => ({
+            ...d,
+            amount: round2(d.amount),
+          })),
+          incentives: incentives.length > 0 ? incentives : undefined,
+          nonTaxableAllowance:
+            nonTaxableAllowance > 0 ? round2(nonTaxableAllowance) : undefined,
+          netPay: round2(netPay),
+          daysWorked: payrollBase.daysWorked,
+          absences: payrollBase.absences,
+          lateHours: payrollBase.lateHours,
+          undertimeHours: payrollBase.undertimeHours,
+          overtimeHours: payrollBase.overtimeHours,
+          holidayPay:
+            payrollBase.holidayPay > 0
+              ? round2(payrollBase.holidayPay)
+              : undefined,
+          holidayPayType: payrollBase.holidayPayType,
+          nightDiffPay:
+            payrollBase.nightDiffPay > 0
+              ? round2(payrollBase.nightDiffPay)
+              : undefined,
+          restDayPay:
+            (payrollBase.restDayPremiumPay ?? 0) > 0
+              ? round2(payrollBase.restDayPremiumPay!)
+              : undefined,
+          overtimeRegular:
+            payrollBase.overtimeRegular > 0
+              ? round2(payrollBase.overtimeRegular)
+              : undefined,
+          overtimeRestDay:
+            payrollBase.overtimeRestDay > 0
+              ? round2(payrollBase.overtimeRestDay)
+              : undefined,
+          overtimeRestDayExcess:
+            payrollBase.overtimeRestDayExcess > 0
+              ? round2(payrollBase.overtimeRestDayExcess)
+              : undefined,
+          overtimeSpecialHoliday:
+            payrollBase.overtimeSpecialHoliday > 0
+              ? round2(payrollBase.overtimeSpecialHoliday)
+              : undefined,
+          overtimeSpecialHolidayExcess:
+            payrollBase.overtimeSpecialHolidayExcess > 0
+              ? round2(payrollBase.overtimeSpecialHolidayExcess)
+              : undefined,
+          overtimeLegalHoliday:
+            payrollBase.overtimeLegalHoliday > 0
+              ? round2(payrollBase.overtimeLegalHoliday)
+              : undefined,
+          overtimeLegalHolidayExcess:
+            payrollBase.overtimeLegalHolidayExcess > 0
+              ? round2(payrollBase.overtimeLegalHolidayExcess)
+              : undefined,
+          pendingDeductions:
+            pendingDeductions > 0 ? round2(pendingDeductions) : undefined,
+          hasWorkedAtLeastOneDay,
+          employerContributions:
+            Object.keys(employerContributions).length > 0
+              ? employerContributions
+              : undefined,
+          createdAt: now,
+        }) as any,
+      );
     }
 
     // Keep status as "draft" - user can review and finalize later
@@ -1790,7 +1817,9 @@ export const updatePayrollRun = mutation({
 
     const runDeductionsEnabled =
       args.deductionsEnabled ?? payrollRun.deductionsEnabled ?? true;
-    const previousDraftConfig = payrollRun.draftConfig ?? {
+    const previousDraftConfig = decryptDraftConfigFromDb(
+      payrollRun.draftConfig,
+    ) ?? {
       employeeIds: [],
     };
     await ctx.db.patch(args.payrollRunId, {
@@ -1798,15 +1827,17 @@ export const updatePayrollRun = mutation({
       cutoffEnd: args.cutoffEnd ?? payrollRun.cutoffEnd,
       period,
       deductionsEnabled: runDeductionsEnabled,
-      draftConfig: buildDraftPayrollConfig({
-        employeeIds: args.employeeIds ?? previousDraftConfig.employeeIds ?? [],
-        manualDeductions:
-          args.manualDeductions ?? previousDraftConfig.manualDeductions,
-        incentives: args.incentives ?? previousDraftConfig.incentives,
-        governmentDeductionSettings:
-          args.governmentDeductionSettings ??
-          previousDraftConfig.governmentDeductionSettings,
-      }),
+      draftConfig: encryptDraftConfigForDb(
+        buildDraftPayrollConfig({
+          employeeIds: args.employeeIds ?? previousDraftConfig.employeeIds ?? [],
+          manualDeductions:
+            args.manualDeductions ?? previousDraftConfig.manualDeductions,
+          incentives: args.incentives ?? previousDraftConfig.incentives,
+          governmentDeductionSettings:
+            args.governmentDeductionSettings ??
+            previousDraftConfig.governmentDeductionSettings,
+        }),
+      ),
       updatedAt: Date.now(),
     });
 
@@ -1862,7 +1893,8 @@ export const updatePayrollRun = mutation({
             const holiday = holidays.find((h: any) =>
               holidayMatchesDateLib(h, rec.date),
             );
-            const emp = (await ctx.db.get(employeeId)) as any;
+            const empRow = (await ctx.db.get(employeeId)) as any;
+            const emp = empRow ? decryptEmployeeFromDb(empRow) : null;
             if (holiday && emp && holidayAppliesToEmployee(holiday, emp)) {
               await ctx.db.patch(rec._id, {
                 isHoliday: true,
@@ -1881,16 +1913,17 @@ export const updatePayrollRun = mutation({
       }
 
       for (const employeeId of employeeIds) {
-        const employee = (await ctx.db.get(employeeId)) as any;
+        const employeeRow = (await ctx.db.get(employeeId)) as any;
         if (
-          !employee ||
-          employee.organizationId !== payrollRun.organizationId
+          !employeeRow ||
+          employeeRow.organizationId !== payrollRun.organizationId
         ) {
           continue;
         }
+        const employee = decryptEmployeeFromDb(employeeRow);
 
         const payrollBase = await buildEmployeePayrollBase(ctx, {
-          employee,
+          employee: employeeRow,
           cutoffStart,
           cutoffEnd,
           payFrequency: payFrequencyUpdate,
@@ -2176,9 +2209,12 @@ export const updatePayrollRun = mutation({
         const currentMonth = cutoffStartDate.getMonth();
         const currentYear = cutoffStartDate.getFullYear();
 
-        const previousPayslips = await (ctx.db.query("payslips") as any)
+        const previousPayslipsRawUpdate = await (ctx.db.query("payslips") as any)
           .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
           .collect();
+        const previousPayslips = previousPayslipsRawUpdate.map((p: any) =>
+          decryptPayslipRowFromDb(p),
+        );
 
         const sameMonthPreviousPayslips = previousPayslips.filter((p: any) => {
           try {
@@ -2300,76 +2336,79 @@ export const updatePayrollRun = mutation({
           employerContributions.pagibig = round2(employeePagibigAmount);
         }
 
-        await ctx.db.insert("payslips", {
-          organizationId: payrollRun.organizationId,
-          employeeId,
-          payrollRunId: args.payrollRunId,
-          period,
-          grossPay: round2(grossPay),
-          basicPay: round2(payrollBase.basicPay),
-          deductions: deductions.map((d) => ({
-            ...d,
-            amount: round2(d.amount),
-          })),
-          incentives: incentives.length > 0 ? incentives : undefined,
-          nonTaxableAllowance:
-            nonTaxableAllowance > 0 ? round2(nonTaxableAllowance) : undefined,
-          netPay: round2(netPay),
-          daysWorked: payrollBase.daysWorked,
-          absences: payrollBase.absences,
-          lateHours: payrollBase.lateHours,
-          undertimeHours: payrollBase.undertimeHours,
-          overtimeHours: payrollBase.overtimeHours,
-          holidayPay:
-            payrollBase.holidayPay > 0
-              ? round2(payrollBase.holidayPay)
-              : undefined,
-          holidayPayType: payrollBase.holidayPayType,
-          nightDiffPay:
-            payrollBase.nightDiffPay > 0
-              ? round2(payrollBase.nightDiffPay)
-              : undefined,
-          restDayPay:
-            (payrollBase.restDayPremiumPay ?? 0) > 0
-              ? round2(payrollBase.restDayPremiumPay!)
-              : undefined,
-          overtimeRegular:
-            payrollBase.overtimeRegular > 0
-              ? round2(payrollBase.overtimeRegular)
-              : undefined,
-          overtimeRestDay:
-            payrollBase.overtimeRestDay > 0
-              ? round2(payrollBase.overtimeRestDay)
-              : undefined,
-          overtimeRestDayExcess:
-            payrollBase.overtimeRestDayExcess > 0
-              ? round2(payrollBase.overtimeRestDayExcess)
-              : undefined,
-          overtimeSpecialHoliday:
-            payrollBase.overtimeSpecialHoliday > 0
-              ? round2(payrollBase.overtimeSpecialHoliday)
-              : undefined,
-          overtimeSpecialHolidayExcess:
-            payrollBase.overtimeSpecialHolidayExcess > 0
-              ? round2(payrollBase.overtimeSpecialHolidayExcess)
-              : undefined,
-          overtimeLegalHoliday:
-            payrollBase.overtimeLegalHoliday > 0
-              ? round2(payrollBase.overtimeLegalHoliday)
-              : undefined,
-          overtimeLegalHolidayExcess:
-            payrollBase.overtimeLegalHolidayExcess > 0
-              ? round2(payrollBase.overtimeLegalHolidayExcess)
-              : undefined,
-          pendingDeductions:
-            pendingDeductions > 0 ? round2(pendingDeductions) : undefined,
-          hasWorkedAtLeastOneDay,
-          employerContributions:
-            Object.keys(employerContributions).length > 0
-              ? employerContributions
-              : undefined,
-          createdAt: Date.now(),
-        });
+        await ctx.db.insert(
+          "payslips",
+          encryptPayslipRowForDb({
+            organizationId: payrollRun.organizationId,
+            employeeId,
+            payrollRunId: args.payrollRunId,
+            period,
+            grossPay: round2(grossPay),
+            basicPay: round2(payrollBase.basicPay),
+            deductions: deductions.map((d) => ({
+              ...d,
+              amount: round2(d.amount),
+            })),
+            incentives: incentives.length > 0 ? incentives : undefined,
+            nonTaxableAllowance:
+              nonTaxableAllowance > 0 ? round2(nonTaxableAllowance) : undefined,
+            netPay: round2(netPay),
+            daysWorked: payrollBase.daysWorked,
+            absences: payrollBase.absences,
+            lateHours: payrollBase.lateHours,
+            undertimeHours: payrollBase.undertimeHours,
+            overtimeHours: payrollBase.overtimeHours,
+            holidayPay:
+              payrollBase.holidayPay > 0
+                ? round2(payrollBase.holidayPay)
+                : undefined,
+            holidayPayType: payrollBase.holidayPayType,
+            nightDiffPay:
+              payrollBase.nightDiffPay > 0
+                ? round2(payrollBase.nightDiffPay)
+                : undefined,
+            restDayPay:
+              (payrollBase.restDayPremiumPay ?? 0) > 0
+                ? round2(payrollBase.restDayPremiumPay!)
+                : undefined,
+            overtimeRegular:
+              payrollBase.overtimeRegular > 0
+                ? round2(payrollBase.overtimeRegular)
+                : undefined,
+            overtimeRestDay:
+              payrollBase.overtimeRestDay > 0
+                ? round2(payrollBase.overtimeRestDay)
+                : undefined,
+            overtimeRestDayExcess:
+              payrollBase.overtimeRestDayExcess > 0
+                ? round2(payrollBase.overtimeRestDayExcess)
+                : undefined,
+            overtimeSpecialHoliday:
+              payrollBase.overtimeSpecialHoliday > 0
+                ? round2(payrollBase.overtimeSpecialHoliday)
+                : undefined,
+            overtimeSpecialHolidayExcess:
+              payrollBase.overtimeSpecialHolidayExcess > 0
+                ? round2(payrollBase.overtimeSpecialHolidayExcess)
+                : undefined,
+            overtimeLegalHoliday:
+              payrollBase.overtimeLegalHoliday > 0
+                ? round2(payrollBase.overtimeLegalHoliday)
+                : undefined,
+            overtimeLegalHolidayExcess:
+              payrollBase.overtimeLegalHolidayExcess > 0
+                ? round2(payrollBase.overtimeLegalHolidayExcess)
+                : undefined,
+            pendingDeductions:
+              pendingDeductions > 0 ? round2(pendingDeductions) : undefined,
+            hasWorkedAtLeastOneDay,
+            employerContributions:
+              Object.keys(employerContributions).length > 0
+                ? employerContributions
+                : undefined,
+            createdAt: Date.now(),
+          }) as any,
+        );
       }
     }
 
@@ -2583,11 +2622,12 @@ async function markExpenseItemsPaid(ctx: any, payrollRun: any) {
 // Helper function to create expense items from payroll run
 async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
   // Get all payslips for this payroll run
-  const payslips = await (ctx.db.query("payslips") as any)
+  const payslipsRaw = await (ctx.db.query("payslips") as any)
     .withIndex("by_payroll_run", (q: any) =>
       q.eq("payrollRunId", payrollRun._id),
     )
     .collect();
+  const payslips = payslipsRaw.map((p: any) => decryptPayslipRowFromDb(p)!);
 
   if (payslips.length === 0) return;
 
@@ -2902,7 +2942,7 @@ export const getPayrollRuns = query({
     }
 
     runs.sort((a: any, b: any) => b.createdAt - a.createdAt);
-    return runs;
+    return runs.map((r: any) => decryptPayrollRunFromDb(r));
   },
 });
 
@@ -3036,7 +3076,8 @@ async function compute13thMonthAmountsInternal(
 
     if (empPayslips.length > 0) {
       for (const p of empPayslips) {
-        totalBasicPay += Math.max(0, getBasicPayFromPayslip(p));
+        const pd = decryptPayslipRowFromDb(p)!;
+        totalBasicPay += Math.max(0, getBasicPayFromPayslip(pd));
       }
     } else {
       const cutoffs: { start: number; end: number }[] = [];
@@ -3077,7 +3118,7 @@ async function compute13thMonthAmountsInternal(
     const thirteenthMonthAmount = round2(totalBasicPay / 12);
     results.push({
       employeeId,
-      employee,
+      employee: decryptEmployeeFromDb(employee),
       totalBasicPay: round2(totalBasicPay),
       thirteenthMonthAmount,
     });
@@ -3122,7 +3163,7 @@ export const create13thMonthRun = mutation({
       status: "draft",
       processedBy: userRecord._id,
       deductionsEnabled: false,
-      draftConfig: { employeeIds: args.employeeIds },
+      draftConfig: encryptDraftConfigForDb({ employeeIds: args.employeeIds }),
       createdAt: now,
       updatedAt: now,
     });
@@ -3131,22 +3172,25 @@ export const create13thMonthRun = mutation({
       const amt = amountMap.get(employeeId) ?? 0;
       if (amt <= 0) continue;
 
-      await ctx.db.insert("payslips", {
-        organizationId: args.organizationId,
-        employeeId,
-        payrollRunId,
-        period,
-        grossPay: amt,
-        basicPay: amt,
-        deductions: [],
-        netPay: amt,
-        daysWorked: 0,
-        absences: 0,
-        lateHours: 0,
-        undertimeHours: 0,
-        overtimeHours: 0,
-        createdAt: now,
-      });
+      await ctx.db.insert(
+        "payslips",
+        encryptPayslipRowForDb({
+          organizationId: args.organizationId,
+          employeeId,
+          payrollRunId,
+          period,
+          grossPay: amt,
+          basicPay: amt,
+          deductions: [],
+          netPay: amt,
+          daysWorked: 0,
+          absences: 0,
+          lateHours: 0,
+          undertimeHours: 0,
+          overtimeHours: 0,
+          createdAt: now,
+        }) as any,
+      );
     }
 
     await ctx.db.patch(payrollRunId, {
@@ -3290,7 +3334,7 @@ async function computeLeaveConversionAmountsInternal(
 
     results.push({
       employeeId: empId,
-      employee,
+      employee: decryptEmployeeFromDb(employee),
       convertibleDays,
       dailyRate: round2(dailyRate),
       leaveConversionAmount,
@@ -3363,7 +3407,7 @@ export const createLeaveConversionRun = mutation({
       status: "draft",
       processedBy: userRecord._id,
       deductionsEnabled: false,
-      draftConfig: { employeeIds: args.employeeIds },
+      draftConfig: encryptDraftConfigForDb({ employeeIds: args.employeeIds }),
       createdAt: now,
       updatedAt: now,
     });
@@ -3372,22 +3416,25 @@ export const createLeaveConversionRun = mutation({
       const amt = amountMap.get(employeeId) ?? 0;
       if (amt <= 0) continue;
 
-      await ctx.db.insert("payslips", {
-        organizationId: args.organizationId,
-        employeeId,
-        payrollRunId,
-        period,
-        grossPay: amt,
-        basicPay: amt,
-        deductions: [],
-        netPay: amt,
-        daysWorked: 0,
-        absences: 0,
-        lateHours: 0,
-        undertimeHours: 0,
-        overtimeHours: 0,
-        createdAt: now,
-      });
+      await ctx.db.insert(
+        "payslips",
+        encryptPayslipRowForDb({
+          organizationId: args.organizationId,
+          employeeId,
+          payrollRunId,
+          period,
+          grossPay: amt,
+          basicPay: amt,
+          deductions: [],
+          netPay: amt,
+          daysWorked: 0,
+          absences: 0,
+          lateHours: 0,
+          undertimeHours: 0,
+          overtimeHours: 0,
+          createdAt: now,
+        }) as any,
+      );
     }
 
     await ctx.db.patch(payrollRunId, {
@@ -3405,17 +3452,19 @@ export const getPayrollRunSummary = query({
     payrollRunId: v.id("payrollRuns"),
   },
   handler: async (ctx, args) => {
-    const payrollRun = await ctx.db.get(args.payrollRunId);
-    if (!payrollRun) throw new Error("Payroll run not found");
+    const payrollRunRaw = await ctx.db.get(args.payrollRunId);
+    if (!payrollRunRaw) throw new Error("Payroll run not found");
+    const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
 
     const userRecord = await checkAuth(ctx, payrollRun.organizationId);
 
     // Get all payslips for this payroll run to get employee IDs
-    const payslips = await (ctx.db.query("payslips") as any)
+    const payslipsRaw = await (ctx.db.query("payslips") as any)
       .withIndex("by_payroll_run", (q: any) =>
         q.eq("payrollRunId", args.payrollRunId),
       )
       .collect();
+    const payslips = payslipsRaw.map((p: any) => decryptPayslipRowFromDb(p)!);
 
     const employeeIds = payslips.map((p: any) => p.employeeId);
 
@@ -3445,7 +3494,10 @@ export const getPayrollRunSummary = query({
 
     // Get all employees
     const employees = await Promise.all(
-      employeeIds.map(async (id: any) => await ctx.db.get(id)),
+      employeeIds.map(async (id: any) => {
+        const row = await ctx.db.get(id);
+        return row ? decryptEmployeeFromDb(row) : null;
+      }),
     );
 
     // Generate one date slot per calendar day (same logic as attendance page: start + i*24h)
@@ -3768,7 +3820,7 @@ export const getPayslipsByPayrollRun = query({
 
     const userRecord = await checkAuth(ctx, payrollRun.organizationId);
 
-    const payslips = await (ctx.db.query("payslips") as any)
+    const payslipsRaw = await (ctx.db.query("payslips") as any)
       .withIndex("by_payroll_run", (q: any) =>
         q.eq("payrollRunId", args.payrollRunId),
       )
@@ -3776,14 +3828,16 @@ export const getPayslipsByPayrollRun = query({
 
     // Get employee details for each payslip
     const payslipsWithEmployees = await Promise.all(
-      payslips.map(async (payslip: any) => {
-        const employee = (await ctx.db.get(payslip.employeeId)) as any;
-        if (!employee) {
+      payslipsRaw.map(async (raw: any) => {
+        const payslip = decryptPayslipRowFromDb(raw)!;
+        const employeeRow = (await ctx.db.get(payslip.employeeId)) as any;
+        if (!employeeRow) {
           return {
             ...payslip,
             employee: null,
           };
         }
+        const employee = decryptEmployeeFromDb(employeeRow);
         return {
           ...payslip,
           employee: {
@@ -3819,10 +3873,11 @@ export const getEmployeePayslips = query({
       throw new Error("Not authorized");
     }
 
-    const payslips = await (ctx.db.query("payslips") as any)
+    const payslipsRaw = await (ctx.db.query("payslips") as any)
       .withIndex("by_employee", (q: any) => q.eq("employeeId", args.employeeId))
       .collect();
 
+    const payslips = payslipsRaw.map((p: any) => decryptPayslipRowFromDb(p)!);
     payslips.sort((a: any, b: any) => b.createdAt - a.createdAt);
     return payslips;
   },
@@ -3834,8 +3889,9 @@ export const getPayslip = query({
     payslipId: v.id("payslips"),
   },
   handler: async (ctx, args) => {
-    const payslip = await ctx.db.get(args.payslipId);
-    if (!payslip) throw new Error("Payslip not found");
+    const raw = await ctx.db.get(args.payslipId);
+    if (!raw) throw new Error("Payslip not found");
+    const payslip = decryptPayslipRowFromDb(raw)!;
 
     const userRecord = await checkAuth(ctx, payslip.organizationId);
 
@@ -3876,8 +3932,9 @@ export const updatePayslip = mutation({
     nonTaxableAllowance: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const payslip = await ctx.db.get(args.payslipId);
-    if (!payslip) throw new Error("Payslip not found");
+    const rawPayslip = await ctx.db.get(args.payslipId);
+    if (!rawPayslip) throw new Error("Payslip not found");
+    const payslip = decryptPayslipRowFromDb(rawPayslip)!;
 
     // Check auth - owner, admin, hr, or accounting can edit
     const userRecord = await checkAuth(ctx, payslip.organizationId);
@@ -3898,9 +3955,12 @@ export const updatePayslip = mutation({
         ? args.nonTaxableAllowance
         : payslip.nonTaxableAllowance || 0;
 
-    const totalDeductions = newDeductions.reduce((sum, d) => sum + d.amount, 0);
+    const totalDeductions = newDeductions.reduce(
+      (sum: number, d: { amount: number }) => sum + d.amount,
+      0,
+    );
     const totalIncentives = newIncentives.reduce(
-      (sum, inc) => sum + inc.amount,
+      (sum: number, inc: { amount: number }) => sum + inc.amount,
       0,
     );
 
@@ -3908,7 +3968,7 @@ export const updatePayslip = mutation({
     // Get basic pay from original gross pay minus original incentives
     const originalIncentives = payslip.incentives || [];
     const originalTotalIncentives = originalIncentives.reduce(
-      (sum, inc) => sum + inc.amount,
+      (sum: number, inc: { amount: number }) => sum + inc.amount,
       0,
     );
     const basicPay = payslip.grossPay - originalTotalIncentives;
@@ -4095,31 +4155,39 @@ export const updatePayslip = mutation({
           ]
         : existingEditHistory;
 
-    await ctx.db.patch(args.payslipId, {
-      deductions: newDeductions.map((d) => ({
-        ...d,
-        amount: round2(d.amount),
-      })),
-      incentives:
-        newIncentives.length > 0
-          ? newIncentives.map((i) => ({ ...i, amount: round2(i.amount) }))
-          : undefined,
-      nonTaxableAllowance:
-        newNonTaxableAllowance > 0 ? round2(newNonTaxableAllowance) : undefined,
-      grossPay: newGrossPay,
-      netPay: newNetPay,
-      employerContributions:
-        Object.keys(updatedEmployerContributions).length > 0
-          ? updatedEmployerContributions
-          : undefined,
-      editHistory:
-        updatedEditHistory.length > 0 ? updatedEditHistory : undefined,
-    });
+    await ctx.db.patch(
+      args.payslipId,
+      encryptPayslipPartialForDb({
+        deductions: newDeductions.map((d: { name: string; amount: number; type: string }) => ({
+          ...d,
+          amount: round2(d.amount),
+        })),
+        incentives:
+          newIncentives.length > 0
+            ? newIncentives.map((i: { name: string; amount: number; type: string }) => ({
+                ...i,
+                amount: round2(i.amount),
+              }))
+            : undefined,
+        nonTaxableAllowance:
+          newNonTaxableAllowance > 0
+            ? round2(newNonTaxableAllowance)
+            : undefined,
+        grossPay: newGrossPay,
+        netPay: newNetPay,
+        employerContributions:
+          Object.keys(updatedEmployerContributions).length > 0
+            ? updatedEmployerContributions
+            : undefined,
+        editHistory:
+          updatedEditHistory.length > 0 ? updatedEditHistory : undefined,
+      }) as any,
+    );
 
     // Re-sync accounting cost items when deductions/incentives/allowance change
     // so that Payroll, SSS, PhilHealth, Pag-IBIG, Tax expense items reflect updated totals
     const payrollRun = payslip.payrollRunId
-      ? await ctx.db.get(payslip.payrollRunId)
+      ? ((await ctx.db.get(payslip.payrollRunId)) as any)
       : null;
     if (
       payrollRun &&
@@ -4167,8 +4235,32 @@ export const getPayslipMessages = query({
             };
           }
         }
+
+        let content = msg.content;
+        if (
+          typeof content === "string" &&
+          isEncryptedPayload(content) &&
+          getChatMasterSecret() &&
+          msg.conversationId
+        ) {
+          const conv = await ctx.db.get(msg.conversationId);
+          if (conv && (conv as any).chatSessionKeyEnc) {
+            try {
+              const sk = unwrapSessionKey(
+                (conv as any).chatSessionKeyEnc,
+                (conv as any).organizationId,
+                conv._id,
+              );
+              content = decryptUtf8(content, sk);
+            } catch {
+              content = "[Encrypted message]";
+            }
+          }
+        }
+
         return {
           ...msg,
+          content,
           sender: sender
             ? {
                 _id: sender._id,

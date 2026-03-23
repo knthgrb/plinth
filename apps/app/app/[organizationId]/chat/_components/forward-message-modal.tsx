@@ -16,6 +16,8 @@ import { Id } from "@/convex/_generated/dataModel";
 import { useToast } from "@/components/ui/use-toast";
 import { Hash, Users, MessageSquare, Loader2 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { encryptWithSessionKeyB64 } from "@/lib/chat-message-crypto";
+import { useChatSessionKeys } from "./chat-session-keys-context";
 
 export interface MessageToForward {
   content: string;
@@ -61,6 +63,7 @@ export function ForwardMessageModal({
 }: ForwardMessageModalProps) {
   const { currentOrganizationId } = useOrganization();
   const { toast } = useToast();
+  const sessionKeys = useChatSessionKeys();
 
   const conversationsData = useQuery(
     (api as any).chat.getConversations,
@@ -78,10 +81,15 @@ export function ForwardMessageModal({
     if (!message || !currentOrganizationId) return;
     setForwardingToId(targetConversationId);
     try {
+      const targetKey = sessionKeys[targetConversationId];
+      let forwardContent = message.content;
+      if (targetKey && forwardContent) {
+        forwardContent = encryptWithSessionKeyB64(forwardContent, targetKey);
+      }
       await forwardMutation({
         organizationId: currentOrganizationId as Id<"organizations">,
         targetConversationId: targetConversationId as Id<"conversations">,
-        content: message.content,
+        content: forwardContent,
         messageType: message.messageType || "text",
         attachments:
           (message.attachments?.length ?? 0) > 0

@@ -67,6 +67,8 @@ type ComputedRow = {
 interface LeaveTrackerTabProps {
   organizationId: string;
   employees: TrackerEmployee[];
+  /** True while employees query is still loading (avoid empty state flash). */
+  employeesLoading?: boolean;
   proratedLeave?: boolean;
   annualSil?: number;
   grantLeaveUponRegularization?: boolean;
@@ -165,6 +167,7 @@ function isSameNumber(left: number | undefined, right: number) {
 export function LeaveTrackerTab({
   organizationId,
   employees,
+  employeesLoading = false,
   proratedLeave = true,
   annualSil = 8,
   grantLeaveUponRegularization = true,
@@ -392,14 +395,6 @@ export function LeaveTrackerTab({
     }
   };
 
-  if (!trackerRows.length) {
-    return (
-      <div className="rounded-lg border border-[rgb(230,230,230)] bg-[rgb(250,250,250)] py-12 text-center text-sm text-[rgb(133,133,133)]">
-        No active employees to track.
-      </div>
-    );
-  }
-
   const yearOptions = useMemo(() => {
     const years: number[] = [];
     for (let y = currentYear; y >= currentYear - 10; y--) {
@@ -407,6 +402,23 @@ export function LeaveTrackerTab({
     }
     return years;
   }, [currentYear]);
+
+  if (employeesLoading) {
+    return (
+      <div className="rounded-lg border border-[rgb(230,230,230)] bg-[rgb(250,250,250)] py-12 text-center text-sm text-[rgb(133,133,133)]">
+        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-[rgb(230,230,230)] border-t-brand-purple" />
+        <p className="mt-4">Loading employees…</p>
+      </div>
+    );
+  }
+
+  if (!trackerRows.length) {
+    return (
+      <div className="rounded-lg border border-[rgb(230,230,230)] bg-[rgb(250,250,250)] py-12 text-center text-sm text-[rgb(133,133,133)]">
+        No active employees to track.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

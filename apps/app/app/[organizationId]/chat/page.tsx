@@ -16,6 +16,7 @@ import { ChevronLeft } from "lucide-react";
 import { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { chatCache } from "@/services/chat-cache-service";
+import { ChatSessionKeysProvider } from "./_components/chat-session-keys-context";
 
 // Breakpoint: below this width we show list first, then chat (mobile/tablet)
 const LIST_OR_CHAT_BREAKPOINT_PX = 1024;
@@ -147,6 +148,7 @@ export default function ChatPage() {
 
   return (
     <MainLayout>
+      <ChatSessionKeysProvider organizationId={currentOrganizationId}>
       {/* relative so absolute sidebar is contained below the main app header */}
       <div className="relative flex h-[calc(100vh-4rem)] min-h-0 overflow-hidden w-full bg-gray-50">
         {/* Conversation list: full width on small screen when visible, sticks to sidebar on large (no margin) */}
@@ -233,6 +235,7 @@ export default function ChatPage() {
         </main>
 
       </div>
+      </ChatSessionKeysProvider>
 
       <NewChatModal
         isOpen={newChatOpen}

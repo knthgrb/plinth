@@ -1,6 +1,16 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { randomBytes } from "@noble/ciphers/utils.js";
+import {
+  encryptUtf8,
+  isEncryptedPayload,
+} from "./chatMessageBodyCrypto";
+import {
+  getChatMasterSecret,
+  wrapSessionKey,
+  unwrapSessionKey,
+} from "./chatSessionKey";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -58,6 +68,30 @@ async function checkAuth(
   // If no requiredRole specified, allow all authenticated users (read access)
 
   return { ...userRecord, role: userRole, organizationId };
+}
+
+/** Reply preview: encrypted bodies pass through as ciphertext for client decryption. */
+function buildReplyToPreview(replyMsg: any, replySender: any) {
+  const replySenderName =
+    replySender?.name || replySender?.email || "Unknown";
+  if (!replyMsg || typeof replyMsg.content !== "string") {
+    return null;
+  }
+  if (isEncryptedPayload(replyMsg.content)) {
+    return {
+      _id: replyMsg._id,
+      content: replyMsg.content,
+      senderName: replySenderName,
+    };
+  }
+  const snippet =
+    replyMsg.content.slice(0, 80) +
+    (replyMsg.content.length > 80 ? "…" : "");
+  return {
+    _id: replyMsg._id,
+    content: snippet,
+    senderName: replySenderName,
+  };
 }
 
 // Get user ID from employee ID
@@ -272,19 +306,7 @@ export const getMessages = query({
               const replySender = (await ctx.db.get(
                 replyMsg.senderId as any,
               )) as any;
-              const snippet =
-                typeof replyMsg.content === "string"
-                  ? replyMsg.content.slice(0, 80) +
-                    (replyMsg.content.length > 80 ? "…" : "")
-                  : "";
-              const replySenderName =
-                replySender?.name || replySender?.email || "Unknown";
-
-              replyTo = {
-                _id: replyMsg._id,
-                content: snippet,
-                senderName: replySenderName,
-              };
+              replyTo = buildReplyToPreview(replyMsg, replySender);
             }
           }
           if (sender && "email" in sender) {
@@ -325,23 +347,9 @@ export const getMessages = query({
           if (msg.replyToMessageId) {
             const rawReplyMsg = await ctx.db.get(msg.replyToMessageId);
             const replyMsg = rawReplyMsg as any;
-            if (replyMsg && typeof replyMsg.content === "string") {
+            if (replyMsg) {
               const replySender = await ctx.db.get(replyMsg.senderId as any);
-              const snippet =
-                replyMsg.content.slice(0, 80) +
-                (replyMsg.content.length > 80 ? "…" : "");
-              const replySenderName =
-                replySender && "name" in replySender
-                  ? (replySender as any).name
-                  : replySender && "email" in replySender
-                    ? (replySender as any).email
-                    : "Unknown";
-
-              replyTo = {
-                _id: replyMsg._id,
-                content: snippet,
-                senderName: replySenderName,
-              };
+              replyTo = buildReplyToPreview(replyMsg, replySender);
             }
           }
           if (sender && "email" in sender) {
@@ -412,13 +420,41 @@ export const sendMessage = mutation({
     }
 
     const now = Date.now();
+    const messageType = args.messageType || "text";
+
+    let conv = conversation as any;
+    if (
+      getChatMasterSecret() &&
+      messageType !== "system" &&
+      !conv.chatSessionKeyEnc
+    ) {
+      const sk = randomBytes(32);
+      const wrapped = wrapSessionKey(sk, conv.organizationId, conv._id);
+      await ctx.db.patch(args.conversationId, { chatSessionKeyEnc: wrapped });
+      conv = { ...conv, chatSessionKeyEnc: wrapped };
+    }
+
+    let contentToStore = args.content;
+    if (
+      messageType !== "system" &&
+      conv.chatSessionKeyEnc &&
+      getChatMasterSecret() &&
+      !isEncryptedPayload(contentToStore)
+    ) {
+      const sk = unwrapSessionKey(
+        conv.chatSessionKeyEnc,
+        conv.organizationId,
+        conv._id,
+      );
+      contentToStore = encryptUtf8(contentToStore, sk);
+    }
 
     // Create message
     const messageId = await ctx.db.insert("messages", {
       conversationId: args.conversationId,
       senderId: userRecord._id,
-      content: args.content,
-      messageType: args.messageType || "text",
+      content: contentToStore,
+      messageType,
       attachments: args.attachments,
       payslipId: args.payslipId,
       replyToMessageId: args.replyToMessageId,
@@ -464,16 +500,50 @@ export const forwardMessage = mutation({
     }
 
     const now = Date.now();
+    const messageType = args.messageType || "text";
     const forwardedContent =
       args.content.trim().toLowerCase().startsWith("forwarded:")
         ? args.content
         : `Forwarded: ${args.content}`;
 
+    let targetConv = target as any;
+    if (
+      getChatMasterSecret() &&
+      messageType !== "system" &&
+      !targetConv.chatSessionKeyEnc
+    ) {
+      const sk = randomBytes(32);
+      const wrapped = wrapSessionKey(
+        sk,
+        targetConv.organizationId,
+        targetConv._id,
+      );
+      await ctx.db.patch(args.targetConversationId, {
+        chatSessionKeyEnc: wrapped,
+      });
+      targetConv = { ...targetConv, chatSessionKeyEnc: wrapped };
+    }
+
+    let forwardBody = forwardedContent;
+    if (
+      messageType !== "system" &&
+      targetConv.chatSessionKeyEnc &&
+      getChatMasterSecret() &&
+      !isEncryptedPayload(forwardBody)
+    ) {
+      const sk = unwrapSessionKey(
+        targetConv.chatSessionKeyEnc,
+        targetConv.organizationId,
+        targetConv._id,
+      );
+      forwardBody = encryptUtf8(forwardBody, sk);
+    }
+
     await ctx.db.insert("messages", {
       conversationId: args.targetConversationId,
       senderId: userRecord._id,
-      content: forwardedContent,
-      messageType: args.messageType || "text",
+      content: forwardBody,
+      messageType,
       attachments: args.attachments,
       readBy: [userRecord._id],
       createdAt: now,
@@ -1032,5 +1102,59 @@ export const markAllConversationsAsRead = mutation({
     }
 
     return { success: true };
+  },
+});
+
+/** Raw AES-256 session key (base64) for decrypting message bodies; participant-only. */
+export const getChatSessionKey = query({
+  args: {
+    conversationId: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    const conv = await ctx.db.get(args.conversationId);
+    if (!conv) return null;
+    const userRecord = await checkAuth(ctx, conv.organizationId);
+    if (!conv.participants.includes(userRecord._id)) return null;
+    if (!conv.chatSessionKeyEnc || !getChatMasterSecret()) return null;
+    try {
+      const raw = unwrapSessionKey(
+        conv.chatSessionKeyEnc,
+        conv.organizationId,
+        conv._id,
+      );
+      return { key: Buffer.from(raw).toString("base64") };
+    } catch {
+      return null;
+    }
+  },
+});
+
+/** All session keys for conversations the user is in (for sidebar previews). */
+export const listChatSessionKeysForOrganization = query({
+  args: { organizationId: v.id("organizations") },
+  handler: async (ctx, args) => {
+    const userRecord = await checkAuth(ctx, args.organizationId);
+    if (!getChatMasterSecret()) return {};
+    const conversations = await (ctx.db.query("conversations") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .collect();
+    const out: Record<string, string> = {};
+    for (const c of conversations) {
+      if (!c.participants?.includes(userRecord._id)) continue;
+      if (!c.chatSessionKeyEnc) continue;
+      try {
+        const raw = unwrapSessionKey(
+          c.chatSessionKeyEnc,
+          c.organizationId,
+          c._id,
+        );
+        out[c._id] = Buffer.from(raw).toString("base64");
+      } catch {
+        /* skip */
+      }
+    }
+    return out;
   },
 });

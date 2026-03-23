@@ -26,6 +26,24 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  decryptWithSessionKeyB64,
+  isEncryptedPayload,
+} from "@/lib/chat-message-crypto";
+import { useChatSessionKeys } from "./chat-session-keys-context";
+
+function lastMessagePreviewText(
+  conv: any,
+  sessionKeys: Record<string, string>,
+): string {
+  const raw = conv.lastMessage?.content;
+  if (raw == null || typeof raw !== "string") return "";
+  const k = sessionKeys[conv._id];
+  if (k && isEncryptedPayload(raw)) {
+    return decryptWithSessionKeyB64(raw, k);
+  }
+  return raw;
+}
 
 interface ConversationListProps {
   selectedConversationId: string | null;
@@ -45,6 +63,7 @@ export function ConversationList({
   currentUserId,
 }: ConversationListProps) {
   const { currentOrganizationId } = useOrganization();
+  const sessionKeys = useChatSessionKeys();
   const [cursor, setCursor] = useState<string | null>(null);
   const [allConversations, setAllConversations] = useState<any[]>([]);
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
@@ -286,7 +305,7 @@ export function ConversationList({
           </div>
           {conv.lastMessage && (
             <div className="text-xs truncate" style={{ color: "rgb(133, 133, 133)" }}>
-              {conv.lastMessage.content}
+              {lastMessagePreviewText(conv, sessionKeys)}
             </div>
           )}
         </div>

@@ -4,10 +4,30 @@
  */
 
 const DB_NAME = "purple-pay-chat";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const CONVERSATIONS_STORE = "conversations";
 const MESSAGES_STORE = "messages";
+const MEDIA_STORE = "media";
 const ENCRYPTION_KEY_STORE = "encryption_keys";
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    const sub = bytes.subarray(i, i + CHUNK);
+    binary += String.fromCharCode.apply(null, sub as unknown as number[]);
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    out[i] = binary.charCodeAt(i);
+  }
+  return out;
+}
 
 // Simple encryption using Web Crypto API
 class ChatCache {
@@ -61,6 +81,15 @@ class ChatCache {
 
         if (!db.objectStoreNames.contains(ENCRYPTION_KEY_STORE)) {
           db.createObjectStore(ENCRYPTION_KEY_STORE, { keyPath: "orgId" });
+        }
+
+        if (!db.objectStoreNames.contains(MEDIA_STORE)) {
+          const mediaStore = db.createObjectStore(MEDIA_STORE, {
+            keyPath: "id",
+          });
+          mediaStore.createIndex("organizationId", "organizationId", {
+            unique: false,
+          });
         }
       };
     });
@@ -167,8 +196,37 @@ class ChatCache {
     combined.set(iv);
     combined.set(new Uint8Array(encrypted), iv.length);
 
-    // Convert to base64 for storage
-    return btoa(String.fromCharCode(...combined));
+    return bytesToBase64(combined);
+  }
+
+  private async encryptBinary(data: ArrayBuffer): Promise<string> {
+    if (!this.encryptionKey) {
+      throw new Error("Encryption key not initialized");
+    }
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      this.encryptionKey,
+      data,
+    );
+    const combined = new Uint8Array(iv.length + encrypted.byteLength);
+    combined.set(iv);
+    combined.set(new Uint8Array(encrypted), iv.length);
+    return bytesToBase64(combined);
+  }
+
+  private async decryptBinary(encryptedData: string): Promise<ArrayBuffer> {
+    if (!this.encryptionKey) {
+      throw new Error("Encryption key not initialized");
+    }
+    const combined = base64ToBytes(encryptedData);
+    const iv = combined.slice(0, 12);
+    const encrypted = combined.slice(12);
+    return crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      this.encryptionKey!,
+      encrypted,
+    );
   }
 
   private async decrypt(encryptedData: string): Promise<string> {
@@ -177,10 +235,7 @@ class ChatCache {
     }
 
     try {
-      // Convert from base64
-      const combined = Uint8Array.from(atob(encryptedData), (c) =>
-        c.charCodeAt(0)
-      );
+      const combined = base64ToBytes(encryptedData);
 
       const iv = combined.slice(0, 12);
       const encrypted = combined.slice(12);
@@ -297,11 +352,18 @@ class ChatCache {
       request.onsuccess = async () => {
         const results = request.result;
         const messages = [];
+        const wantConv = String(conversationId);
 
         for (const item of results) {
           try {
             const decrypted = await this.decrypt(item.data);
-            messages.push(JSON.parse(decrypted));
+            const msg = JSON.parse(decrypted);
+            if (
+              msg?.conversationId != null &&
+              String(msg.conversationId) === wantConv
+            ) {
+              messages.push(msg);
+            }
           } catch (error) {
             console.error("Error decrypting message:", error);
           }
@@ -316,17 +378,73 @@ class ChatCache {
     });
   }
 
+  /**
+   * Cache file bytes (images/videos/docs) encrypted; avoids refetch when offline.
+   */
+  async cacheAttachment(
+    storageId: string,
+    data: ArrayBuffer,
+    contentType: string,
+  ): Promise<void> {
+    if (!this.db || !this.orgId) return;
+    try {
+      const encrypted = await this.encryptBinary(data);
+      const transaction = this.db.transaction([MEDIA_STORE], "readwrite");
+      const store = transaction.objectStore(MEDIA_STORE);
+      store.put({
+        id: `${this.orgId}_${storageId}`,
+        organizationId: this.orgId,
+        storageId,
+        data: encrypted,
+        contentType: contentType || "application/octet-stream",
+        cachedAt: Date.now(),
+      });
+    } catch (e) {
+      console.error("cacheAttachment:", e);
+    }
+  }
+
+  async getCachedAttachment(
+    storageId: string,
+  ): Promise<{ data: ArrayBuffer; contentType: string } | null> {
+    if (!this.db || !this.orgId) return null;
+    return new Promise((resolve) => {
+      const transaction = this.db!.transaction([MEDIA_STORE], "readonly");
+      const store = transaction.objectStore(MEDIA_STORE);
+      const request = store.get(`${this.orgId}_${storageId}`);
+      request.onsuccess = async () => {
+        const row = request.result;
+        if (!row?.data) {
+          resolve(null);
+          return;
+        }
+        try {
+          const data = await this.decryptBinary(row.data);
+          resolve({
+            data,
+            contentType: row.contentType || "application/octet-stream",
+          });
+        } catch (e) {
+          console.error("getCachedAttachment decrypt:", e);
+          resolve(null);
+        }
+      };
+      request.onerror = () => resolve(null);
+    });
+  }
+
   async clearCache(): Promise<void> {
     if (!this.db || !this.orgId) return;
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction(
-        [CONVERSATIONS_STORE, MESSAGES_STORE],
-        "readwrite"
+        [CONVERSATIONS_STORE, MESSAGES_STORE, MEDIA_STORE],
+        "readwrite",
       );
 
       const conversationsStore = transaction.objectStore(CONVERSATIONS_STORE);
       const messagesStore = transaction.objectStore(MESSAGES_STORE);
+      const mediaStore = transaction.objectStore(MEDIA_STORE);
 
       const conversationsIndex = conversationsStore.index("organizationId");
       const conversationsRequest = conversationsIndex.openKeyCursor(
@@ -351,7 +469,21 @@ class ChatCache {
               }
               msgCursor.continue();
             } else {
-              resolve();
+              const orgId = this.orgId!;
+              const mediaIndex = mediaStore.index("organizationId");
+              const mediaReq = mediaIndex.openKeyCursor(
+                IDBKeyRange.only(orgId),
+              );
+              mediaReq.onsuccess = (mev) => {
+                const mc = (mev.target as IDBRequest).result;
+                if (mc) {
+                  mediaStore.delete(mc.primaryKey);
+                  mc.continue();
+                } else {
+                  resolve();
+                }
+              };
+              mediaReq.onerror = () => reject(mediaReq.error);
             }
           };
 
@@ -365,3 +497,15 @@ class ChatCache {
 }
 
 export const chatCache = new ChatCache();
+
+/** Merge server + locally cached messages; server wins on same _id. */
+export function mergeChatMessagesById(server: any[], existing: any[]): any[] {
+  const map = new Map<string, any>();
+  for (const m of existing) {
+    if (m?._id != null) map.set(String(m._id), m);
+  }
+  for (const m of server) {
+    if (m?._id != null) map.set(String(m._id), m);
+  }
+  return [...map.values()].sort((a, b) => a.createdAt - b.createdAt);
+}

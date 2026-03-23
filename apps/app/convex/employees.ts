@@ -1,6 +1,10 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import {
+  encryptCompensationForDb,
+  decryptEmployeeFromDb,
+} from "./employeeCompensationCrypto";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -136,7 +140,7 @@ export const getEmployees = query({
       );
     }
 
-    return employees;
+    return employees.map((e: any) => decryptEmployeeFromDb(e));
   },
 });
 
@@ -159,7 +163,7 @@ export const getEmployee = query({
       throw new Error("Not authorized");
     }
 
-    return employee;
+    return decryptEmployeeFromDb(employee);
   },
 });
 
@@ -468,7 +472,7 @@ export const createEmployee = mutation({
       organizationId: args.organizationId,
       personalInfo: args.personalInfo,
       employment: args.employment,
-      compensation: args.compensation,
+      compensation: encryptCompensationForDb(args.compensation) as any,
       schedule: args.schedule,
       requirements: defaultRequirements,
       deductions: [],
@@ -650,7 +654,13 @@ export const updateEmployee = mutation({
       updates.personalInfo = personalInfoUpdate;
     }
     if (args.employment) updates.employment = args.employment;
-    if (args.compensation) updates.compensation = args.compensation;
+    if (args.compensation) {
+      const currentComp = decryptEmployeeFromDb(employee).compensation;
+      updates.compensation = encryptCompensationForDb({
+        ...currentComp,
+        ...args.compensation,
+      }) as any;
+    }
     if (args.schedule) updates.schedule = args.schedule;
     if (args.shiftId !== undefined) updates.shiftId = args.shiftId;
     if (args.customFields !== undefined) {
@@ -1027,11 +1037,14 @@ export const migrateRemovePaymentFrequency = mutation({
     const employees = await ctx.db.query("employees").collect();
 
     for (const employee of employees) {
-      if (employee.compensation.paymentFrequency !== undefined) {
+      const dec = decryptEmployeeFromDb(employee);
+      if (dec.compensation?.paymentFrequency !== undefined) {
         const { paymentFrequency, ...compensationWithoutPaymentFrequency } =
-          employee.compensation;
+          dec.compensation;
         await ctx.db.patch(employee._id, {
-          compensation: compensationWithoutPaymentFrequency as any,
+          compensation: encryptCompensationForDb(
+            compensationWithoutPaymentFrequency as any,
+          ) as any,
           updatedAt: Date.now(),
         });
       }

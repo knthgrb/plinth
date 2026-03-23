@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { encryptCompensationForDb } from "./employeeCompensationCrypto";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -565,10 +566,10 @@ export const convertApplicantToEmployee = mutation({
         hireDate: args.employeeData.hireDate,
         status: "active",
       },
-      compensation: {
+      compensation: encryptCompensationForDb({
         basicSalary: args.employeeData.basicSalary,
         salaryType: args.employeeData.salaryType,
-      },
+      }) as any,
       schedule: {
         defaultSchedule: {
           monday: { in: "09:00", out: "18:00", isWorkday: true },

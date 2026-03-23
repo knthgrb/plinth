@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { decryptPayslipRowFromDb } from "./payslipCrypto";
 
 // Helper to check authorization - accounting, admin, and owner can access
 async function checkAuth(
@@ -129,9 +130,10 @@ async function buildBreakdownForPayrollCostItem(
     .then((runs: any[]) => runs.find((run) => run.period === period));
   if (!payrollRun) return undefined;
 
-  const payslips = await (ctx.db.query("payslips") as any)
+  const payslipsRaw = await (ctx.db.query("payslips") as any)
     .withIndex("by_payroll_run", (q: any) => q.eq("payrollRunId", payrollRun._id))
     .collect();
+  const payslips = payslipsRaw.map((p: any) => decryptPayslipRowFromDb(p)!);
   if (payslips.length === 0) return undefined;
 
   const employees = await Promise.all(
@@ -251,9 +253,10 @@ async function buildAttachmentIdsForPayrollCostItem(
     .then((runs: any[]) => runs.find((run) => run.period === period));
   if (!payrollRun) return undefined;
 
-  const payslips = await (ctx.db.query("payslips") as any)
+  const payslipsRawAttach = await (ctx.db.query("payslips") as any)
     .withIndex("by_payroll_run", (q: any) => q.eq("payrollRunId", payrollRun._id))
     .collect();
+  const payslips = payslipsRawAttach.map((p: any) => decryptPayslipRowFromDb(p)!);
 
   const attachmentIds = Array.from(
     new Set(

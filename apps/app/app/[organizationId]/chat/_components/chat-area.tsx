@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useMemo,
+} from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -14,7 +20,6 @@ import {
   Paperclip,
   X,
   FileText,
-  Download,
   ChevronUp,
   Forward,
   Reply,
@@ -35,7 +40,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { chatCache } from "@/services/chat-cache-service";
+import { chatCache, mergeChatMessagesById } from "@/services/chat-cache-service";
+import { CachedFileAttachment } from "./chat-file-attachment";
 import { generateUploadUrl } from "@/actions/files";
 import { validateChatFile } from "@/lib/chat-file-validation";
 import { DocumentSelectorModal } from "./document-selector-modal";
@@ -54,6 +60,34 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  decryptWithSessionKeyB64,
+  encryptWithSessionKeyB64,
+  isEncryptedPayload,
+} from "@/lib/chat-message-crypto";
+import { useChatSessionKeys } from "./chat-session-keys-context";
+
+function scopeMessagesToConversation(
+  msgs: any[],
+  conversationId: string | null,
+): any[] {
+  if (!conversationId) return [];
+  const cid = String(conversationId);
+  return msgs.filter(
+    (m) => m?.conversationId != null && String(m.conversationId) === cid,
+  );
+}
+
+function messagesBelongToConversation(
+  msgs: any[],
+  conversationId: string,
+): boolean {
+  if (msgs.length === 0) return true;
+  const cid = String(conversationId);
+  return msgs.every(
+    (m) => m?.conversationId != null && String(m.conversationId) === cid,
+  );
+}
 
 interface ChatAreaProps {
   conversationId: string | null;
@@ -82,7 +116,8 @@ export function ChatArea({
   const router = useRouter();
   const { toast } = useToast();
   const { currentOrganizationId } = useOrganization();
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const sessionKeys = useChatSessionKeys();
+  const messagesListRef = useRef<HTMLDivElement>(null);
   const messagesTopRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [messageContent, setMessageContent] = useState("");
@@ -116,6 +151,9 @@ export function ChatArea({
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
 
   const [loadOlderTrigger, setLoadOlderTrigger] = useState(0);
+  /** After prepending older messages, restore scroll so the viewport stays put */
+  const scrollRestoreRef = useRef<{ height: number; top: number } | null>(null);
+  const prevMessageCountRef = useRef(0);
 
   const messagesData = useQuery(
     (api as any).chat.getMessages,
@@ -131,36 +169,11 @@ export function ChatArea({
   // Track if we're loading older messages
   const isLoadingOlderRef = useRef(false);
 
-  // Update messages when data changes
+  // Reset first on conversation change so merges/cache never see the previous thread.
   useEffect(() => {
-    if (messagesData) {
-      if (isLoadingOlderRef.current) {
-        // Loading older messages - prepend them
-        setAllMessages((prev) => {
-          const newMessages = messagesData.messages.filter(
-            (newMsg: any) =>
-              !prev.some((oldMsg: any) => oldMsg._id === newMsg._id),
-          );
-          return [...newMessages, ...prev];
-        });
-        // Update oldest timestamp to the new oldest message
-        if (messagesData.oldestTimestamp) {
-          setOldestTimestamp(messagesData.oldestTimestamp);
-        }
-      } else {
-        // Initial load
-        setAllMessages(messagesData.messages);
-        if (messagesData.oldestTimestamp) {
-          setOldestTimestamp(messagesData.oldestTimestamp);
-        }
-      }
-      setIsLoadingOlder(false);
-      isLoadingOlderRef.current = false;
-    }
-  }, [messagesData]);
-
-  // Reset when conversation changes
-  useEffect(() => {
+    let cancelled = false;
+    scrollRestoreRef.current = null;
+    prevMessageCountRef.current = 0;
     setAllMessages([]);
     setOldestTimestamp(null);
     setIsLoadingOlder(false);
@@ -168,7 +181,104 @@ export function ChatArea({
     setLoadOlderTrigger(0);
     setReplyingTo(null);
     setHoveredMessageId(null);
-  }, [conversationId]);
+
+    if (!conversationId || !currentOrganizationId) return;
+
+    (async () => {
+      try {
+        await chatCache.initialize(currentOrganizationId);
+        const cached = await chatCache.getCachedMessages(conversationId);
+        if (cancelled || cached.length === 0) return;
+        setAllMessages((prev) =>
+          mergeChatMessagesById(
+            scopeMessagesToConversation(prev, conversationId),
+            cached,
+          ),
+        );
+      } catch (e) {
+        console.error("Hydrate messages from cache:", e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, currentOrganizationId]);
+
+  // Sync from Convex after reset (same tick: [] then merge sees empty prev)
+  useEffect(() => {
+    if (!conversationId || !messagesData) return;
+
+    const incoming = messagesData.messages.filter(
+      (m: any) => String(m.conversationId) === String(conversationId),
+    );
+    // Drop stale query results from the previous conversation
+    if (
+      messagesData.messages.length > 0 &&
+      incoming.length === 0
+    ) {
+      return;
+    }
+
+    if (isLoadingOlderRef.current) {
+      setAllMessages((prev) => {
+        const base = scopeMessagesToConversation(prev, conversationId);
+        const newMessages = incoming.filter(
+          (newMsg: any) =>
+            !base.some((oldMsg: any) => oldMsg._id === newMsg._id),
+        );
+        return [...newMessages, ...base];
+      });
+    } else {
+      setAllMessages((prev) =>
+        mergeChatMessagesById(
+          incoming,
+          scopeMessagesToConversation(prev, conversationId),
+        ),
+      );
+    }
+    setIsLoadingOlder(false);
+    isLoadingOlderRef.current = false;
+  }, [conversationId, messagesData]);
+
+  const messages = useMemo(
+    () => scopeMessagesToConversation(allMessages, conversationId),
+    [allMessages, conversationId],
+  );
+
+  const sessionKeyB64 =
+    conversationId && sessionKeys[conversationId]
+      ? sessionKeys[conversationId]
+      : undefined;
+
+  const displayMessages = useMemo(() => {
+    if (!sessionKeyB64) return messages;
+    return messages.map((m: any) => ({
+      ...m,
+      content: decryptWithSessionKeyB64(m.content, sessionKeyB64),
+      replyTo: m.replyTo
+        ? {
+            ...m.replyTo,
+            content:
+              typeof m.replyTo.content === "string" &&
+              isEncryptedPayload(m.replyTo.content)
+                ? decryptWithSessionKeyB64(m.replyTo.content, sessionKeyB64)
+                : m.replyTo.content,
+          }
+        : null,
+    }));
+  }, [messages, sessionKeyB64]);
+
+  // Oldest message time for pagination (current thread only)
+  useEffect(() => {
+    if (messages.length === 0) {
+      setOldestTimestamp(null);
+      return;
+    }
+    setOldestTimestamp(
+      Math.min(...messages.map((m: any) => m.createdAt)),
+    );
+  }, [messages]);
 
   // Clear hover leave timeout on unmount
   useEffect(() => {
@@ -178,7 +288,6 @@ export function ChatArea({
     };
   }, []);
 
-  const messages = allMessages;
   const hasMoreMessages = messagesData?.hasMore || false;
 
   const sendMessageMutation = useMutation((api as any).chat.sendMessage);
@@ -197,10 +306,10 @@ export function ChatArea({
     if (
       !conversationId ||
       !currentUserId ||
-      !allMessages.length
+      messages.length === 0
     )
       return;
-    const unreadIds = allMessages
+    const unreadIds = messages
       .filter(
         (m: any) =>
           m.senderId !== currentUserId &&
@@ -212,32 +321,91 @@ export function ChatArea({
       conversationId: conversationId as Id<"conversations">,
       messageIds: unreadIds,
     }).catch((err) => console.error("markMessagesAsRead failed", err));
-  }, [conversationId, currentUserId, allMessages]);
+  }, [conversationId, currentUserId, messages]);
 
-  // Cache messages when they update
+  // Cache only rows that belong to this conversation (avoids cross-thread writes on switch)
   useEffect(() => {
-    if (messages && conversationId) {
-      chatCache.cacheMessages(conversationId, messages).catch((error) => {
-        console.error("Error caching messages:", error);
-      });
+    if (
+      messages.length === 0 ||
+      !conversationId ||
+      !messagesBelongToConversation(messages, conversationId)
+    ) {
+      return;
     }
+    chatCache.cacheMessages(conversationId, messages).catch((error) => {
+      console.error("Error caching messages:", error);
+    });
   }, [messages, conversationId]);
 
   const loadOlderMessages = () => {
     if (!hasMoreMessages || isLoadingOlder || !oldestTimestamp) return;
+    const el = messagesListRef.current;
+    if (el) {
+      scrollRestoreRef.current = {
+        height: el.scrollHeight,
+        top: el.scrollTop,
+      };
+    }
     setIsLoadingOlder(true);
     isLoadingOlderRef.current = true;
     // Trigger query with current oldestTimestamp to fetch older messages
     setLoadOlderTrigger((prev) => prev + 1);
   };
 
-  // Auto-scroll to bottom when new messages arrive (only on initial load or new messages)
-  useEffect(() => {
-    if (!oldestTimestamp) {
-      // Initial load - scroll to bottom
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  // Newer messages at bottom: scroll down when the list grows (open thread, sync, new msgs).
+  // "See more" prepends older rows — restore scroll so we don't jump to the bottom.
+  useLayoutEffect(() => {
+    const el = messagesListRef.current;
+    if (!el || !conversationId) return;
+
+    if (scrollRestoreRef.current != null) {
+      const { height: prevH, top: prevTop } = scrollRestoreRef.current;
+      scrollRestoreRef.current = null;
+      const delta = el.scrollHeight - prevH;
+      el.scrollTop = prevTop + delta;
+      prevMessageCountRef.current = messages.length;
+      return;
     }
-  }, [messages.length, oldestTimestamp]);
+
+    if (messages.length === 0) {
+      prevMessageCountRef.current = 0;
+      return;
+    }
+
+    const prevCount = prevMessageCountRef.current;
+    prevMessageCountRef.current = messages.length;
+
+    if (messages.length <= prevCount) return;
+
+    // Stick to newest messages (bottom). Older rows only load via "See more"
+    // above, which uses scrollRestoreRef instead of this path.
+    const pinBottom = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+    pinBottom();
+    requestAnimationFrame(() => {
+      const list = messagesListRef.current;
+      if (list) list.scrollTop = list.scrollHeight;
+    });
+    requestAnimationFrame(() => {
+      const list = messagesListRef.current;
+      if (list) list.scrollTop = list.scrollHeight;
+    });
+  }, [messages, conversationId]);
+
+  // Images / late layout can grow scrollHeight; stay pinned if already near the bottom
+  useEffect(() => {
+    const el = messagesListRef.current;
+    if (!el || !conversationId) return;
+    const ro = new ResizeObserver(() => {
+      const list = messagesListRef.current;
+      if (!list || list.scrollHeight <= list.clientHeight) return;
+      const gap = list.scrollHeight - list.scrollTop - list.clientHeight;
+      if (gap < 160) list.scrollTop = list.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [conversationId]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -380,9 +548,15 @@ export function ChatArea({
       }
       if (!targetConversationId) return;
 
+      const keyForSend = sessionKeys[targetConversationId];
+      let contentOut = content;
+      if (keyForSend && contentOut) {
+        contentOut = encryptWithSessionKeyB64(contentOut, keyForSend);
+      }
+
       await sendMessageMutation({
         conversationId: targetConversationId as Id<"conversations">,
-        content,
+        content: contentOut,
         messageType: attachmentStorageIds.length > 0 ? "file" : "text",
         attachments:
           attachmentStorageIds.length > 0
@@ -470,7 +644,7 @@ export function ChatArea({
     );
   }
 
-  const messagesToShow = conversationId ? messages : [];
+  const messagesToShow = conversationId ? displayMessages : [];
   const canSend = !!conversationId || !!pendingParticipant;
 
   return (
@@ -636,8 +810,11 @@ export function ChatArea({
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white">
+      {/* Messages — min-h-0 so flex-1 can shrink; without it, min-height:auto grows with content and no inner scroll (page scrolls instead). */}
+      <div
+        ref={messagesListRef}
+        className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 bg-white"
+      >
         {/* Load older messages button */}
         {conversationId && hasMoreMessages && (
           <div className="flex justify-center" ref={messagesTopRef}>
@@ -667,7 +844,9 @@ export function ChatArea({
             <MessageListSkeleton />
           </div>
         )}
-        {conversationId && messagesData === undefined ? (
+        {conversationId &&
+        messagesData === undefined &&
+        messages.length === 0 ? (
           <MessageListSkeleton />
         ) : (messagesToShow?.length ?? 0) === 0 ? (
           <div className="text-center text-gray-500 py-8">
@@ -797,10 +976,11 @@ export function ChatArea({
                     <div className="mt-2 space-y-1">
                       {message.attachments.map(
                         (attachmentId: string, idx: number) => (
-                          <FileAttachment
+                          <CachedFileAttachment
                             key={idx}
                             storageId={attachmentId}
                             isOwnMessage={isOwnMessage}
+                            organizationId={currentOrganizationId || ""}
                           />
                         ),
                       )}
@@ -839,7 +1019,7 @@ export function ChatArea({
             );
           })
         )}
-        <div ref={messagesEndRef} />
+        <div aria-hidden className="h-px shrink-0" />
       </div>
 
       {/* Message Input */}
@@ -999,116 +1179,5 @@ export function ChatArea({
         currentConversationId={conversationId}
       />
     </div>
-  );
-}
-
-// Content types that show inline preview (images including GIF; video)
-function isPreviewableMedia(
-  contentType: string | null,
-): "image" | "video" | false {
-  if (!contentType) return false;
-  if (contentType.startsWith("image/")) return "image";
-  if (contentType.startsWith("video/")) return "video";
-  return false;
-}
-
-// Component to display file attachments in messages
-function FileAttachment({
-  storageId,
-  isOwnMessage,
-}: {
-  storageId: string;
-  isOwnMessage: boolean;
-}) {
-  const fileData = useQuery(
-    (api as any).files.getFileUrlAndType,
-    storageId ? { storageId: storageId as Id<"_storage"> } : "skip",
-  );
-
-  if (fileData === undefined) {
-    return (
-      <div className="flex items-center gap-2 text-xs">
-        <div className="animate-spin h-3 w-3 border-2 border-gray-400 border-t-transparent rounded-full" />
-        <span>Loading file...</span>
-      </div>
-    );
-  }
-
-  if (!fileData?.url) {
-    return <div className="text-xs text-gray-500">File not available</div>;
-  }
-
-  const { url } = fileData;
-  const previewType = isPreviewableMedia(fileData.contentType ?? null);
-  const downloadClass = isOwnMessage
-    ? "bg-purple-500/20 text-white hover:bg-purple-500/30"
-    : "bg-gray-100 text-gray-700 hover:bg-gray-200";
-
-  // Image (including GIF): neutral container, no brand background
-  if (previewType === "image") {
-    return (
-      <div className="space-y-1">
-        <div className="rounded-lg overflow-hidden bg-white max-w-[280px] max-h-[320px]">
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block"
-          >
-            <img
-              src={url}
-              alt="Attachment"
-              className="w-full h-auto object-contain max-h-[320px]"
-            />
-          </a>
-        </div>
-        <a
-          href={url}
-          download
-          target="_blank"
-          rel="noopener noreferrer"
-          className={`inline-flex items-center gap-1.5 text-xs p-1.5 rounded transition-all ${downloadClass}`}
-        >
-          <Download className="h-3 w-3 shrink-0" />
-          <span>Download</span>
-        </a>
-      </div>
-    );
-  }
-
-  // Video: neutral container, no brand background
-  if (previewType === "video") {
-    return (
-      <div className="space-y-1">
-        <div className="rounded-lg overflow-hidden bg-white max-w-[280px] max-h-[320px]">
-          <video src={url} controls className="w-full h-auto max-h-[320px]" />
-        </div>
-        <a
-          href={url}
-          download
-          target="_blank"
-          rel="noopener noreferrer"
-          className={`inline-flex items-center gap-1.5 text-xs p-1.5 rounded transition-all ${downloadClass}`}
-        >
-          <Download className="h-3 w-3 shrink-0" />
-          <span>Download</span>
-        </a>
-      </div>
-    );
-  }
-
-  // PDF, docs, etc.: downloadable only
-  return (
-    <a
-      href={url}
-      download
-      target="_blank"
-      rel="noopener noreferrer"
-      className={`flex items-center gap-2 text-xs p-2 rounded transition-all ${downloadClass}`}
-    >
-      <FileText className="h-4 w-4 shrink-0" />
-      <span className="truncate">Attachment</span>
-      <Download className="h-3 w-3 shrink-0 ml-auto" />
-    </a>
   );
 }

@@ -769,6 +769,9 @@ export default function LeavePage() {
                 <LeaveTrackerTab
                   organizationId={currentOrganizationId || ""}
                   employees={activeEmployees}
+                  employeesLoading={
+                    Boolean(currentOrganizationId) && employees === undefined
+                  }
                   proratedLeave={settings?.proratedLeave ?? true}
                   annualSil={settings?.annualSil ?? 8}
                   grantLeaveUponRegularization={

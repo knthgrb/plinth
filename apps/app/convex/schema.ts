@@ -120,8 +120,9 @@ export default defineSchema({
       ),
     }),
     compensation: v.object({
-      basicSalary: v.number(),
-      allowance: v.optional(v.number()), // Non-taxable allowance
+      /** Encrypted at rest when ENCRYPTION_KEY is set (stored as pp:enc:v1:… string). */
+      basicSalary: v.union(v.number(), v.string()),
+      allowance: v.optional(v.union(v.number(), v.string())),
       salaryType: v.union(
         v.literal("monthly"),
         v.literal("daily"),
@@ -395,60 +396,63 @@ export default defineSchema({
     /** Set when run is saved as draft; indicates gov/attendance deductions were applied in payslips */
     deductionsEnabled: v.optional(v.boolean()),
     draftConfig: v.optional(
-      v.object({
-        employeeIds: v.array(v.id("employees")),
-        manualDeductions: v.optional(
-          v.array(
-            v.object({
-              employeeId: v.id("employees"),
-              deductions: v.array(
-                v.object({
-                  name: v.string(),
-                  amount: v.number(),
-                  type: v.string(),
+      v.union(
+        v.string(),
+        v.object({
+          employeeIds: v.array(v.id("employees")),
+          manualDeductions: v.optional(
+            v.array(
+              v.object({
+                employeeId: v.id("employees"),
+                deductions: v.array(
+                  v.object({
+                    name: v.string(),
+                    amount: v.number(),
+                    type: v.string(),
+                  }),
+                ),
+              }),
+            ),
+          ),
+          incentives: v.optional(
+            v.array(
+              v.object({
+                employeeId: v.id("employees"),
+                incentives: v.array(
+                  v.object({
+                    name: v.string(),
+                    amount: v.number(),
+                    type: v.string(),
+                  }),
+                ),
+              }),
+            ),
+          ),
+          governmentDeductionSettings: v.optional(
+            v.array(
+              v.object({
+                employeeId: v.id("employees"),
+                sss: v.object({
+                  enabled: v.boolean(),
+                  frequency: v.union(v.literal("full"), v.literal("half")),
                 }),
-              ),
-            }),
-          ),
-        ),
-        incentives: v.optional(
-          v.array(
-            v.object({
-              employeeId: v.id("employees"),
-              incentives: v.array(
-                v.object({
-                  name: v.string(),
-                  amount: v.number(),
-                  type: v.string(),
+                pagibig: v.object({
+                  enabled: v.boolean(),
+                  frequency: v.union(v.literal("full"), v.literal("half")),
                 }),
-              ),
-            }),
+                philhealth: v.object({
+                  enabled: v.boolean(),
+                  frequency: v.union(v.literal("full"), v.literal("half")),
+                }),
+                tax: v.object({
+                  enabled: v.boolean(),
+                  frequency: v.union(v.literal("full"), v.literal("half")),
+                }),
+              }),
+            ),
           ),
-        ),
-        governmentDeductionSettings: v.optional(
-          v.array(
-            v.object({
-              employeeId: v.id("employees"),
-              sss: v.object({
-                enabled: v.boolean(),
-                frequency: v.union(v.literal("full"), v.literal("half")),
-              }),
-              pagibig: v.object({
-                enabled: v.boolean(),
-                frequency: v.union(v.literal("full"), v.literal("half")),
-              }),
-              philhealth: v.object({
-                enabled: v.boolean(),
-                frequency: v.union(v.literal("full"), v.literal("half")),
-              }),
-              tax: v.object({
-                enabled: v.boolean(),
-                frequency: v.union(v.literal("full"), v.literal("half")),
-              }),
-            }),
-          ),
-        ),
-      }),
+        }),
+      ),
     ),
     notes: v.optional(
       v.array(
@@ -478,55 +482,65 @@ export default defineSchema({
     employeeId: v.id("employees"),
     payrollRunId: v.id("payrollRuns"),
     period: v.string(),
-    grossPay: v.number(),
+    /** Numeric fields may be AES-GCM ciphertext strings when ENCRYPTION_KEY is set. */
+    grossPay: v.union(v.number(), v.string()),
     /** Basic pay (regular compensation) for this period - used for 13th month computation */
-    basicPay: v.optional(v.number()),
-    deductions: v.array(
-      v.object({
-        name: v.string(),
-        amount: v.number(),
-        type: v.string(),
-      }),
-    ),
-    incentives: v.optional(
+    basicPay: v.optional(v.union(v.number(), v.string())),
+    deductions: v.union(
+      v.string(),
       v.array(
         v.object({
           name: v.string(),
-          amount: v.number(),
+          amount: v.union(v.number(), v.string()),
           type: v.string(),
         }),
       ),
     ),
-    nonTaxableAllowance: v.optional(v.number()),
-    netPay: v.number(),
-    daysWorked: v.number(),
-    absences: v.number(),
-    lateHours: v.number(),
-    undertimeHours: v.number(),
-    overtimeHours: v.number(),
-    holidayPay: v.optional(v.number()),
+    incentives: v.optional(
+      v.union(
+        v.string(),
+        v.array(
+          v.object({
+            name: v.string(),
+            amount: v.union(v.number(), v.string()),
+            type: v.string(),
+          }),
+        ),
+      ),
+    ),
+    nonTaxableAllowance: v.optional(v.union(v.number(), v.string())),
+    netPay: v.union(v.number(), v.string()),
+    daysWorked: v.union(v.number(), v.string()),
+    absences: v.union(v.number(), v.string()),
+    lateHours: v.union(v.number(), v.string()),
+    undertimeHours: v.union(v.number(), v.string()),
+    overtimeHours: v.union(v.number(), v.string()),
+    holidayPay: v.optional(v.union(v.number(), v.string())),
     /** When holidayPay > 0: "regular" = Legal Holiday, "special" = Special Holiday (for label only). */
     holidayPayType: v.optional(
       v.union(v.literal("regular"), v.literal("special")),
     ),
-    restDayPay: v.optional(v.number()),
-    nightDiffPay: v.optional(v.number()),
-    overtimeRegular: v.optional(v.number()),
-    overtimeRestDay: v.optional(v.number()),
-    overtimeRestDayExcess: v.optional(v.number()),
-    overtimeSpecialHoliday: v.optional(v.number()),
-    overtimeSpecialHolidayExcess: v.optional(v.number()),
-    overtimeLegalHoliday: v.optional(v.number()),
-    overtimeLegalHolidayExcess: v.optional(v.number()),
-    pendingDeductions: v.optional(v.number()),
+    restDayPay: v.optional(v.union(v.number(), v.string())),
+    nightDiffPay: v.optional(v.union(v.number(), v.string())),
+    overtimeRegular: v.optional(v.union(v.number(), v.string())),
+    overtimeRestDay: v.optional(v.union(v.number(), v.string())),
+    overtimeRestDayExcess: v.optional(v.union(v.number(), v.string())),
+    overtimeSpecialHoliday: v.optional(v.union(v.number(), v.string())),
+    overtimeSpecialHolidayExcess: v.optional(v.union(v.number(), v.string())),
+    overtimeLegalHoliday: v.optional(v.union(v.number(), v.string())),
+    overtimeLegalHolidayExcess: v.optional(v.union(v.number(), v.string())),
+    pendingDeductions: v.optional(v.union(v.number(), v.string())),
     hasWorkedAtLeastOneDay: v.optional(v.boolean()),
     /** Employer share of gov contributions (per cutoff) for accounting total. */
     employerContributions: v.optional(
-      v.object({
-        sss: v.optional(v.number()),
-        philhealth: v.optional(v.number()),
-        pagibig: v.optional(v.number()),
-      }),
+      v.union(
+        v.string(),
+        v.object({
+          sss: v.optional(v.union(v.number(), v.string())),
+          philhealth: v.optional(v.union(v.number(), v.string())),
+          pagibig: v.optional(v.union(v.number(), v.string())),
+        }),
+      ),
     ),
     pdfFile: v.optional(v.id("_storage")),
     editHistory: v.optional(
@@ -1023,6 +1037,8 @@ export default defineSchema({
       v.union(v.literal("organization"), v.literal("personal")),
     ), // Only for type "channel"
     lastMessageAt: v.optional(v.number()),
+    /** AES-256 session key for message bodies, wrapped with org KEK (see chatSessionKey.ts). */
+    chatSessionKeyEnc: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

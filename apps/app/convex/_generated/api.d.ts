@@ -10,14 +10,19 @@
 
 import type * as accounting from "../accounting.js";
 import type * as announcements from "../announcements.js";
+import type * as appEncryption from "../appEncryption.js";
 import type * as assets from "../assets.js";
 import type * as attendance from "../attendance.js";
 import type * as auth from "../auth.js";
 import type * as chat from "../chat.js";
+import type * as chatMessageBodyCrypto from "../chatMessageBodyCrypto.js";
+import type * as chatSessionKey from "../chatSessionKey.js";
 import type * as demoRequests from "../demoRequests.js";
 import type * as documents from "../documents.js";
+import type * as employeeCompensationCrypto from "../employeeCompensationCrypto.js";
 import type * as employees from "../employees.js";
 import type * as evaluations from "../evaluations.js";
+import type * as fieldEncryption from "../fieldEncryption.js";
 import type * as files from "../files.js";
 import type * as holidays from "../holidays.js";
 import type * as http from "../http.js";
@@ -27,6 +32,8 @@ import type * as leaveCalculations from "../leaveCalculations.js";
 import type * as memos from "../memos.js";
 import type * as organizations from "../organizations.js";
 import type * as payroll from "../payroll.js";
+import type * as payrollRunCrypto from "../payrollRunCrypto.js";
+import type * as payslipCrypto from "../payslipCrypto.js";
 import type * as payslipPin from "../payslipPin.js";
 import type * as recruitment from "../recruitment.js";
 import type * as settings from "../settings.js";
@@ -43,14 +50,19 @@ import type {
 declare const fullApi: ApiFromModules<{
   accounting: typeof accounting;
   announcements: typeof announcements;
+  appEncryption: typeof appEncryption;
   assets: typeof assets;
   attendance: typeof attendance;
   auth: typeof auth;
   chat: typeof chat;
+  chatMessageBodyCrypto: typeof chatMessageBodyCrypto;
+  chatSessionKey: typeof chatSessionKey;
   demoRequests: typeof demoRequests;
   documents: typeof documents;
+  employeeCompensationCrypto: typeof employeeCompensationCrypto;
   employees: typeof employees;
   evaluations: typeof evaluations;
+  fieldEncryption: typeof fieldEncryption;
   files: typeof files;
   holidays: typeof holidays;
   http: typeof http;
@@ -60,6 +72,8 @@ declare const fullApi: ApiFromModules<{
   memos: typeof memos;
   organizations: typeof organizations;
   payroll: typeof payroll;
+  payrollRunCrypto: typeof payrollRunCrypto;
+  payslipCrypto: typeof payslipCrypto;
   payslipPin: typeof payslipPin;
   recruitment: typeof recruitment;
   settings: typeof settings;
