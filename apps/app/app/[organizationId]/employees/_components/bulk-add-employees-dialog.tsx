@@ -36,7 +36,7 @@ export function BulkAddEmployeesDialog({
 }: BulkAddEmployeesDialogProps) {
   const settings = useQuery(
     (api as any).settings.getSettings,
-    organizationId ? { organizationId } : "skip"
+    organizationId ? { organizationId } : "skip",
   );
 
   const [file, setFile] = useState<File | null>(null);
@@ -79,27 +79,22 @@ export function BulkAddEmployeesDialog({
   };
 
   const validRows = parsedRows.filter(
-    (r) => Object.keys(r.errors).length === 0
+    (r) => Object.keys(r.errors).length === 0,
   );
   const invalidRows = parsedRows.filter(
-    (r) => Object.keys(r.errors).length > 0
+    (r) => Object.keys(r.errors).length > 0,
   );
 
   const handleBulkAdd = async () => {
     if (!organizationId || validRows.length === 0 || isUploading) return;
 
     // Organization base configs (% additional stored as multipliers, e.g. 2.0 = 100% additional).
-    const orgRegularRate =
-      settings?.payrollSettings?.regularHolidayRate ?? 2.0;
-    const orgSpecialRate =
-      settings?.payrollSettings?.specialHolidayRate ?? 1.3;
-    const orgNightDiff =
-      settings?.payrollSettings?.nightDiffPercent ?? 1.1;
-    const orgOtRegular =
-      settings?.payrollSettings?.overtimeRegularRate ?? 1.25;
+    const orgRegularRate = settings?.payrollSettings?.regularHolidayRate ?? 2.0;
+    const orgSpecialRate = settings?.payrollSettings?.specialHolidayRate ?? 1.3;
+    const orgNightDiff = settings?.payrollSettings?.nightDiffPercent ?? 1.1;
+    const orgOtRegular = settings?.payrollSettings?.overtimeRegularRate ?? 1.25;
     // REST_DAY_PREMIUM (base config) – stored as 1.3 = 30% additional.
-    const orgOtRestDay =
-      settings?.payrollSettings?.overtimeRestDayRate ?? 1.3;
+    const orgOtRestDay = settings?.payrollSettings?.overtimeRestDayRate ?? 1.3;
 
     setIsUploading(true);
     const errors: string[] = [];
@@ -140,7 +135,11 @@ export function BulkAddEmployeesDialog({
             employeeId: "",
             position: v.position,
             department: v.department,
-            employmentType: v.employmentType as "regular" | "probationary" | "contractual" | "part-time",
+            employmentType: v.employmentType as
+              | "regular"
+              | "probationary"
+              | "contractual"
+              | "part-time",
             hireDate: new Date(v.hireDate).getTime(),
             status: "active",
           },
@@ -195,7 +194,8 @@ export function BulkAddEmployeesDialog({
         <DialogHeader>
           <DialogTitle>Bulk add employees (CSV)</DialogTitle>
           <DialogDescription>
-            Upload a CSV file with employee data. Use the sample template to get the correct columns.
+            Upload a CSV file with employee data. Use the sample template to get
+            the correct columns.
           </DialogDescription>
         </DialogHeader>
 
@@ -227,7 +227,8 @@ export function BulkAddEmployeesDialog({
           {file && (
             <div className="text-sm text-muted-foreground flex items-center gap-2">
               <FileSpreadsheet className="h-4 w-4" />
-              {file.name} ({parsedRows.length} row{parsedRows.length !== 1 ? "s" : ""})
+              {file.name} ({parsedRows.length} row
+              {parsedRows.length !== 1 ? "s" : ""})
             </div>
           )}
 

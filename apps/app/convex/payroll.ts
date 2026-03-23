@@ -7,7 +7,7 @@ import {
 } from "./sss";
 import { getScheduleWithLunch } from "./shifts";
 import {
-  calculateNightDiffHoursForPayroll,
+  calculateNightDiffWorkHoursForAttendance,
   calculatePayrollBaseFromRecords,
   getMatchingHolidayForDate,
   holidayAppliesToEmployee,
@@ -623,6 +623,67 @@ function getUndertimeHoursFromAttendance(att: {
   return Math.max(0, scheduleOutM - actualOutAdjusted) / 60;
 }
 
+/** Merge shift default lunch/schedule onto attendance for payroll (night diff, undertime). */
+async function enrichAttendanceRecordWithSchedule(
+  ctx: any,
+  employee: any,
+  att: any,
+): Promise<any> {
+  let lunchStart: string | null = att.lunchStart ?? null;
+  let lunchEnd: string | null = att.lunchEnd ?? null;
+  let scheduleIn: string | null = att.scheduleIn ?? null;
+  let scheduleOut: string | null = att.scheduleOut ?? null;
+
+  const scheduleWithLunch = await getScheduleWithLunch(
+    ctx,
+    employee,
+    att.date,
+    employee.organizationId,
+  );
+  if (scheduleWithLunch) {
+    lunchStart = lunchStart ?? scheduleWithLunch.lunchStart;
+    lunchEnd = lunchEnd ?? scheduleWithLunch.lunchEnd;
+    scheduleIn = scheduleIn ?? scheduleWithLunch.scheduleIn;
+    scheduleOut = scheduleOut ?? scheduleWithLunch.scheduleOut;
+  }
+  if (
+    (lunchStart == null ||
+      lunchEnd == null ||
+      scheduleIn == null ||
+      scheduleOut == null) &&
+    employee.shiftId
+  ) {
+    const shift = await ctx.db.get(employee.shiftId);
+    if (shift) {
+      lunchStart = lunchStart ?? shift.lunchStart ?? null;
+      lunchEnd = lunchEnd ?? shift.lunchEnd ?? null;
+      scheduleIn = scheduleIn ?? shift.scheduleIn ?? null;
+      scheduleOut = scheduleOut ?? shift.scheduleOut ?? null;
+    }
+  }
+  if (lunchStart == null || lunchEnd == null) {
+    const settings = await (ctx.db.query("settings") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", employee.organizationId),
+      )
+      .first();
+    const attSettings = settings?.attendanceSettings;
+    lunchStart = lunchStart ?? attSettings?.defaultLunchStart ?? "12:00";
+    lunchEnd = lunchEnd ?? attSettings?.defaultLunchEnd ?? "13:00";
+  }
+
+  const updates: Record<string, unknown> = {};
+  if (att.lunchStart == null && lunchStart != null)
+    updates.lunchStart = lunchStart;
+  if (att.lunchEnd == null && lunchEnd != null) updates.lunchEnd = lunchEnd;
+  if (att.scheduleIn == null && scheduleIn != null)
+    updates.scheduleIn = scheduleIn;
+  if (att.scheduleOut == null && scheduleOut != null)
+    updates.scheduleOut = scheduleOut;
+  if (Object.keys(updates).length === 0) return att;
+  return { ...att, ...updates };
+}
+
 function getMonthlyBasicForTax(
   employee: any,
   workingDaysPerYear: number,
@@ -696,52 +757,9 @@ async function buildEmployeePayrollBase(
   // Enrich attendance with lunch and schedule when missing (for night diff and break exclusion).
   // Schedule fallback lets "early in / late timeout" records still get night diff from the scheduled shift.
   const attendanceEnriched = await Promise.all(
-    attendance.map(async (att: any) => {
-      let lunchStart: string | null = att.lunchStart ?? null;
-      let lunchEnd: string | null = att.lunchEnd ?? null;
-      let scheduleIn: string | null = att.scheduleIn ?? null;
-      let scheduleOut: string | null = att.scheduleOut ?? null;
-
-      const scheduleWithLunch = await getScheduleWithLunch(
-        ctx,
-        employee,
-        att.date,
-        employee.organizationId,
-      );
-      if (scheduleWithLunch) {
-        lunchStart = lunchStart ?? scheduleWithLunch.lunchStart;
-        lunchEnd = lunchEnd ?? scheduleWithLunch.lunchEnd;
-        scheduleIn = scheduleIn ?? scheduleWithLunch.scheduleIn;
-        scheduleOut = scheduleOut ?? scheduleWithLunch.scheduleOut;
-      }
-      if ((lunchStart == null || lunchEnd == null || scheduleIn == null || scheduleOut == null) && employee.shiftId) {
-        const shift = await ctx.db.get(employee.shiftId);
-        if (shift) {
-          lunchStart = lunchStart ?? shift.lunchStart ?? null;
-          lunchEnd = lunchEnd ?? shift.lunchEnd ?? null;
-          scheduleIn = scheduleIn ?? shift.scheduleIn ?? null;
-          scheduleOut = scheduleOut ?? shift.scheduleOut ?? null;
-        }
-      }
-      if (lunchStart == null || lunchEnd == null) {
-        const settings = await (ctx.db.query("settings") as any)
-          .withIndex("by_organization", (q: any) =>
-            q.eq("organizationId", employee.organizationId),
-          )
-          .first();
-        const attSettings = settings?.attendanceSettings;
-        lunchStart = lunchStart ?? attSettings?.defaultLunchStart ?? "12:00";
-        lunchEnd = lunchEnd ?? attSettings?.defaultLunchEnd ?? "13:00";
-      }
-
-      const updates: Record<string, unknown> = {};
-      if (att.lunchStart == null && lunchStart != null) updates.lunchStart = lunchStart;
-      if (att.lunchEnd == null && lunchEnd != null) updates.lunchEnd = lunchEnd;
-      if (att.scheduleIn == null && scheduleIn != null) updates.scheduleIn = scheduleIn;
-      if (att.scheduleOut == null && scheduleOut != null) updates.scheduleOut = scheduleOut;
-      if (Object.keys(updates).length === 0) return att;
-      return { ...att, ...updates };
-    }),
+    attendance.map((att: any) =>
+      enrichAttendanceRecordWithSchedule(ctx, employee, att),
+    ),
   );
 
   return calculatePayrollBaseFromRecords({
@@ -3468,9 +3486,10 @@ export const getPayrollRunSummary = query({
     const payslipByEmployeeId = new Map(
       payslips.map((payslip: any) => [payslip.employeeId, payslip]),
     );
-    const summary = employees
-      .filter((e: any) => e)
-      .map((employee: any) => {
+    const summary = await Promise.all(
+      employees
+        .filter((e: any) => e)
+        .map(async (employee: any) => {
         const empAttendance = periodAttendance.filter(
           (a: any) => a.employeeId === employee._id,
         );
@@ -3552,7 +3571,8 @@ export const getPayrollRunSummary = query({
         };
 
         // Build daily attendance data (match by 24h window so attendance aligns with summary dates)
-        const dailyData = dates.map((dateTimestamp) => {
+        const dailyData = await Promise.all(
+          dates.map(async (dateTimestamp) => {
           const windowEnd = dateTimestamp + ONE_DAY_MS;
           const att = empAttendance.find(
             (a: any) => a.date >= dateTimestamp && a.date < windowEnd,
@@ -3635,18 +3655,15 @@ export const getPayrollRunSummary = query({
             }
           }
 
-          // Night diff hours: 10pm–6am intersected with scheduled shift (matches payslip)
+          // Night diff: Manila segments, lunch excluded (same as payslip), schedule fallback
           if (att.status === "present") {
-            nightDiffHours = calculateNightDiffHoursForPayroll(
-              att.actualIn,
-              att.actualOut,
-              att.date,
-              att.scheduleIn,
-              att.scheduleOut,
-              att.overtime,
-              att.lunchStart,
-              att.lunchEnd,
+            const enriched = await enrichAttendanceRecordWithSchedule(
+              ctx,
+              employee,
+              att,
             );
+            nightDiffHours =
+              calculateNightDiffWorkHoursForAttendance(enriched);
             totalNightDiffHours += nightDiffHours;
           }
 
@@ -3673,7 +3690,8 @@ export const getPayrollRunSummary = query({
               att.status === "absent" || att.status === "leave_without_pay",
             note: att.remarks || null,
           };
-        });
+          }),
+        );
 
         return {
           employee,
@@ -3696,7 +3714,8 @@ export const getPayrollRunSummary = query({
             totalAbsentDays,
           },
         };
-      });
+      }),
+    );
 
     return {
       payrollRun,

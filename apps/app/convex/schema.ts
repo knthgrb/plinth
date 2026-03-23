@@ -33,8 +33,7 @@ export default defineSchema({
     name: v.optional(v.string()),
     message: v.optional(v.string()),
     createdAt: v.number(),
-  })
-    .index("by_created", ["createdAt"]),
+  }).index("by_created", ["createdAt"]),
 
   // Users table (extends Better Auth user)
   users: defineTable({
@@ -341,8 +340,7 @@ export default defineSchema({
     lunchEnd: v.string(), // HH:mm
     createdAt: v.number(),
     updatedAt: v.number(),
-  })
-    .index("by_organization", ["organizationId"]),
+  }).index("by_organization", ["organizationId"]),
 
   // Holidays table
   holidays: defineTable({
@@ -508,7 +506,9 @@ export default defineSchema({
     overtimeHours: v.number(),
     holidayPay: v.optional(v.number()),
     /** When holidayPay > 0: "regular" = Legal Holiday, "special" = Special Holiday (for label only). */
-    holidayPayType: v.optional(v.union(v.literal("regular"), v.literal("special"))),
+    holidayPayType: v.optional(
+      v.union(v.literal("regular"), v.literal("special")),
+    ),
     restDayPay: v.optional(v.number()),
     nightDiffPay: v.optional(v.number()),
     overtimeRegular: v.optional(v.number()),
@@ -853,10 +853,7 @@ export default defineSchema({
         dailyRateWorkingDaysPerYear: v.optional(v.number()), // Working days per year for daily rate (default 261)
         // Tax deduction: once_per_month = full tax on one pay; twice_per_month = half on 1st, half on 2nd (bimonthly only)
         taxDeductionFrequency: v.optional(
-          v.union(
-            v.literal("once_per_month"),
-            v.literal("twice_per_month"),
-          ),
+          v.union(v.literal("once_per_month"), v.literal("twice_per_month")),
         ),
         // When once_per_month: which pay deducts full tax (first = 1st cutoff, second = 2nd cutoff)
         taxDeductOnPay: v.optional(

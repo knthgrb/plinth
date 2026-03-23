@@ -815,7 +815,11 @@ export default function EmployeesPage() {
           employeeId: "", // Auto-generated on backend from document id
           position: data.position,
           department: data.department,
-          employmentType: data.employmentType as "regular" | "probationary" | "contractual" | "part-time",
+          employmentType: data.employmentType as
+            | "regular"
+            | "probationary"
+            | "contractual"
+            | "part-time",
           hireDate: new Date(data.hireDate).getTime(),
           regularizationDate: data.regularizationDate
             ? new Date(data.regularizationDate).getTime()
@@ -824,9 +828,7 @@ export default function EmployeesPage() {
         },
         compensation: {
           basicSalary: parseFloat(data.basicSalary),
-          allowance: data.allowance
-            ? parseFloat(data.allowance)
-            : undefined,
+          allowance: data.allowance ? parseFloat(data.allowance) : undefined,
           salaryType: data.salaryType as "monthly" | "daily" | "hourly",
           regularHolidayRate: regularHolidayRateDecimal,
           specialHolidayRate: specialHolidayRateDecimal,
@@ -977,10 +979,7 @@ export default function EmployeesPage() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setIsBulkAddOpen(true)}
-            >
+            <Button variant="outline" onClick={() => setIsBulkAddOpen(true)}>
               <FileSpreadsheet className="mr-2 h-4 w-4" />
               Add from CSV
             </Button>
@@ -991,521 +990,550 @@ export default function EmployeesPage() {
                   Add Employee
                 </Button>
               </DialogTrigger>
-            <DialogContent className="max-w-[95vw] sm:max-w-2xl overflow-hidden">
-              <div className="dialog-thin-scrollbar max-h-[90vh] overflow-y-auto overscroll-contain">
-                <DialogHeader>
-                  <DialogTitle className="text-lg sm:text-xl">
-                    Add New Employee
-                  </DialogTitle>
-                  <DialogDescription className="text-sm">
-                    Fill in the employee information below.
-                  </DialogDescription>
-                </DialogHeader>
-                <form onSubmit={handleAddSubmit(onValidAddSubmit)}>
-                  <fieldset disabled={isCreatingEmployee} className="space-y-4">
-                    <div className="grid gap-4 py-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="firstName" required>
-                            First Name
-                          </Label>
-                          <Input
-                            id="firstName"
-                            {...registerAdd("firstName")}
-                            disabled={isCreatingEmployee}
-                            className={cn(addFormErrors.firstName && "border-red-500 focus-visible:ring-red-500")}
-                          />
-                          {addFormErrors.firstName?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.firstName.message}
+              <DialogContent className="max-w-[95vw] sm:max-w-2xl overflow-hidden">
+                <div className="dialog-thin-scrollbar max-h-[90vh] overflow-y-auto overscroll-contain">
+                  <DialogHeader>
+                    <DialogTitle className="text-lg sm:text-xl">
+                      Add New Employee
+                    </DialogTitle>
+                    <DialogDescription className="text-sm">
+                      Fill in the employee information below.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <form onSubmit={handleAddSubmit(onValidAddSubmit)}>
+                    <fieldset
+                      disabled={isCreatingEmployee}
+                      className="space-y-4"
+                    >
+                      <div className="grid gap-4 py-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="firstName" required>
+                              First Name
+                            </Label>
+                            <Input
+                              id="firstName"
+                              {...registerAdd("firstName")}
+                              disabled={isCreatingEmployee}
+                              className={cn(
+                                addFormErrors.firstName &&
+                                  "border-red-500 focus-visible:ring-red-500",
+                              )}
+                            />
+                            {addFormErrors.firstName?.message && (
+                              <p className="text-xs text-red-600">
+                                {addFormErrors.firstName.message}
+                              </p>
+                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="middleName">Middle Name</Label>
+                            <Input
+                              id="middleName"
+                              {...registerAdd("middleName")}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="lastName" required>
+                              Last Name
+                            </Label>
+                            <Input
+                              id="lastName"
+                              {...registerAdd("lastName")}
+                              className={cn(
+                                addFormErrors.lastName &&
+                                  "border-red-500 focus-visible:ring-red-500",
+                              )}
+                            />
+                            {addFormErrors.lastName?.message && (
+                              <p className="text-xs text-red-600">
+                                {addFormErrors.lastName.message}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="email" required>
+                              Email
+                            </Label>
+                            <Input
+                              id="email"
+                              type="email"
+                              {...registerAdd("email")}
+                              className={cn(
+                                addFormErrors.email &&
+                                  "border-red-500 focus-visible:ring-red-500",
+                              )}
+                            />
+                            {addFormErrors.email?.message && (
+                              <p className="text-xs text-red-600">
+                                {addFormErrors.email.message}
+                              </p>
+                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="phone">Phone</Label>
+                            <Input
+                              id="phone"
+                              type="tel"
+                              {...registerAdd("phone")}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="province">Province</Label>
+                            <Controller
+                              name="province"
+                              control={addFormControl}
+                              render={({ field }) => (
+                                <Select
+                                  value={field.value || "none"}
+                                  onValueChange={(v) =>
+                                    field.onChange(v === "none" ? "" : v)
+                                  }
+                                >
+                                  <SelectTrigger id="province">
+                                    <SelectValue placeholder="Select province (optional)" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="none">—</SelectItem>
+                                    {PH_PROVINCES.map((p) => (
+                                      <SelectItem key={p} value={p}>
+                                        {p}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              )}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              For province-specific holiday pay.
                             </p>
-                          )}
+                          </div>
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="middleName">Middle Name</Label>
-                          <Input
-                            id="middleName"
-                            {...registerAdd("middleName")}
-                          />
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="position" required>
+                              Position
+                            </Label>
+                            <Input
+                              id="position"
+                              {...registerAdd("position")}
+                              className={cn(
+                                addFormErrors.position &&
+                                  "border-red-500 focus-visible:ring-red-500",
+                              )}
+                            />
+                            {addFormErrors.position?.message && (
+                              <p className="text-xs text-red-600">
+                                {addFormErrors.position.message}
+                              </p>
+                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="department" required>
+                              Department
+                            </Label>
+                            <Controller
+                              name="department"
+                              control={addFormControl}
+                              render={({ field }) => (
+                                <DepartmentSelect
+                                  departments={departments}
+                                  value={field.value}
+                                  onValueChange={field.onChange}
+                                  disabled={isCreatingEmployee}
+                                  onEditDepartments={() =>
+                                    setIsDialogOpen(false)
+                                  }
+                                />
+                              )}
+                            />
+                            {addFormErrors.department?.message && (
+                              <p className="text-xs text-red-600">
+                                {addFormErrors.department.message}
+                              </p>
+                            )}
+                          </div>
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="lastName" required>
-                            Last Name
-                          </Label>
-                          <Input
-                            id="lastName"
-                            {...registerAdd("lastName")}
-                            className={cn(addFormErrors.lastName && "border-red-500 focus-visible:ring-red-500")}
-                          />
-                          {addFormErrors.lastName?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.lastName.message}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="employmentType" required>
+                              Employment Type
+                            </Label>
+                            <Controller
+                              name="employmentType"
+                              control={addFormControl}
+                              render={({ field }) => (
+                                <EmploymentTypeSelect
+                                  value={field.value as EmploymentType}
+                                  onValueChange={field.onChange}
+                                />
+                              )}
+                            />
+                            {addFormErrors.employmentType?.message && (
+                              <p className="text-xs text-red-600">
+                                {addFormErrors.employmentType.message}
+                              </p>
+                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="hireDate" required>
+                              Hire Date
+                            </Label>
+                            <Controller
+                              name="hireDate"
+                              control={addFormControl}
+                              render={({ field }) => (
+                                <DatePicker
+                                  value={field.value}
+                                  onValueChange={field.onChange}
+                                  placeholder="Select hire date"
+                                />
+                              )}
+                            />
+                            {addFormErrors.hireDate?.message && (
+                              <p className="text-xs text-red-600">
+                                {addFormErrors.hireDate.message}
+                              </p>
+                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="regularizationDate">
+                              Date of regularization
+                            </Label>
+                            <Controller
+                              name="regularizationDate"
+                              control={addFormControl}
+                              render={({ field }) => (
+                                <DatePicker
+                                  value={field.value}
+                                  onValueChange={field.onChange}
+                                  placeholder="Optional"
+                                />
+                              )}
+                            />
+                            <p className="text-xs text-gray-500">
+                              Optional. Affects leave proration when enabled in
+                              Leave settings.
                             </p>
-                          )}
+                          </div>
                         </div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="email" required>
-                            Email
-                          </Label>
-                          <Input
-                            id="email"
-                            type="email"
-                            {...registerAdd("email")}
-                            className={cn(addFormErrors.email && "border-red-500 focus-visible:ring-red-500")}
-                          />
-                          {addFormErrors.email?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.email.message}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="basicSalary" required>
+                              Basic Salary
+                            </Label>
+                            <Input
+                              id="basicSalary"
+                              type="number"
+                              step="0.01"
+                              {...registerAdd("basicSalary")}
+                              className={cn(
+                                addFormErrors.basicSalary &&
+                                  "border-red-500 focus-visible:ring-red-500",
+                              )}
+                            />
+                            {addFormErrors.basicSalary?.message && (
+                              <p className="text-xs text-red-600">
+                                {addFormErrors.basicSalary.message}
+                              </p>
+                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="allowance">
+                              Non-Taxable Allowance
+                            </Label>
+                            <Input
+                              id="allowance"
+                              type="number"
+                              step="0.01"
+                              {...registerAdd("allowance")}
+                              placeholder="0.00"
+                              className={cn(
+                                addFormErrors.allowance &&
+                                  "border-red-500 focus-visible:ring-red-500",
+                              )}
+                            />
+                            {addFormErrors.allowance?.message && (
+                              <p className="text-xs text-red-600">
+                                {addFormErrors.allowance.message}
+                              </p>
+                            )}
+                            <p className="text-xs text-gray-500">
+                              Optional: Non-taxable allowance (e.g.,
+                              transportation, meal allowance)
                             </p>
-                          )}
+                          </div>
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="phone">Phone</Label>
-                          <Input
-                            id="phone"
-                            type="tel"
-                            {...registerAdd("phone")}
-                          />
+                        {/* Pay rates use org settings on add; overrides available in Edit Employee. */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="salaryType" required>
+                              Salary Type
+                            </Label>
+                            <Controller
+                              name="salaryType"
+                              control={addFormControl}
+                              render={({ field }) => (
+                                <SalaryTypeSelect
+                                  value={field.value as SalaryType}
+                                  onValueChange={field.onChange}
+                                />
+                              )}
+                            />
+                            {addFormErrors.salaryType?.message && (
+                              <p className="text-xs text-red-600">
+                                {addFormErrors.salaryType.message}
+                              </p>
+                            )}
+                          </div>
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="province">Province</Label>
-                          <Controller
-                            name="province"
-                            control={addFormControl}
-                            render={({ field }) => (
-                              <Select
-                                value={field.value || "none"}
-                                onValueChange={(v) => field.onChange(v === "none" ? "" : v)}
-                              >
-                                <SelectTrigger id="province">
-                                  <SelectValue placeholder="Select province (optional)" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="none">—</SelectItem>
-                                  {PH_PROVINCES.map((p) => (
-                                    <SelectItem key={p} value={p}>
-                                      {p}
+
+                        {/* Schedule Section - Optional */}
+                        <div className="space-y-4 pt-4 border-t border-[#DDDDDD]">
+                          <div className="flex items-center space-x-2">
+                            <Checkbox
+                              id="enableSchedule"
+                              checked={enableSchedule}
+                              onCheckedChange={(checked) =>
+                                setEnableSchedule(checked as boolean)
+                              }
+                            />
+                            <Label
+                              htmlFor="enableSchedule"
+                              className="text-sm font-medium cursor-pointer"
+                            >
+                              Set Work Schedule (Optional)
+                            </Label>
+                          </div>
+
+                          {enableSchedule && (
+                            <div className="space-y-4 pl-6 border-l border-[#DDDDDD]">
+                              <div className="space-y-2">
+                                <Label htmlFor="scheduleType">
+                                  Schedule Type
+                                </Label>
+                                <Select
+                                  value={scheduleType}
+                                  onValueChange={(
+                                    value: "one-time" | "regular",
+                                  ) => setScheduleType(value)}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="one-time">
+                                      Same time for all work days
                                     </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            )}
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            For province-specific holiday pay.
-                          </p>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="position" required>
-                            Position
-                          </Label>
-                          <Input
-                            id="position"
-                            {...registerAdd("position")}
-                            className={cn(addFormErrors.position && "border-red-500 focus-visible:ring-red-500")}
-                          />
-                          {addFormErrors.position?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.position.message}
-                            </p>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="department" required>
-                            Department
-                          </Label>
-                          <Controller
-                            name="department"
-                            control={addFormControl}
-                            render={({ field }) => (
-                              <DepartmentSelect
-                                departments={departments}
-                                value={field.value}
-                                onValueChange={field.onChange}
-                                disabled={isCreatingEmployee}
-                                onEditDepartments={() => setIsDialogOpen(false)}
-                              />
-                            )}
-                          />
-                          {addFormErrors.department?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.department.message}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="employmentType" required>
-                            Employment Type
-                          </Label>
-                          <Controller
-                            name="employmentType"
-                            control={addFormControl}
-                            render={({ field }) => (
-                              <EmploymentTypeSelect
-                                value={field.value as EmploymentType}
-                                onValueChange={field.onChange}
-                              />
-                            )}
-                          />
-                          {addFormErrors.employmentType?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.employmentType.message}
-                            </p>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="hireDate" required>
-                            Hire Date
-                          </Label>
-                          <Controller
-                            name="hireDate"
-                            control={addFormControl}
-                            render={({ field }) => (
-                              <DatePicker
-                                value={field.value}
-                                onValueChange={field.onChange}
-                                placeholder="Select hire date"
-                              />
-                            )}
-                          />
-                          {addFormErrors.hireDate?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.hireDate.message}
-                            </p>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="regularizationDate">
-                            Date of regularization
-                          </Label>
-                          <Controller
-                            name="regularizationDate"
-                            control={addFormControl}
-                            render={({ field }) => (
-                              <DatePicker
-                                value={field.value}
-                                onValueChange={field.onChange}
-                                placeholder="Optional"
-                              />
-                            )}
-                          />
-                          <p className="text-xs text-gray-500">
-                            Optional. Affects leave proration when enabled in Leave settings.
-                          </p>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="basicSalary" required>
-                            Basic Salary
-                          </Label>
-                          <Input
-                            id="basicSalary"
-                            type="number"
-                            step="0.01"
-                            {...registerAdd("basicSalary")}
-                            className={cn(addFormErrors.basicSalary && "border-red-500 focus-visible:ring-red-500")}
-                          />
-                          {addFormErrors.basicSalary?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.basicSalary.message}
-                            </p>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="allowance">
-                            Non-Taxable Allowance
-                          </Label>
-                          <Input
-                            id="allowance"
-                            type="number"
-                            step="0.01"
-                            {...registerAdd("allowance")}
-                            placeholder="0.00"
-                            className={cn(addFormErrors.allowance && "border-red-500 focus-visible:ring-red-500")}
-                          />
-                          {addFormErrors.allowance?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.allowance.message}
-                            </p>
-                          )}
-                          <p className="text-xs text-gray-500">
-                            Optional: Non-taxable allowance (e.g.,
-                            transportation, meal allowance)
-                          </p>
-                        </div>
-                      </div>
-                      {/* Pay rates use org settings on add; overrides available in Edit Employee. */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="salaryType" required>
-                            Salary Type
-                          </Label>
-                          <Controller
-                            name="salaryType"
-                            control={addFormControl}
-                            render={({ field }) => (
-                              <SalaryTypeSelect
-                                value={field.value as SalaryType}
-                                onValueChange={field.onChange}
-                              />
-                            )}
-                          />
-                          {addFormErrors.salaryType?.message && (
-                            <p className="text-xs text-red-600">
-                              {addFormErrors.salaryType.message}
-                            </p>
-                          )}
-                        </div>
-                      </div>
+                                    <SelectItem value="regular">
+                                      Different time per day
+                                    </SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
 
-                      {/* Schedule Section - Optional */}
-                      <div className="space-y-4 pt-4 border-t border-[#DDDDDD]">
-                        <div className="flex items-center space-x-2">
-                          <Checkbox
-                            id="enableSchedule"
-                            checked={enableSchedule}
-                            onCheckedChange={(checked) =>
-                              setEnableSchedule(checked as boolean)
-                            }
-                          />
-                          <Label
-                            htmlFor="enableSchedule"
-                            className="text-sm font-medium cursor-pointer"
-                          >
-                            Set Work Schedule (Optional)
-                          </Label>
-                        </div>
-
-                        {enableSchedule && (
-                          <div className="space-y-4 pl-6 border-l border-[#DDDDDD]">
-                            <div className="space-y-2">
-                              <Label htmlFor="scheduleType">
-                                Schedule Type
-                              </Label>
-                              <Select
-                                value={scheduleType}
-                                onValueChange={(
-                                  value: "one-time" | "regular",
-                                ) => setScheduleType(value)}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="one-time">
-                                    Same time for all work days
-                                  </SelectItem>
-                                  <SelectItem value="regular">
-                                    Different time per day
-                                  </SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-
-                            {scheduleType === "one-time" ? (
-                              <div className="space-y-4">
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                  <div className="space-y-2">
-                                    <TimePicker
-                                      value={oneTimeSchedule.startTime}
-                                      onValueChange={(value) =>
-                                        setOneTimeSchedule({
-                                          ...oneTimeSchedule,
-                                          startTime: value,
-                                        })
-                                      }
-                                      label="Start Time"
-                                      placeholder="Select start time"
-                                    />
+                              {scheduleType === "one-time" ? (
+                                <div className="space-y-4">
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                      <TimePicker
+                                        value={oneTimeSchedule.startTime}
+                                        onValueChange={(value) =>
+                                          setOneTimeSchedule({
+                                            ...oneTimeSchedule,
+                                            startTime: value,
+                                          })
+                                        }
+                                        label="Start Time"
+                                        placeholder="Select start time"
+                                      />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <TimePicker
+                                        value={oneTimeSchedule.endTime}
+                                        onValueChange={(value) =>
+                                          setOneTimeSchedule({
+                                            ...oneTimeSchedule,
+                                            endTime: value,
+                                          })
+                                        }
+                                        label="End Time"
+                                        placeholder="Select end time"
+                                      />
+                                    </div>
                                   </div>
                                   <div className="space-y-2">
-                                    <TimePicker
-                                      value={oneTimeSchedule.endTime}
-                                      onValueChange={(value) =>
-                                        setOneTimeSchedule({
-                                          ...oneTimeSchedule,
-                                          endTime: value,
-                                        })
-                                      }
-                                      label="End Time"
-                                      placeholder="Select end time"
-                                    />
+                                    <Label>Workdays</Label>
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                      {[
+                                        { key: "monday", label: "Monday" },
+                                        { key: "tuesday", label: "Tuesday" },
+                                        {
+                                          key: "wednesday",
+                                          label: "Wednesday",
+                                        },
+                                        { key: "thursday", label: "Thursday" },
+                                        { key: "friday", label: "Friday" },
+                                        { key: "saturday", label: "Saturday" },
+                                        { key: "sunday", label: "Sunday" },
+                                      ].map((day) => (
+                                        <div
+                                          key={day.key}
+                                          className="flex items-center space-x-2"
+                                        >
+                                          <Checkbox
+                                            id={`workday-${day.key}`}
+                                            checked={
+                                              oneTimeSchedule.workdays[
+                                                day.key as keyof typeof oneTimeSchedule.workdays
+                                              ]
+                                            }
+                                            onCheckedChange={(checked) =>
+                                              setOneTimeSchedule({
+                                                ...oneTimeSchedule,
+                                                workdays: {
+                                                  ...oneTimeSchedule.workdays,
+                                                  [day.key]: checked as boolean,
+                                                },
+                                              })
+                                            }
+                                          />
+                                          <Label
+                                            htmlFor={`workday-${day.key}`}
+                                            className="text-sm font-normal cursor-pointer"
+                                          >
+                                            {day.label}
+                                          </Label>
+                                        </div>
+                                      ))}
+                                    </div>
                                   </div>
                                 </div>
-                                <div className="space-y-2">
-                                  <Label>Workdays</Label>
-                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                    {[
-                                      { key: "monday", label: "Monday" },
-                                      { key: "tuesday", label: "Tuesday" },
-                                      { key: "wednesday", label: "Wednesday" },
-                                      { key: "thursday", label: "Thursday" },
-                                      { key: "friday", label: "Friday" },
-                                      { key: "saturday", label: "Saturday" },
-                                      { key: "sunday", label: "Sunday" },
-                                    ].map((day) => (
-                                      <div
-                                        key={day.key}
-                                        className="flex items-center space-x-2"
-                                      >
+                              ) : (
+                                <div className="space-y-3">
+                                  {[
+                                    { key: "monday", label: "Monday" },
+                                    { key: "tuesday", label: "Tuesday" },
+                                    { key: "wednesday", label: "Wednesday" },
+                                    { key: "thursday", label: "Thursday" },
+                                    { key: "friday", label: "Friday" },
+                                    { key: "saturday", label: "Saturday" },
+                                    { key: "sunday", label: "Sunday" },
+                                  ].map((day) => (
+                                    <div
+                                      key={day.key}
+                                      className="space-y-2 p-3 border rounded-lg"
+                                    >
+                                      <div className="flex items-center space-x-2 mb-2">
                                         <Checkbox
-                                          id={`workday-${day.key}`}
+                                          id={`workday-regular-${day.key}`}
                                           checked={
-                                            oneTimeSchedule.workdays[
-                                              day.key as keyof typeof oneTimeSchedule.workdays
-                                            ]
+                                            scheduleForm[
+                                              day.key as keyof typeof scheduleForm
+                                            ].workday
                                           }
                                           onCheckedChange={(checked) =>
-                                            setOneTimeSchedule({
-                                              ...oneTimeSchedule,
-                                              workdays: {
-                                                ...oneTimeSchedule.workdays,
-                                                [day.key]: checked as boolean,
+                                            setScheduleForm({
+                                              ...scheduleForm,
+                                              [day.key]: {
+                                                ...scheduleForm[
+                                                  day.key as keyof typeof scheduleForm
+                                                ],
+                                                workday: checked as boolean,
                                               },
                                             })
                                           }
                                         />
                                         <Label
-                                          htmlFor={`workday-${day.key}`}
-                                          className="text-sm font-normal cursor-pointer"
+                                          htmlFor={`workday-regular-${day.key}`}
+                                          className="text-sm font-medium cursor-pointer"
                                         >
                                           {day.label}
                                         </Label>
                                       </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="space-y-3">
-                                {[
-                                  { key: "monday", label: "Monday" },
-                                  { key: "tuesday", label: "Tuesday" },
-                                  { key: "wednesday", label: "Wednesday" },
-                                  { key: "thursday", label: "Thursday" },
-                                  { key: "friday", label: "Friday" },
-                                  { key: "saturday", label: "Saturday" },
-                                  { key: "sunday", label: "Sunday" },
-                                ].map((day) => (
-                                  <div
-                                    key={day.key}
-                                    className="space-y-2 p-3 border rounded-lg"
-                                  >
-                                    <div className="flex items-center space-x-2 mb-2">
-                                      <Checkbox
-                                        id={`workday-regular-${day.key}`}
-                                        checked={
-                                          scheduleForm[
-                                            day.key as keyof typeof scheduleForm
-                                          ].workday
-                                        }
-                                        onCheckedChange={(checked) =>
-                                          setScheduleForm({
-                                            ...scheduleForm,
-                                            [day.key]: {
-                                              ...scheduleForm[
+                                      {scheduleForm[
+                                        day.key as keyof typeof scheduleForm
+                                      ].workday && (
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-6">
+                                          <TimePicker
+                                            value={
+                                              scheduleForm[
                                                 day.key as keyof typeof scheduleForm
-                                              ],
-                                              workday: checked as boolean,
-                                            },
-                                          })
-                                        }
-                                      />
-                                      <Label
-                                        htmlFor={`workday-regular-${day.key}`}
-                                        className="text-sm font-medium cursor-pointer"
-                                      >
-                                        {day.label}
-                                      </Label>
+                                              ].start
+                                            }
+                                            onValueChange={(value) =>
+                                              setScheduleForm({
+                                                ...scheduleForm,
+                                                [day.key]: {
+                                                  ...scheduleForm[
+                                                    day.key as keyof typeof scheduleForm
+                                                  ],
+                                                  start: value,
+                                                },
+                                              })
+                                            }
+                                            label="Start Time"
+                                            placeholder="Select start time"
+                                            showLabel={true}
+                                          />
+                                          <TimePicker
+                                            value={
+                                              scheduleForm[
+                                                day.key as keyof typeof scheduleForm
+                                              ].end
+                                            }
+                                            onValueChange={(value) =>
+                                              setScheduleForm({
+                                                ...scheduleForm,
+                                                [day.key]: {
+                                                  ...scheduleForm[
+                                                    day.key as keyof typeof scheduleForm
+                                                  ],
+                                                  end: value,
+                                                },
+                                              })
+                                            }
+                                            label="End Time"
+                                            placeholder="Select end time"
+                                            showLabel={true}
+                                          />
+                                        </div>
+                                      )}
                                     </div>
-                                    {scheduleForm[
-                                      day.key as keyof typeof scheduleForm
-                                    ].workday && (
-                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pl-6">
-                                        <TimePicker
-                                          value={
-                                            scheduleForm[
-                                              day.key as keyof typeof scheduleForm
-                                            ].start
-                                          }
-                                          onValueChange={(value) =>
-                                            setScheduleForm({
-                                              ...scheduleForm,
-                                              [day.key]: {
-                                                ...scheduleForm[
-                                                  day.key as keyof typeof scheduleForm
-                                                ],
-                                                start: value,
-                                              },
-                                            })
-                                          }
-                                          label="Start Time"
-                                          placeholder="Select start time"
-                                          showLabel={true}
-                                        />
-                                        <TimePicker
-                                          value={
-                                            scheduleForm[
-                                              day.key as keyof typeof scheduleForm
-                                            ].end
-                                          }
-                                          onValueChange={(value) =>
-                                            setScheduleForm({
-                                              ...scheduleForm,
-                                              [day.key]: {
-                                                ...scheduleForm[
-                                                  day.key as keyof typeof scheduleForm
-                                                ],
-                                                end: value,
-                                              },
-                                            })
-                                          }
-                                          label="End Time"
-                                          placeholder="Select end time"
-                                          showLabel={true}
-                                        />
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </fieldset>
-                  <DialogFooter>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setIsDialogOpen(false)}
-                      disabled={isCreatingEmployee}
-                    >
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={isCreatingEmployee}>
-                      {isCreatingEmployee ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Creating...
-                        </>
-                      ) : (
-                        "Create Employee"
-                      )}
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </div>
-            </DialogContent>
-          </Dialog>
+                    </fieldset>
+                    <DialogFooter>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setIsDialogOpen(false)}
+                        disabled={isCreatingEmployee}
+                      >
+                        Cancel
+                      </Button>
+                      <Button type="submit" disabled={isCreatingEmployee}>
+                        {isCreatingEmployee ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Creating...
+                          </>
+                        ) : (
+                          "Create Employee"
+                        )}
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </div>
+              </DialogContent>
+            </Dialog>
             <BulkAddEmployeesDialog
               open={isBulkAddOpen}
               onOpenChange={setIsBulkAddOpen}
@@ -1544,46 +1572,50 @@ export default function EmployeesPage() {
                       Edit columns
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-64 p-3" align="end" sideOffset={8}>
-                  <h4 className="text-xs font-semibold text-[rgb(64,64,64)] mb-2">
-                    Columns
-                  </h4>
-                  <div className="space-y-1.5">
-                    {(
-                      [
-                        { id: "name", label: "Name" },
-                        { id: "email", label: "Email" },
-                        { id: "position", label: "Position" },
-                        { id: "department", label: "Department" },
-                        { id: "phone", label: "Phone" },
-                        { id: "createdAt", label: "Created date" },
-                        { id: "status", label: "Status" },
-                      ] as { id: EmployeeColumnId; label: string }[]
-                    ).map((col) => (
-                      <label
-                        key={col.id}
-                        className="flex items-center gap-2 text-xs text-[rgb(64,64,64)] cursor-pointer"
-                      >
-                        <Checkbox
-                          checked={visibleColumns.includes(col.id)}
-                          onCheckedChange={(checked) => {
-                            setVisibleColumns((prev) => {
-                              const isChecked = checked === true;
-                              if (isChecked) {
-                                if (prev.includes(col.id)) return prev;
-                                return [...prev, col.id];
-                              }
-                              const next = prev.filter((c) => c !== col.id);
-                              return next.length === 0 ? prev : next;
-                            });
-                          }}
-                        />
-                        <span>{col.label}</span>
-                      </label>
-                    ))}
-                  </div>
-                </PopoverContent>
-              </Popover>
+                  <PopoverContent
+                    className="w-64 p-3"
+                    align="end"
+                    sideOffset={8}
+                  >
+                    <h4 className="text-xs font-semibold text-[rgb(64,64,64)] mb-2">
+                      Columns
+                    </h4>
+                    <div className="space-y-1.5">
+                      {(
+                        [
+                          { id: "name", label: "Name" },
+                          { id: "email", label: "Email" },
+                          { id: "position", label: "Position" },
+                          { id: "department", label: "Department" },
+                          { id: "phone", label: "Phone" },
+                          { id: "createdAt", label: "Created date" },
+                          { id: "status", label: "Status" },
+                        ] as { id: EmployeeColumnId; label: string }[]
+                      ).map((col) => (
+                        <label
+                          key={col.id}
+                          className="flex items-center gap-2 text-xs text-[rgb(64,64,64)] cursor-pointer"
+                        >
+                          <Checkbox
+                            checked={visibleColumns.includes(col.id)}
+                            onCheckedChange={(checked) => {
+                              setVisibleColumns((prev) => {
+                                const isChecked = checked === true;
+                                if (isChecked) {
+                                  if (prev.includes(col.id)) return prev;
+                                  return [...prev, col.id];
+                                }
+                                const next = prev.filter((c) => c !== col.id);
+                                return next.length === 0 ? prev : next;
+                              });
+                            }}
+                          />
+                          <span>{col.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               }
             />
           </CardHeader>
@@ -1675,7 +1707,8 @@ export default function EmployeesPage() {
                           className="mt-1"
                           value={deleteConfirmInput}
                           onChange={(e) =>
-                            setDeleteConfirmInput(e.target.value)}
+                            setDeleteConfirmInput(e.target.value)
+                          }
                           placeholder="CONFIRM"
                           disabled={isDeletingEmployee}
                           autoComplete="off"

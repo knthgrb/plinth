@@ -41,11 +41,11 @@ export class EmployeesService {
       };
       regularHolidayRate?: number;
       specialHolidayRate?: number;
-    nightDiffPercent?: number;
-    overtimeRegularRate?: number;
-    overtimeRestDayRate?: number;
-    regularHolidayOtRate?: number;
-    specialHolidayOtRate?: number;
+      nightDiffPercent?: number;
+      overtimeRegularRate?: number;
+      overtimeRestDayRate?: number;
+      regularHolidayOtRate?: number;
+      specialHolidayOtRate?: number;
     };
     schedule: {
       defaultSchedule: {
@@ -83,7 +83,7 @@ export class EmployeesService {
         schedule: {
           ...data.schedule,
         },
-      }
+      },
     );
   }
 
@@ -154,7 +154,7 @@ export class EmployeesService {
       };
       shiftId?: Id<"shifts"> | null;
       customFields?: Record<string, any>;
-    }
+    },
   ) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(
@@ -162,7 +162,7 @@ export class EmployeesService {
       {
         employeeId: employeeId as Id<"employees">,
         ...data,
-      }
+      },
     );
   }
 
@@ -179,7 +179,7 @@ export class EmployeesService {
       (api as any).employees.deleteEmployee,
       {
         employeeId: employeeId as Id<"employees">,
-      }
+      },
     );
   }
 
@@ -202,7 +202,7 @@ export class EmployeesService {
           ...data.requirement,
           file: data.requirement.file as Id<"_storage"> | undefined,
         },
-      }
+      },
     );
   }
 
@@ -218,7 +218,7 @@ export class EmployeesService {
         employeeId: data.employeeId as Id<"employees">,
         requirementIndex: data.requirementIndex,
         status: data.status,
-      }
+      },
     );
   }
 
@@ -232,7 +232,7 @@ export class EmployeesService {
       {
         employeeId: data.employeeId as Id<"employees">,
         complete: data.complete,
-      }
+      },
     );
   }
 
@@ -248,7 +248,7 @@ export class EmployeesService {
         employeeId: data.employeeId as Id<"employees">,
         requirementIndex: data.requirementIndex,
         file: data.file as Id<"_storage">,
-      }
+      },
     );
   }
 
@@ -262,7 +262,7 @@ export class EmployeesService {
       {
         employeeId: data.employeeId as Id<"employees">,
         requirementIndex: data.requirementIndex,
-      }
+      },
     );
   }
 
@@ -272,7 +272,7 @@ export class EmployeesService {
       (api as any).employees.getEmployee,
       {
         employeeId: employeeId as Id<"employees">,
-      }
+      },
     );
 
     return employee?.requirements || [];

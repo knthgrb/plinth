@@ -43,6 +43,7 @@ export async function createEmployee(data: {
       accountNumber: string;
       accountName: string;
     };
+    useOrganizationPayrollBaseRates?: boolean;
     regularHolidayRate?: number;
     specialHolidayRate?: number;
     nightDiffPercent?: number;
@@ -136,7 +137,7 @@ export async function updateEmployee(
     };
     shiftId?: Id<"shifts"> | null;
     customFields?: Record<string, any>;
-  }
+  },
 ) {
   return EmployeesService.updateEmployee(employeeId, data);
 }
@@ -164,7 +165,7 @@ export async function checkEmployeeHasUserAccount(data: {
     {
       organizationId: data.organizationId as Id<"organizations">,
       employeeId: data.employeeId as Id<"employees">,
-    }
+    },
   );
 }
 
@@ -183,13 +184,13 @@ export async function createUserForEmployee(data: {
       organizationId: data.organizationId as Id<"organizations">,
       employeeId: data.employeeId as Id<"employees">,
       role: data.role,
-    }
+    },
   );
 
   // Get invitation details to send email
   const invitation = await (convex.query as any)(
     (api as any).invitations.getInvitationById,
-    { invitationId: result.invitationId as Id<"invitations"> }
+    { invitationId: result.invitationId as Id<"invitations"> },
   );
 
   if (invitation) {
@@ -209,7 +210,7 @@ export async function createUserForEmployee(data: {
       invitation.organization.name,
       invitation.inviter.name || invitation.inviter.email,
       invitation.role,
-      invitationLink
+      invitationLink,
     );
 
     try {

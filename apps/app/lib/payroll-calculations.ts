@@ -280,64 +280,14 @@ function timeStringToMinutes(time: string | undefined): number | null {
   return hours * 60 + minutes;
 }
 
-/**
- * Total hours in 10pm–6am that qualify for night differential.
- * Currently mirrors the legacy calculation used for night diff pay hours,
- * so the summary \"Total Night Diff (hrs)\" stays consistent with payroll.
- */
-export function calculateNightDiffHoursForPayroll(
-  actualIn: string | undefined,
-  actualOut: string | undefined,
-  attDate: number,
-  scheduleIn: string | undefined,
-  scheduleOut: string | undefined,
-  overtimeHours?: number,
-  lunchStart?: string,
-  lunchEnd?: string,
-): number {
-  if (!actualIn || !actualOut) return 0;
-  const si = timeStringToMinutes(scheduleIn);
-  const so = timeStringToMinutes(scheduleOut);
-  if (si === null || so === null) {
-    return calculateNightDiffHours(actualIn, actualOut);
-  }
+function hasUsableLunchPair(lunchStart?: string, lunchEnd?: string): boolean {
+  const a = lunchStart?.trim() ?? "";
+  const b = lunchEnd?.trim() ?? "";
+  if (!a || !b) return false;
   return (
-    sumScheduleCappedNightDiffMinutes(
-      {
-        date: attDate,
-        overtime: overtimeHours ?? 0,
-        lunchStart,
-        lunchEnd,
-        scheduleIn,
-        scheduleOut,
-      },
-      actualIn,
-      actualOut,
-    ) / 60
+    timeStringToMinutes(lunchStart) !== null &&
+    timeStringToMinutes(lunchEnd) !== null
   );
-}
-
-function calculateNightDiffHours(
-  actualIn: string | undefined,
-  actualOut: string | undefined,
-  _scheduleIn?: string,
-  _scheduleOut?: string,
-): number {
-  if (!actualIn || !actualOut) return 0;
-  let s = timeStringToMinutes(actualIn) ?? 0;
-  let e = timeStringToMinutes(actualOut) ?? 0;
-  const nightStart = 22 * 60;
-  const nightEnd = 24 * 60 + 6 * 60;
-  if (s < 6 * 60) {
-    s += 24 * 60;
-    e += 24 * 60;
-  } else if (e <= s) {
-    e += 24 * 60;
-  }
-  const actNightStart = Math.max(s, nightStart);
-  const actNightEnd = Math.min(e, nightEnd);
-  if (actNightEnd <= actNightStart) return 0;
-  return (actNightEnd - actNightStart) / 60;
 }
 
 /** Segment of work on one calendar day: startMin/endMin in 0..1440 for that day. */
@@ -380,7 +330,11 @@ function subtractLunchFromSegments(
           }
         } else {
           if (seg.endMin > seg.startMin) {
-            out.push({ dayTimestamp: seg.dayTimestamp, startMin: seg.startMin, endMin: seg.endMin });
+            out.push({
+              dayTimestamp: seg.dayTimestamp,
+              startMin: seg.startMin,
+              endMin: seg.endMin,
+            });
           }
         }
       }
@@ -397,11 +351,14 @@ function subtractLunchFromSegments(
           });
         }
         if (seg.endMin > le) {
-          out.push({
-            dayTimestamp: seg.dayTimestamp,
-            startMin: le,
-            endMin: seg.endMin,
-          });
+          const afterLunchStart = Math.max(seg.startMin, le);
+          if (afterLunchStart < seg.endMin) {
+            out.push({
+              dayTimestamp: seg.dayTimestamp,
+              startMin: afterLunchStart,
+              endMin: seg.endMin,
+            });
+          }
         }
       }
     }
@@ -440,17 +397,101 @@ function getSegmentsByManilaDay(
   return segments;
 }
 
+/** Work segments for a shift on `attDate`, minus scheduled lunch (same-day or crossing midnight). */
+function buildSegmentsExcludingLunch(
+  attDate: number,
+  inStr: string,
+  outStr: string,
+  lunchStart?: string,
+  lunchEnd?: string,
+): DaySegment[] {
+  let segments = getSegmentsByManilaDay(attDate, inStr, outStr);
+  if (segments.length === 0) return [];
+  if (hasUsableLunchPair(lunchStart, lunchEnd)) {
+    const attDayStart = getManilaDayStart(attDate);
+    segments = subtractLunchFromSegments(
+      segments,
+      lunchStart!,
+      lunchEnd!,
+      attDayStart,
+    );
+  }
+  return segments;
+}
+
+/** Minutes of work (after lunch exclusion) that fall in 10pm–6am per Manila calendar segment. */
+function sumNightDiffMinutesFromSegments(segments: DaySegment[]): number {
+  let total = 0;
+  for (const seg of segments) {
+    if (seg.startMin < NIGHT_END_MIN) {
+      const a = seg.startMin;
+      const b = Math.min(seg.endMin, NIGHT_END_MIN);
+      if (b > a) total += b - a;
+    }
+    if (seg.endMin > NIGHT_START_MIN) {
+      const a = Math.max(seg.startMin, NIGHT_START_MIN);
+      const b = Math.min(seg.endMin, MIDNIGHT_MIN);
+      if (b > a) total += b - a;
+    }
+  }
+  return total;
+}
+
+function calculateNightDiffWorkMinutesFromTimes(
+  att: { date: number; lunchStart?: string; lunchEnd?: string },
+  inStr: string,
+  outStr: string,
+): number {
+  const segments = buildSegmentsExcludingLunch(
+    att.date,
+    inStr,
+    outStr,
+    att.lunchStart,
+    att.lunchEnd,
+  );
+  return sumNightDiffMinutesFromSegments(segments);
+}
+
+/**
+ * Night differential hours (10pm–6am) matching payroll pay logic: Manila day segments, lunch excluded
+ * when it overlaps the shift, then actual in/out with schedule fallback when actual has no night window overlap.
+ */
+export function calculateNightDiffWorkHoursForAttendance(att: {
+  date: number;
+  actualIn?: string;
+  actualOut?: string;
+  scheduleIn?: string;
+  scheduleOut?: string;
+  lunchStart?: string;
+  lunchEnd?: string;
+}): number {
+  const actualIn = att.actualIn;
+  const actualOut = att.actualOut;
+  const scheduleIn = att.scheduleIn;
+  const scheduleOut = att.scheduleOut;
+
+  const minsFromActual =
+    actualIn && actualOut
+      ? calculateNightDiffWorkMinutesFromTimes(att, actualIn, actualOut)
+      : 0;
+  if (minsFromActual > 0) return minsFromActual / 60;
+  if (!scheduleIn || !scheduleOut) return 0;
+  return (
+    calculateNightDiffWorkMinutesFromTimes(att, scheduleIn, scheduleOut) / 60
+  );
+}
+
 /**
  * Night diff pay with segmented rates. Applies:
  * - Regular night (no OT, non-holiday): nightDiffRate (110%)
  * - Night on top of OT (regular day): nightDiffOnOtRate (137.5%)
  * - Night on regular holiday (same calendar day only): nightDiffRegularHolidayRate (220%)
- * - Night on special holiday; overnight from holiday applies to post-midnight portion of same shift
- * - Regular holiday + OT + night: nightDiffRegularHolidayOtRate (286%)
- * - Special holiday + OT + night: nightDiffSpecialHolidayOtRate (185.9%)
+ * - Night on special holiday (same day only): nightDiffSpecialHolidayRate (143%)
+ * - Regular holiday + OT + night (same day only): nightDiffRegularHolidayOtRate (286%)
+ * - Special holiday + OT + night (same day only): nightDiffSpecialHolidayOtRate (185.9%)
  * - Rest day + night: nightDiffRestDayRate (rest day premium × 110%)
  * - Rest day OT + night: nightDiffRestDayOtRate (rest day OT × 110%)
- * Eligible night minutes ∩ scheduled shift; evening past schedule out requires recorded OT.
+ * Hours after midnight on a holiday use regular 110% (next day is not the holiday).
  */
 function calculateNightDiffPay(
   att: {
@@ -503,179 +544,6 @@ function calculateNightDiffPay(
   );
 }
 
-function intersectMinuteRange(
-  a: number,
-  b: number,
-  c: number,
-  d: number,
-): [number, number] | null {
-  const lo = Math.max(a, c);
-  const hi = Math.min(b, d);
-  return hi > lo ? [lo, hi] : null;
-}
-
-/**
- * Raw 10pm–6am overlap on one calendar segment (no schedule cap).
- */
-function buildLegacyNightRangesForSegment(seg: DaySegment): [number, number][] {
-  const nightRanges: [number, number][] = [];
-  if (seg.startMin < NIGHT_END_MIN) {
-    const a = seg.startMin;
-    const b = Math.min(seg.endMin, NIGHT_END_MIN);
-    if (b > a) nightRanges.push([a, b]);
-  }
-  if (seg.endMin > NIGHT_START_MIN) {
-    const a = Math.max(seg.startMin, NIGHT_START_MIN);
-    const b = Math.min(seg.endMin, MIDNIGHT_MIN);
-    if (b > a) nightRanges.push([a, b]);
-  }
-  return nightRanges;
-}
-
-/**
- * Night minutes that qualify for pay: 10pm–6am ∩ scheduled shift.
- * Same-day: time after schedule out counts only where it overlaps **recorded OT**
- * (last `overtime` hours before clock-out), so 1pm–10pm + 1h OT to 11pm → 1h night-on-OT only.
- * Overnight: morning after scheduled out only in OT window; reg hours capped at schedule out when OT=0.
- */
-function buildScheduleAwareNightRanges(
-  seg: DaySegment,
-  anchorDayStart: number,
-  si: number,
-  so: number,
-  overnight: boolean,
-  otMin: number,
-  otStartGlobal: number,
-  outGlobal: number,
-  segmentIndex: number,
-): [number, number][] {
-  const ranges: [number, number][] = [];
-  const isAnchor = seg.dayTimestamp === anchorDayStart;
-  const isNextDay = seg.dayTimestamp === anchorDayStart + ONE_DAY_MS;
-
-  const segStartGlobal =
-    segmentIndex === 0 ? seg.startMin : MIDNIGHT_MIN + seg.startMin;
-  const segEndGlobal =
-    segmentIndex === 0 ? seg.endMin : MIDNIGHT_MIN + seg.endMin;
-
-  /** Post-schedule / post–scheduled-out night minutes that are also inside OT window. */
-  const pushOtNightGlobal = (gLo: number, gHi: number) => {
-    const ox = Math.max(gLo, otStartGlobal);
-    const oy = Math.min(gHi, outGlobal);
-    if (oy <= ox) return;
-    if (segmentIndex === 0) {
-      ranges.push([ox, oy]);
-    } else {
-      ranges.push([ox - MIDNIGHT_MIN, oy - MIDNIGHT_MIN]);
-    }
-  };
-
-  if (seg.startMin < NIGHT_END_MIN) {
-    const ms = Math.max(seg.startMin, 0);
-    const me = Math.min(seg.endMin, NIGHT_END_MIN);
-    if (me > ms) {
-      if (overnight && isNextDay) {
-        const endReg = Math.min(me, so);
-        if (endReg > ms) ranges.push([ms, endReg]);
-        if (otMin > 0 && me > so) {
-          const gLo = MIDNIGHT_MIN + Math.max(ms, so);
-          const gHi = MIDNIGHT_MIN + me;
-          pushOtNightGlobal(gLo, gHi);
-        }
-      } else if (!overnight && isAnchor) {
-        const x = intersectMinuteRange(ms, me, si, so);
-        if (x) ranges.push(x);
-      } else if (!overnight && isNextDay) {
-        ranges.push([ms, me]);
-      } else if (overnight && isAnchor) {
-        const x = intersectMinuteRange(ms, me, si, MIDNIGHT_MIN);
-        if (x) ranges.push(x);
-      }
-    }
-  }
-
-  if (seg.endMin > NIGHT_START_MIN) {
-    const es = Math.max(seg.startMin, NIGHT_START_MIN);
-    const ee = Math.min(seg.endMin, MIDNIGHT_MIN);
-    if (ee <= es) return ranges;
-    if (!overnight && isAnchor) {
-      const reg = intersectMinuteRange(es, ee, si, so);
-      if (reg) ranges.push(reg);
-      if (otMin > 0 && ee > so) {
-        const gLo = Math.max(es, so);
-        const gHi = ee;
-        pushOtNightGlobal(gLo, gHi);
-      }
-    } else if (overnight && isAnchor) {
-      const x = intersectMinuteRange(es, ee, si, MIDNIGHT_MIN);
-      if (x) ranges.push(x);
-    } else if (isNextDay && !overnight) {
-      ranges.push([es, ee]);
-    }
-  }
-  return ranges;
-}
-
-function sumScheduleCappedNightDiffMinutes(
-  att: {
-    date: number;
-    overtime?: number;
-    lunchStart?: string;
-    lunchEnd?: string;
-    scheduleIn?: string;
-    scheduleOut?: string;
-  },
-  inStr: string,
-  outStr: string,
-): number {
-  let segments = getSegmentsByManilaDay(att.date, inStr, outStr);
-  if (segments.length === 0) return 0;
-  if (att.lunchStart != null && att.lunchEnd != null) {
-    const attDayStart = getManilaDayStart(att.date);
-    segments = subtractLunchFromSegments(
-      segments,
-      att.lunchStart,
-      att.lunchEnd,
-      attDayStart,
-    );
-  }
-  const si = timeStringToMinutes(att.scheduleIn);
-  const so = timeStringToMinutes(att.scheduleOut);
-  const anchorDayStart = getManilaDayStart(att.date);
-  const otMin = (att.overtime ?? 0) * 60;
-  const inM = timeStringToMinutes(inStr) ?? 0;
-  const outM = timeStringToMinutes(outStr) ?? 0;
-  const outGlobal =
-    outM <= inM ? MIDNIGHT_MIN + outM : outM;
-  const otStartGlobal = Math.max(inM, outGlobal - otMin);
-  let total = 0;
-  if (si === null || so === null) {
-    for (const seg of segments) {
-      for (const [a, b] of buildLegacyNightRangesForSegment(seg)) {
-        total += b - a;
-      }
-    }
-    return total;
-  }
-  const overnight = so <= si;
-  segments.forEach((seg, segmentIndex) => {
-    for (const [a, b] of buildScheduleAwareNightRanges(
-      seg,
-      anchorDayStart,
-      si,
-      so,
-      overnight,
-      otMin,
-      otStartGlobal,
-      outGlobal,
-      segmentIndex,
-    )) {
-      total += b - a;
-    }
-  });
-  return total;
-}
-
 /** Compute night diff pay for one record using given in/out times (actual or schedule). */
 function computeNightDiffPayFromTimes(
   att: {
@@ -683,8 +551,6 @@ function computeNightDiffPayFromTimes(
     overtime?: number;
     lunchStart?: string;
     lunchEnd?: string;
-    scheduleIn?: string;
-    scheduleOut?: string;
   },
   inStr: string,
   outStr: string,
@@ -693,19 +559,14 @@ function computeNightDiffPayFromTimes(
   hourlyRate: number,
   rates: ResolvedPayrollRates,
 ): number {
-  let segments = getSegmentsByManilaDay(att.date, inStr, outStr);
+  const segments = buildSegmentsExcludingLunch(
+    att.date,
+    inStr,
+    outStr,
+    att.lunchStart,
+    att.lunchEnd,
+  );
   if (segments.length === 0) return 0;
-
-  // Exclude lunch break from segments so night diff is not paid for break time (e.g. 6pm–3am shift, lunch 11pm–12am).
-  if (att.lunchStart != null && att.lunchEnd != null) {
-    const attDayStart = getManilaDayStart(att.date);
-    segments = subtractLunchFromSegments(
-      segments,
-      att.lunchStart,
-      att.lunchEnd,
-      attDayStart,
-    );
-  }
 
   const actualOutM = timeStringToMinutes(outStr);
   const actualInM = timeStringToMinutes(inStr);
@@ -715,12 +576,10 @@ function computeNightDiffPayFromTimes(
       ? MIDNIGHT_MIN + actualOutM
       : (actualOutM ?? 0);
   const otMinutes = (att.overtime ?? 0) * 60;
-  const otStartGlobal = Math.max(inGlobal, outGlobal - otMinutes);
-
-  const si = timeStringToMinutes(att.scheduleIn);
-  const so = timeStringToMinutes(att.scheduleOut);
-  const hasSchedule = si !== null && so !== null;
-  const overnightSched = hasSchedule && so! <= si!;
+  const otStartGlobal = Math.min(
+    Math.max(inGlobal, outGlobal - otMinutes),
+    outGlobal,
+  );
 
   const nightDiffRate = rates.nightDiffRate ?? 1.1;
   const nightDiffOnOt = rates.nightDiffOnOtRate ?? 1.375;
@@ -737,6 +596,7 @@ function computeNightDiffPayFromTimes(
 
   let pay = 0;
   const attDayStart = getManilaDayStart(att.date);
+  // Holiday rate only for night hours on the attendance calendar day. Resolve holiday once from attendance date.
   const holidayOnAttDay = getMatchingHolidayForDate(attDayStart, holidays);
   const holEntryAttDay = holidays.find((h) =>
     holidayMatchesDate(h, attDayStart),
@@ -747,40 +607,37 @@ function computeNightDiffPayFromTimes(
     holEntryAttDay &&
     holidayAppliesToEmployee(holEntryAttDay, employee);
 
-  segments.forEach((seg, segmentIndex) => {
-    const holidayContinuesOvernight =
-      overnightSched &&
-      segmentIndex > 0 &&
-      holidayAppliesOnAttDay &&
-      (holidayOnAttDay?.type === "regular" ||
-        holidayOnAttDay?.type === "special");
-
+  segments.forEach((seg) => {
+    // Use calendar day of segment (not forEach index): lunch can split one day into two segments;
+    // index 1 would wrongly add +1440 and break OT vs regular night (e.g. 11pm–midnight).
+    const dayOffsetMin =
+      Math.round((seg.dayTimestamp - attDayStart) / ONE_DAY_MS) * MIDNIGHT_MIN;
+    const segmentIsOnAttendanceDay = seg.dayTimestamp === attDayStart;
     const isRegHol =
+      segmentIsOnAttendanceDay &&
       holidayAppliesOnAttDay &&
-      holidayOnAttDay?.type === "regular" &&
-      (segmentIndex === 0 || holidayContinuesOvernight);
+      holidayOnAttDay?.type === "regular";
     const isSpecHol =
+      segmentIsOnAttendanceDay &&
       holidayAppliesOnAttDay &&
-      holidayOnAttDay?.type === "special" &&
-      (segmentIndex === 0 || holidayContinuesOvernight);
+      holidayOnAttDay?.type === "special";
     const isRestDaySeg =
       !isRegHol &&
       !isSpecHol &&
       isRestDay(seg.dayTimestamp, employee?.schedule ?? null);
 
-    const nightRanges: [number, number][] = hasSchedule
-      ? buildScheduleAwareNightRanges(
-          seg,
-          attDayStart,
-          si!,
-          so!,
-          overnightSched,
-          otMinutes,
-          otStartGlobal,
-          outGlobal,
-          segmentIndex,
-        )
-      : buildLegacyNightRangesForSegment(seg);
+    // Night on this calendar day: 22:00–24:00 (1320–1440) and 0:00–6:00 (0–360)
+    const nightRanges: [number, number][] = [];
+    if (seg.startMin < NIGHT_END_MIN) {
+      const a = seg.startMin;
+      const b = Math.min(seg.endMin, NIGHT_END_MIN);
+      if (b > a) nightRanges.push([a, b]);
+    }
+    if (seg.endMin > NIGHT_START_MIN) {
+      const a = Math.max(seg.startMin, NIGHT_START_MIN);
+      const b = Math.min(seg.endMin, MIDNIGHT_MIN);
+      if (b > a) nightRanges.push([a, b]);
+    }
 
     const regularOt = rates.regularOt ?? 1.25;
     const regularHolidayOt = rates.regularHolidayOt ?? 2.0;
@@ -789,33 +646,33 @@ function computeNightDiffPayFromTimes(
     const specialHolidayRate = rates.specialHolidayRate ?? 1.3;
 
     for (const [nStart, nEnd] of nightRanges) {
-      const rangeStartGlobal =
-        segmentIndex === 0 ? nStart : MIDNIGHT_MIN + nStart;
-      const rangeEndGlobal =
-        segmentIndex === 0 ? nEnd : MIDNIGHT_MIN + nEnd;
+      const rangeStartGlobal = dayOffsetMin + nStart;
+      const rangeEndGlobal = dayOffsetMin + nEnd;
 
-      // Split at OT boundary: 22:00–23:00 gets 110%, 23:00–24:00 gets night-on-OT 137.5%.
-      const split =
-        otStartGlobal > rangeStartGlobal && otStartGlobal < rangeEndGlobal
-          ? otStartGlobal
-          : null;
+      // Regular night = overlap of [rangeStart, rangeEnd) with [inGlobal, otStartGlobal).
+      // Night on OT = overlap with [otStartGlobal, outGlobal). Avoids classifying 22:00–24:00 as OT
+      // when otStart is still at clock-in (no overtime recorded).
+      const regNightEndGlobal = Math.min(rangeEndGlobal, otStartGlobal);
+      const otNightStartGlobal = Math.max(rangeStartGlobal, otStartGlobal);
+      const parts: { startGlobal: number; endGlobal: number; isOT: boolean }[] =
+        [];
+      if (regNightEndGlobal > rangeStartGlobal) {
+        parts.push({
+          startGlobal: rangeStartGlobal,
+          endGlobal: regNightEndGlobal,
+          isOT: false,
+        });
+      }
+      if (rangeEndGlobal > otNightStartGlobal) {
+        parts.push({
+          startGlobal: otNightStartGlobal,
+          endGlobal: rangeEndGlobal,
+          isOT: true,
+        });
+      }
 
-      const parts: { endGlobal: number; isOT: boolean }[] =
-        split != null
-          ? [
-              { endGlobal: split, isOT: false },
-              { endGlobal: rangeEndGlobal, isOT: true },
-            ]
-          : [
-              {
-                endGlobal: rangeEndGlobal,
-                isOT: otStartGlobal < rangeEndGlobal,
-              },
-            ];
-
-      let prevEnd = rangeStartGlobal;
-      for (const { endGlobal, isOT } of parts) {
-        const mins = Math.max(0, endGlobal - prevEnd);
+      for (const { startGlobal, endGlobal, isOT } of parts) {
+        const mins = Math.max(0, endGlobal - startGlobal);
         if (mins <= 0) continue;
         const premium = (() => {
           if (isRegHol && isOT) return nightDiffRegHolOt - regularHolidayOt;
@@ -832,7 +689,6 @@ function computeNightDiffPayFromTimes(
           return nightDiffRate >= 1 ? nightDiffRate - 1 : nightDiffRate;
         })();
         pay += (mins / 60) * hourlyRate * premium;
-        prevEnd = endGlobal;
       }
     }
   });
@@ -927,10 +783,7 @@ function getUndertimeHoursFromAttendance(att: {
       const overlapStart = Math.max(scheduleInM, ls);
       const overlapEnd = Math.min(scheduleOutM, le);
       const lunchOverlap = Math.max(0, overlapEnd - overlapStart);
-      scheduledWorkMinutes = Math.max(
-        0,
-        scheduledWorkMinutes - lunchOverlap,
-      );
+      scheduledWorkMinutes = Math.max(0, scheduledWorkMinutes - lunchOverlap);
     }
   }
 
@@ -954,10 +807,7 @@ function getUndertimeHoursFromAttendance(att: {
 
   // Do not charge undertime for "small" late that is already counted as late.
   const lateHours = getLateHoursFromAttendance(att);
-  const undertimeMinutes = Math.max(
-    0,
-    rawUndertimeMinutes - lateHours * 60,
-  );
+  const undertimeMinutes = Math.max(0, rawUndertimeMinutes - lateHours * 60);
 
   return undertimeMinutes / 60;
 }
