@@ -543,43 +543,15 @@ export function PayslipDetail({
                   <p className="font-semibold mb-2">Other Earnings</p>
                   <div className="space-y-1 text-sm">
                     {(payslip.nightDiffPay ?? 0) > 0 && (
-                      <div>
-                        <div className="flex justify-between">
-                          <span>Night Differential</span>
-                          <span>
-                            ₱
-                            {payslip.nightDiffPay!.toLocaleString("en-US", {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </span>
-                        </div>
-                        {Array.isArray((payslip as any).nightDiffBreakdown) &&
-                          (payslip as any).nightDiffBreakdown.length > 0 && (
-                            <ul className="mt-1 ml-3 list-disc space-y-0.5 text-xs text-muted-foreground">
-                              {(payslip as any).nightDiffBreakdown.map(
-                                (row: {
-                                  label: string;
-                                  date: number;
-                                  amount: number;
-                                }) => (
-                                  <li
-                                    key={`${row.date}-${row.amount}`}
-                                    className="flex justify-between gap-2"
-                                  >
-                                    <span>{row.label}</span>
-                                    <span className="shrink-0 tabular-nums">
-                                      ₱
-                                      {row.amount.toLocaleString("en-US", {
-                                        minimumFractionDigits: 2,
-                                        maximumFractionDigits: 2,
-                                      })}
-                                    </span>
-                                  </li>
-                                ),
-                              )}
-                            </ul>
-                          )}
+                      <div className="flex justify-between">
+                        <span>Night Differential</span>
+                        <span>
+                          ₱
+                          {payslip.nightDiffPay!.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
                       </div>
                     )}
                     {(payslip.holidayPay ?? 0) > 0 && (
