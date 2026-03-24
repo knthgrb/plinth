@@ -151,6 +151,21 @@ function getDeductionAmountByNames(
   }, 0);
 }
 
+function isAttendanceDeductionName(name: string): boolean {
+  const n = (name || "").trim().toLowerCase();
+  return (
+    n === "late" ||
+    n === "regular day late" ||
+    n === "regular holiday late" ||
+    n === "special holiday late" ||
+    n === "undertime" ||
+    n === "absent" ||
+    n.startsWith("absent ") ||
+    n === "no work" ||
+    n.startsWith("no work ")
+  );
+}
+
 /** Round to 2 decimal places for currency */
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -1335,16 +1350,8 @@ export const createPayrollRun = mutation({
       if (hasOverrideDeductionsCreate) {
         // Manual override: use saved/edited deduction amounts as-is (from "Edit deductions" in preview).
         // Override values for SSS, PhilHealth, Pag-IBIG, Withholding Tax are used directly in computation.
-        const nonAttendance = (
-          manualDeductionEntry!.deductions as any[]
-        ).filter(
-          (d: { name: string }) =>
-            d.name !== "Late" &&
-            d.name !== "Regular day late" &&
-            d.name !== "Regular Holiday Late" &&
-            d.name !== "Special Holiday Late" &&
-            d.name !== "Undertime" &&
-            !d.name.startsWith("Absent "),
+        const nonAttendance = (manualDeductionEntry!.deductions as any[]).filter(
+          (d: { name: string }) => !isAttendanceDeductionName(d.name),
         );
         // When run has government deductions disabled, exclude SSS/PhilHealth/Pag-IBIG only; withholding tax follows org settings
         deductions =
@@ -1500,7 +1507,9 @@ export const createPayrollRun = mutation({
 
         // Add manual/custom deductions (loans, etc.) - these are separate from government deductions
         if (manualDeductionEntry && manualDeductionEntry.deductions) {
-          for (const ded of manualDeductionEntry.deductions) {
+          for (const ded of manualDeductionEntry.deductions.filter(
+            (d) => !isAttendanceDeductionName(d.name),
+          )) {
             deductions.push(ded);
           }
         }
@@ -2080,15 +2089,7 @@ export const updatePayrollRun = mutation({
           // Use saved/edited deductions as-is; only refresh attendance-based ones
           const nonAttendance = (
             manualDeductionEntry!.deductions as any[]
-          ).filter(
-            (d: { name: string }) =>
-              d.name !== "Late" &&
-              d.name !== "Regular day late" &&
-              d.name !== "Regular Holiday Late" &&
-              d.name !== "Special Holiday Late" &&
-              d.name !== "Undertime" &&
-              !d.name.startsWith("Absent "),
-          );
+          ).filter((d: { name: string }) => !isAttendanceDeductionName(d.name));
           // When run has government deductions disabled, exclude SSS/PhilHealth/Pag-IBIG only; withholding tax follows org settings
           deductions =
             runDeductionsEnabled === false
@@ -2241,7 +2242,11 @@ export const updatePayrollRun = mutation({
           }
 
           if (manualDeductionEntry?.deductions) {
-            deductions.push(...manualDeductionEntry.deductions);
+            deductions.push(
+              ...manualDeductionEntry.deductions.filter(
+                (d) => !isAttendanceDeductionName(d.name),
+              ),
+            );
           }
 
           if (employee.deductions) {

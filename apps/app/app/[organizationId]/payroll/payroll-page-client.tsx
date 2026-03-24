@@ -688,10 +688,11 @@ export default function PayrollPageClient({
         incentives: draftConfig.incentives,
       });
       await loadPayrollRuns();
+      if (selectedPayrollRun?._id === payrollRun._id) {
+        await handleViewPayslips(payrollRun);
+      }
       toast({
         title: "Payslips regenerated",
-        description:
-          "Payslips updated with correct late categorization (Regular Holiday Late vs Late).",
       });
     } catch (error: any) {
       toast({
