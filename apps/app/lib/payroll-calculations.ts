@@ -25,6 +25,8 @@ export type PayrollRates = {
   nightDiffRestDayOtRate?: number;
   dailyRateIncludesAllowance: boolean;
   dailyRateWorkingDaysPerYear: number;
+  /** If true, holiday no_work is treated as no-work-no-pay (deduct daily pay for monthly). Default false. */
+  holidayNoWorkNoPay?: boolean;
 };
 
 export type ResolvedPayrollRates = PayrollRates & {
@@ -1281,7 +1283,20 @@ export function calculatePayrollBaseFromRecords(args: {
         });
       }
     } else if (att.status === "no_work") {
-      // Holiday (or similar) when employee did not work — no additional pay, no absence
+      // Holiday no_work policy is org-configurable:
+      // - false (default): no-work-with-pay -> no absence deduction
+      // - true: no-work-no-pay -> deduct one daily pay for monthly employees
+      const holidayInfo = getHolidayInfo(att.date, holidays, att, employee);
+      const shouldDeductNoWorkHoliday =
+        payrollRates.holidayNoWorkNoPay === true &&
+        holidayInfo.isHoliday &&
+        holidayInfo.appliesToEmployee !== false;
+      if (shouldDeductNoWorkHoliday) {
+        absences += 1;
+        if (salaryType === "monthly") {
+          absentDeduction += dailyRateForAbsence;
+        }
+      }
       continue;
     } else if (att.status === "leave" || att.status === "leave_with_pay") {
       // leave = legacy, treat as leave_with_pay
@@ -1299,32 +1314,8 @@ export function calculatePayrollBaseFromRecords(args: {
         }
         continue;
       }
-
-      const holidayInfo = getHolidayInfo(att.date, holidays, att, employee);
-      if (
-        holidayInfo.holidayType === "regular" &&
-        holidayInfo.appliesToEmployee !== false
-      ) {
-        if (salaryType !== "monthly") {
-          basicPay += dailyRate;
-        }
-        const rate = payrollRates.regularHolidayRate;
-        const amount = holidayPremiumBase * Math.max(0, rate - 1);
-        holidayPay += amount;
-        holidayPayFromRegular += amount;
-        continue;
-      }
-
-      if (
-        holidayInfo.holidayType === "special" &&
-        holidayInfo.appliesToEmployee !== false
-      ) {
-        if (salaryType !== "monthly") {
-          basicPay += dailyRate;
-        }
-        continue;
-      }
-
+      // Absent (or leave without pay) on any day, including regular/special holiday:
+      // do NOT grant holiday additional pay; just apply normal absence deduction.
       absences += 1;
       if (salaryType === "monthly") {
         absentDeduction += dailyRateForAbsence;
@@ -1352,40 +1343,14 @@ export function calculatePayrollBaseFromRecords(args: {
       continue;
     }
 
-    const holidayInfo = getHolidayInfo(dateTs, holidays, undefined, employee);
-    if (
-      holidayInfo.holidayType === "regular" &&
-      holidayInfo.appliesToEmployee !== false
-    ) {
-      if (salaryType !== "monthly") {
-        basicPay += dailyRate;
-      }
-      const rate = payrollRates.regularHolidayRate;
-      const amount = holidayPremiumBase * Math.max(0, rate - 1);
-      holidayPay += amount;
-      holidayPayFromRegular += amount;
-      continue;
-    }
-
-    if (
-      holidayInfo.holidayType === "special" &&
-      holidayInfo.appliesToEmployee !== false
-    ) {
-      if (salaryType !== "monthly") {
-        basicPay += dailyRate;
-      }
-      continue;
-    }
-
     if (isRestDay(dateTs, employee.schedule)) {
       continue;
     }
-
-    if (holidayInfo.holidayType === "special_working") {
-      absences += 1;
-      if (salaryType === "monthly") {
-        absentDeduction += dailyRateForAbsence;
-      }
+    // Missing attendance entry for a workday (holiday or not) is treated as absence:
+    // no holiday premium on non-worked holidays; only standard absence deduction.
+    absences += 1;
+    if (salaryType === "monthly") {
+      absentDeduction += dailyRateForAbsence;
     }
   }
 

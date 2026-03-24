@@ -89,6 +89,7 @@ export function PayrollSettingsContent() {
       | "once_per_month"
       | "twice_per_month",
     taxDeductOnPay: "first" as "first" | "second",
+    holidayNoWorkNoPay: false,
   });
   const [isSaving, setIsSaving] = useState(false);
 
@@ -123,6 +124,7 @@ export function PayrollSettingsContent() {
         secondPayDate: organization?.secondPayDate ?? 30,
         taxDeductionFrequency: taxFreq,
         taxDeductOnPay: taxPay,
+        holidayNoWorkNoPay: ps.holidayNoWorkNoPay ?? false,
       });
     } else {
       setFormData((prev) => ({
@@ -155,6 +157,7 @@ export function PayrollSettingsContent() {
           dailyRateWorkingDaysPerYear: formData.dailyRateWorkingDaysPerYear,
           taxDeductionFrequency: formData.taxDeductionFrequency,
           taxDeductOnPay: formData.taxDeductOnPay,
+          holidayNoWorkNoPay: formData.holidayNoWorkNoPay,
         },
       });
 
@@ -286,6 +289,42 @@ export function PayrollSettingsContent() {
                 }
               />
             </div>
+          </div>
+        </div>
+
+        <div className="space-y-4 rounded-lg border p-4">
+          <h4 className="font-medium">Holiday no-work behavior</h4>
+          <p className="text-sm text-muted-foreground">
+            Controls payroll treatment when attendance status is{" "}
+            <code>no_work</code> on a holiday.
+          </p>
+          <div className="space-y-2 max-w-md">
+            <Label htmlFor="holidayNoWorkNoPay">
+              Holiday no-work payroll mode
+            </Label>
+            <Select
+              value={formData.holidayNoWorkNoPay ? "no_pay" : "with_pay"}
+              onValueChange={(value) =>
+                setFormData({
+                  ...formData,
+                  holidayNoWorkNoPay: value === "no_pay",
+                })
+              }
+            >
+              <SelectTrigger id="holidayNoWorkNoPay">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="with_pay">
+                  No work with pay (default)
+                </SelectItem>
+                <SelectItem value="no_pay">No work no pay</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              If set to No work no pay, payroll deducts one daily pay for
+              monthly employees on holiday <code>no_work</code> days.
+            </p>
           </div>
         </div>
 

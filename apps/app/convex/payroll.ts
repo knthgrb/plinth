@@ -42,6 +42,104 @@ function buildDraftPayrollConfig(args: {
   };
 }
 
+type DraftDependencySnapshot = {
+  attendance: number;
+  holidays: number;
+  payrollSettings: number;
+  leaveTypes: number;
+  shifts: number;
+  employees: number;
+};
+
+function maxTs(current: number, next: any): number {
+  const v =
+    typeof next?.updatedAt === "number"
+      ? next.updatedAt
+      : typeof next?.createdAt === "number"
+        ? next.createdAt
+        : 0;
+  return v > current ? v : current;
+}
+
+async function resolveDraftEmployeeIdsForRun(ctx: any, payrollRun: any) {
+  const cfg = decryptDraftConfigFromDb(payrollRun.draftConfig);
+  const fromConfig = Array.isArray(cfg?.employeeIds) ? cfg.employeeIds : [];
+  if (fromConfig.length > 0) return fromConfig;
+  const payslips = await (ctx.db.query("payslips") as any)
+    .withIndex("by_payroll_run", (q: any) => q.eq("payrollRunId", payrollRun._id))
+    .collect();
+  return Array.from(new Set(payslips.map((p: any) => p.employeeId)));
+}
+
+async function captureDraftDependencySnapshot(ctx: any, args: {
+  organizationId: any;
+  cutoffStart: number;
+  cutoffEnd: number;
+  employeeIds: any[];
+}): Promise<DraftDependencySnapshot> {
+  let attendance = 0;
+  let employees = 0;
+  for (const employeeId of args.employeeIds) {
+    const emp = await ctx.db.get(employeeId);
+    employees = maxTs(employees, emp);
+    const rows = await (ctx.db.query("attendance") as any)
+      .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
+      .collect();
+    for (const row of rows) {
+      if (row.date >= args.cutoffStart && row.date <= args.cutoffEnd) {
+        attendance = maxTs(attendance, row);
+      }
+    }
+  }
+
+  let holidays = 0;
+  const holidayRows = await (ctx.db.query("holidays") as any)
+    .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
+    .collect();
+  for (const row of holidayRows) holidays = maxTs(holidays, row);
+
+  let leaveTypes = 0;
+  const leaveTypeRows = await (ctx.db.query("leaveTypes") as any)
+    .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
+    .collect();
+  for (const row of leaveTypeRows) leaveTypes = maxTs(leaveTypes, row);
+
+  let shifts = 0;
+  const shiftRows = await (ctx.db.query("shifts") as any)
+    .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
+    .collect();
+  for (const row of shiftRows) shifts = maxTs(shifts, row);
+
+  const settingsRow = await (ctx.db.query("settings") as any)
+    .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
+    .first();
+  const payrollSettings = maxTs(0, settingsRow);
+
+  return {
+    attendance,
+    holidays,
+    payrollSettings,
+    leaveTypes,
+    shifts,
+    employees,
+  };
+}
+
+function hasDraftDependenciesChanged(
+  snapshot: DraftDependencySnapshot | undefined,
+  current: DraftDependencySnapshot,
+): boolean {
+  if (!snapshot) return true;
+  return (
+    current.attendance > snapshot.attendance ||
+    current.holidays > snapshot.holidays ||
+    current.payrollSettings > snapshot.payrollSettings ||
+    current.leaveTypes > snapshot.leaveTypes ||
+    current.shifts > snapshot.shifts ||
+    current.employees > snapshot.employees
+  );
+}
+
 function getDeductionAmountByNames(
   deductions: Array<{ name: string; amount: number }>,
   names: string[],
@@ -362,6 +460,7 @@ export type BasePayrollConfig = {
   overtimeRestDayRate: number;
   dailyRateIncludesAllowance: boolean;
   dailyRateWorkingDaysPerYear: number;
+  holidayNoWorkNoPay: boolean;
 };
 
 function derivePayrollRatesFromBase(base: BasePayrollConfig): PayrollRates {
@@ -395,6 +494,7 @@ function derivePayrollRatesFromBase(base: BasePayrollConfig): PayrollRates {
     dailyRateWorkingDaysPerYear:
       base.dailyRateWorkingDaysPerYear ??
       DEFAULT_DAILY_RATE_WORKING_DAYS_PER_YEAR,
+    holidayNoWorkNoPay: base.holidayNoWorkNoPay ?? false,
     regularHolidayRate: regHol,
     specialHolidayRate: specHol,
   };
@@ -416,6 +516,7 @@ export type PayrollRates = {
   nightDiffRestDayOtRate: number;
   dailyRateIncludesAllowance: boolean;
   dailyRateWorkingDaysPerYear: number;
+  holidayNoWorkNoPay: boolean;
   regularHolidayRate: number;
   specialHolidayRate: number;
 };
@@ -460,6 +561,7 @@ async function getPayrollRates(
     dailyRateWorkingDaysPerYear:
       ps.dailyRateWorkingDaysPerYear ??
       DEFAULT_DAILY_RATE_WORKING_DAYS_PER_YEAR,
+    holidayNoWorkNoPay: ps.holidayNoWorkNoPay ?? false,
   };
   return { rates: derivePayrollRatesFromBase(base), base };
 }
@@ -486,6 +588,7 @@ function getEmployeePayrollRates(
     overtimeRestDayRate: c.overtimeRestDayRate ?? orgBase.overtimeRestDayRate,
     dailyRateIncludesAllowance: orgBase.dailyRateIncludesAllowance,
     dailyRateWorkingDaysPerYear: orgBase.dailyRateWorkingDaysPerYear,
+    holidayNoWorkNoPay: orgBase.holidayNoWorkNoPay,
   };
   return derivePayrollRatesFromBase(mergedBase);
 }
@@ -1726,9 +1829,16 @@ export const createPayrollRun = mutation({
 
     // Keep status as "draft" - user can review and finalize later
     // Mark that deductions (gov + attendance) were applied when saving this draft
+    const draftDependencySnapshot = await captureDraftDependencySnapshot(ctx, {
+      organizationId: args.organizationId,
+      cutoffStart: args.cutoffStart,
+      cutoffEnd: args.cutoffEnd,
+      employeeIds: args.employeeIds,
+    });
     await ctx.db.patch(payrollRunId, {
       processedAt: now,
       deductionsEnabled,
+      draftDependencySnapshot,
       updatedAt: now,
     });
 
@@ -2413,6 +2523,17 @@ export const updatePayrollRun = mutation({
           }) as any,
         );
       }
+
+      const refreshedSnapshot = await captureDraftDependencySnapshot(ctx, {
+        organizationId: payrollRun.organizationId,
+        cutoffStart,
+        cutoffEnd,
+        employeeIds,
+      });
+      await ctx.db.patch(args.payrollRunId, {
+        draftDependencySnapshot: refreshedSnapshot,
+        updatedAt: Date.now(),
+      });
     }
 
     return { success: true };
@@ -2445,6 +2566,28 @@ export const updatePayrollRunStatus = mutation({
       throw new Error(
         "Finalized payroll runs cannot be reverted to draft. Delete the run and create a new one instead.",
       );
+    }
+
+    if (
+      args.status === "finalized" &&
+      payrollRun.status === "draft" &&
+      (payrollRun.runType ?? "regular") === "regular"
+    ) {
+      const employeeIds = await resolveDraftEmployeeIdsForRun(ctx, payrollRun);
+      const currentSnapshot = await captureDraftDependencySnapshot(ctx, {
+        organizationId: payrollRun.organizationId,
+        cutoffStart: payrollRun.cutoffStart,
+        cutoffEnd: payrollRun.cutoffEnd,
+        employeeIds,
+      });
+      const savedSnapshot = payrollRun.draftDependencySnapshot as
+        | DraftDependencySnapshot
+        | undefined;
+      if (hasDraftDependenciesChanged(savedSnapshot, currentSnapshot)) {
+        throw new Error(
+          "Draft is outdated due to attendance/holiday/rate/schedule changes. Regenerate payslips before finalizing.",
+        );
+      }
     }
 
     // Remove cost items if archiving after finalize/paid
@@ -2945,7 +3088,30 @@ export const getPayrollRuns = query({
     }
 
     runs.sort((a: any, b: any) => b.createdAt - a.createdAt);
-    return runs.map((r: any) => decryptPayrollRunFromDb(r));
+    const out: any[] = [];
+    for (const run of runs) {
+      const dec = decryptPayrollRunFromDb(run);
+      if (
+        dec.status === "draft" &&
+        (dec.runType ?? "regular") === "regular"
+      ) {
+        const employeeIds = await resolveDraftEmployeeIdsForRun(ctx, run);
+        const currentSnapshot = await captureDraftDependencySnapshot(ctx, {
+          organizationId: dec.organizationId,
+          cutoffStart: dec.cutoffStart,
+          cutoffEnd: dec.cutoffEnd,
+          employeeIds,
+        });
+        dec.isDraftOutdated = hasDraftDependenciesChanged(
+          run.draftDependencySnapshot as DraftDependencySnapshot | undefined,
+          currentSnapshot,
+        );
+      } else {
+        dec.isDraftOutdated = false;
+      }
+      out.push(dec);
+    }
+    return out;
   },
 });
 

@@ -83,19 +83,29 @@ export function PayrollRunsTable({
               <TableRow key={run._id}>
                 <TableCell>{periodDisplay}</TableCell>
                 <TableCell>
-                  <Badge
-                    variant="secondary"
-                    className={getStatusBadgeClass(run.status)}
-                    style={getStatusBadgeStyle(run.status)}
-                  >
-                    {run.status === "paid"
-                      ? "Paid"
-                      : run.status === "finalized"
-                        ? "Finalized"
-                        : run.status === "archived"
-                          ? "Archived"
-                          : run.status}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      variant="secondary"
+                      className={getStatusBadgeClass(run.status)}
+                      style={getStatusBadgeStyle(run.status)}
+                    >
+                      {run.status === "paid"
+                        ? "Paid"
+                        : run.status === "finalized"
+                          ? "Finalized"
+                          : run.status === "archived"
+                            ? "Archived"
+                            : run.status}
+                    </Badge>
+                    {run.status === "draft" && run.isDraftOutdated && (
+                      <Badge
+                        variant="secondary"
+                        className="bg-amber-100 text-amber-700 border border-amber-200"
+                      >
+                        Outdated
+                      </Badge>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell>
                   {run.processedAt
@@ -139,10 +149,13 @@ export function PayrollRunsTable({
                               </>
                             )}
                             <DropdownMenuItem
+                              disabled={run.isDraftOutdated}
                               onClick={() => onStatusChange(run, "finalized")}
                             >
                               <CheckCircle className="h-4 w-4 mr-2" />
-                              Finalize
+                              {run.isDraftOutdated
+                                ? "Finalize (regenerate required)"
+                                : "Finalize"}
                             </DropdownMenuItem>
                           </>
                         )}

@@ -1020,6 +1020,67 @@ describe("payroll calculations", () => {
     expect(result.absentDeduction).toBeCloseTo(1379.31, 2);
   });
 
+  it("does not add regular holiday premium when employee is absent on holiday (only absence deduction)", () => {
+    const date = localDate(2026, 1, 23); // Feb 23, 2026
+    const result = calculate({
+      attendance: [
+        {
+          date,
+          status: "absent",
+        },
+      ],
+      holidays: [{ date, type: "regular", isRecurring: false, year: 2026 }],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    expect(result.holidayPay).toBe(0);
+    expect(result.absences).toBe(1);
+    expect(result.absentDeduction).toBeCloseTo(1379.31, 2);
+  });
+
+  it("missing attendance on special holiday is treated as absence without holiday premium", () => {
+    const date = localDate(2026, 1, 24); // Feb 24, 2026
+    const result = calculate({
+      attendance: [],
+      holidays: [{ date, type: "special", isRecurring: false, year: 2026 }],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    expect(result.holidayPay).toBe(0);
+    expect(result.absences).toBe(1);
+    expect(result.absentDeduction).toBeCloseTo(1379.31, 2);
+  });
+
+  it("holiday no_work defaults to no-work-with-pay (no absence deduction)", () => {
+    const date = localDate(2026, 1, 25);
+    const result = calculate({
+      attendance: [{ date, status: "no_work" }],
+      holidays: [{ date, type: "regular", isRecurring: false, year: 2026 }],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    expect(result.absences).toBe(0);
+    expect(result.absentDeduction).toBe(0);
+    expect(result.holidayPay).toBe(0);
+  });
+
+  it("holiday no_work can be configured as no-work-no-pay (deduct one daily pay)", () => {
+    const date = localDate(2026, 1, 26);
+    const result = calculate({
+      attendance: [{ date, status: "no_work" }],
+      holidays: [{ date, type: "special", isRecurring: false, year: 2026 }],
+      cutoffStart: date,
+      cutoffEnd: date,
+      payrollRates: {
+        ...baseRates,
+        holidayNoWorkNoPay: true,
+      },
+    });
+    expect(result.absences).toBe(1);
+    expect(result.absentDeduction).toBeCloseTo(1379.31, 2);
+    expect(result.holidayPay).toBe(0);
+  });
+
   it("treats leave_with_pay as paid (no deduction)", () => {
     const date = localDate(2026, 1, 23); // Friday
     const result = calculate({

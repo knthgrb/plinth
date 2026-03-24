@@ -465,6 +465,17 @@ export default defineSchema({
         }),
       ),
     ),
+    /** Dependency snapshot captured when draft payslips were last regenerated. */
+    draftDependencySnapshot: v.optional(
+      v.object({
+        attendance: v.number(),
+        holidays: v.number(),
+        payrollSettings: v.number(),
+        leaveTypes: v.number(),
+        shifts: v.number(),
+        employees: v.number(),
+      }),
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -886,6 +897,9 @@ export default defineSchema({
         taxDeductOnPay: v.optional(
           v.union(v.literal("first"), v.literal("second")),
         ),
+        // Holiday with "no_work" attendance status: if true, treat as no-work-no-pay (deduct daily pay for monthly).
+        // Default false = no-work-with-pay (no absence deduction).
+        holidayNoWorkNoPay: v.optional(v.boolean()),
       }),
     ),
     // Leave type configurations
