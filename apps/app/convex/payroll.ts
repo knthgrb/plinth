@@ -1562,8 +1562,14 @@ export const createPayrollRun = mutation({
         });
       }
       if (payrollBase.absentDeduction > 0) {
+        const noWorkDays = payrollBase.noWorkNoPayDays ?? 0;
+        const absentDays = Math.max(0, payrollBase.absences - noWorkDays);
+        const absenceLabel =
+          noWorkDays > 0 && absentDays === 0
+            ? `No work (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`
+            : `Absent (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`;
         deductions.push({
-          name: `Absent (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`,
+          name: absenceLabel,
           amount: payrollBase.absentDeduction,
           type: "attendance",
         });
@@ -2291,8 +2297,14 @@ export const updatePayrollRun = mutation({
           });
         }
         if (payrollBase.absentDeduction > 0) {
+          const noWorkDays = payrollBase.noWorkNoPayDays ?? 0;
+          const absentDays = Math.max(0, payrollBase.absences - noWorkDays);
+          const absenceLabel =
+            noWorkDays > 0 && absentDays === 0
+              ? `No work (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`
+              : `Absent (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`;
           deductions.push({
-            name: `Absent (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`,
+            name: absenceLabel,
             amount: payrollBase.absentDeduction,
             type: "attendance",
           });

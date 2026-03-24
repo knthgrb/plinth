@@ -38,6 +38,7 @@ export type PayrollBaseResult = {
   basicPay: number;
   daysWorked: number;
   absences: number;
+  noWorkNoPayDays?: number;
   lateHours: number;
   undertimeHours: number;
   overtimeHours: number;
@@ -1115,6 +1116,7 @@ export function calculatePayrollBaseFromRecords(args: {
       : 0;
   let daysWorked = 0;
   let absences = 0;
+  let noWorkNoPayDays = 0;
   let lateHours = 0;
   let undertimeHours = 0;
   let overtimeHours = 0;
@@ -1293,6 +1295,7 @@ export function calculatePayrollBaseFromRecords(args: {
         holidayInfo.appliesToEmployee !== false;
       if (shouldDeductNoWorkHoliday) {
         absences += 1;
+        noWorkNoPayDays += 1;
         if (salaryType === "monthly") {
           absentDeduction += dailyRateForAbsence;
         }
@@ -1372,6 +1375,7 @@ export function calculatePayrollBaseFromRecords(args: {
     basicPay: round2(basicPay),
     daysWorked,
     absences,
+    noWorkNoPayDays: noWorkNoPayDays > 0 ? noWorkNoPayDays : undefined,
     lateHours,
     undertimeHours,
     overtimeHours,

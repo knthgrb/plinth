@@ -268,11 +268,21 @@ export function PayslipDetail({
       ? (monthlySalary + (allowance ?? 0)) * (12 / dailyRateWorkingDaysPerYear)
       : dailyRate;
   const absentDeduction =
-    getAttendanceDeductionAmount((name) => name.startsWith("absent")) ||
+    getAttendanceDeductionAmount(
+      (name) => name.startsWith("absent") || name.startsWith("no work"),
+    ) ||
     (salaryType === "monthly" ? calculatedAbsences * dailyRateForAbsence : 0);
   // Get attendance deductions by name for display (Special Holiday Late, Regular Holiday Late, Late)
   const attendanceDeductions =
     payslip.deductions?.filter((d: any) => d.type === "attendance") || [];
+  const totalLateDeductionFromAttendance = attendanceDeductions
+    .filter((d: any) => String(d.name || "").toLowerCase().includes("late"))
+    .reduce((sum: number, d: any) => sum + (d.amount ?? 0), 0);
+  const noWorkDeductionFromAttendance = attendanceDeductions
+    .filter((d: any) => String(d.name || "").toLowerCase().startsWith("no work"))
+    .reduce((sum: number, d: any) => sum + (d.amount ?? 0), 0);
+  const lessPrimaryLabel =
+    noWorkDeductionFromAttendance > 0 ? "No work" : "Absent";
   const holidayPayAmount = payslip.holidayPay ?? 0;
   const hasLegalHolidayOvertime = (payslip.overtimeLegalHoliday ?? 0) > 0;
   const hasSpecialHolidayOvertime = (payslip.overtimeSpecialHoliday ?? 0) > 0;
@@ -750,7 +760,7 @@ export function PayslipDetail({
                     {absentDeduction > 0 && (
                       <div className="flex justify-between">
                         <span>
-                          Absent{" "}
+                          {lessPrimaryLabel}{" "}
                           {calculatedAbsences > 0 &&
                             `(${calculatedAbsences} days)`}
                         </span>
@@ -763,53 +773,29 @@ export function PayslipDetail({
                         </span>
                       </div>
                     )}
-                    {attendanceDeductions
-                      .filter(
-                        (d: any) =>
-                          !String(d.name || "").startsWith("Absent") &&
-                          !String(d.name || "").includes("Undertime"),
-                      )
-                      .sort((a: any, b: any) => {
-                        const order = [
-                          "special holiday late",
-                          "regular holiday late",
-                          "regular day late",
-                          "late",
-                        ];
-                        const ai = order.findIndex((o) =>
-                          String(a.name || "")
-                            .toLowerCase()
-                            .includes(o),
-                        );
-                        const bi = order.findIndex((o) =>
-                          String(b.name || "")
-                            .toLowerCase()
-                            .includes(o),
-                        );
-                        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-                      })
-                      .map((d: any) =>
-                        (d.amount ?? 0) > 0 ? (
-                          <div key={d.name} className="flex justify-between">
-                            <span>
-                              {d.name}
-                              {d.name === "Late" && lateHours > 0 && (
-                                <span className="text-muted-foreground font-normal">
-                                  {" "}
-                                  ({Math.round(lateHours * 60)} min)
-                                </span>
-                              )}
+                    {totalLateDeductionFromAttendance > 0 && (
+                      <div className="flex justify-between">
+                        <span>
+                          Late
+                          {lateHours > 0 && (
+                            <span className="text-muted-foreground font-normal">
+                              {" "}
+                              ({Math.round(lateHours * 60)} min)
                             </span>
-                            <span>
-                              ₱
-                              {(d.amount ?? 0).toLocaleString("en-US", {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2,
-                              })}
-                            </span>
-                          </div>
-                        ) : null,
-                      )}
+                          )}
+                        </span>
+                        <span>
+                          ₱
+                          {totalLateDeductionFromAttendance.toLocaleString(
+                            "en-US",
+                            {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            },
+                          )}
+                        </span>
+                      </div>
+                    )}
                     {undertimeDeduction > 0 && (
                       <div className="flex justify-between">
                         <span>Undertime</span>
