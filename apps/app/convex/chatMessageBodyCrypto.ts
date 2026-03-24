@@ -8,16 +8,9 @@ import {
   bytesToUtf8,
   randomBytes,
 } from "@noble/ciphers/utils.js";
+import { base64ToBytes, bytesToBase64 } from "./binaryBase64";
 
 export const CHAT_ENC_PREFIX = "pp:enc:v1:";
-
-function bytesToBase64(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64");
-}
-
-function base64ToBytes(b64: string): Uint8Array {
-  return new Uint8Array(Buffer.from(b64, "base64"));
-}
 
 export function isEncryptedPayload(s: string): boolean {
   return typeof s === "string" && s.startsWith(CHAT_ENC_PREFIX);

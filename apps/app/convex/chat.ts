@@ -11,6 +11,7 @@ import {
   wrapSessionKey,
   unwrapSessionKey,
 } from "./chatSessionKey";
+import { bytesToBase64 } from "./binaryBase64";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -1122,7 +1123,7 @@ export const getChatSessionKey = query({
         conv.organizationId,
         conv._id,
       );
-      return { key: Buffer.from(raw).toString("base64") };
+      return { key: bytesToBase64(raw) };
     } catch {
       return null;
     }
@@ -1150,7 +1151,7 @@ export const listChatSessionKeysForOrganization = query({
           c.organizationId,
           c._id,
         );
-        out[c._id] = Buffer.from(raw).toString("base64");
+        out[c._id] = bytesToBase64(raw);
       } catch {
         /* skip */
       }

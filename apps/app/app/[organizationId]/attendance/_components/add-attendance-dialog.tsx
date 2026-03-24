@@ -31,6 +31,9 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   calculateLate,
   calculateUndertime,
+  clockOutIsNextCalendarDay,
+  formatAttendanceDateLabelFromYmd,
+  formatNextDayLabelFromYmd,
   formatTime12Hour,
 } from "@/utils/attendance-calculations";
 
@@ -327,32 +330,55 @@ export function AddAttendanceDialog({
                 </Select>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <TimePicker
-                  value={timeIn}
-                  onValueChange={setTimeIn}
-                  disabled={
-                    status === "absent" ||
-                      status === "leave_with_pay" ||
-                      status === "leave_without_pay" ||
-                      status === "no_work" ||
-                      isSubmitting
-                  }
-                  label="Time In"
-                  placeholder="Select time in"
-                />
-                <TimePicker
-                  value={timeOut}
-                  onValueChange={setTimeOut}
-                  disabled={
-                    status === "absent" ||
-                      status === "leave_with_pay" ||
-                      status === "leave_without_pay" ||
-                      status === "no_work" ||
-                      isSubmitting
-                  }
-                  label="Time Out"
-                  placeholder="Select time out"
-                />
+                <div className="space-y-1">
+                  <TimePicker
+                    value={timeIn}
+                    onValueChange={setTimeIn}
+                    disabled={
+                      status === "absent" ||
+                        status === "leave_with_pay" ||
+                        status === "leave_without_pay" ||
+                        status === "no_work" ||
+                        isSubmitting
+                    }
+                    label="Time In"
+                    placeholder="Select time in"
+                  />
+                  {selectedDate && timeIn && (
+                    <p className="text-xs text-muted-foreground">
+                      Calendar day (Manila):{" "}
+                      {formatAttendanceDateLabelFromYmd(selectedDate) ?? "—"}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <TimePicker
+                    value={timeOut}
+                    onValueChange={setTimeOut}
+                    disabled={
+                      status === "absent" ||
+                        status === "leave_with_pay" ||
+                        status === "leave_without_pay" ||
+                        status === "no_work" ||
+                        isSubmitting
+                    }
+                    label="Time Out"
+                    placeholder="Select time out"
+                  />
+                  {selectedDate &&
+                    timeIn &&
+                    timeOut &&
+                    (clockOutIsNextCalendarDay(timeIn, timeOut) ? (
+                      <p className="text-xs text-muted-foreground">
+                        Interpreted as next calendar day (Manila):{" "}
+                        {formatNextDayLabelFromYmd(selectedDate) ?? "—"}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Same calendar day as time in (Manila).
+                      </p>
+                    ))}
+                </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="overtime">Overtime (hours)</Label>
@@ -474,7 +500,18 @@ export function AddAttendanceDialog({
                       <p className="text-xs text-gray-500">
                         {useManualUndertime
                           ? "Manually enter undertime minutes"
-                          : `Calculated: ${Math.round(calculatedUndertime * 60)} min from this employee's scheduled time out (${formatTime12Hour(employeeSchedule.out)}).`}
+                          : (() => {
+                              const mins = Math.round(
+                                calculatedUndertime * 60,
+                              );
+                              const schedLabel = formatTime12Hour(
+                                employeeSchedule.out,
+                              );
+                              if (mins > 0) {
+                                return `Calculated: ${mins} min (left before scheduled end ${schedLabel}; overnight clock-out counts as the next calendar day).`;
+                              }
+                              return `Calculated: 0 min (no undertime vs scheduled end ${schedLabel}; overnight clock-out counts as the next calendar day).`;
+                            })()}
                       </p>
                     </div>
                   </div>

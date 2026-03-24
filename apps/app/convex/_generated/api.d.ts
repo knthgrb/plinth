@@ -14,6 +14,7 @@ import type * as appEncryption from "../appEncryption.js";
 import type * as assets from "../assets.js";
 import type * as attendance from "../attendance.js";
 import type * as auth from "../auth.js";
+import type * as binaryBase64 from "../binaryBase64.js";
 import type * as chat from "../chat.js";
 import type * as chatMessageBodyCrypto from "../chatMessageBodyCrypto.js";
 import type * as chatSessionKey from "../chatSessionKey.js";
@@ -54,6 +55,7 @@ declare const fullApi: ApiFromModules<{
   assets: typeof assets;
   attendance: typeof attendance;
   auth: typeof auth;
+  binaryBase64: typeof binaryBase64;
   chat: typeof chat;
   chatMessageBodyCrypto: typeof chatMessageBodyCrypto;
   chatSessionKey: typeof chatSessionKey;

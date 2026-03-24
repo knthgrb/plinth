@@ -43,6 +43,8 @@ export type PayrollBaseResult = {
   /** When holidayPay > 0, which type produced it so the payslip can show "Legal" vs "Special Holiday". */
   holidayPayType?: "regular" | "special";
   nightDiffPay: number;
+  /** Per attendance day with positive night diff (debug / payslip); amounts rounded to 2 dp. */
+  nightDiffBreakdown?: Array<{ label: string; date: number; amount: number }>;
   restDayPremiumPay: number;
   overtimeRegular: number;
   overtimeRestDay: number;
@@ -100,6 +102,36 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const NIGHT_START_MIN = 22 * 60; // 10:00 PM
 const NIGHT_END_MIN = 6 * 60; // 6:00 AM (same calendar day: 0–360; next day in next segment)
 const MIDNIGHT_MIN = 24 * 60; // 1440
+
+const NIGHT_DIFF_LABEL_WEEKDAYS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+const NIGHT_DIFF_LABEL_MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+/** Payslip debug: e.g. "Monday - March 27" in Asia/Manila. */
+export function formatNightDiffBreakdownLabel(dateTs: number): string {
+  const { dayOfWeek, m, d } = getManilaDateParts(dateTs);
+  return `${NIGHT_DIFF_LABEL_WEEKDAYS[dayOfWeek]} - ${NIGHT_DIFF_LABEL_MONTHS[m]} ${d}`;
+}
 
 function getDayName(date: number): string {
   const dayNames = [
@@ -278,6 +310,61 @@ function timeStringToMinutes(time: string | undefined): number | null {
   const minutes = Number(minutePart);
   if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
   return hours * 60 + minutes;
+}
+
+/**
+ * In/out on one shift as cumulative minutes from 00:00 on the attendance calendar day,
+ * with out past midnight expressed as minutes beyond 1440 (same convention as getSegmentsByManilaDay).
+ */
+function pairInOutGlobalMinutes(
+  inStr: string,
+  outStr: string,
+): { inGlobal: number; outGlobal: number } | null {
+  const inM = timeStringToMinutes(inStr);
+  const outM = timeStringToMinutes(outStr);
+  if (inM === null || outM === null) return null;
+  const outGlobal = outM <= inM ? MIDNIGHT_MIN + outM : outM;
+  return { inGlobal: inM, outGlobal };
+}
+
+/** HH:mm for getSegmentsByManilaDay from global end minutes (see pairInOutGlobalMinutes). */
+function globalEndToOutTimeString(endGlobal: number): string {
+  const m = Math.round(endGlobal);
+  if (m <= 0) return "00:00";
+  if (m < MIDNIGHT_MIN) {
+    const hh = Math.floor(m / 60);
+    const mm = m % 60;
+    return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+  }
+  if (m === MIDNIGHT_MIN) return "00:00";
+  const rem = m - MIDNIGHT_MIN;
+  const hh = Math.floor(rem / 60);
+  const mm = rem % 60;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+/**
+ * Night diff is based on paid work only: scheduled end + approved OT, not a late clock-out.
+ * If actual out is after scheduled end, cap at schedule-out + overtime (minutes). Early out unchanged.
+ */
+function effectiveNightDiffOutClock(params: {
+  actualIn: string;
+  actualOut: string;
+  scheduleIn?: string;
+  scheduleOut?: string;
+  overtimeHours?: number;
+}): string {
+  const { actualIn, actualOut, scheduleIn, scheduleOut, overtimeHours } = params;
+  const act = pairInOutGlobalMinutes(actualIn, actualOut);
+  if (!act) return actualOut;
+  if (!scheduleIn?.trim() || !scheduleOut?.trim()) return actualOut;
+  const sch = pairInOutGlobalMinutes(scheduleIn, scheduleOut);
+  if (!sch) return actualOut;
+  const otMin = Math.max(0, (overtimeHours ?? 0) * 60);
+  if (act.outGlobal <= sch.outGlobal) return actualOut;
+  const paidEndGlobal = sch.outGlobal + otMin;
+  const effectiveEndGlobal = Math.min(act.outGlobal, paidEndGlobal);
+  return globalEndToOutTimeString(effectiveEndGlobal);
 }
 
 function hasUsableLunchPair(lunchStart?: string, lunchEnd?: string): boolean {
@@ -464,15 +551,27 @@ export function calculateNightDiffWorkHoursForAttendance(att: {
   scheduleOut?: string;
   lunchStart?: string;
   lunchEnd?: string;
+  overtime?: number;
 }): number {
   const actualIn = att.actualIn;
   const actualOut = att.actualOut;
   const scheduleIn = att.scheduleIn;
   const scheduleOut = att.scheduleOut;
 
-  const minsFromActual =
+  const outForNightDiff =
     actualIn && actualOut
-      ? calculateNightDiffWorkMinutesFromTimes(att, actualIn, actualOut)
+      ? effectiveNightDiffOutClock({
+          actualIn,
+          actualOut,
+          scheduleIn,
+          scheduleOut,
+          overtimeHours: att.overtime,
+        })
+      : actualOut;
+
+  const minsFromActual =
+    actualIn && outForNightDiff
+      ? calculateNightDiffWorkMinutesFromTimes(att, actualIn, outForNightDiff)
       : 0;
   if (minsFromActual > 0) return minsFromActual / 60;
   if (!scheduleIn || !scheduleOut) return 0;
@@ -511,18 +610,29 @@ function calculateNightDiffPay(
   hourlyRate: number,
   rates: ResolvedPayrollRates,
 ): number {
-  // Prefer actual in/out; if missing or they yield no night hours, use schedule so "early in / late timeout" days still get night diff.
+  // Prefer actual in / effective out (scheduled end + OT, not unapproved late clock-out); if missing or no night hours, use schedule.
   const actualIn = att.actualIn;
   const actualOut = att.actualOut;
   const scheduleIn = att.scheduleIn;
   const scheduleOut = att.scheduleOut;
 
-  const payFromActual =
+  const outForNightDiff =
     actualIn && actualOut
+      ? effectiveNightDiffOutClock({
+          actualIn,
+          actualOut,
+          scheduleIn,
+          scheduleOut,
+          overtimeHours: att.overtime,
+        })
+      : actualOut;
+
+  const payFromActual =
+    actualIn && outForNightDiff
       ? computeNightDiffPayFromTimes(
           att,
           actualIn,
-          actualOut,
+          outForNightDiff,
           holidays,
           employee,
           hourlyRate,
@@ -975,6 +1085,11 @@ export function calculatePayrollBaseFromRecords(args: {
   let absentDeduction = 0;
   let holidayPayFromRegular = 0;
   let holidayPayFromSpecial = 0;
+  const nightDiffBreakdown: Array<{
+    label: string;
+    date: number;
+    amount: number;
+  }> = [];
 
   for (const att of periodAttendance) {
     if (att.status === "present" || att.status === "half-day") {
@@ -1109,6 +1224,13 @@ export function calculatePayrollBaseFromRecords(args: {
         payrollRates,
       );
       nightDiffPay += dayNightDiffAmount;
+      if (dayNightDiffAmount > 0) {
+        nightDiffBreakdown.push({
+          label: formatNightDiffBreakdownLabel(att.date),
+          date: att.date,
+          amount: round2(dayNightDiffAmount),
+        });
+      }
     } else if (att.status === "no_work") {
       // Holiday (or similar) when employee did not work — no additional pay, no absence
       continue;
@@ -1242,6 +1364,8 @@ export function calculatePayrollBaseFromRecords(args: {
     holidayPay: round2(holidayPay),
     holidayPayType,
     nightDiffPay: round2(nightDiffPay),
+    nightDiffBreakdown:
+      nightDiffBreakdown.length > 0 ? nightDiffBreakdown : undefined,
     restDayPremiumPay: round2(restDayPremiumPay),
     overtimeRegular: round2(overtimeRegular),
     overtimeRestDay: round2(overtimeRestDay),

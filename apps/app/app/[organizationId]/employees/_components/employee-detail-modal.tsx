@@ -1780,7 +1780,8 @@ export function EmployeeDetailModal({
                         {(shifts ?? []).map((s: any) => (
                           <SelectItem key={String(s._id)} value={String(s._id)}>
                             {s.name} ({s.scheduleIn}–{s.scheduleOut}, lunch{" "}
-                            {s.lunchStart}–{s.lunchEnd})
+                            {formatTime12Hour(s.lunchStart)} –{" "}
+                            {formatTime12Hour(s.lunchEnd)})
                           </SelectItem>
                         ))}
                         {editShiftId &&
@@ -1802,7 +1803,8 @@ export function EmployeeDetailModal({
                         );
                         return selected ? (
                           <p className="text-xs text-muted-foreground">
-                            Lunch: {selected.lunchStart} – {selected.lunchEnd}
+                            Lunch: {formatTime12Hour(selected.lunchStart)} –{" "}
+                            {formatTime12Hour(selected.lunchEnd)}
                           </p>
                         ) : null;
                       })()}
@@ -1989,8 +1991,9 @@ export function EmployeeDetailModal({
                                 if (matched) {
                                   return (
                                     <p className="text-xs text-muted-foreground">
-                                      Lunch: {matched.lunchStart}–
-                                      {matched.lunchEnd} ({matched.name})
+                                      Lunch: {formatTime12Hour(matched.lunchStart)}{" "}
+                                      – {formatTime12Hour(matched.lunchEnd)} (
+                                      {matched.name})
                                     </p>
                                   );
                                 }

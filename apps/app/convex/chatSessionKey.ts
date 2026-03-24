@@ -6,14 +6,7 @@ import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { utf8ToBytes, randomBytes } from "@noble/ciphers/utils.js";
 import { getEncryptionKeyRaw } from "./appEncryption";
-
-function bytesToBase64(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64");
-}
-
-function base64ToBytes(b64: string): Uint8Array {
-  return new Uint8Array(Buffer.from(b64, "base64"));
-}
+import { base64ToBytes, bytesToBase64 } from "./binaryBase64";
 
 /** @deprecated use getEncryptionKeyRaw from appEncryption */
 export function getChatMasterSecret(): Uint8Array | null {

@@ -998,6 +998,7 @@ export const computeEmployeePayroll = query({
       holidayPayType: payrollBase.holidayPayType,
       restDayPay: payrollBase.restDayPremiumPay ?? 0,
       nightDiffPay: payrollBase.nightDiffPay,
+      nightDiffBreakdown: payrollBase.nightDiffBreakdown,
       overtimeRegular: payrollBase.overtimeRegular,
       overtimeRestDay: payrollBase.overtimeRestDay,
       overtimeRestDayExcess: payrollBase.overtimeRestDayExcess,
@@ -1678,6 +1679,7 @@ export const createPayrollRun = mutation({
             payrollBase.nightDiffPay > 0
               ? round2(payrollBase.nightDiffPay)
               : undefined,
+          nightDiffBreakdown: payrollBase.nightDiffBreakdown,
           restDayPay:
             (payrollBase.restDayPremiumPay ?? 0) > 0
               ? round2(payrollBase.restDayPremiumPay!)
@@ -2367,6 +2369,7 @@ export const updatePayrollRun = mutation({
               payrollBase.nightDiffPay > 0
                 ? round2(payrollBase.nightDiffPay)
                 : undefined,
+            nightDiffBreakdown: payrollBase.nightDiffBreakdown,
             restDayPay:
               (payrollBase.restDayPremiumPay ?? 0) > 0
                 ? round2(payrollBase.restDayPremiumPay!)

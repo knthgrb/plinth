@@ -45,6 +45,11 @@ export function encryptPayslipRowForDb(
   if (Array.isArray(out.incentives) && out.incentives.length > 0) {
     out.incentives = maybeEncryptJsonForStorage(out.incentives) as any;
   }
+  if (Array.isArray(out.nightDiffBreakdown) && out.nightDiffBreakdown.length > 0) {
+    out.nightDiffBreakdown = maybeEncryptJsonForStorage(
+      out.nightDiffBreakdown,
+    ) as any;
+  }
   if (
     out.employerContributions &&
     typeof out.employerContributions === "object"
@@ -82,6 +87,15 @@ export function decryptPayslipRowFromDb(
       out.incentives = undefined;
     }
   }
+  if (typeof out.nightDiffBreakdown === "string") {
+    try {
+      out.nightDiffBreakdown = decryptJsonFromStorage(out.nightDiffBreakdown);
+    } catch {
+      out.nightDiffBreakdown = undefined;
+    }
+  } else if (!Array.isArray(out.nightDiffBreakdown)) {
+    out.nightDiffBreakdown = undefined;
+  }
   if (typeof out.employerContributions === "string") {
     try {
       out.employerContributions = decryptJsonFromStorage(
@@ -114,6 +128,15 @@ export function encryptPayslipPartialForDb(
   }
   if ("incentives" in out && Array.isArray(out.incentives)) {
     out.incentives = maybeEncryptJsonForStorage(out.incentives) as any;
+  }
+  if (
+    "nightDiffBreakdown" in out &&
+    Array.isArray(out.nightDiffBreakdown) &&
+    out.nightDiffBreakdown.length > 0
+  ) {
+    out.nightDiffBreakdown = maybeEncryptJsonForStorage(
+      out.nightDiffBreakdown,
+    ) as any;
   }
   if (
     "employerContributions" in out &&

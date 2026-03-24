@@ -167,6 +167,7 @@ export function PayrollStep5Preview({
               holidayPayType: preview.holidayPayType ?? preview.payroll?.holidayPayType,
               restDayPay: preview.restDayPay || 0,
               nightDiffPay: preview.nightDiffPay || 0,
+              nightDiffBreakdown: preview.nightDiffBreakdown,
               overtimeRegular: preview.overtimeRegular || 0,
               overtimeRestDay: preview.overtimeRestDay || 0,
               overtimeRestDayExcess: preview.overtimeRestDayExcess || 0,

@@ -651,6 +651,62 @@ describe("payroll calculations", () => {
     expect(result.nightDiffPay).toBeCloseTo(8.62, 2);
   });
 
+  it("caps night diff at scheduled out when actual out is later without OT (2pm-11pm sched, actual midnight)", () => {
+    const date = localDate(2026, 2, 18); // Mar 19 2026 = Thursday
+    const result = calculate({
+      attendance: [
+        {
+          date,
+          status: "present",
+          actualIn: "14:00",
+          actualOut: "00:00",
+          scheduleIn: "14:00",
+          scheduleOut: "23:00",
+          overtime: 0,
+        },
+      ],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    const hourly = (30_000 * 12) / 261 / 8;
+    // Paid window ends 23:00 → 1h night (22:00-23:00), not 2h to midnight
+    expect(result.nightDiffPay).toBeCloseTo(hourly * 0.1, 2);
+    expect(
+      calculateNightDiffWorkHoursForAttendance({
+        date,
+        actualIn: "14:00",
+        actualOut: "00:00",
+        scheduleIn: "14:00",
+        scheduleOut: "23:00",
+        overtime: 0,
+      }),
+    ).toBeCloseTo(1, 5);
+  });
+
+  it("extends night diff through scheduled out + recorded OT (2pm-11pm + 1h OT, actual midnight)", () => {
+    const date = localDate(2026, 2, 18);
+    const result = calculate({
+      attendance: [
+        {
+          date,
+          status: "present",
+          actualIn: "14:00",
+          actualOut: "00:00",
+          scheduleIn: "14:00",
+          scheduleOut: "23:00",
+          overtime: 1,
+        },
+      ],
+      cutoffStart: date,
+      cutoffEnd: date,
+    });
+    const hourly = (30_000 * 12) / 261 / 8;
+    // 22:00-23:00 regular night (10%), 23:00-24:00 OT night (137.5% - 125%)
+    const regNight = hourly * 0.1;
+    const otNight = hourly * (1.375 - 1.25);
+    expect(result.nightDiffPay).toBeCloseTo(regNight + otNight, 2);
+  });
+
   it("applies night diff on OT rate (137.5%) for OT hours in 10pm-6am", () => {
     const date = localDate(2026, 1, 23); // Friday
     // Schedule to 8pm, worked until 11pm → 3h OT. 8-10pm = 2h at 125%, 10-11pm = 1h at 137.5%
@@ -705,6 +761,9 @@ describe("payroll calculations", () => {
       }),
     ).toBeCloseTo(1, 5);
     expect(result.nightDiffPay).toBeCloseTo(hourly * 0.1, 2);
+    expect(result.nightDiffBreakdown?.length).toBe(1);
+    const brSum = result.nightDiffBreakdown!.reduce((s, r) => s + r.amount, 0);
+    expect(brSum).toBeCloseTo(result.nightDiffPay, 2);
   });
 
   it("overnight shift 6pm-3am with lunch 11pm-12am: night diff on both calendar days (1h + 3h = 4h)", () => {

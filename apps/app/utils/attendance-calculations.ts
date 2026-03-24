@@ -8,6 +8,89 @@ function timeToMins(t: string): number {
 
 const MAX_LATE_MINUTES = 60;
 
+const MIDNIGHT_MIN = 24 * 60;
+
+const MANILA_MONTH_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+/** Manila wall-clock offset used elsewhere (attendance schedule, payroll). */
+export const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+/**
+ * In/out on one shift as minutes from 00:00 on the attendance calendar day,
+ * with clock-out past midnight as minutes beyond 1440 (same as payroll `pairInOutGlobalMinutes`).
+ */
+export function pairInOutGlobalMinutes(
+  inStr: string,
+  outStr: string,
+): { inGlobal: number; outGlobal: number } | null {
+  const inM = timeToMins(inStr);
+  const outM = timeToMins(outStr);
+  if (!Number.isFinite(inM) || !Number.isFinite(outM)) return null;
+  const outGlobal = outM <= inM ? MIDNIGHT_MIN + outM : outM;
+  return { inGlobal: inM, outGlobal };
+}
+
+/** True when clock-out is interpreted as the next calendar day (e.g. in 2:00 PM, out 12:00 AM). */
+export function clockOutIsNextCalendarDay(timeIn: string, timeOut: string): boolean {
+  if (!timeIn?.trim() || !timeOut?.trim()) return false;
+  return timeToMins(timeOut) <= timeToMins(timeIn);
+}
+
+/** True when scheduled end is the morning after scheduled start (overnight shift). */
+export function scheduleEndsNextCalendarDay(schedIn: string, schedOut: string): boolean {
+  if (!schedIn?.trim() || !schedOut?.trim()) return false;
+  return timeToMins(schedOut) <= timeToMins(schedIn);
+}
+
+/** Label for the attendance row’s calendar day in Manila (for `record.date` timestamps). */
+export function formatManilaAttendanceDayLabel(recordDateTs: number): string {
+  const u = new Date(recordDateTs + MANILA_OFFSET_MS);
+  return `${MANILA_MONTH_SHORT[u.getUTCMonth()]} ${u.getUTCDate()}, ${u.getUTCFullYear()}`;
+}
+
+/** Next Manila calendar day after the attendance row day (for “time out is next day” hints). */
+export function formatNextManilaCalendarDayFromAttendanceTs(recordDateTs: number): string {
+  const u = new Date(recordDateTs + MANILA_OFFSET_MS);
+  const next = new Date(
+    Date.UTC(u.getUTCFullYear(), u.getUTCMonth(), u.getUTCDate() + 1),
+  );
+  return `${MANILA_MONTH_SHORT[next.getUTCMonth()]} ${next.getUTCDate()}, ${next.getUTCFullYear()}`;
+}
+
+/** `yyyy-MM-dd` from a date picker → same calendar label as Manila (date-only, no TZ ambiguity). */
+export function formatAttendanceDateLabelFromYmd(ymd: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim());
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const u = new Date(Date.UTC(y, mo - 1, d));
+  return `${MANILA_MONTH_SHORT[u.getUTCMonth()]} ${u.getUTCDate()}, ${u.getUTCFullYear()}`;
+}
+
+export function formatNextDayLabelFromYmd(ymd: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim());
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const u = new Date(Date.UTC(y, mo - 1, d + 1));
+  return `${MANILA_MONTH_SHORT[u.getUTCMonth()]} ${u.getUTCDate()}, ${u.getUTCFullYear()}`;
+}
+
 /**
  * Calculate late time in minutes (arrival after scheduled start).
  * Per policy: late and undertime are independent — late = late arrival only.
@@ -39,28 +122,9 @@ export function calculateLate(
 }
 
 /**
- * When actualOut is earlier in the day than scheduleOut (e.g. out 23:00, actual 00:00),
- * treat actualOut as next-day so we don't count overtime as undertime.
- * Same-day shift: scheduleIn < scheduleOut. If actualOut is in early morning (e.g. 00:00–noon), treat as next day.
- */
-function actualOutMinutesForComparison(
-  scheduleIn: string,
-  scheduleOut: string,
-  actualOut: string,
-): number {
-  const scheduleInM = timeToMins(scheduleIn);
-  const scheduleOutM = timeToMins(scheduleOut);
-  let actualOutM = timeToMins(actualOut);
-  if (scheduleInM < scheduleOutM && actualOutM < scheduleOutM && actualOutM <= 12 * 60) {
-    actualOutM += 24 * 60;
-  }
-  return actualOutM;
-}
-
-/**
  * Calculate undertime in hours.
- * Policy: Undertime = early departure only (when time out is earlier than scheduled time out).
- * Clock-out after midnight (e.g. 00:00 when schedule out is 23:00) is treated as next day, so no undertime.
+ * Uses the same global timeline as payroll: clock-out at or before clock-in on the clock face
+ * is treated as the next calendar day (e.g. 14:00–00:00 → 10 hours worked, not negative span).
  */
 export function calculateUndertime(
   scheduleIn: string,
@@ -72,39 +136,29 @@ export function calculateUndertime(
 ): number {
   if (!actualIn || !actualOut) return 0;
 
-  const scheduleInM = timeToMins(scheduleIn);
-  const scheduleOutM = timeToMins(scheduleOut);
-  const actualInM = timeToMins(actualIn);
-  const actualOutM = actualOutMinutesForComparison(
-    scheduleIn,
-    scheduleOut,
-    actualOut,
-  );
+  const act = pairInOutGlobalMinutes(actualIn, actualOut);
+  const sch = pairInOutGlobalMinutes(scheduleIn, scheduleOut);
+  if (!act || !sch) return 0;
 
-  // Scheduled work minutes, excluding lunch when provided.
-  let scheduledWorkMinutes = Math.max(0, scheduleOutM - scheduleInM);
+  let scheduledWorkMinutes = Math.max(0, sch.outGlobal - sch.inGlobal);
   if (lunchStart != null && lunchEnd != null) {
     const ls = timeToMins(lunchStart);
     const le = timeToMins(lunchEnd);
     if (ls < le) {
-      const overlapStart = Math.max(scheduleInM, ls);
-      const overlapEnd = Math.min(scheduleOutM, le);
+      const overlapStart = Math.max(sch.inGlobal, ls);
+      const overlapEnd = Math.min(sch.outGlobal, le);
       const lunchOverlap = Math.max(0, overlapEnd - overlapStart);
-      scheduledWorkMinutes = Math.max(
-        0,
-        scheduledWorkMinutes - lunchOverlap,
-      );
+      scheduledWorkMinutes = Math.max(0, scheduledWorkMinutes - lunchOverlap);
     }
   }
 
-  // Actual work minutes, excluding any overlap with lunch.
-  let actualWorkMinutes = Math.max(0, actualOutM - actualInM);
+  let actualWorkMinutes = Math.max(0, act.outGlobal - act.inGlobal);
   if (lunchStart != null && lunchEnd != null) {
     const ls = timeToMins(lunchStart);
     const le = timeToMins(lunchEnd);
     if (ls < le) {
-      const overlapStart = Math.max(actualInM, ls);
-      const overlapEnd = Math.min(actualOutM, le);
+      const overlapStart = Math.max(act.inGlobal, ls);
+      const overlapEnd = Math.min(act.outGlobal, le);
       const lunchOverlap = Math.max(0, overlapEnd - overlapStart);
       actualWorkMinutes = Math.max(0, actualWorkMinutes - lunchOverlap);
     }
@@ -115,7 +169,6 @@ export function calculateUndertime(
     scheduledWorkMinutes - actualWorkMinutes,
   );
 
-  // Do not double‑count "small" late as undertime.
   const lateForDay = calculateLate(scheduleIn, actualIn, lunchStart);
   const undertimeMinutes = Math.max(0, rawUndertimeMinutes - lateForDay);
 
@@ -131,25 +184,29 @@ export function timeToMinutes(time: string): number {
 }
 
 /**
- * Calculate overtime in hours.
- * When actual time out is after scheduled time out (e.g. schedule 23:00, actual 00:00 next day), returns positive hours.
+ * Calculate overtime in hours (actual end after scheduled end on the global timeline).
+ * Pass `actualIn` whenever possible so overnight clock-out is interpreted correctly.
  */
 export function calculateOvertime(
   scheduleOut: string,
   actualOut: string | undefined,
   scheduleIn?: string,
+  actualIn?: string,
 ): number {
-  if (!actualOut) return 0;
+  if (!actualOut?.trim()) return 0;
+
+  if (scheduleIn?.trim() && actualIn?.trim()) {
+    const act = pairInOutGlobalMinutes(actualIn, actualOut);
+    const sch = pairInOutGlobalMinutes(scheduleIn, scheduleOut);
+    if (!act || !sch) return 0;
+    const overtimeMinutes = act.outGlobal - sch.outGlobal;
+    return overtimeMinutes > 0 ? overtimeMinutes / 60 : 0;
+  }
 
   const scheduleOutM = timeToMins(scheduleOut);
   let actualOutM = timeToMins(actualOut);
-  if (scheduleIn != null) {
-    const scheduleInM = timeToMins(scheduleIn);
-    if (scheduleInM < scheduleOutM && actualOutM < scheduleOutM && actualOutM <= 12 * 60) {
-      actualOutM += 24 * 60;
-    }
-  } else if (actualOutM < scheduleOutM && actualOutM <= 12 * 60) {
-    actualOutM += 24 * 60;
+  if (actualOutM < scheduleOutM && actualOutM <= 12 * 60) {
+    actualOutM += MIDNIGHT_MIN;
   }
 
   const overtimeMinutes = actualOutM - scheduleOutM;

@@ -2,103 +2,11 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import { holidayAppliesToEmployee } from "@/lib/payroll-calculations";
+import {
+  calculateLate,
+  calculateUndertime,
+} from "@/utils/attendance-calculations";
 import { getScheduleWithLunch } from "./shifts";
-
-function timeToMins(t: string): number {
-  const [h, m] = t.split(":").map(Number);
-  return (h ?? 0) * 60 + (m ?? 0);
-}
-
-// Late = late arrival only. If lunchStart provided and actualIn >= lunchStart, return 0 (time in after lunch = undertime, not late).
-function calculateLate(
-  scheduleIn: string,
-  actualIn: string | undefined,
-  lunchStart?: string,
-): number {
-  if (!actualIn) return 0;
-  const scheduleMinutes = timeToMins(scheduleIn);
-  const actualMinutes = timeToMins(actualIn);
-  if (lunchStart != null && actualMinutes >= timeToMins(lunchStart)) return 0;
-  const lateMinutes = actualMinutes - scheduleMinutes;
-  return lateMinutes > 0 ? lateMinutes : 0;
-}
-
-// When actualOut is earlier in the day than scheduleOut (e.g. schedule 23:00, actual 00:00),
-// treat actualOut as next-day so overtime is not counted as undertime.
-function actualOutMinutesForComparison(
-  scheduleIn: string,
-  scheduleOut: string,
-  actualOut: string,
-): number {
-  const scheduleInM = timeToMins(scheduleIn);
-  const scheduleOutM = timeToMins(scheduleOut);
-  let actualOutM = timeToMins(actualOut);
-  if (scheduleInM < scheduleOutM && actualOutM < scheduleOutM && actualOutM <= 12 * 60) {
-    actualOutM += 24 * 60;
-  }
-  return actualOutM;
-}
-
-// Undertime = missing scheduled work (early out and, for big tardiness or AM absence, missing hours before lunch).
-// Clock-out after midnight (e.g. 00:00 when schedule out is 23:00) is treated as next day → no undertime on OT.
-function calculateUndertime(
-  scheduleIn: string,
-  scheduleOut: string,
-  actualIn: string | undefined,
-  actualOut: string | undefined,
-  lunchStart?: string,
-  lunchEnd?: string,
-): number {
-  if (!actualIn || !actualOut) return 0;
-  const scheduleInM = timeToMins(scheduleIn);
-  const scheduleOutM = timeToMins(scheduleOut);
-  const actualInM = timeToMins(actualIn);
-  const actualOutM = actualOutMinutesForComparison(
-    scheduleIn,
-    scheduleOut,
-    actualOut,
-  );
-
-  // Scheduled work minutes, excluding lunch when provided.
-  let scheduledWorkMinutes = Math.max(0, scheduleOutM - scheduleInM);
-  if (lunchStart != null && lunchEnd != null) {
-    const ls = timeToMins(lunchStart);
-    const le = timeToMins(lunchEnd);
-    if (ls < le) {
-      const overlapStart = Math.max(scheduleInM, ls);
-      const overlapEnd = Math.min(scheduleOutM, le);
-      const lunchOverlap = Math.max(0, overlapEnd - overlapStart);
-      scheduledWorkMinutes = Math.max(
-        0,
-        scheduledWorkMinutes - lunchOverlap,
-      );
-    }
-  }
-
-  // Actual work minutes, excluding lunch overlap.
-  let actualWorkMinutes = Math.max(0, actualOutM - actualInM);
-  if (lunchStart != null && lunchEnd != null) {
-    const ls = timeToMins(lunchStart);
-    const le = timeToMins(lunchEnd);
-    if (ls < le) {
-      const overlapStart = Math.max(actualInM, ls);
-      const overlapEnd = Math.min(actualOutM, le);
-      const lunchOverlap = Math.max(0, overlapEnd - overlapStart);
-      actualWorkMinutes = Math.max(0, actualWorkMinutes - lunchOverlap);
-    }
-  }
-
-  const rawUndertimeMinutes = Math.max(
-    0,
-    scheduledWorkMinutes - actualWorkMinutes,
-  );
-
-  // Mirror late policy: minutes counted as "late" (up to 60) are not also undertime.
-  const lateForDay = calculateLate(scheduleIn, actualIn, lunchStart);
-  const undertimeMinutes = Math.max(0, rawUndertimeMinutes - lateForDay);
-
-  return undertimeMinutes / 60;
-}
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 function getManilaDateParts(ts: number) {

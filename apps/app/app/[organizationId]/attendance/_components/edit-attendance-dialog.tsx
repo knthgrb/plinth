@@ -28,7 +28,11 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   calculateLate,
   calculateUndertime,
+  clockOutIsNextCalendarDay,
+  formatManilaAttendanceDayLabel,
+  formatNextManilaCalendarDayFromAttendanceTs,
   formatTime12Hour,
+  scheduleEndsNextCalendarDay,
 } from "@/utils/attendance-calculations";
 import { Loader2 } from "lucide-react";
 import { format } from "date-fns";
@@ -42,6 +46,17 @@ interface EditAttendanceDialogProps {
 }
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+const undertimeHelperText = (
+  undertimeMins: number,
+  scheduleOut24: string,
+): string => {
+  const schedLabel = formatTime12Hour(scheduleOut24);
+  if (undertimeMins > 0) {
+    return `Calculated: ${undertimeMins} min (left before scheduled end ${schedLabel}, after treating overnight clock-out as the next calendar day). Late is from time in only.`;
+  }
+  return `Calculated: 0 min (no undertime: actual end is at or after scheduled end ${schedLabel}; clock-out at or before time in on the clock counts as the next calendar day). Late is from time in only.`;
+};
 
 function getScheduledTimesForDate(
   employee: any,
@@ -280,6 +295,17 @@ export function EditAttendanceDialog({
                     placeholder="Select scheduled time out"
                     showLabel={false}
                   />
+                  {editScheduleIn &&
+                    editScheduleOut &&
+                    scheduleEndsNextCalendarDay(
+                      editScheduleIn,
+                      editScheduleOut,
+                    ) && (
+                      <p className="text-xs text-muted-foreground">
+                        Overnight shift: scheduled end is the next calendar day
+                        after scheduled start.
+                      </p>
+                    )}
                 </div>
               </div>
               <div className="space-y-2">
@@ -321,32 +347,57 @@ export function EditAttendanceDialog({
                 </Select>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <TimePicker
-                  value={editTimeIn}
-                  onValueChange={setEditTimeIn}
-                  disabled={
-                    editStatus === "absent" ||
-                    editStatus === "leave" ||
-                    editStatus === "leave_with_pay" ||
-                    editStatus === "leave_without_pay" ||
-                    isUpdating
-                  }
-                  label="Time In"
-                  placeholder="Select time in"
-                />
-                <TimePicker
-                  value={editTimeOut}
-                  onValueChange={setEditTimeOut}
-                  disabled={
-                    editStatus === "absent" ||
-                    editStatus === "leave" ||
-                    editStatus === "leave_with_pay" ||
-                    editStatus === "leave_without_pay" ||
-                    isUpdating
-                  }
-                  label="Time Out"
-                  placeholder="Select time out"
-                />
+                <div className="space-y-1">
+                  <TimePicker
+                    value={editTimeIn}
+                    onValueChange={setEditTimeIn}
+                    disabled={
+                      editStatus === "absent" ||
+                      editStatus === "leave" ||
+                      editStatus === "leave_with_pay" ||
+                      editStatus === "leave_without_pay" ||
+                      isUpdating
+                    }
+                    label="Time In"
+                    placeholder="Select time in"
+                  />
+                  {record?.date != null && editTimeIn && (
+                    <p className="text-xs text-muted-foreground">
+                      Calendar day (Manila):{" "}
+                      {formatManilaAttendanceDayLabel(record.date)}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <TimePicker
+                    value={editTimeOut}
+                    onValueChange={setEditTimeOut}
+                    disabled={
+                      editStatus === "absent" ||
+                      editStatus === "leave" ||
+                      editStatus === "leave_with_pay" ||
+                      editStatus === "leave_without_pay" ||
+                      isUpdating
+                    }
+                    label="Time Out"
+                    placeholder="Select time out"
+                  />
+                  {record?.date != null &&
+                    editTimeIn &&
+                    editTimeOut &&
+                    (clockOutIsNextCalendarDay(editTimeIn, editTimeOut) ? (
+                      <p className="text-xs text-muted-foreground">
+                        Interpreted as next calendar day (Manila):{" "}
+                        {formatNextManilaCalendarDayFromAttendanceTs(
+                          record.date,
+                        )}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Same calendar day as time in (Manila).
+                      </p>
+                    ))}
+                </div>
               </div>
               {editStatus === "present" &&
                 editScheduleIn &&
@@ -435,7 +486,10 @@ export function EditAttendanceDialog({
                       <p className="text-xs text-gray-500">
                         {useManualUndertime
                           ? "Manually enter undertime minutes (set to 0 to remove undertime)"
-                          : `Calculated: ${Math.round(calculatedUndertime * 60)} min (time out earlier than scheduled ${formatTime12Hour(editScheduleOut)}). Late is from time in only.`}
+                          : undertimeHelperText(
+                              Math.round(calculatedUndertime * 60),
+                              editScheduleOut,
+                            )}
                       </p>
                     </div>
                   </div>

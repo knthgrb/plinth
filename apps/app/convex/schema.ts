@@ -522,6 +522,19 @@ export default defineSchema({
     ),
     restDayPay: v.optional(v.union(v.number(), v.string())),
     nightDiffPay: v.optional(v.union(v.number(), v.string())),
+    /** Per-day night diff (debug); encrypted JSON string when ENCRYPTION_KEY is set. */
+    nightDiffBreakdown: v.optional(
+      v.union(
+        v.string(),
+        v.array(
+          v.object({
+            label: v.string(),
+            date: v.number(),
+            amount: v.number(),
+          }),
+        ),
+      ),
+    ),
     overtimeRegular: v.optional(v.union(v.number(), v.string())),
     overtimeRestDay: v.optional(v.union(v.number(), v.string())),
     overtimeRestDayExcess: v.optional(v.union(v.number(), v.string())),
