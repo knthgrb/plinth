@@ -707,6 +707,45 @@ describe("payroll calculations", () => {
     expect(result.nightDiffPay).toBeCloseTo(regNight + otNight, 2);
   });
 
+  it("night diff: early clock-in before scheduled morning start does not count pre-schedule minutes in 10pm–6am window", () => {
+    const date = localDate(2026, 2, 18);
+    expect(
+      calculateNightDiffWorkHoursForAttendance({
+        date,
+        actualIn: "05:30",
+        actualOut: "14:00",
+        scheduleIn: "06:00",
+        scheduleOut: "14:00",
+      }),
+    ).toBe(0);
+  });
+
+  it("night diff: morning window counts from scheduled start when employee is early (only 5:30–6:00 if sched 5:30)", () => {
+    const date = localDate(2026, 2, 18);
+    expect(
+      calculateNightDiffWorkHoursForAttendance({
+        date,
+        actualIn: "05:10",
+        actualOut: "14:00",
+        scheduleIn: "05:30",
+        scheduleOut: "14:00",
+      }),
+    ).toBeCloseTo(0.5, 5);
+  });
+
+  it("night diff: late clock-in after scheduled start reduces morning night minutes", () => {
+    const date = localDate(2026, 2, 18);
+    expect(
+      calculateNightDiffWorkHoursForAttendance({
+        date,
+        actualIn: "05:45",
+        actualOut: "14:00",
+        scheduleIn: "05:30",
+        scheduleOut: "14:00",
+      }),
+    ).toBeCloseTo(0.25, 5);
+  });
+
   it("applies night diff on OT rate (137.5%) for OT hours in 10pm-6am", () => {
     const date = localDate(2026, 1, 23); // Friday
     // Schedule to 8pm, worked until 11pm → 3h OT. 8-10pm = 2h at 125%, 10-11pm = 1h at 137.5%

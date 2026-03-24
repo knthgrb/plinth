@@ -367,6 +367,30 @@ function effectiveNightDiffOutClock(params: {
   return globalEndToOutTimeString(effectiveEndGlobal);
 }
 
+/**
+ * Night diff is paid only from scheduled start onward unless the employee clocks in later.
+ * Early arrival before schedule does not earn night diff (same “paid work window” idea as
+ * capping clock-out at scheduled end + OT).
+ */
+function effectiveNightDiffInClock(params: {
+  actualIn: string;
+  actualOut: string;
+  scheduleIn?: string;
+  scheduleOut?: string;
+}): string {
+  const { actualIn, actualOut, scheduleIn, scheduleOut } = params;
+  const act = pairInOutGlobalMinutes(actualIn, actualOut);
+  if (!act) return actualIn;
+  if (!scheduleIn?.trim() || !scheduleOut?.trim()) return actualIn;
+  const sch = pairInOutGlobalMinutes(scheduleIn, scheduleOut);
+  if (!sch) return actualIn;
+  if (act.inGlobal >= sch.inGlobal) return actualIn;
+  // Early arrival: align to scheduled start only if they worked to or past that time (strict `<` so out === schedule in → clamp).
+  // Otherwise keep actual in/out (e.g. 11:00–12:00 vs 18:00–03:00 → no night on actual; schedule fallback can apply).
+  if (act.outGlobal < sch.inGlobal) return actualIn;
+  return scheduleIn.trim();
+}
+
 function hasUsableLunchPair(lunchStart?: string, lunchEnd?: string): boolean {
   const a = lunchStart?.trim() ?? "";
   const b = lunchEnd?.trim() ?? "";
@@ -569,9 +593,23 @@ export function calculateNightDiffWorkHoursForAttendance(att: {
         })
       : actualOut;
 
+  const inForNightDiff =
+    actualIn && actualOut
+      ? effectiveNightDiffInClock({
+          actualIn,
+          actualOut,
+          scheduleIn,
+          scheduleOut,
+        })
+      : actualIn;
+
   const minsFromActual =
-    actualIn && outForNightDiff
-      ? calculateNightDiffWorkMinutesFromTimes(att, actualIn, outForNightDiff)
+    actualIn && inForNightDiff && outForNightDiff
+      ? calculateNightDiffWorkMinutesFromTimes(
+          att,
+          inForNightDiff,
+          outForNightDiff,
+        )
       : 0;
   if (minsFromActual > 0) return minsFromActual / 60;
   if (!scheduleIn || !scheduleOut) return 0;
@@ -610,7 +648,8 @@ function calculateNightDiffPay(
   hourlyRate: number,
   rates: ResolvedPayrollRates,
 ): number {
-  // Prefer actual in / effective out (scheduled end + OT, not unapproved late clock-out); if missing or no night hours, use schedule.
+  // Effective in/out: paid night span starts at scheduled start when employee is early (if they worked past that time);
+  // ends at scheduled end + OT (not unapproved late clock-out). If missing or no night hours on actuals, use schedule.
   const actualIn = att.actualIn;
   const actualOut = att.actualOut;
   const scheduleIn = att.scheduleIn;
@@ -627,11 +666,21 @@ function calculateNightDiffPay(
         })
       : actualOut;
 
+  const inForNightDiff =
+    actualIn && actualOut
+      ? effectiveNightDiffInClock({
+          actualIn,
+          actualOut,
+          scheduleIn,
+          scheduleOut,
+        })
+      : actualIn;
+
   const payFromActual =
-    actualIn && outForNightDiff
+    actualIn && inForNightDiff && outForNightDiff
       ? computeNightDiffPayFromTimes(
           att,
-          actualIn,
+          inForNightDiff,
           outForNightDiff,
           holidays,
           employee,
