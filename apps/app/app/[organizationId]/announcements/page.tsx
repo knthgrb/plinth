@@ -7,8 +7,13 @@ import { Button } from "@/components/ui/button";
 import { useOrganization } from "@/hooks/organization-context";
 import { Bell, Plus, ChevronDown } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
-import { CreateAnnouncementModal } from "./_components/create-announcement-modal";
+import dynamic from "next/dynamic";
 import { AnnouncementCard } from "./_components/announcement-card";
+
+const CreateAnnouncementModal = dynamic(
+  () => import("./_components/create-announcement-modal").then((m) => m.CreateAnnouncementModal),
+  { ssr: false },
+);
 
 const INITIAL_PAGE_SIZE = 10;
 const PAGE_SIZE = 10;

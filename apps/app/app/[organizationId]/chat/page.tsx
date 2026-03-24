@@ -8,15 +8,32 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { useOrganization } from "@/hooks/organization-context";
 import { ConversationList } from "./_components/conversation-list";
 import { ChatArea } from "./_components/chat-area";
-import { NewChatModal } from "./_components/new-chat-modal";
-import { CreateGroupChatModal } from "./_components/create-group-chat-modal";
-import { CreateChannelModal } from "./_components/create-channel-modal";
-import { AddMembersModal } from "./_components/add-members-modal";
+import dynamic from "next/dynamic";
 import { ChevronLeft } from "lucide-react";
 import { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { chatCache } from "@/services/chat-cache-service";
 import { ChatSessionKeysProvider } from "./_components/chat-session-keys-context";
+
+const NewChatModal = dynamic(
+  () => import("./_components/new-chat-modal").then((m) => m.NewChatModal),
+  { ssr: false },
+);
+const CreateGroupChatModal = dynamic(
+  () =>
+    import("./_components/create-group-chat-modal").then(
+      (m) => m.CreateGroupChatModal,
+    ),
+  { ssr: false },
+);
+const CreateChannelModal = dynamic(
+  () => import("./_components/create-channel-modal").then((m) => m.CreateChannelModal),
+  { ssr: false },
+);
+const AddMembersModal = dynamic(
+  () => import("./_components/add-members-modal").then((m) => m.AddMembersModal),
+  { ssr: false },
+);
 
 // Breakpoint: below this width we show list first, then chat (mobile/tablet)
 const LIST_OR_CHAT_BREAKPOINT_PX = 1024;

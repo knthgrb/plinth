@@ -3,6 +3,8 @@
 import { useOrganization } from "@/hooks/organization-context";
 import { MainLoader } from "@/components/main-loader";
 import { OrganizationSwitchingOverlay } from "@/components/organization-switching-overlay";
+import { MainLayout } from "@/components/layout/main-layout";
+import { PageSkeleton } from "./_components/page-skeleton";
 
 /**
  * Shown by Next.js while the [organizationId] segment is loading (e.g. during org switch).
@@ -33,5 +35,13 @@ export default function Loading() {
     );
   }
 
-  return <MainLoader />;
+  if (isLoggingOut) {
+    return <MainLoader />;
+  }
+
+  return (
+    <MainLayout>
+      <PageSkeleton title="Loading" rows={6} />
+    </MainLayout>
+  );
 }

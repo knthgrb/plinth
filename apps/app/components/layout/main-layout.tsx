@@ -12,6 +12,8 @@ import { SettingsModalProvider } from "@/hooks/settings-modal-context";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { MainLoader } from "@/components/main-loader";
 
+let hasResolvedUserOnce = false;
+
 export function MainLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -32,6 +34,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (user !== undefined) {
       hasLoadedUser.current = true;
+      hasResolvedUserOnce = true;
     }
   }, [user]);
 
@@ -82,7 +85,11 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Only show full-screen loading on initial load, not during refetches (MainLoader handles tail)
-  if (user === undefined && !hasLoadedUser.current) {
+  if (
+    user === undefined &&
+    !hasLoadedUser.current &&
+    !hasResolvedUserOnce
+  ) {
     return <MainLoader />;
   }
 
