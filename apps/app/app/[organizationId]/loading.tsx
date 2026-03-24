@@ -40,7 +40,7 @@ export default function Loading() {
   }
 
   return (
-    <MainLayout>
+    <MainLayout disableInitialLoader>
       <PageSkeleton title="Loading" rows={6} />
     </MainLayout>
   );

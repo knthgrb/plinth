@@ -14,7 +14,13 @@ import { MainLoader } from "@/components/main-loader";
 
 let hasResolvedUserOnce = false;
 
-export function MainLayout({ children }: { children: React.ReactNode }) {
+export function MainLayout({
+  children,
+  disableInitialLoader = false,
+}: {
+  children: React.ReactNode;
+  disableInitialLoader?: boolean;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const { currentOrganizationId, isLoggingOut } = useOrganization();
@@ -88,7 +94,8 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   if (
     user === undefined &&
     !hasLoadedUser.current &&
-    !hasResolvedUserOnce
+    !hasResolvedUserOnce &&
+    !disableInitialLoader
   ) {
     return <MainLoader />;
   }
