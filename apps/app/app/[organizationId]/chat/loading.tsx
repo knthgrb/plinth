@@ -4,7 +4,7 @@ import { MainLayout } from "@/components/layout/main-layout";
 
 export default function Loading() {
   return (
-    <MainLayout disableInitialLoader>
+    <MainLayout>
       <div className="animate-pulse flex h-[calc(100vh-4rem)] min-h-0 overflow-hidden w-full bg-gray-50">
         <aside className="hidden lg:flex w-80 shrink-0 flex-col border-r border-[rgb(230,230,230)] bg-white p-3 space-y-3">
           <div className="h-10 rounded bg-[rgb(245,245,245)]" />

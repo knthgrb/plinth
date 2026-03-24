@@ -8,7 +8,6 @@ import { useOrganization } from "@/hooks/organization-context";
 import { Id } from "@/convex/_generated/dataModel";
 import { removeOrganizationId } from "@/utils/organization-routing";
 import { canAccessRoute } from "@/utils/role-access";
-import { MainLoader } from "@/components/main-loader";
 import { OrganizationSwitchingOverlay } from "@/components/organization-switching-overlay";
 
 export default function OrganizationLayout({
@@ -109,16 +108,13 @@ export default function OrganizationLayout({
     );
   }
 
-  if (isLoading) {
-    if (isSwitching) {
-      return (
-        <OrganizationSwitchingOverlay
-          isSwitching={true}
-          switchingOrgName={switchingOrg?.name}
-        />
-      );
-    }
-    return <MainLoader />;
+  if (isLoading && isSwitching) {
+    return (
+      <OrganizationSwitchingOverlay
+        isSwitching={true}
+        switchingOrgName={switchingOrg?.name}
+      />
+    );
   }
 
   return (

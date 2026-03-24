@@ -72,6 +72,7 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
     if (role === "admin" || role === "owner") return "Owner";
     return role ? role.charAt(0).toUpperCase() + role.slice(1) : "User";
   };
+  const isUserLoading = user === undefined || !currentOrganizationId;
 
   return (
     <header className="relative z-10 bg-white shrink-0 h-14 flex items-center">
@@ -137,13 +138,21 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
               >
                 <Avatar className="h-6 w-6 shrink-0">
                   <AvatarFallback className="text-xs bg-[rgb(245,245,245)] text-gray-900">
-                    {userInitials}
+                    {isUserLoading ? (
+                      <span className="block h-3 w-3 rounded bg-[rgb(230,230,230)] animate-pulse" />
+                    ) : (
+                      userInitials
+                    )}
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex flex-col items-start min-w-0 hidden sm:flex">
-                  <span className="text-left truncate text-xs font-bold max-w-[120px]">
-                    {user?.name || user?.email || "User"}
-                  </span>
+                  {isUserLoading ? (
+                    <span className="h-3 w-20 rounded bg-[rgb(235,235,235)] animate-pulse" />
+                  ) : (
+                    <span className="text-left truncate text-xs font-bold max-w-[120px]">
+                      {user?.name || user?.email || "User"}
+                    </span>
+                  )}
                 </div>
                 <ChevronDown
                   className={`h-4 w-4 transition-transform duration-200 shrink-0 text-gray-900 ${
@@ -161,9 +170,13 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">
-                      {user?.name || user?.email || "User"}
-                    </p>
+                    {isUserLoading ? (
+                      <div className="h-4 w-28 rounded bg-[rgb(235,235,235)] animate-pulse" />
+                    ) : (
+                      <p className="text-sm font-medium truncate">
+                        {user?.name || user?.email || "User"}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <Separator className="my-2" />

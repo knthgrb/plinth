@@ -214,6 +214,8 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   );
   const announcementsUnread: number =
     typeof announcementsUnreadCount === "number" ? announcementsUnreadCount : 0;
+  const isSidebarLoading =
+    orgsLoading || user === undefined || !currentOrganizationId;
 
   // Filter navigation items based on user role (uses role-access effectiveRole)
   const filterItems = (items: NavigationItem[]) => {
@@ -485,20 +487,32 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       />
       {/* Organization switcher - same height as main header (h-12), aligned with search */}
       <div className="shrink-0 h-14 flex items-center px-3">
-        <Popover open={orgPopoverOpen} onOpenChange={setOrgPopoverOpen}>
+        <Popover
+          open={isSidebarLoading ? false : orgPopoverOpen}
+          onOpenChange={setOrgPopoverOpen}
+        >
           <PopoverTrigger asChild>
             <button
               type="button"
               className="flex w-full items-center gap-2.5 rounded-lg py-1.5 pr-1 pl-0 text-left transition-colors hover:bg-[rgb(250,250,250)] cursor-pointer min-w-0 h-9"
               style={{ color: "rgb(53, 58, 68)" }}
+              disabled={isSidebarLoading}
             >
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[rgb(245,245,245)] text-xs font-medium text-[rgb(64,64,64)]">
-                {currentOrganization?.name?.trim()[0]?.toUpperCase() || "O"}
+                {isSidebarLoading ? (
+                  <span className="block h-3 w-3 rounded bg-[rgb(230,230,230)] animate-pulse" />
+                ) : (
+                  currentOrganization?.name?.trim()[0]?.toUpperCase() || "O"
+                )}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="truncate text-sm font-semibold leading-tight">
-                  {currentOrganization?.name || "Select organization"}
-                </div>
+                {isSidebarLoading ? (
+                  <div className="h-3.5 w-32 rounded bg-[rgb(235,235,235)] animate-pulse" />
+                ) : (
+                  <div className="truncate text-sm font-semibold leading-tight">
+                    {currentOrganization?.name || "Select organization"}
+                  </div>
+                )}
               </div>
               <ChevronDown
                 className={cn(
@@ -595,7 +609,32 @@ export function Sidebar({ onNavigate }: SidebarProps) {
           isScrolling ? "scrolling" : "",
         )}
       >
-        <div className="space-y-6">
+        {isSidebarLoading ? (
+          <div className="space-y-6 animate-pulse">
+            <div className="space-y-1">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <div
+                  key={`sb-top-${i}`}
+                  className="h-8 rounded-lg bg-[rgb(245,245,245)]"
+                />
+              ))}
+            </div>
+            {Array.from({ length: 3 }).map((_, sectionIdx) => (
+              <div key={`sb-section-${sectionIdx}`} className="space-y-2">
+                <div className="h-3 w-24 rounded bg-[rgb(238,238,238)]" />
+                <div className="space-y-1">
+                  {Array.from({ length: 3 }).map((_, itemIdx) => (
+                    <div
+                      key={`sb-item-${sectionIdx}-${itemIdx}`}
+                      className="h-8 rounded-lg bg-[rgb(247,247,247)]"
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-6">
           {/* Dashboard without category header */}
           {showDashboard && (
             <div className="space-y-1">
@@ -621,7 +660,8 @@ export function Sidebar({ onNavigate }: SidebarProps) {
               </div>
             </div>
           ))}
-        </div>
+          </div>
+        )}
       </nav>
     </div>
   );

@@ -268,7 +268,7 @@ export function ConversationList({
             onSelectConversation(conv._id);
           }
         }}
-        className={`w-full flex items-center gap-2 rounded-lg pl-3 pr-2 py-2 text-sm text-left transition-colors relative cursor-pointer ${
+        className={`w-full flex items-center gap-2 rounded-none pl-3 pr-2 py-2 text-sm text-left transition-colors relative cursor-pointer ${
           isSelected ? "bg-gray-100" : "hover:bg-[rgb(250,250,250)]"
         }`}
         style={{

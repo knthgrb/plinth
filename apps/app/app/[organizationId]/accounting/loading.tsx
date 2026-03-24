@@ -5,7 +5,7 @@ import AccountingPageSkeleton from "./_components/page-skeleton";
 
 export default function Loading() {
   return (
-    <MainLayout disableInitialLoader>
+    <MainLayout>
       <AccountingPageSkeleton />
     </MainLayout>
   );

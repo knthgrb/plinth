@@ -10,17 +10,8 @@ import { useEffect, useRef, useState } from "react";
 import { useOrganization } from "@/hooks/organization-context";
 import { SettingsModalProvider } from "@/hooks/settings-modal-context";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import { MainLoader } from "@/components/main-loader";
 
-let hasResolvedUserOnce = false;
-
-export function MainLayout({
-  children,
-  disableInitialLoader = false,
-}: {
-  children: React.ReactNode;
-  disableInitialLoader?: boolean;
-}) {
+export function MainLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { currentOrganizationId, isLoggingOut } = useOrganization();
@@ -30,19 +21,10 @@ export function MainLayout({
       ? { organizationId: currentOrganizationId }
       : "skip",
   );
-  const hasLoadedUser = useRef(false);
   const mainContentRef = useRef<HTMLElement>(null);
   const [isScrolling, setIsScrolling] = useState(false);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-
-  // Track if we've successfully loaded the user at least once
-  useEffect(() => {
-    if (user !== undefined) {
-      hasLoadedUser.current = true;
-      hasResolvedUserOnce = true;
-    }
-  }, [user]);
 
   useEffect(() => {
     if (user === null) {
@@ -91,16 +73,7 @@ export function MainLayout({
   }, []);
 
   // Only show full-screen loading on initial load, not during refetches (MainLoader handles tail)
-  if (
-    user === undefined &&
-    !hasLoadedUser.current &&
-    !hasResolvedUserOnce &&
-    !disableInitialLoader
-  ) {
-    return <MainLoader />;
-  }
-
-  if (user === null || !currentOrganizationId) {
+  if (user === null) {
     return null;
   }
 

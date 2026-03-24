@@ -4,7 +4,7 @@ import { MainLayout } from "@/components/layout/main-layout";
 
 export default function Loading() {
   return (
-    <MainLayout disableInitialLoader>
+    <MainLayout>
       <div className="animate-pulse p-4 sm:p-6 lg:p-8 space-y-4">
         <div className="flex items-center justify-between">
           <div className="space-y-2">
