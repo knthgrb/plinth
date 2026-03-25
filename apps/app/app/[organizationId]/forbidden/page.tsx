@@ -5,6 +5,7 @@ import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useRouter, usePathname } from "next/navigation";
 import { useOrganization } from "@/hooks/organization-context";
+import { useEmployeeView } from "@/hooks/employee-view-context";
 import {
   getOrganizationPath,
   extractOrganizationId,
@@ -17,6 +18,7 @@ export default function ForbiddenPage() {
   const router = useRouter();
   const pathname = usePathname();
   const { currentOrganizationId, organizations } = useOrganization();
+  const { isEmployeeExperienceUI } = useEmployeeView();
   const [isRedirecting, setIsRedirecting] = useState(false);
 
   // Extract organizationId from URL
@@ -29,17 +31,28 @@ export default function ForbiddenPage() {
     orgId ? { organizationId: orgId } : "skip",
   );
 
-  const handleGoToDashboard = () => {
+  const safeHomePath = (): string => {
+    if (isEmployeeExperienceUI) return "/announcements";
+    const r = (user?.role || "").toLowerCase();
+    if (r === "employee") return "/announcements";
+    if (r === "accounting") return "/accounting";
+    return "/dashboard";
+  };
+
+  const safeHomeLabel = (): string => {
+    if (isEmployeeExperienceUI || user?.role === "employee") {
+      return "Announcements";
+    }
+    if (user?.role === "accounting") return "Accounting";
+    return "Dashboard";
+  };
+
+  const userReady = user !== undefined;
+
+  const handleGoHome = () => {
     if (isRedirecting) return;
     setIsRedirecting(true);
-
-    // Determine redirect based on user role
-    let redirectPath = "/dashboard";
-    if (user?.role === "accounting") {
-      redirectPath = "/accounting";
-    } else if (user?.role === "employee") {
-      redirectPath = "/announcements";
-    }
+    const redirectPath = safeHomePath();
 
     if (orgId) {
       router.push(getOrganizationPath(orgId, redirectPath));
@@ -69,10 +82,15 @@ export default function ForbiddenPage() {
             You don't have permission to access this page. Please contact your
             administrator if you believe this is an error.
           </p>
-          <Button onClick={handleGoToDashboard} disabled={isRedirecting}>
+          <Button
+            onClick={handleGoHome}
+            disabled={isRedirecting || !userReady}
+          >
             {isRedirecting
               ? "Redirecting..."
-              : `Go to ${user?.role === "employee" ? "Announcements" : user?.role === "accounting" ? "Accounting" : "Dashboard"}`}
+              : !userReady
+                ? "Loading..."
+                : `Go to ${safeHomeLabel()}`}
           </Button>
         </CardContent>
       </Card>

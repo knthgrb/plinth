@@ -368,11 +368,12 @@ export default function DashboardPage() {
       )
       .map((e: any) => {
         const emp = employees?.find((em: any) => em._id === e.employeeId);
+        const first = emp?.personalInfo?.firstName ?? "";
+        const last = emp?.personalInfo?.lastName ?? "";
+        const name = `${first} ${last}`.trim();
         return {
           employeeId: e.employeeId,
-          employeeName: emp
-            ? `${emp.personalInfo.firstName} ${emp.personalInfo.lastName}`
-            : "Unknown",
+          employeeName: name || "Unknown",
           date: e.evaluationDate,
           label: e.label,
         };
@@ -384,8 +385,29 @@ export default function DashboardPage() {
 
   if (!effectiveOrganizationId) return null;
 
+  // Avoid rendering HR/accounting dashboard before role is known (prevents post-login races / errors).
+  if (user === undefined) {
+    return (
+      <MainLayout>
+        <div className="flex min-h-[50vh] items-center justify-center p-8">
+          <p className="text-sm text-[rgb(133,133,133)]">Loading…</p>
+        </div>
+      </MainLayout>
+    );
+  }
+
+  if (user === null) {
+    return (
+      <MainLayout>
+        <div className="flex min-h-[50vh] items-center justify-center p-8">
+          <p className="text-sm text-[rgb(133,133,133)]">Unable to load your account.</p>
+        </div>
+      </MainLayout>
+    );
+  }
+
   // Employee: redirecting (handled in useEffect)
-  if (user && user.role === "employee") {
+  if (user.role === "employee") {
     return (
       <MainLayout>
         <div className="flex h-screen items-center justify-center">
@@ -396,7 +418,7 @@ export default function DashboardPage() {
   }
 
   // Accounting: separate dashboard (payroll, expense management, announcements)
-  if (user && user.role === "accounting") {
+  if (user.role === "accounting") {
     return (
       <MainLayout>
         <AccountingDashboard

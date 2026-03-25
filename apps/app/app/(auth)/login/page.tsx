@@ -1,10 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
-import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
@@ -17,7 +15,6 @@ const marketingUrl =
   process.env.NEXT_PUBLIC_MARKETING_APP_URL ?? process.env.NEXT_PUBLIC_MARKETING_URL ?? "/";
 
 export default function LoginPage() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
   const [email, setEmail] = useState("");
@@ -51,17 +48,11 @@ export default function LoginPage() {
           variant: "destructive",
         });
       } else {
-        // Wait for session to be established
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
-        // Check if there's a specific redirect in URL params
+        // Ensure session is readable, then full navigation so cookies + middleware see auth
+        // (client router.push alone can race Convex / role cookie on first load).
+        await authClient.getSession();
         const redirectParam = searchParams.get("redirect");
-        if (redirectParam) {
-          router.push(redirectParam);
-        } else {
-          // Send to root; root page will redirect to dashboard (if user has orgs) or signup
-          router.push("/");
-        }
+        window.location.assign(redirectParam || "/");
       }
     } catch (err: any) {
       toast({

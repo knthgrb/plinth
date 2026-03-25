@@ -17,6 +17,7 @@ import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
 import { useEmployeeView } from "@/hooks/employee-view-context";
+import { getOrganizationPath } from "@/utils/organization-routing";
 import {
   Popover,
   PopoverContent,
@@ -192,7 +193,37 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
                     <button
                       type="button"
                       onClick={() => {
-                        setEmployeeViewActive(!employeeViewActive);
+                        const next = !employeeViewActive;
+                        setEmployeeViewActive(next);
+                        if (effectiveOrganizationId) {
+                          if (next) {
+                            router.push(
+                              getOrganizationPath(
+                                effectiveOrganizationId,
+                                "/announcements",
+                              ),
+                            );
+                          } else {
+                            const r = (user?.role || "").toLowerCase();
+                            if (r === "accounting") {
+                              router.push(
+                                getOrganizationPath(
+                                  effectiveOrganizationId,
+                                  "/accounting",
+                                ),
+                              );
+                            } else if (
+                              ["admin", "owner", "hr"].includes(r)
+                            ) {
+                              router.push(
+                                getOrganizationPath(
+                                  effectiveOrganizationId,
+                                  "/dashboard",
+                                ),
+                              );
+                            }
+                          }
+                        }
                         setUserPopoverOpen(false);
                       }}
                       className="flex w-full cursor-pointer items-center gap-2 px-2.5 py-1.5 text-sm font-normal rounded-lg hover:bg-[rgb(250,250,250)] transition-colors text-left"

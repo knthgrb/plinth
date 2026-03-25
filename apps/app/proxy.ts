@@ -27,7 +27,8 @@ const ROLES_ALL_AUTH = ["hr", "accounting", "employee", "admin", "owner"] as con
 
 /** Route access: list of path prefixes → allowed roles. First match wins. */
 const ROUTE_ROLES: { routes: readonly string[]; roles: readonly Role[] }[] = [
-  { routes: ["/payslips", "/employee"], roles: ["employee"] },
+  // Payslips + employee hub: all org roles (layout + Convex enforce fine-grained access; "view as employee" needs this)
+  { routes: ["/payslips", "/employee"], roles: ROLES_ALL_AUTH },
   { routes: ["/accounting"], roles: ROLES_ACCOUNTING_PAGE },
   { routes: ["/payroll", "/assets"], roles: ROLES_HR_AND_ACCOUNTING },
   { routes: ["/dashboard", "/employees", "/attendance", "/recruitment", "/requirements"], roles: ROLES_HR },
@@ -108,11 +109,6 @@ function normalizeRole(role: string | null): Role | null {
 
 function hasAccessToRoute(userRole: Role, cleanPathname: string): boolean {
   if (matchesRoute(cleanPathname, "/forbidden")) return true;
-  if (userRole === "owner" || userRole === "admin") {
-    const employeeOnly = ROUTE_ROLES[0].routes;
-    if (employeeOnly.some((r) => matchesRoute(cleanPathname, r))) return false;
-    return true;
-  }
   for (const { routes, roles } of ROUTE_ROLES) {
     if (routes.some((r) => matchesRoute(cleanPathname, r)))
       return (roles as readonly string[]).includes(userRole);

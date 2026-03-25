@@ -34,6 +34,7 @@ import {
   removeOrganizationId,
 } from "@/utils/organization-routing";
 import { effectiveRole, rolesForPath } from "@/utils/role-access";
+import { useEmployeeView } from "@/hooks/employee-view-context";
 import {
   Popover,
   PopoverContent,
@@ -217,6 +218,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     typeof announcementsUnreadCount === "number" ? announcementsUnreadCount : 0;
   const isSidebarLoading =
     orgsLoading || user === undefined || !effectiveOrganizationId;
+  const { isEmployeeExperienceUI } = useEmployeeView();
 
   // Filter navigation items based on user role (uses role-access effectiveRole)
   const filterItems = (items: NavigationItem[]) => {
@@ -228,9 +230,13 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     });
   };
 
-  // Check if dashboard should be shown (no role restriction, so always show)
+  const isAccountingStaff =
+    effectiveRole(user?.role) === "accounting" && !isEmployeeExperienceUI;
+
+  // Dashboard always redirects to announcements for accounting (proxy); hide the link in staff mode.
   const showDashboard =
-    !dashboardItem.roles || filterItems([dashboardItem]).length > 0;
+    (!dashboardItem.roles || filterItems([dashboardItem]).length > 0) &&
+    !isAccountingStaff;
 
   // Settings removed - now accessible via Settings icon in header
 
