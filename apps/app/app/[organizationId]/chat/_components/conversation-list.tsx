@@ -62,7 +62,7 @@ export function ConversationList({
   onCreateChannel,
   currentUserId,
 }: ConversationListProps) {
-  const { currentOrganizationId } = useOrganization();
+  const { effectiveOrganizationId } = useOrganization();
   const sessionKeys = useChatSessionKeys();
   const [cursor, setCursor] = useState<string | null>(null);
   const [allConversations, setAllConversations] = useState<any[]>([]);
@@ -72,9 +72,9 @@ export function ConversationList({
 
   const conversationsData = useQuery(
     (api as any).chat.getConversations,
-    currentOrganizationId
+    effectiveOrganizationId
       ? {
-          organizationId: currentOrganizationId,
+          organizationId: effectiveOrganizationId,
           limit: 20,
           cursor: cursor || undefined,
         }
@@ -83,12 +83,16 @@ export function ConversationList({
 
   const pinnedConversations = useQuery(
     (api as any).chat.getPinnedConversations,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
   );
 
   const unreadCounts = useQuery(
     (api as any).chat.getUnreadCounts,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
   );
 
   const markAllReadMutation = useMutation(
@@ -116,9 +120,13 @@ export function ConversationList({
   useEffect(() => {
     setAllConversations([]);
     setCursor(null);
-  }, [currentOrganizationId]);
+  }, [effectiveOrganizationId]);
 
   const conversations = allConversations;
+  const isConversationListLoading =
+    Boolean(effectiveOrganizationId) &&
+    conversationsData === undefined &&
+    cursor === null;
   const hasMore = conversationsData?.hasMore || false;
 
   const togglePinMutation = useMutation(
@@ -164,11 +172,11 @@ export function ConversationList({
     conversationId: string,
   ) => {
     e.stopPropagation();
-    if (!currentOrganizationId) return;
+    if (!effectiveOrganizationId) return;
 
     try {
       await togglePinMutation({
-        organizationId: currentOrganizationId,
+        organizationId: effectiveOrganizationId,
         conversationId: conversationId as Id<"conversations">,
       });
     } catch (error) {
@@ -244,9 +252,9 @@ export function ConversationList({
   };
 
   const handleMarkAllRead = async () => {
-    if (!currentOrganizationId) return;
+    if (!effectiveOrganizationId) return;
     try {
-      await markAllReadMutation({ organizationId: currentOrganizationId });
+      await markAllReadMutation({ organizationId: effectiveOrganizationId });
     } catch (e) {
       console.error(e);
     }
@@ -397,9 +405,9 @@ export function ConversationList({
         </div>
       </div>
       <div className="flex-1 overflow-y-auto min-h-0">
-        {conversations === undefined ? (
-          <div className="p-3 text-center text-sm" style={{ color: "rgb(133, 133, 133)" }}>
-            Loading...
+        {isConversationListLoading ? (
+          <div className="py-2">
+            <ConversationListSkeleton />
           </div>
         ) : (showUnreadOnly ? filteredConversations : conversations)?.length ===
           0 ? (

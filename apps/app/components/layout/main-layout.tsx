@@ -14,11 +14,11 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 export function MainLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { currentOrganizationId, isLoggingOut } = useOrganization();
+  const { effectiveOrganizationId, isLoggingOut } = useOrganization();
   const user = useQuery(
     (api as any).organizations.getCurrentUser,
-    !isLoggingOut && currentOrganizationId
-      ? { organizationId: currentOrganizationId }
+    !isLoggingOut && effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
   const mainContentRef = useRef<HTMLElement>(null);

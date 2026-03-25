@@ -56,19 +56,22 @@ import { useToast } from "@/components/ui/use-toast";
 
 export default function DocumentsPage() {
   const router = useRouter();
-  const { currentOrganizationId } = useOrganization();
+  const { effectiveOrganizationId } = useOrganization();
   const { toast } = useToast();
-  const user = useQuery((api as any).organizations.getCurrentUser, {
-    organizationId: currentOrganizationId || undefined,
-  });
+  const user = useQuery(
+    (api as any).organizations.getCurrentUser,
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
+  );
 
   const documents = useQuery(
     (api as any).documents.getDocuments,
-    currentOrganizationId
+    effectiveOrganizationId
       ? {
-          organizationId: currentOrganizationId,
+          organizationId: effectiveOrganizationId,
         }
-      : "skip"
+      : "skip",
   );
 
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
@@ -310,7 +313,7 @@ export default function DocumentsPage() {
   };
 
   const handleDirectFileUpload = async () => {
-    if (directUploadFiles.length === 0 || !currentOrganizationId) return;
+    if (directUploadFiles.length === 0 || !effectiveOrganizationId) return;
 
     // Mark all as uploading
     setDirectUploadFiles((prev) =>
@@ -345,7 +348,7 @@ export default function DocumentsPage() {
 
         // Create document entry with file metadata
         await createDocument({
-          organizationId: currentOrganizationId,
+          organizationId: effectiveOrganizationId,
           title: title || file.name,
           content: JSON.stringify({ type: "doc", content: [] }),
           type: type,
@@ -394,7 +397,7 @@ export default function DocumentsPage() {
 
   const handleEdit = (doc: any) => {
     router.push(
-      getOrganizationPath(currentOrganizationId, `/documents/${doc._id}/edit`)
+      getOrganizationPath(effectiveOrganizationId, `/documents/${doc._id}/edit`)
     );
   };
 
@@ -418,7 +421,7 @@ export default function DocumentsPage() {
   };
 
   const handleNew = () => {
-    router.push(getOrganizationPath(currentOrganizationId, "/documents/new"));
+    router.push(getOrganizationPath(effectiveOrganizationId, "/documents/new"));
   };
 
   const handleDownloadFile = async (storageId: string) => {
@@ -701,10 +704,38 @@ export default function DocumentsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Documents ({filteredDocuments?.length || 0})</CardTitle>
+            <CardTitle>
+              Documents (
+              {documents === undefined ? "…" : filteredDocuments?.length || 0})
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            {filteredDocuments?.length === 0 ? (
+            {documents === undefined ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Title</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead>Files</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead>Last Updated</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <TableRow key={`doc-sk-${i}`}>
+                      {Array.from({ length: 7 }).map((__, j) => (
+                        <TableCell key={j}>
+                          <div className="h-4 w-full max-w-[7rem] rounded bg-gray-200 animate-pulse" />
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : filteredDocuments?.length === 0 ? (
               <div className="text-center py-8 text-gray-500">
                 <FileText className="h-12 w-12 mx-auto mb-4 text-gray-400" />
                 <p>

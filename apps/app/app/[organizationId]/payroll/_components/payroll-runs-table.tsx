@@ -32,6 +32,7 @@ import { getStatusBadgeClass, getStatusBadgeStyle } from "@/utils/colors";
 
 interface PayrollRunsTableProps {
   payrollRuns: any[];
+  isLoading?: boolean;
   onViewSummary: (run: any) => void;
   onViewPayslips: (run: any) => void;
   onEdit: (run: any) => void;
@@ -42,6 +43,7 @@ interface PayrollRunsTableProps {
 
 export function PayrollRunsTable({
   payrollRuns,
+  isLoading = false,
   onViewSummary,
   onViewPayslips,
   onEdit,
@@ -60,7 +62,24 @@ export function PayrollRunsTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {payrollRuns?.length === 0 ? (
+        {isLoading ? (
+          Array.from({ length: 6 }).map((_, i) => (
+            <TableRow key={`sk-${i}`}>
+              <TableCell>
+                <div className="h-4 w-40 max-w-full rounded bg-gray-200 animate-pulse" />
+              </TableCell>
+              <TableCell>
+                <div className="h-6 w-20 rounded-full bg-gray-200 animate-pulse" />
+              </TableCell>
+              <TableCell>
+                <div className="h-4 w-28 rounded bg-gray-200 animate-pulse" />
+              </TableCell>
+              <TableCell className="text-right">
+                <div className="ml-auto h-8 w-8 rounded bg-gray-200 animate-pulse" />
+              </TableCell>
+            </TableRow>
+          ))
+        ) : payrollRuns?.length === 0 ? (
           <TableRow>
             <TableCell colSpan={4} className="text-center text-gray-500">
               No payroll runs found

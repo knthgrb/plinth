@@ -37,10 +37,10 @@ type HeaderProps = {
 
 export function Header({ onMobileMenuOpen }: HeaderProps) {
   const router = useRouter();
-  const { currentOrganizationId, clearOrganization } = useOrganization();
+  const { effectiveOrganizationId, clearOrganization } = useOrganization();
   const user = useQuery(
     (api as any).organizations.getCurrentUser,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    effectiveOrganizationId ? { organizationId: effectiveOrganizationId } : "skip",
   );
   const {
     isOpen: settingsModalOpen,
@@ -72,7 +72,7 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
     if (role === "admin" || role === "owner") return "Owner";
     return role ? role.charAt(0).toUpperCase() + role.slice(1) : "User";
   };
-  const isUserLoading = user === undefined || !currentOrganizationId;
+  const isUserLoading = user === undefined || !effectiveOrganizationId;
 
   return (
     <header className="relative z-10 bg-white shrink-0 h-14 flex items-center">

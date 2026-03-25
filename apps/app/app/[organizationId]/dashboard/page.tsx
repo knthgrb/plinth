@@ -36,13 +36,13 @@ import {
 
 /** Dashboard view for accounting role: payroll, expense management, announcements */
 function AccountingDashboard({
-  currentOrganizationId,
+  organizationId,
   recentAnnouncements,
   recentPayrollRuns,
   dateRange,
   onDateRangeChange,
 }: {
-  currentOrganizationId: string;
+  organizationId: string;
   recentAnnouncements: any[];
   recentPayrollRuns: any[];
   dateRange: DateRangeOption;
@@ -50,8 +50,8 @@ function AccountingDashboard({
 }) {
   const costItems = useQuery(
     (api as any).accounting.getCostItems,
-    currentOrganizationId
-      ? { organizationId: currentOrganizationId as any }
+    organizationId
+      ? { organizationId: organizationId as any }
       : "skip",
   );
   const items = costItems ?? [];
@@ -76,10 +76,10 @@ function AccountingDashboard({
           title="Payroll"
           value={`${recentPayrollRuns.length} recent run${recentPayrollRuns.length !== 1 ? "s" : ""}`}
           secondary="View and manage payroll"
-          exploreHref={getOrganizationPath(currentOrganizationId, "/payroll")}
+          exploreHref={getOrganizationPath(organizationId, "/payroll")}
           exploreLabel="Explore"
           moreDetailsHref={getOrganizationPath(
-            currentOrganizationId,
+            organizationId,
             "/payroll",
           )}
           moreDetailsLabel="More details"
@@ -93,12 +93,12 @@ function AccountingDashboard({
               : "Manage expenses"
           }
           exploreHref={getOrganizationPath(
-            currentOrganizationId,
+            organizationId,
             "/accounting",
           )}
           exploreLabel="Explore"
           moreDetailsHref={getOrganizationPath(
-            currentOrganizationId,
+            organizationId,
             "/accounting",
           )}
           moreDetailsLabel="More details"
@@ -125,7 +125,7 @@ function AccountingDashboard({
                   <Link
                     key={run._id}
                     href={getOrganizationPath(
-                      currentOrganizationId,
+                      organizationId,
                       "/payroll",
                     )}
                     className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
@@ -156,7 +156,7 @@ function AccountingDashboard({
                   </Link>
                 ))}
                 <Link
-                  href={getOrganizationPath(currentOrganizationId, "/payroll")}
+                  href={getOrganizationPath(organizationId, "/payroll")}
                   className="mt-2 flex items-center gap-1 text-sm font-medium text-brand-purple hover:text-brand-purple-hover"
                 >
                   View all <ArrowRight className="h-3 w-3" />
@@ -189,7 +189,7 @@ function AccountingDashboard({
                   <Link
                     key={announcement._id}
                     href={getOrganizationPath(
-                      currentOrganizationId,
+                      organizationId,
                       "/announcements",
                     )}
                     className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
@@ -207,7 +207,7 @@ function AccountingDashboard({
                 ))}
                 <Link
                   href={getOrganizationPath(
-                    currentOrganizationId,
+                    organizationId,
                     "/announcements",
                   )}
                   className="mt-2 flex items-center gap-1 text-sm font-medium text-brand-purple hover:text-brand-purple-hover"
@@ -229,53 +229,60 @@ function AccountingDashboard({
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { currentOrganizationId, currentOrganization } = useOrganization();
+  const { effectiveOrganizationId, currentOrganization } = useOrganization();
 
   // Get user first - needed for conditional queries below
-  const user = useQuery((api as any).organizations.getCurrentUser, {
-    organizationId: currentOrganizationId || undefined,
-  });
+  const user = useQuery(
+    (api as any).organizations.getCurrentUser,
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
+  );
 
   // Only query employees if user has HR/admin/accounting role
   // This prevents "Not authorized" errors for employees
   const allowedRolesForEmployees = ["admin", "hr", "accounting", "owner"];
   const employees = useQuery(
     (api as any).employees.getEmployees,
-    currentOrganizationId &&
+    effectiveOrganizationId &&
       user &&
       user.role &&
       allowedRolesForEmployees.includes(user.role)
-      ? { organizationId: currentOrganizationId }
+      ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
 
   const leaveRequests = useQuery(
     (api as any).leave.getLeaveRequests,
-    currentOrganizationId
-      ? { organizationId: currentOrganizationId, status: "pending" }
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId, status: "pending" }
       : "skip",
   );
 
   // Get recent announcements
   const announcements = useQuery(
     (api as any).announcements.getAnnouncements,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
   );
 
   const evaluations = useQuery(
     (api as any).evaluations.getEvaluations,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
   );
 
   // Only query payroll runs if user has HR/admin/accounting role
   const allowedRolesForPayroll = ["admin", "hr", "accounting", "owner"];
   const payrollRuns = useQuery(
     (api as any).payroll.getPayrollRuns,
-    currentOrganizationId &&
+    effectiveOrganizationId &&
       user &&
       user.role &&
       allowedRolesForPayroll.includes(user.role)
-      ? { organizationId: currentOrganizationId }
+      ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
 
@@ -283,14 +290,14 @@ export default function DashboardPage() {
   useEffect(() => {
     if (
       user &&
-      currentOrganizationId &&
+      effectiveOrganizationId &&
       (user.role === "employee" || user.role === "accounting")
     ) {
       router.replace(
-        getOrganizationPath(currentOrganizationId, "/announcements"),
+        getOrganizationPath(effectiveOrganizationId, "/announcements"),
       );
     }
-  }, [user, currentOrganizationId, router]);
+  }, [user, effectiveOrganizationId, router]);
 
   // All hooks must run before any conditional return (React rules of hooks)
   const recentAnnouncements = useMemo(() => {
@@ -349,7 +356,7 @@ export default function DashboardPage() {
 
   const [dateRange, setDateRange] = useState<DateRangeOption>("7");
 
-  if (!currentOrganizationId) return null;
+  if (!effectiveOrganizationId) return null;
 
   // Employee: redirecting (handled in useEffect)
   if (user && user.role === "employee") {
@@ -367,7 +374,7 @@ export default function DashboardPage() {
     return (
       <MainLayout>
         <AccountingDashboard
-          currentOrganizationId={currentOrganizationId}
+          organizationId={effectiveOrganizationId}
           recentAnnouncements={recentAnnouncements}
           recentPayrollRuns={recentPayrollRuns}
           dateRange={dateRange}
@@ -388,7 +395,7 @@ export default function DashboardPage() {
           actions={
             <>
               <Link
-                href={getOrganizationPath(currentOrganizationId, "/employees")}
+                href={getOrganizationPath(effectiveOrganizationId, "/employees")}
               >
                 <Button
                   size="sm"
@@ -452,14 +459,14 @@ export default function DashboardPage() {
                   if (!first) {
                     router.push(
                       getOrganizationPath(
-                        currentOrganizationId,
+                        effectiveOrganizationId,
                         "/evaluations",
                       ),
                     );
                     return;
                   }
                   const base = getOrganizationPath(
-                    currentOrganizationId,
+                    effectiveOrganizationId,
                     "/evaluations",
                   );
                   const url = `${base}?employeeId=${encodeURIComponent(
@@ -481,10 +488,10 @@ export default function DashboardPage() {
             title="Pending Leave Requests"
             value={leaveRequests?.length ?? 0}
             secondary="0 previous period"
-            asLink={getOrganizationPath(currentOrganizationId, "/leave")}
-            exploreHref={getOrganizationPath(currentOrganizationId, "/leave")}
+            asLink={getOrganizationPath(effectiveOrganizationId, "/leave")}
+            exploreHref={getOrganizationPath(effectiveOrganizationId, "/leave")}
             moreDetailsHref={getOrganizationPath(
-              currentOrganizationId,
+              effectiveOrganizationId,
               "/leave",
             )}
           />
@@ -511,7 +518,7 @@ export default function DashboardPage() {
                     <Link
                       key={announcement._id}
                       href={getOrganizationPath(
-                        currentOrganizationId,
+                        effectiveOrganizationId,
                         "/announcements",
                       )}
                       className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
@@ -531,7 +538,7 @@ export default function DashboardPage() {
                   ))}
                   <Link
                     href={getOrganizationPath(
-                      currentOrganizationId,
+                      effectiveOrganizationId,
                       "/announcements",
                     )}
                     className="mt-2 flex items-center gap-1 text-sm font-medium text-brand-purple hover:text-brand-purple-hover"
@@ -571,7 +578,7 @@ export default function DashboardPage() {
                       <Link
                         key={request._id}
                         href={getOrganizationPath(
-                          currentOrganizationId,
+                          effectiveOrganizationId,
                           "/leave",
                         )}
                         className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
@@ -596,7 +603,7 @@ export default function DashboardPage() {
                     );
                   })}
                   <Link
-                    href={getOrganizationPath(currentOrganizationId, "/leave")}
+                    href={getOrganizationPath(effectiveOrganizationId, "/leave")}
                     className="mt-2 flex items-center gap-1 text-sm font-medium text-brand-purple hover:text-brand-purple-hover"
                   >
                     View all <ArrowRight className="h-3 w-3" />
@@ -630,7 +637,7 @@ export default function DashboardPage() {
                     <Link
                       key={run._id}
                       href={getOrganizationPath(
-                        currentOrganizationId,
+                        effectiveOrganizationId,
                         "/payroll",
                       )}
                       className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
@@ -662,7 +669,7 @@ export default function DashboardPage() {
                   ))}
                   <Link
                     href={getOrganizationPath(
-                      currentOrganizationId,
+                      effectiveOrganizationId,
                       "/payroll",
                     )}
                     className="mt-2 flex items-center gap-1 text-sm font-medium text-brand-purple hover:text-brand-purple-hover"
@@ -692,7 +699,7 @@ export default function DashboardPage() {
           <CardContent className="p-4 sm:p-6 pt-0">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <Link
-                href={getOrganizationPath(currentOrganizationId, "/employees")}
+                href={getOrganizationPath(effectiveOrganizationId, "/employees")}
               >
                 <Button
                   variant="outline"
@@ -708,7 +715,7 @@ export default function DashboardPage() {
                 </Button>
               </Link>
               <Link
-                href={getOrganizationPath(currentOrganizationId, "/payroll")}
+                href={getOrganizationPath(effectiveOrganizationId, "/payroll")}
               >
                 <Button
                   variant="outline"
@@ -725,7 +732,7 @@ export default function DashboardPage() {
               </Link>
               <Link
                 href={getOrganizationPath(
-                  currentOrganizationId,
+                  effectiveOrganizationId,
                   "/announcements",
                 )}
               >

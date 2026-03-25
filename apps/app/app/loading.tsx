@@ -1,5 +1,4 @@
-import { MainLoader } from "@/components/main-loader";
-
+/** Avoid full-screen loader so org layout shell (sidebar) stays visible during segment transitions. */
 export default function Loading() {
-  return <MainLoader />;
+  return null;
 }

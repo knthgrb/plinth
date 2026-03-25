@@ -178,7 +178,7 @@ type SidebarProps = {
 export function Sidebar({ onNavigate }: SidebarProps) {
   const pathname = usePathname();
   const {
-    currentOrganizationId,
+    effectiveOrganizationId,
     organizations,
     currentOrganization,
     switchOrganization,
@@ -187,15 +187,15 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   } = useOrganization();
   const user = useQuery(
     (api as any).organizations.getCurrentUser,
-    !isLoggingOut && currentOrganizationId
-      ? { organizationId: currentOrganizationId }
+    !isLoggingOut && effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
 
   const chatUnreadCounts = useQuery(
     (api as any).chat.getUnreadCounts,
-    !isLoggingOut && currentOrganizationId
-      ? { organizationId: currentOrganizationId }
+    !isLoggingOut && effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
   const chatUnreadTotal: number =
@@ -205,9 +205,9 @@ export function Sidebar({ onNavigate }: SidebarProps) {
 
   const announcementsUnreadCount = useQuery(
     (api as any).announcements.getUnreadAnnouncementsCount,
-    !isLoggingOut && currentOrganizationId
+    !isLoggingOut && effectiveOrganizationId
       ? {
-          organizationId: currentOrganizationId,
+          organizationId: effectiveOrganizationId,
           employeeId: currentOrganization?.employeeId,
         }
       : "skip",
@@ -215,7 +215,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   const announcementsUnread: number =
     typeof announcementsUnreadCount === "number" ? announcementsUnreadCount : 0;
   const isSidebarLoading =
-    orgsLoading || user === undefined || !currentOrganizationId;
+    orgsLoading || user === undefined || !effectiveOrganizationId;
 
   // Filter navigation items based on user role (uses role-access effectiveRole)
   const filterItems = (items: NavigationItem[]) => {
@@ -307,7 +307,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
 
   const renderNavItem = (item: NavigationItem, isSubItem = false) => {
     // Get organization-aware href
-    const orgHref = getOrganizationPath(currentOrganizationId, item.href);
+    const orgHref = getOrganizationPath(effectiveOrganizationId, item.href);
     // Check if active (compare with pathname that may or may not have organizationId)
     const cleanPathname = removeOrganizationId(pathname || "");
     const isActive =
@@ -369,7 +369,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
           >
             {filteredSubItems.map((subItem) => {
               const subItemOrgHref = getOrganizationPath(
-                currentOrganizationId,
+                effectiveOrganizationId,
                 subItem.href,
               );
               const isSubItemActive =
@@ -548,7 +548,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
                 <div className="max-h-[280px] overflow-y-auto space-y-0.5">
                   {organizations.map((org) => {
                     const initial = org.name?.trim()[0]?.toUpperCase() || "O";
-                    const isSelected = org._id === currentOrganizationId;
+                    const isSelected = org._id === effectiveOrganizationId;
                     return (
                       <button
                         key={org._id}

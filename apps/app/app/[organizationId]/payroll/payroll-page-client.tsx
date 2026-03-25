@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, Suspense } from "react";
 import { useQuery } from "convex/react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
@@ -242,26 +242,18 @@ function dateStringToLocalMs(dateStr: string): number {
   return new Date(y, m - 1, d).getTime();
 }
 
-type PayrollPageClientProps = {
-  initialPayrollRuns?: any[];
-};
-
-export default function PayrollPageClient({
-  initialPayrollRuns,
-}: PayrollPageClientProps) {
+export default function PayrollPageClient() {
   const { toast } = useToast();
-  const params = useParams();
-  const organizationIdFromUrl = params?.organizationId as string | undefined;
-  const { currentOrganizationId, currentOrganization } = useOrganization();
-  /** Use URL org as fallback so employees load even when org context is not yet synced (e.g. dialog open early) */
-  const effectiveOrganizationId =
-    currentOrganizationId || organizationIdFromUrl;
-  const user = useQuery((api as any).organizations.getCurrentUser, {
-    organizationId: currentOrganizationId || undefined,
-  });
+  const { effectiveOrganizationId, currentOrganization } = useOrganization();
+  const user = useQuery(
+    (api as any).organizations.getCurrentUser,
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
+  );
   const settings = useQuery(
     (api as any).settings.getSettings,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    effectiveOrganizationId ? { organizationId: effectiveOrganizationId } : "skip",
   );
   const employees = useQuery(
     (api as any).employees.getEmployees,
@@ -278,9 +270,8 @@ export default function PayrollPageClient({
   /** Admin, HR, owner can edit deductions in pay preview (Step 5) */
   const canEditPreviewDeductions =
     user?.role === "admin" || user?.role === "hr" || user?.role === "owner";
-  const [payrollRuns, setPayrollRuns] = useState<any[]>(
-    initialPayrollRuns ?? [],
-  );
+  const [payrollRuns, setPayrollRuns] = useState<any[]>([]);
+  const [payrollRunsInitialReady, setPayrollRunsInitialReady] = useState(false);
   const [filterMonth, setFilterMonth] = useState("");
   const [payrollRunsPage, setPayrollRunsPage] = useState(1);
   const payrollRunsPageSize = 10;
@@ -359,16 +350,34 @@ export default function PayrollPageClient({
   const searchParams = useSearchParams();
   const payslipIdParam = searchParams.get("payslipId");
 
-  // Load payroll runs on mount
-  useEffect(() => {
-    if (currentOrganizationId) {
-      loadPayrollRuns();
+  const loadPayrollRuns = async (opts?: { isInitialHydration?: boolean }) => {
+    if (!effectiveOrganizationId) return;
+    if (opts?.isInitialHydration) {
+      setPayrollRuns([]);
+      setPayrollRunsInitialReady(false);
     }
-  }, [currentOrganizationId]);
+    try {
+      const runs = await getPayrollRuns(effectiveOrganizationId);
+      setPayrollRuns(runs);
+    } catch (error) {
+      console.error("Error loading payroll runs:", error);
+    } finally {
+      if (opts?.isInitialHydration) setPayrollRunsInitialReady(true);
+    }
+  };
+
+  useEffect(() => {
+    if (!effectiveOrganizationId) {
+      setPayrollRuns([]);
+      setPayrollRunsInitialReady(false);
+      return;
+    }
+    void loadPayrollRuns({ isInitialHydration: true });
+  }, [effectiveOrganizationId]);
 
   // Handle payslipId from URL (from chat link)
   useEffect(() => {
-    if (payslipIdParam && currentOrganizationId) {
+    if (payslipIdParam && effectiveOrganizationId) {
       // Find the payroll run that contains this payslip
       const findAndOpenPayslip = async () => {
         try {
@@ -377,7 +386,7 @@ export default function PayrollPageClient({
           const payslip = await fetchPayslip(payslipIdParam);
           if (payslip) {
             // Get the payroll run for this payslip
-            const runs = await getPayrollRuns(currentOrganizationId);
+            const runs = await getPayrollRuns(effectiveOrganizationId);
             const payrollRun = runs.find(
               (run: any) => run._id === payslip.payrollRunId,
             );
@@ -391,17 +400,7 @@ export default function PayrollPageClient({
       };
       findAndOpenPayslip();
     }
-  }, [payslipIdParam, currentOrganizationId]);
-
-  const loadPayrollRuns = async () => {
-    if (!currentOrganizationId) return;
-    try {
-      const runs = await getPayrollRuns(currentOrganizationId);
-      setPayrollRuns(runs);
-    } catch (error) {
-      console.error("Error loading payroll runs:", error);
-    }
-  };
+  }, [payslipIdParam, effectiveOrganizationId]);
 
   const filteredPayrollRuns = useMemo(() => {
     let runs = payrollRuns;
@@ -976,7 +975,7 @@ export default function PayrollPageClient({
   };
 
   const computePreview = async () => {
-    if (!currentOrganizationId || selectedEmployees.length === 0) return;
+    if (!effectiveOrganizationId || selectedEmployees.length === 0) return;
 
     setIsProcessing(true);
     try {
@@ -1264,7 +1263,7 @@ export default function PayrollPageClient({
 
   const computeEditPreview = async () => {
     if (
-      !currentOrganizationId ||
+      !effectiveOrganizationId ||
       editSelectedEmployees.length === 0 ||
       !editCutoffStart ||
       !editCutoffEnd
@@ -1527,7 +1526,7 @@ export default function PayrollPageClient({
   };
 
   const handleSubmit = async (status: "draft" | "finalized" = "draft") => {
-    if (!currentOrganizationId) return;
+    if (!effectiveOrganizationId) return;
 
     setSubmitStatus(status);
     setIsProcessing(true);
@@ -1640,7 +1639,7 @@ export default function PayrollPageClient({
       });
 
       const payrollRunId = await createPayrollRun({
-        organizationId: currentOrganizationId,
+        organizationId: effectiveOrganizationId,
         cutoffStart: dateStringToLocalMs(cutoffStart),
         cutoffEnd: dateStringToLocalMs(cutoffEnd),
         employeeIds: selectedEmployees,
@@ -1823,7 +1822,7 @@ export default function PayrollPageClient({
   const handleSavePayrollRun = async (
     status: "draft" | "finalized" = "draft",
   ) => {
-    if (!editingPayrollRun || !currentOrganizationId) return;
+    if (!editingPayrollRun || !effectiveOrganizationId) return;
 
     setEditSubmitStatus(status);
     setIsSavingPayrollRun(true);
@@ -2211,6 +2210,7 @@ export default function PayrollPageClient({
               <CardContent>
                 <PayrollRunsTable
                   payrollRuns={paginatedPayrollRuns || []}
+                  isLoading={!payrollRunsInitialReady}
                   onViewSummary={handleViewSummary}
                   onViewPayslips={handleViewPayslips}
                   onEdit={handleEditPayrollRun}

@@ -64,7 +64,7 @@ type EmployeeSidebarProps = {
 export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
   const pathname = usePathname();
   const {
-    currentOrganizationId,
+    effectiveOrganizationId,
     organizations,
     currentOrganization,
     switchOrganization,
@@ -72,7 +72,7 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
   } = useOrganization();
   const [orgPopoverOpen, setOrgPopoverOpen] = useState(false);
   const [isCreateOrgDialogOpen, setIsCreateOrgDialogOpen] = useState(false);
-  const isSidebarLoading = orgsLoading || !currentOrganizationId;
+  const isSidebarLoading = orgsLoading || !effectiveOrganizationId;
 
   const cleanPathname = removeOrganizationId(pathname || "");
 
@@ -141,7 +141,7 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
                 <div className="max-h-[280px] overflow-y-auto space-y-0.5">
                   {organizations.map((org) => {
                     const initial = org.name?.trim()[0]?.toUpperCase() || "O";
-                    const isSelected = org._id === currentOrganizationId;
+                    const isSelected = org._id === effectiveOrganizationId;
                     return (
                       <button
                         key={org._id}
@@ -232,7 +232,7 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
             <div className="space-y-1">
               {category.items.map((item) => {
                 const orgHref = getOrganizationPath(
-                  currentOrganizationId,
+                  effectiveOrganizationId,
                   item.href,
                 );
                 const isActive =

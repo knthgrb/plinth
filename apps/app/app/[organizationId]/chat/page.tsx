@@ -42,7 +42,7 @@ const CONVERSATION_PARAM = "conversation";
 const DM_PARAM = "dm";
 
 export default function ChatPage() {
-  const { currentOrganizationId } = useOrganization();
+  const { effectiveOrganizationId } = useOrganization();
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
@@ -59,27 +59,29 @@ export default function ChatPage() {
 
   const user = useQuery(
     (api as any).organizations.getCurrentUser,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
   );
 
   const selectedConversation = useQuery(
     (api as any).chat.getConversationById,
-    currentOrganizationId && selectedConversationId
+    effectiveOrganizationId && selectedConversationId
       ? {
-          organizationId: currentOrganizationId,
+          organizationId: effectiveOrganizationId,
           conversationId: selectedConversationId,
         }
-      : "skip"
+      : "skip",
   );
 
   const pendingParticipantUser = useQuery(
     (api as any).organizations.getUserById,
-    currentOrganizationId && selectedPendingParticipantId
+    effectiveOrganizationId && selectedPendingParticipantId
       ? {
           userId: selectedPendingParticipantId as Id<"users">,
-          organizationId: currentOrganizationId,
+          organizationId: effectiveOrganizationId,
         }
-      : "skip"
+      : "skip",
   );
 
   // Detect small screen (mobile/tablet): conversations first, then chat replaces list when selected.
@@ -101,10 +103,10 @@ export default function ChatPage() {
 
   // Initialize IndexedDB cache with encryption for this org
   useEffect(() => {
-    if (currentOrganizationId) {
-      chatCache.initialize(currentOrganizationId).catch(console.error);
+    if (effectiveOrganizationId) {
+      chatCache.initialize(effectiveOrganizationId).catch(console.error);
     }
-  }, [currentOrganizationId]);
+  }, [effectiveOrganizationId]);
 
   const setUrlParams = (conversation: string | null, dm: string | null) => {
     const params = new URLSearchParams();
@@ -157,7 +159,7 @@ export default function ChatPage() {
     if (isSmallScreen) setListOrChatMode(false);
   };
 
-  if (!currentOrganizationId) return null;
+  if (!effectiveOrganizationId) return null;
 
   // Small screen: show either list (first) or chat (when a conversation or pending DM is selected)
   const showList = !isSmallScreen || listOrChatMode;
@@ -165,7 +167,7 @@ export default function ChatPage() {
 
   return (
     <MainLayout>
-      <ChatSessionKeysProvider organizationId={currentOrganizationId}>
+      <ChatSessionKeysProvider organizationId={effectiveOrganizationId}>
       {/* relative so absolute sidebar is contained below the main app header */}
       <div className="relative flex h-[calc(100vh-4rem)] min-h-0 overflow-hidden w-full bg-gray-50">
         {/* Conversation list: full width on small screen when visible, sticks to sidebar on large (no margin) */}

@@ -19,6 +19,8 @@ type Organization = {
 
 type OrganizationContextType = {
   currentOrganizationId: Id<"organizations"> | null;
+  /** URL org id when context has not synced yet (keeps shell/queries working on hard refresh) */
+  effectiveOrganizationId: Id<"organizations"> | null;
   organizations: Organization[];
   currentOrganization: Organization | null;
   isLoading: boolean;
@@ -283,6 +285,12 @@ export function OrganizationProvider({
   const currentOrganization =
     organizations.find((org) => org._id === currentOrganizationId) || null;
 
+  const effectiveOrganizationId: Id<"organizations"> | null =
+    currentOrganizationId ??
+    (urlOrganizationId
+      ? (urlOrganizationId as Id<"organizations">)
+      : null);
+
   // Expose ref value so layout/loading see switching state before state flush (every switch shows overlay)
   const effectiveSwitchingToOrganizationId =
     switchingToOrganizationId ?? switchingToOrganizationIdRef.current;
@@ -293,6 +301,7 @@ export function OrganizationProvider({
     <OrganizationContext.Provider
       value={{
         currentOrganizationId,
+        effectiveOrganizationId,
         organizations,
         currentOrganization,
         isLoading: !isInitialized || organizationsQuery === undefined,

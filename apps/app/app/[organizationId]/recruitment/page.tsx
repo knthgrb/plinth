@@ -44,19 +44,25 @@ import { useToast } from "@/components/ui/use-toast";
 
 export default function RecruitmentPage() {
   const router = useRouter();
-  const { currentOrganizationId } = useOrganization();
+  const { effectiveOrganizationId } = useOrganization();
   const { toast } = useToast();
   const jobs = useQuery(
     (api as any).recruitment.getJobs,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
   );
   const applicants = useQuery(
     (api as any).recruitment.getApplicants,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
   );
   const settings = useQuery(
     (api as any).settings.getSettings,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
   );
   const [isJobDialogOpen, setIsJobDialogOpen] = useState(false);
   const [newDepartmentName, setNewDepartmentName] = useState("");
@@ -80,7 +86,7 @@ export default function RecruitmentPage() {
   });
 
   const handleCreateDepartment = async () => {
-    if (!currentOrganizationId || !newDepartmentName.trim()) return;
+    if (!effectiveOrganizationId || !newDepartmentName.trim()) return;
 
     const trimmedName = newDepartmentName.trim();
     const existingDepartments = settings?.departments || [];
@@ -106,7 +112,7 @@ export default function RecruitmentPage() {
             : { name: d.name, color: d.color ?? "#9CA3AF" },
       );
       await updateDepartments({
-        organizationId: currentOrganizationId,
+        organizationId: effectiveOrganizationId,
         departments: [
           ...departmentsToSave,
           { name: trimmedName, color: "#9CA3AF" },
@@ -137,11 +143,11 @@ export default function RecruitmentPage() {
 
   const handleJobSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentOrganizationId) return;
+    if (!effectiveOrganizationId) return;
 
     try {
       await createJob({
-        organizationId: currentOrganizationId,
+        organizationId: effectiveOrganizationId,
         title: jobFormData.title || undefined,
         department: jobFormData.department || undefined,
         employmentType: jobFormData.employmentType || undefined,
@@ -403,7 +409,26 @@ export default function RecruitmentPage() {
         </div>
 
         <div className="space-y-3">
-          {jobs && jobs.length > 0 ? (
+          {jobs === undefined ? (
+            Array.from({ length: 4 }).map((_, i) => (
+              <Card
+                key={`job-sk-${i}`}
+                className="border border-[#DDDDDD] rounded-xl overflow-hidden"
+              >
+                <CardContent className="p-4 sm:p-5">
+                  <div className="flex items-start gap-3 animate-pulse">
+                    <div className="h-10 w-10 shrink-0 rounded-lg bg-gray-200" />
+                    <div className="flex-1 min-w-0 space-y-2">
+                      <div className="h-5 w-48 max-w-full rounded bg-gray-200" />
+                      <div className="h-4 w-full max-w-md rounded bg-gray-200" />
+                      <div className="h-3 w-24 rounded bg-gray-200" />
+                    </div>
+                    <div className="h-6 w-16 shrink-0 rounded-md bg-gray-200" />
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          ) : jobs.length > 0 ? (
             jobs.map((job: any) => {
               const jobApplicants =
                 applicants?.filter((a: any) => a.jobId === job._id) || [];
@@ -414,7 +439,7 @@ export default function RecruitmentPage() {
                   onClick={() =>
                     router.push(
                       getOrganizationPath(
-                        currentOrganizationId,
+                        effectiveOrganizationId,
                         `/recruitment/${job._id}`,
                       ),
                     )

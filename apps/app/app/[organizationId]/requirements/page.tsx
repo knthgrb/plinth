@@ -99,22 +99,31 @@ const Checkbox = ({
 );
 
 export default function RequirementsPage() {
-  const { currentOrganizationId } = useOrganization();
+  const { effectiveOrganizationId } = useOrganization();
   const { toast } = useToast();
-  const user = useQuery((api as any).organizations.getCurrentUser, {
-    organizationId: currentOrganizationId || undefined,
-  });
+  const user = useQuery(
+    (api as any).organizations.getCurrentUser,
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
+  );
   const employees = useQuery(
     (api as any).employees.getEmployees,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
   );
   const defaultRequirements = useQuery(
     (api as any).organizations.getDefaultRequirements,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
   );
   const settings = useQuery(
     (api as any).settings.getSettings,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
   );
 
   const generateUploadUrl = useMutation(
@@ -258,7 +267,7 @@ export default function RequirementsPage() {
     requirementType: string,
     file: File,
   ) => {
-    if (!currentEmployee || !currentOrganizationId) return;
+    if (!currentEmployee || !effectiveOrganizationId) return;
 
     setUploadingFile(true);
     try {
@@ -369,8 +378,8 @@ export default function RequirementsPage() {
   const handleSaveDefaultRequirements = async (
     requirements: Array<{ type: string; isRequired?: boolean }>,
   ) => {
-    if (!currentOrganizationId) return;
-    await updateDefaultRequirements(currentOrganizationId, requirements);
+    if (!effectiveOrganizationId) return;
+    await updateDefaultRequirements(effectiveOrganizationId, requirements);
     toast({
       title: "Success",
       description: "Default requirements updated and synced to all employees",
@@ -932,6 +941,7 @@ export default function RequirementsPage() {
                 columns={tableColumns}
                 onRowClick={openEmployeeModal}
                 pageSize={20}
+                isLoading={employees === undefined}
               />
             </CardContent>
           </Card>

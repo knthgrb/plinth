@@ -39,6 +39,7 @@ interface DynamicRequirementsTableProps {
   columns: Column[];
   onRowClick: (employee: any) => void;
   pageSize?: number;
+  isLoading?: boolean;
 }
 
 type SortDirection = "asc" | "desc" | null;
@@ -49,6 +50,7 @@ export function DynamicRequirementsTable({
   columns,
   onRowClick,
   pageSize = PAGE_SIZE_DEFAULT,
+  isLoading = false,
 }: DynamicRequirementsTableProps) {
   const [sortState, setSortState] = useState<SortState>({
     field: "",
@@ -328,7 +330,17 @@ export function DynamicRequirementsTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {sortedForPage.length === 0 ? (
+          {isLoading ? (
+            Array.from({ length: 8 }).map((_, rowIdx) => (
+              <TableRow key={`req-sk-${rowIdx}`}>
+                {visibleColumns.map((col) => (
+                  <TableCell key={col.id}>
+                    <div className="h-4 w-full max-w-[10rem] rounded bg-gray-200 animate-pulse" />
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))
+          ) : sortedForPage.length === 0 ? (
             <TableRow>
               <TableCell
                 colSpan={visibleColumns.length}
@@ -383,7 +395,9 @@ export function DynamicRequirementsTable({
           )}
         </TableBody>
       </Table>
-      {employees.length > pageSize && employees.length > 0 && (
+      {!isLoading &&
+        employees.length > pageSize &&
+        employees.length > 0 && (
         <div className="flex items-center justify-between gap-4 px-4 py-3 border-t border-[rgb(230,230,230)] bg-[rgb(250,250,250)]">
           <p className="text-xs font-medium text-[rgb(133,133,133)]">
             {from + 1}–{Math.min(from + pageSize, employees.length)} of{" "}
