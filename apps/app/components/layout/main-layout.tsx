@@ -72,7 +72,6 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Only show full-screen loading on initial load, not during refetches (MainLoader handles tail)
   if (user === null) {
     return null;
   }

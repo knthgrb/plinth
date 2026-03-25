@@ -51,7 +51,6 @@ import {
 } from "@/actions/assets";
 import { useToast } from "@/components/ui/use-toast";
 import { format } from "date-fns";
-import { MainLoader } from "@/components/main-loader";
 
 export default function AssetsPage() {
   const { toast } = useToast();
@@ -319,10 +318,6 @@ export default function AssetsPage() {
     return sum + (asset.quantity || 0);
   }, 0);
 
-  if (loading) {
-    return <MainLoader />;
-  }
-
   return (
     <>
       <MainLayout>
@@ -343,7 +338,11 @@ export default function AssetsPage() {
                 <Package className="h-4 w-4 text-gray-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{assets.length}</div>
+                {loading ? (
+                  <div className="h-8 w-16 rounded bg-[rgb(245,245,245)] animate-pulse" />
+                ) : (
+                  <div className="text-2xl font-bold">{assets.length}</div>
+                )}
                 <p className="text-xs text-gray-500">Asset records</p>
               </CardContent>
             </Card>
@@ -355,7 +354,11 @@ export default function AssetsPage() {
                 <Package className="h-4 w-4 text-gray-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{totalQuantity}</div>
+                {loading ? (
+                  <div className="h-8 w-16 rounded bg-[rgb(245,245,245)] animate-pulse" />
+                ) : (
+                  <div className="text-2xl font-bold">{totalQuantity}</div>
+                )}
                 <p className="text-xs text-gray-500">Total units</p>
               </CardContent>
             </Card>
@@ -367,9 +370,13 @@ export default function AssetsPage() {
                 <Package className="h-4 w-4 text-gray-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">
-                  ₱{totalAssetsValue.toLocaleString()}
-                </div>
+                {loading ? (
+                  <div className="h-8 w-28 rounded bg-[rgb(245,245,245)] animate-pulse" />
+                ) : (
+                  <div className="text-2xl font-bold">
+                    ₱{totalAssetsValue.toLocaleString()}
+                  </div>
+                )}
                 <p className="text-xs text-gray-500">Combined asset value</p>
               </CardContent>
             </Card>
@@ -400,7 +407,36 @@ export default function AssetsPage() {
               </div>
             </CardHeader>
             <CardContent>
-              {filteredAssets.length === 0 ? (
+              {loading ? (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Quantity</TableHead>
+                        <TableHead>Unit Price</TableHead>
+                        <TableHead>Total Value</TableHead>
+                        <TableHead>Date Purchased</TableHead>
+                        <TableHead>Location</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {Array.from({ length: 6 }).map((_, skelIdx) => (
+                        <TableRow key={skelIdx}>
+                          {Array.from({ length: 9 }).map((__, cellIdx) => (
+                            <TableCell key={cellIdx}>
+                              <div className="h-4 w-full max-w-[90px] rounded bg-[rgb(245,245,245)] animate-pulse" />
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : filteredAssets.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   <AlertCircle className="mx-auto h-12 w-12 text-gray-400 mb-2" />
                   <p>

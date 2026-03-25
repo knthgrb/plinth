@@ -46,7 +46,6 @@ import { createEvaluation, updateEvaluation } from "@/actions/evaluations";
 import { updateEvaluationColumns } from "@/actions/settings";
 import { cn } from "@/utils/utils";
 import { EvaluationColumnManagementModal } from "./evaluation-column-management-modal";
-import { MainLoader } from "@/components/main-loader";
 
 type EvaluationColumn = {
   id: string;
@@ -206,6 +205,12 @@ export function EvaluationsContent() {
     user?.role === "admin" ||
     user?.role === "hr" ||
     user?.role === "accounting";
+
+  const evaluationsDataLoading =
+    user === undefined ||
+    settings === undefined ||
+    employees === undefined ||
+    evaluations === undefined;
   useEffect(() => {
     if (initializedFromUrl) return;
     if (typeof window === "undefined") return;
@@ -260,11 +265,7 @@ export function EvaluationsContent() {
     );
   }
 
-  if (user === undefined || settings === undefined) {
-    return <MainLoader />;
-  }
-
-  if (!isOwnerOrAdminOrHr) {
+  if (user !== undefined && !isOwnerOrAdminOrHr) {
     return (
       <MainLayout>
         <div className="p-8">You are not authorized to view this page.</div>
@@ -451,6 +452,13 @@ export function EvaluationsContent() {
     return !col?.hidden;
   });
 
+  const evaluationTableColCount =
+    defaultColumns.length +
+    visibleColumns.filter(
+      (col) =>
+        !["employee", "employeeId", "position", "hiredDate"].includes(col.id),
+    ).length;
+
   const getCellValue = (
     employeeId: string,
     column: EvaluationColumn,
@@ -532,24 +540,9 @@ export function EvaluationsContent() {
           Evaluations
         </h1>
 
-        {evaluations === undefined ? (
-          <div
-            className="flex flex-wrap items-center gap-2 sm:gap-3 rounded-xl border border-[rgb(230,230,230)] bg-[rgb(250,250,250)] px-4 py-3 shadow-sm animate-pulse"
-            role="status"
-            aria-label="Loading upcoming evaluations"
-          >
-            <div className="flex items-center gap-2 shrink-0">
-              <div className="h-4 w-4 rounded bg-[rgb(220,220,220)] shrink-0" />
-              <span className="h-4 w-4 rounded bg-[rgb(220,220,220)] shrink-0 sm:w-32 w-24" />
-            </div>
-            <div className="h-4 flex-1 min-w-0 max-w-md rounded bg-[rgb(220,220,220)]" />
-            <div className="flex items-center gap-2 shrink-0">
-              <div className="h-4 w-8 rounded bg-[rgb(220,220,220)]" />
-              <div className="h-4 w-px bg-[rgb(220,220,220)]" aria-hidden />
-              <div className="h-6 w-6 rounded bg-[rgb(220,220,220)]" />
-            </div>
-          </div>
-        ) : upcomingEvaluations.length > 0 && !upcomingBannerDismissed ? (
+        {evaluations !== undefined &&
+        upcomingEvaluations.length > 0 &&
+        !upcomingBannerDismissed ? (
           <div
             className="flex flex-wrap items-center gap-2 sm:gap-3 rounded-xl border border-[rgb(230,230,230)] bg-[rgb(250,250,250)] px-4 py-3 shadow-sm"
             role="region"
@@ -797,7 +790,22 @@ export function EvaluationsContent() {
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedEmployees.length > 0 ? (
+                  {evaluationsDataLoading ? (
+                    Array.from({ length: 8 }).map((_, rowIdx) => (
+                      <tr
+                        key={`eval-skel-${rowIdx}`}
+                        className="border-b last:border-b-0 border-[rgb(230,230,230)] h-9"
+                      >
+                        {Array.from({ length: evaluationTableColCount }).map(
+                          (_, cIdx) => (
+                            <td key={cIdx} className="py-2 px-3 align-middle">
+                              <div className="h-3.5 w-full max-w-[100px] rounded bg-[rgb(235,235,235)] animate-pulse" />
+                            </td>
+                          ),
+                        )}
+                      </tr>
+                    ))
+                  ) : paginatedEmployees.length > 0 ? (
                     paginatedEmployees.map((emp: any) => (
                       <tr
                         key={emp._id}
@@ -909,18 +917,7 @@ export function EvaluationsContent() {
                   ) : (
                     <tr className="border-b border-[rgb(230,230,230)]">
                       <td
-                        colSpan={
-                          defaultColumns.length +
-                          visibleColumns.filter(
-                            (col) =>
-                              ![
-                                "employee",
-                                "employeeId",
-                                "position",
-                                "hiredDate",
-                              ].includes(col.id),
-                          ).length
-                        }
+                        colSpan={evaluationTableColCount}
                         className="py-6 text-center text-gray-500 text-sm"
                       >
                         No employees found.

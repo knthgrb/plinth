@@ -78,73 +78,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-function EmployeesTableSkeleton() {
-  return (
-    <div className="overflow-x-auto -mx-4 sm:mx-0">
-      <div className="inline-block min-w-full align-middle">
-        <Table>
-          <TableHeader>
-            <TableRow className="h-9">
-              <TableHead className="min-w-[150px] py-1.5">Name</TableHead>
-              <TableHead className="min-w-[180px] hidden sm:table-cell py-1.5">
-                Email
-              </TableHead>
-              <TableHead className="min-w-[120px] py-1.5">Position</TableHead>
-              <TableHead className="min-w-[120px] hidden md:table-cell py-1.5">
-                Department
-              </TableHead>
-              <TableHead className="min-w-[120px] hidden lg:table-cell py-1.5">
-                Phone
-              </TableHead>
-              <TableHead className="min-w-[140px] hidden lg:table-cell py-1.5">
-                Created date
-              </TableHead>
-              <TableHead className="min-w-[100px] py-1.5">Status</TableHead>
-              <TableHead className="text-right min-w-[80px] py-1.5">
-                Actions
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {Array.from({ length: 5 }).map((_, i) => (
-              <TableRow key={i} className="h-9">
-                <TableCell className="py-1.5 px-3">
-                  <div className="h-4 w-24 bg-gray-200 rounded animate-pulse" />
-                </TableCell>
-                <TableCell className="hidden sm:table-cell py-1.5 px-3">
-                  <div className="h-4 w-32 bg-gray-200 rounded animate-pulse" />
-                </TableCell>
-                <TableCell className="py-1.5 px-3">
-                  <div className="h-4 w-20 bg-gray-200 rounded animate-pulse" />
-                </TableCell>
-                <TableCell className="hidden md:table-cell py-1.5 px-3">
-                  <div className="h-4 w-16 bg-gray-200 rounded animate-pulse" />
-                </TableCell>
-                <TableCell className="hidden lg:table-cell py-1.5 px-3">
-                  <div className="h-4 w-20 bg-gray-200 rounded animate-pulse" />
-                </TableCell>
-                <TableCell className="hidden lg:table-cell py-1.5 px-3">
-                  <div className="h-4 w-16 bg-gray-200 rounded animate-pulse" />
-                </TableCell>
-                <TableCell className="py-1.5 px-3">
-                  <div className="h-5 w-14 bg-gray-200 rounded animate-pulse" />
-                </TableCell>
-                <TableCell className="text-right py-1.5 pr-3">
-                  <div className="h-6 w-6 bg-gray-200 rounded animate-pulse ml-auto" />
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-    </div>
-  );
-}
-
 const EmployeesTable = dynamic(
   () => import("./_components/employees-table").then((m) => m.EmployeesTable),
   {
-    loading: () => <EmployeesTableSkeleton />,
+    loading: () => null,
     ssr: false,
   },
 );

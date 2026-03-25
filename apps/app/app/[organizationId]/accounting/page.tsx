@@ -59,7 +59,6 @@ import {
 import { generateUploadUrl, getFileUrl } from "@/actions/files";
 import { useToast } from "@/components/ui/use-toast";
 import { getStatusBadgeClass, getStatusBadgeStyle } from "@/utils/colors";
-import { MainLoader } from "@/components/main-loader";
 import {
   DashboardOverviewHeader,
   DashboardMetricCard,
@@ -167,6 +166,7 @@ export default function AccountingPage() {
   const categories = REQUIRED_CATEGORIES;
   const costItems = costItemsFromQuery ?? [];
   const loading = costItemsFromQuery === undefined;
+  const dataLoading = user === undefined || loading;
 
   // Redirect if no access
   useEffect(() => {
@@ -556,19 +556,8 @@ export default function AccountingPage() {
     };
   }, [receiptFilePreviews]);
 
-  // Show loading or forbidden
-  if (user === undefined || loading) {
-    return <MainLoader />;
-  }
-
-  if (
-    !user ||
-    (user.role !== "accounting" &&
-      user.role !== "admin" &&
-      user.role !== "owner")
-  ) {
-    return null; // Will redirect to forbidden
-  }
+  if (user === null) return null;
+  if (user !== undefined && !hasAccess) return null;
 
   return (
     <>
@@ -606,33 +595,44 @@ export default function AccountingPage() {
 
           {/* Summary metric cards */}
           <div className="mt-6 grid gap-4 md:grid-cols-2">
-            {categories.map((category) => {
-              const { total, paid, remaining } = categoryTotals[
-                category.name
-              ] ?? {
-                total: 0,
-                paid: 0,
-                remaining: 0,
-              };
-              return (
-                <DashboardMetricCard
-                  key={category.name}
-                  title={category.name}
-                  value={
-                    <>
-                      ₱
-                      {total.toLocaleString("en-US", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </>
-                  }
-                  secondary={`₱${paid.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} paid · ₱${remaining.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} remaining · ${getItemsForCategory(category.name).length} expenses`}
-                  moreDetailsHref="#expenses"
-                  moreDetailsLabel="View expenses"
-                />
-              );
-            })}
+            {dataLoading
+              ? categories.map((category) => (
+                  <div
+                    key={category.name}
+                    className="rounded-xl border border-[rgb(230,230,230)] bg-white p-4 sm:p-6 animate-pulse"
+                  >
+                    <div className="h-4 w-40 rounded bg-[rgb(240,240,240)]" />
+                    <div className="mt-3 h-8 w-32 rounded bg-[rgb(245,245,245)]" />
+                    <div className="mt-2 h-3 w-full max-w-xs rounded bg-[rgb(248,248,248)]" />
+                  </div>
+                ))
+              : categories.map((category) => {
+                  const { total, paid, remaining } = categoryTotals[
+                    category.name
+                  ] ?? {
+                    total: 0,
+                    paid: 0,
+                    remaining: 0,
+                  };
+                  return (
+                    <DashboardMetricCard
+                      key={category.name}
+                      title={category.name}
+                      value={
+                        <>
+                          ₱
+                          {total.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </>
+                      }
+                      secondary={`₱${paid.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} paid · ₱${remaining.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} remaining · ${getItemsForCategory(category.name).length} expenses`}
+                      moreDetailsHref="#expenses"
+                      moreDetailsLabel="View expenses"
+                    />
+                  );
+                })}
           </div>
 
           {/* Expense Categories */}
@@ -668,7 +668,37 @@ export default function AccountingPage() {
                     </div>
                   </CardHeader>
                   <CardContent>
-                    {allCategoryItems.length === 0 ? (
+                    {dataLoading ? (
+                      <div className="overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Name</TableHead>
+                              <TableHead>Amount</TableHead>
+                              <TableHead>Paid</TableHead>
+                              <TableHead>Remaining</TableHead>
+                              <TableHead>Frequency</TableHead>
+                              <TableHead>Due Date</TableHead>
+                              <TableHead>Status</TableHead>
+                              <TableHead className="text-right">
+                                Actions
+                              </TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {Array.from({ length: 5 }).map((_, skelIdx) => (
+                              <TableRow key={skelIdx}>
+                                {Array.from({ length: 8 }).map((__, cellIdx) => (
+                                  <TableCell key={cellIdx}>
+                                    <div className="h-4 w-full max-w-[100px] rounded bg-[rgb(245,245,245)] animate-pulse" />
+                                  </TableCell>
+                                ))}
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    ) : allCategoryItems.length === 0 ? (
                       <div className="text-center py-8 text-gray-500">
                         <AlertCircle className="mx-auto h-12 w-12 text-gray-400 mb-2" />
                         <p>No expenses yet. Add your first expense above.</p>
