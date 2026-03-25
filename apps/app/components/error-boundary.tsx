@@ -1,6 +1,7 @@
 "use client";
 
 import React, { Component, ErrorInfo, ReactNode, useEffect } from "react";
+import { GlobalErrorFallback } from "@/components/global-error-fallback";
 
 interface Props {
   children: ReactNode;
@@ -88,15 +89,12 @@ export class ConvexErrorBoundary extends Component<Props, State> {
         );
       }
 
-      // For other errors, show error message
+      // Convex / runtime errors: branded UI only (details logged in componentDidCatch)
       return (
-        <div className="flex h-screen items-center justify-center">
-          <div className="text-center">
-            <h2 className="text-xl font-bold text-red-600 mb-2">
-              Something went wrong
-            </h2>
-            <p className="text-gray-600">{errorMessage}</p>
-          </div>
+        <div className="min-h-screen bg-white">
+          <GlobalErrorFallback
+            reset={() => this.setState({ hasError: false, error: null })}
+          />
         </div>
       );
     }

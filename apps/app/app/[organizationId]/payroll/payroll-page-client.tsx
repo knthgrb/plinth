@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, Suspense } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, Suspense } from "react";
 import { useQuery } from "convex/react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
@@ -152,6 +152,14 @@ const PayrollSummaryDialog = dynamic<any>(
   () =>
     import("./_components/payroll-summary-dialog").then((mod) => ({
       default: mod.PayrollSummaryDialog,
+    })),
+  { ssr: false },
+);
+
+const PayrollFinalizeDialog = dynamic(
+  () =>
+    import("./_components/payroll-finalize-dialog").then((mod) => ({
+      default: mod.PayrollFinalizeDialog,
     })),
   { ssr: false },
 );
@@ -315,7 +323,13 @@ export default function PayrollPageClient() {
   const [summaryData, setSummaryData] = useState<any>(null);
   const [isLoadingSummary, setIsLoadingSummary] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
-  const [isFinalizing, setIsFinalizing] = useState(false);
+  const [finalizeDialogOpen, setFinalizeDialogOpen] = useState(false);
+  const [finalizePayrollRunId, setFinalizePayrollRunId] = useState<
+    string | null
+  >(null);
+  const [finalizeFlowBusy, setFinalizeFlowBusy] = useState(false);
+  const finalizeSuccessRef = useRef<(() => Promise<void>) | null>(null);
+  const finalizeCancelRef = useRef<(() => Promise<void>) | null>(null);
   const [isEditPayrollRunOpen, setIsEditPayrollRunOpen] = useState(false);
   const [editingPayrollRun, setEditingPayrollRun] = useState<any>(null);
   const [editPayrollStep, setEditPayrollStep] = useState(1);
@@ -349,6 +363,29 @@ export default function PayrollPageClient() {
 
   const searchParams = useSearchParams();
   const payslipIdParam = searchParams.get("payslipId");
+
+  const closeFinalizeDialog = useCallback(() => {
+    setFinalizeDialogOpen(false);
+    setFinalizePayrollRunId(null);
+    finalizeSuccessRef.current = null;
+    finalizeCancelRef.current = null;
+    setFinalizeFlowBusy(false);
+  }, []);
+
+  const openPayrollFinalizeFlow = useCallback(
+    (
+      payrollRunId: string,
+      onSuccess: () => Promise<void>,
+      onCancel: () => Promise<void>,
+    ) => {
+      finalizeSuccessRef.current = onSuccess;
+      finalizeCancelRef.current = onCancel;
+      setFinalizeFlowBusy(true);
+      setFinalizePayrollRunId(payrollRunId);
+      setFinalizeDialogOpen(true);
+    },
+    [],
+  );
 
   const loadPayrollRuns = async (opts?: { isInitialHydration?: boolean }) => {
     if (!effectiveOrganizationId) return;
@@ -486,6 +523,7 @@ export default function PayrollPageClient() {
     // Create CSV content
     const headers = [
       "Employee",
+      "Daily pay",
       ...summaryData.dates.map((d: number) => format(new Date(d), "MMM dd")),
       "Total Late (min)",
       "Total Undertime (min)",
@@ -511,6 +549,7 @@ export default function PayrollPageClient() {
 
       return [
         `${empSummary.employee.personalInfo.firstName} ${empSummary.employee.personalInfo.lastName}`,
+        empSummary.dailyPayRate ?? 0,
         ...dayValues,
         empSummary.totals.totalLateMinutes,
         empSummary.totals.totalUndertimeMinutes,
@@ -656,6 +695,16 @@ export default function PayrollPageClient() {
   };
 
   const handleStatusChange = async (payrollRun: any, status: string) => {
+    if (status === "finalized") {
+      openPayrollFinalizeFlow(
+        payrollRun._id,
+        async () => {
+          await loadPayrollRuns();
+        },
+        async () => {},
+      );
+      return;
+    }
     try {
       await updatePayrollRunStatus(payrollRun._id, status as any);
       await loadPayrollRuns();
@@ -689,6 +738,9 @@ export default function PayrollPageClient() {
       await loadPayrollRuns();
       if (selectedPayrollRun?._id === payrollRun._id) {
         await handleViewPayslips(payrollRun);
+      }
+      if (isSummaryOpen && selectedPayrollRun?._id === payrollRun._id) {
+        await handleViewSummary(payrollRun);
       }
       toast({
         title: "Payslips regenerated",
@@ -1650,9 +1702,45 @@ export default function PayrollPageClient() {
         incentives: incentives.length > 0 ? incentives : undefined,
       });
 
-      // If finalizing, update status immediately
+      // Finalize: show recipient dialog (emails only for employees with Plinth accounts)
       if (status === "finalized" && payrollRunId) {
-        await updatePayrollRunStatus(payrollRunId, "finalized");
+        openPayrollFinalizeFlow(
+          payrollRunId,
+          async () => {
+            setIsDialogOpen(false);
+            setCurrentStep(1);
+            setCutoffStart("");
+            setCutoffEnd("");
+            setSelectedEmployees([]);
+            setDeductionsEnabled(true);
+            setGovernmentDeductionSettings([]);
+            setEmployeeDeductions([]);
+            setEmployeeIncentives([]);
+            setPreviewData([]);
+            setPreviewDeductionOverrides({});
+            await loadPayrollRuns();
+          },
+          async () => {
+            setIsDialogOpen(false);
+            setCurrentStep(1);
+            setCutoffStart("");
+            setCutoffEnd("");
+            setSelectedEmployees([]);
+            setDeductionsEnabled(true);
+            setGovernmentDeductionSettings([]);
+            setEmployeeDeductions([]);
+            setEmployeeIncentives([]);
+            setPreviewData([]);
+            setPreviewDeductionOverrides({});
+            await loadPayrollRuns();
+            toast({
+              title: "Saved as draft",
+              description:
+                "Payroll was not finalized. You can finalize from the payroll list when ready.",
+            });
+          },
+        );
+        return;
       }
 
       // Reset form
@@ -1865,7 +1953,19 @@ export default function PayrollPageClient() {
       });
 
       if (status === "finalized") {
-        await updatePayrollRunStatus(editingPayrollRun._id, "finalized");
+        const runId = editingPayrollRun._id;
+        setIsEditPayrollRunOpen(false);
+        setEditingPayrollRun(null);
+        openPayrollFinalizeFlow(
+          runId,
+          async () => {
+            await loadPayrollRuns();
+          },
+          async () => {
+            await loadPayrollRuns();
+          },
+        );
+        return;
       }
 
       setIsEditPayrollRunOpen(false);
@@ -1873,10 +1973,7 @@ export default function PayrollPageClient() {
       await loadPayrollRuns();
       toast({
         title: "Success",
-        description:
-          status === "finalized"
-            ? "Payroll run updated and finalized successfully!"
-            : "Payroll run updated successfully!",
+        description: "Payroll run updated successfully!",
       });
     } catch (error: any) {
       console.error("Error updating payroll run:", error);
@@ -2341,7 +2438,7 @@ export default function PayrollPageClient() {
               onExportExcel={handleExportExcel}
               onExportPDF={handleExportPDF}
               isSavingDraft={isSavingDraft}
-              isFinalizing={isFinalizing}
+              isFinalizing={finalizeFlowBusy}
               onSaveDraft={async () => {
                 setIsSavingDraft(true);
                 try {
@@ -2362,29 +2459,15 @@ export default function PayrollPageClient() {
                 }
               }}
               onFinalize={async () => {
-                setIsFinalizing(true);
-                try {
-                  await updatePayrollRunStatus(
-                    selectedPayrollRun._id,
-                    "finalized",
-                  );
-                  await loadPayrollRuns();
-                  toast({
-                    title: "Success",
-                    description:
-                      "Payroll run finalized successfully! Cost records created.",
-                  });
-                  setIsSummaryOpen(false);
-                } catch (error: any) {
-                  toast({
-                    title: "Error",
-                    description:
-                      error.message || "Failed to finalize payroll run",
-                    variant: "destructive",
-                  });
-                } finally {
-                  setIsFinalizing(false);
-                }
+                if (!selectedPayrollRun) return;
+                openPayrollFinalizeFlow(
+                  selectedPayrollRun._id,
+                  async () => {
+                    await loadPayrollRuns();
+                    setIsSummaryOpen(false);
+                  },
+                  async () => {},
+                );
               }}
             />
           </Suspense>
@@ -2523,6 +2606,18 @@ export default function PayrollPageClient() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <PayrollFinalizeDialog
+          open={finalizeDialogOpen}
+          payrollRunId={finalizePayrollRunId}
+          onClose={closeFinalizeDialog}
+          onFlowSuccess={async () => {
+            await finalizeSuccessRef.current?.();
+          }}
+          onFlowCancel={async () => {
+            await finalizeCancelRef.current?.();
+          }}
+        />
       </div>
     </MainLayout>
   );

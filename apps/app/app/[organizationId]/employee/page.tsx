@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/card";
 import { Receipt, Calendar, FileText, Bell, MessageCircle } from "lucide-react";
 import { useOrganization } from "@/hooks/organization-context";
+import { useEmployeeView } from "@/hooks/employee-view-context";
+import { getOrganizationPath } from "@/utils/organization-routing";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
@@ -20,36 +22,38 @@ import { useEffect } from "react";
 export default function EmployeePage() {
   const router = useRouter();
   const { currentOrganizationId, currentOrganization } = useOrganization();
+  const { isEmployeeExperienceUI, effectiveSelfEmployeeId } =
+    useEmployeeView();
   const user = useQuery((api as any).organizations.getCurrentUser, {
     organizationId: currentOrganizationId || undefined,
   });
 
-  // Redirect if not employee
-  useEffect(() => {
-    if (user !== undefined && user && user.role !== "employee") {
-      router.push("/forbidden");
-    }
-  }, [user, router]);
+  const selfEmpId =
+    effectiveSelfEmployeeId ?? (user?.employeeId ? String(user.employeeId) : null);
 
-  // Get employee's payslips count
+  useEffect(() => {
+    if (user !== undefined && user && !isEmployeeExperienceUI) {
+      router.push(getOrganizationPath(currentOrganizationId, "/forbidden"));
+    }
+  }, [user, router, isEmployeeExperienceUI, currentOrganizationId]);
+
   const payslips = useQuery(
     (api as any).payroll.getEmployeePayslips,
-    user?.employeeId
+    selfEmpId
       ? {
-          employeeId: user.employeeId,
+          employeeId: selfEmpId,
         }
-      : "skip"
+      : "skip",
   );
 
-  // Get employee's leave requests
   const leaveRequests = useQuery(
     (api as any).leave.getLeaveRequests,
-    currentOrganizationId && user?.employeeId
+    currentOrganizationId && selfEmpId
       ? {
           organizationId: currentOrganizationId,
-          employeeId: user.employeeId,
+          employeeId: selfEmpId,
         }
-      : "skip"
+      : "skip",
   );
 
   if (!currentOrganizationId) return null;
@@ -65,8 +69,8 @@ export default function EmployeePage() {
     );
   }
 
-  if (!user || user.role !== "employee") {
-    return null; // Will redirect to forbidden
+  if (!user || !isEmployeeExperienceUI) {
+    return null;
   }
 
   const quickLinks = [
@@ -165,7 +169,7 @@ export default function EmployeePage() {
                   <CardDescription>{link.description}</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <Link href={link.href}>
+                  <Link href={getOrganizationPath(currentOrganizationId, link.href)}>
                     <Button variant="outline" className="w-full">
                       Go to {link.title}
                     </Button>

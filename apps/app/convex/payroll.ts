@@ -3695,8 +3695,17 @@ export const getPayrollRunSummary = query({
       dates.push(payrollRun.cutoffStart + i * ONE_DAY_MS);
     }
 
-    // Get payroll rates from organization settings (night diff, OT rates, etc.)
-    const { rates } = await getPayrollRates(ctx, payrollRun.organizationId);
+    // Org pay frequency + settings base (per-employee rates merged in loop)
+    const organization = await ctx.db.get(payrollRun.organizationId);
+    if (!organization) throw new Error("Organization not found");
+    const payFrequency = getOrganizationPayFrequency(organization);
+    const { base } = await getPayrollRates(ctx, payrollRun.organizationId);
+
+    const holidaysForPayroll = await (ctx.db.query("holidays") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", payrollRun.organizationId),
+      )
+      .collect();
 
     // Get all approved leave requests for all employees in the period
     const allLeaveRequests = await (ctx.db.query("leaveRequests") as any)
@@ -3931,8 +3940,21 @@ export const getPayrollRunSummary = query({
           }),
         );
 
+        const employeeRates = getEmployeePayrollRates(employee, base);
+        const payrollBase = await buildEmployeePayrollBase(ctx, {
+          employee,
+          cutoffStart: payrollRun.cutoffStart,
+          cutoffEnd: payrollRun.cutoffEnd,
+          payFrequency,
+          payrollRates: employeeRates,
+          holidays: holidaysForPayroll,
+          leaveTypes,
+        });
+
         return {
           employee,
+          /** Daily rate used by payroll for this period (monthly → prorated daily, daily/hourly → contract rate). */
+          dailyPayRate: payrollBase.dailyRate,
           payslipBreakdown: {
             grossPay: payslip?.grossPay ?? 0,
             nonTaxableAllowance: payslip?.nonTaxableAllowance ?? 0,
@@ -3992,6 +4014,136 @@ export const addPayrollRunNote = mutation({
     });
 
     return { success: true };
+  },
+});
+
+/** Resolve Plinth login email for payroll emails: linked employeeId on userOrganizations, else same work email + org membership. */
+async function findPlinthAccountEmailForEmployee(
+  ctx: any,
+  organizationId: any,
+  employeeId: any,
+  workEmail: string,
+): Promise<string | null> {
+  const userOrgs = await (ctx.db.query("userOrganizations") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", organizationId),
+    )
+    .collect();
+
+  for (const uo of userOrgs) {
+    if (uo.employeeId !== employeeId) continue;
+    const user = await ctx.db.get(uo.userId);
+    if (!user) continue;
+    if ((user as any).isActive === false) continue;
+    const em = String((user as any).email || "").trim();
+    if (em) return em;
+  }
+
+  const tryEmails = new Set<string>();
+  const raw = (workEmail || "").trim();
+  if (raw) {
+    tryEmails.add(raw);
+    tryEmails.add(raw.toLowerCase());
+  }
+  for (const em of tryEmails) {
+    if (!em) continue;
+    const user = await (ctx.db.query("users") as any)
+      .withIndex("by_email", (q: any) => q.eq("email", em))
+      .first();
+    if (!user || (user as any).isActive === false) continue;
+    const uo = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_user_organization", (q: any) =>
+        q.eq("userId", user._id).eq("organizationId", organizationId),
+      )
+      .first();
+    if (!uo) continue;
+    if (uo.employeeId != null && uo.employeeId !== employeeId) continue;
+    const loginEmail = String((user as any).email || "").trim();
+    if (loginEmail) return loginEmail;
+  }
+  return null;
+}
+
+/** Who will receive emailed payslip PDFs when this run is finalized (Plinth accounts only). */
+export const getPayrollFinalizePayslipRecipients = query({
+  args: {
+    payrollRunId: v.id("payrollRuns"),
+  },
+  handler: async (ctx, args) => {
+    const payrollRunRaw = await ctx.db.get(args.payrollRunId);
+    if (!payrollRunRaw) throw new Error("Payroll run not found");
+    const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
+
+    const userRecord = await checkAuth(ctx, payrollRun.organizationId);
+    const allowedRoles = ["owner", "admin", "hr", "accounting"];
+    if (!allowedRoles.includes(userRecord.role)) {
+      throw new Error("Not authorized");
+    }
+
+    const org = await ctx.db.get(payrollRun.organizationId);
+    const organizationName = (org as any)?.name ?? "Organization";
+
+    const payslipsRaw = await (ctx.db.query("payslips") as any)
+      .withIndex("by_payroll_run", (q: any) =>
+        q.eq("payrollRunId", args.payrollRunId),
+      )
+      .collect();
+
+    const withAccount: Array<{
+      payslipId: any;
+      employeeId: any;
+      name: string;
+      email: string;
+      workEmail: string;
+    }> = [];
+    const withoutAccount: Array<{
+      employeeId: any;
+      name: string;
+      workEmail: string;
+    }> = [];
+
+    for (const raw of payslipsRaw) {
+      const payslip = decryptPayslipRowFromDb(raw)!;
+      const employeeRow = await ctx.db.get(payslip.employeeId);
+      if (!employeeRow) continue;
+      const employee = decryptEmployeeFromDb(employeeRow as any);
+      const workEmail = String(employee.personalInfo?.email || "").trim();
+      const name =
+        `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`.trim();
+
+      const accountEmail = await findPlinthAccountEmailForEmployee(
+        ctx,
+        payrollRun.organizationId,
+        payslip.employeeId,
+        workEmail,
+      );
+
+      if (accountEmail) {
+        withAccount.push({
+          payslipId: payslip._id,
+          employeeId: payslip.employeeId,
+          name,
+          email: accountEmail,
+          workEmail,
+        });
+      } else {
+        withoutAccount.push({
+          employeeId: payslip.employeeId,
+          name,
+          workEmail,
+        });
+      }
+    }
+
+    return {
+      runStatus: payrollRun.status,
+      organizationId: payrollRun.organizationId,
+      organizationName,
+      cutoffStart: payrollRun.cutoffStart,
+      cutoffEnd: payrollRun.cutoffEnd,
+      withAccount,
+      withoutAccount,
+    };
   },
 });
 

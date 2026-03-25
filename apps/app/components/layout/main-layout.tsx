@@ -9,6 +9,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useOrganization } from "@/hooks/organization-context";
 import { SettingsModalProvider } from "@/hooks/settings-modal-context";
+import { useEmployeeView } from "@/hooks/employee-view-context";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
@@ -25,6 +26,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   const [isScrolling, setIsScrolling] = useState(false);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { isEmployeeExperienceUI } = useEmployeeView();
 
   useEffect(() => {
     if (user === null) {
@@ -76,9 +78,8 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
     return null;
   }
 
-  // Only show employee sidebar if user role is explicitly "employee"
-  // Default to admin sidebar for admin/hr/accounting or if role is undefined
-  const isEmployee = user?.role === "employee";
+  // Employee sidebar: real employees, or elevated users who toggled "View as employee"
+  const isEmployee = isEmployeeExperienceUI;
   const isChatPage = pathname?.includes("/chat");
 
   return (

@@ -5,12 +5,16 @@ import { useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
+import {
+  EmployeeViewProvider,
+  useEmployeeView,
+} from "@/hooks/employee-view-context";
 import { Id } from "@/convex/_generated/dataModel";
 import { removeOrganizationId } from "@/utils/organization-routing";
 import { canAccessRoute } from "@/utils/role-access";
 import { OrganizationSwitchingOverlay } from "@/components/organization-switching-overlay";
 
-export default function OrganizationLayout({
+function OrganizationLayoutInner({
   children,
 }: {
   children: React.ReactNode;
@@ -27,6 +31,7 @@ export default function OrganizationLayout({
     switchingToOrganizationId,
     isLoggingOut,
   } = useOrganization();
+  const { isEmployeeExperienceUI } = useEmployeeView();
   const updateLastActive = useMutation(
     (api as any).organizations.updateLastActiveOrganization,
   );
@@ -35,7 +40,6 @@ export default function OrganizationLayout({
     organizationId && !isLoggingOut ? { organizationId } : "skip",
   );
 
-  // Validate organizationId from URL and sync with context (do not override when user just switched)
   useEffect(() => {
     if (isLoggingOut || isLoading || !organizations.length) return;
     if (!organizationId) return;
@@ -52,7 +56,6 @@ export default function OrganizationLayout({
       return;
     }
 
-    // Sync URL -> context only when we're not in the middle of a user-initiated switch (avoids infinite loop)
     if (currentOrganizationId !== orgId && !switchingToOrganizationId) {
       switchOrganization(orgId);
     }
@@ -73,23 +76,30 @@ export default function OrganizationLayout({
     pathname,
   ]);
 
-  // Role-based access: redirect to forbidden only when we have a resolved user and they lack access
   useEffect(() => {
     if (isLoggingOut || isLoading || !organizationId) return;
-    // Wait for user query to resolve (undefined = loading)
     if (user === undefined) return;
-    // Don't redirect to forbidden when user is null (e.g. brief unauthenticated state after login); let query refetch
     if (user === null) return;
     let cleanPath = removeOrganizationId(pathname || "") || "/dashboard";
-    // When path is exactly /orgId (no subpath), treat as dashboard for access check
     if (cleanPath === `/${organizationId}`) cleanPath = "/dashboard";
     if (cleanPath === "/forbidden") return;
-    if (!canAccessRoute(cleanPath, user.role ?? null)) {
+
+    const roleForAccess = isEmployeeExperienceUI
+      ? "employee"
+      : (user.role ?? null);
+    if (!canAccessRoute(cleanPath, roleForAccess)) {
       router.replace(`/${organizationId}/forbidden`);
     }
-  }, [isLoading, organizationId, pathname, user, router]);
+  }, [
+    isLoading,
+    organizationId,
+    pathname,
+    user,
+    router,
+    isLoggingOut,
+    isEmployeeExperienceUI,
+  ]);
 
-  // When switching org, show org switcher overlay. Never show when logging out.
   const isSwitching =
     !isLoggingOut &&
     !!switchingToOrganizationId &&
@@ -99,7 +109,6 @@ export default function OrganizationLayout({
     ? organizations.find((o) => o._id === switchingToOrganizationId)
     : null;
 
-  // When logging out, unmount children immediately so no auth-dependent Convex queries run after token is cleared
   if (isLoggingOut) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-white">
@@ -125,5 +134,17 @@ export default function OrganizationLayout({
         switchingOrgName={switchingOrg?.name}
       />
     </>
+  );
+}
+
+export default function OrganizationLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <EmployeeViewProvider>
+      <OrganizationLayoutInner>{children}</OrganizationLayoutInner>
+    </EmployeeViewProvider>
   );
 }

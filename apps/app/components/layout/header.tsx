@@ -10,11 +10,13 @@ import {
   Settings,
   HelpCircle,
   Menu,
+  UserCog,
 } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
+import { useEmployeeView } from "@/hooks/employee-view-context";
 import {
   Popover,
   PopoverContent,
@@ -50,6 +52,11 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
   } = useSettingsModal();
 
   const [userPopoverOpen, setUserPopoverOpen] = useState(false);
+  const {
+    canUseEmployeeView,
+    employeeViewActive,
+    setEmployeeViewActive,
+  } = useEmployeeView();
 
   const handleLogout = () => {
     clearOrganization();
@@ -180,6 +187,25 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
                   </div>
                 </div>
                 <Separator className="my-2" />
+                {canUseEmployeeView && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmployeeViewActive(!employeeViewActive);
+                        setUserPopoverOpen(false);
+                      }}
+                      className="flex w-full cursor-pointer items-center gap-2 px-2.5 py-1.5 text-sm font-normal rounded-lg hover:bg-[rgb(250,250,250)] transition-colors text-left"
+                      style={{ color: "rgb(64, 64, 64)" }}
+                    >
+                      <UserCog className="h-4 w-4 shrink-0" />
+                      {employeeViewActive
+                        ? "Exit employee view"
+                        : "View as employee"}
+                    </button>
+                    <Separator className="my-2" />
+                  </>
+                )}
                 <button
                   onClick={async () => {
                     setUserPopoverOpen(false);

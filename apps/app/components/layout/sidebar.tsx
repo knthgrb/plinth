@@ -208,7 +208,8 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     !isLoggingOut && effectiveOrganizationId
       ? {
           organizationId: effectiveOrganizationId,
-          employeeId: currentOrganization?.employeeId,
+          employeeId:
+            currentOrganization?.employeeId ?? user?.employeeId ?? undefined,
         }
       : "skip",
   );
@@ -635,31 +636,31 @@ export function Sidebar({ onNavigate }: SidebarProps) {
           </div>
         ) : (
           <div className="space-y-6">
-          {/* Dashboard without category header */}
-          {showDashboard && (
-            <div className="space-y-1">
-              {renderNavItem(dashboardItem)}
-              {filterItems([calendarItem]).length > 0 &&
-                renderNavItem(calendarItem)}
-            </div>
-          )}
-          {/* Categories with headers */}
-          {filteredCategories.map((category) => (
-            <div key={category.title} className="space-y-1">
-              <h2
-                className="px-3 text-xs font-medium"
-                style={{
-                  color: "rgb(133, 133, 133)",
-                  lineHeight: "normal",
-                }}
-              >
-                {category.title}
-              </h2>
+            {/* Dashboard without category header */}
+            {showDashboard && (
               <div className="space-y-1">
-                {category.items.map((item) => renderNavItem(item))}
+                {renderNavItem(dashboardItem)}
+                {filterItems([calendarItem]).length > 0 &&
+                  renderNavItem(calendarItem)}
               </div>
-            </div>
-          ))}
+            )}
+            {/* Categories with headers */}
+            {filteredCategories.map((category) => (
+              <div key={category.title} className="space-y-1">
+                <h2
+                  className="px-3 text-xs font-medium"
+                  style={{
+                    color: "rgb(133, 133, 133)",
+                    lineHeight: "normal",
+                  }}
+                >
+                  {category.title}
+                </h2>
+                <div className="space-y-1">
+                  {category.items.map((item) => renderNavItem(item))}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </nav>

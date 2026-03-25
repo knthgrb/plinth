@@ -55,6 +55,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useOrganization } from "@/hooks/organization-context";
+import { useEmployeeView } from "@/hooks/employee-view-context";
 import { holidayAppliesToEmployee } from "@/lib/payroll-calculations";
 import {
   getAttendanceStatusLabel,
@@ -124,6 +125,8 @@ function offsetDateInYear(h: Holiday, year: number): Date | null {
 
 export default function AttendancePage() {
   const { currentOrganizationId } = useOrganization();
+  const { isEmployeeExperienceUI, effectiveSelfEmployeeId } =
+    useEmployeeView();
   const user = useQuery(
     (api as any).organizations.getCurrentUser,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
@@ -132,7 +135,8 @@ export default function AttendancePage() {
     (api as any).employees.getEmployees,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
-  const isReadOnly = user?.role === "employee";
+  const isReadOnly =
+    user?.role === "employee" || isEmployeeExperienceUI;
 
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20; // min 20 per page
@@ -170,6 +174,20 @@ export default function AttendancePage() {
   useEffect(() => {
     setIndividualPage(1);
   }, [selectedEmployeeFilter, selectedMonth]);
+
+  useEffect(() => {
+    if (
+      isEmployeeExperienceUI &&
+      effectiveSelfEmployeeId &&
+      !selectedEmployeeFilter
+    ) {
+      setSelectedEmployeeFilter(effectiveSelfEmployeeId);
+    }
+  }, [
+    isEmployeeExperienceUI,
+    effectiveSelfEmployeeId,
+    selectedEmployeeFilter,
+  ]);
 
   // When opening summary modal, default to current page month
   useEffect(() => {

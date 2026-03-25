@@ -67,7 +67,9 @@ async function checkAuth(
   }
   // Read operations (no requiredRole): all org members including accounting (for payroll/payslips)
 
-  return { ...userRecord, role: userRole, organizationId };
+  const employeeId = userOrg?.employeeId ?? userRecord.employeeId;
+
+  return { ...userRecord, role: userRole, organizationId, employeeId };
 }
 
 // Helper to calculate working days (excluding weekends)
@@ -169,9 +171,11 @@ export const getLeaveRequests = query({
 
     // If employee role and no employeeId specified, filter to their own requests
     if (userRecord.role === "employee" && !args.employeeId) {
-      requests = requests.filter(
-        (r: any) => r.employeeId === userRecord.employeeId,
-      );
+      const eid = userRecord.employeeId;
+      if (!eid) {
+        return [];
+      }
+      requests = requests.filter((r: any) => r.employeeId === eid);
     } else if (args.employeeId) {
       requests = requests.filter((r: any) => r.employeeId === args.employeeId);
     }

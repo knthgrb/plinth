@@ -4,6 +4,8 @@ import { getAuthedConvexClient } from "@/lib/convex-client";
 import { ChatService } from "./chat-service";
 import { EmployeesService } from "./employees-service";
 import { sendEmail } from "@/lib/email";
+import { renderPayslipPdfBuffer } from "@/lib/payslip-pdf";
+import { buildPayslipEmailContent } from "@/lib/payslip-email-templates";
 
 export class PayrollService {
   static async createPayrollRun(data: {
@@ -273,6 +275,87 @@ export class PayrollService {
         status,
       }
     );
+  }
+
+  /**
+   * After a run is finalized: email password-protected payslip PDFs only to employees
+   * who have a Plinth account in this organization.
+   */
+  static async sendFinalizedPayrollPayslipEmails(payrollRunId: string): Promise<{
+    sent: number;
+    withoutAccountCount: number;
+    errors: string[];
+  }> {
+    const convex = await getAuthedConvexClient();
+    const recipients = await (convex.query as any)(
+      (api as any).payroll.getPayrollFinalizePayslipRecipients,
+      { payrollRunId: payrollRunId as Id<"payrollRuns"> },
+    );
+    if (!recipients) {
+      throw new Error("Could not load payslip recipients");
+    }
+    if (recipients.runStatus !== "finalized") {
+      throw new Error("Payroll run must be finalized before sending payslip emails.");
+    }
+
+    const payslips = await (convex.query as any)(
+      (api as any).payroll.getPayslipsByPayrollRun,
+      { payrollRunId: payrollRunId as Id<"payrollRuns"> },
+    );
+
+    let sent = 0;
+    const errors: string[] = [];
+
+    for (const row of recipients.withAccount as Array<{
+      employeeId: string;
+      name: string;
+      email: string;
+    }>) {
+      const payslip = payslips.find(
+        (p: any) => String(p.employeeId) === String(row.employeeId),
+      );
+      if (!payslip?.employee) {
+        errors.push(`${row.name}: missing payslip data`);
+        continue;
+      }
+      try {
+        const pdf = await renderPayslipPdfBuffer({
+          payslip,
+          employee: payslip.employee,
+          organizationName: recipients.organizationName,
+          cutoffStart: recipients.cutoffStart,
+          cutoffEnd: recipients.cutoffEnd,
+        });
+        const period = String(payslip.period ?? "payroll");
+        const safePeriod = period.replace(/[^a-zA-Z0-9-_]+/g, "_").slice(0, 48);
+        const { subject, html, text } = buildPayslipEmailContent(
+          payslip.employee.personalInfo.firstName,
+          period,
+        );
+        await sendEmail({
+          to: row.email,
+          subject,
+          html,
+          text,
+          attachments: [
+            {
+              filename: `payslip-${safePeriod}-${row.employeeId}.pdf`,
+              content: pdf,
+              type: "application/pdf",
+            },
+          ],
+        });
+        sent += 1;
+      } catch (e: any) {
+        errors.push(`${row.name}: ${e?.message ?? "send failed"}`);
+      }
+    }
+
+    return {
+      sent,
+      withoutAccountCount: (recipients.withoutAccount as unknown[]).length,
+      errors,
+    };
   }
 
   static async deletePayrollRun(payrollRunId: string) {

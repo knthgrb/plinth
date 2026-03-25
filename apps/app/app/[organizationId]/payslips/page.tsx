@@ -6,9 +6,19 @@ import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Receipt, Download, Eye, MessageSquare, Filter, Lock, KeyRound } from "lucide-react";
+import {
+  Receipt,
+  Download,
+  Eye,
+  MessageSquare,
+  Filter,
+  Lock,
+  KeyRound,
+} from "lucide-react";
 import { format, startOfMonth, endOfMonth, parse } from "date-fns";
 import { useOrganization } from "@/hooks/organization-context";
+import { useEmployeeView } from "@/hooks/employee-view-context";
+import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -44,10 +54,17 @@ import { useToast } from "@/components/ui/use-toast";
 export default function PayslipsPage() {
   const { toast } = useToast();
   const { currentOrganizationId, currentOrganization } = useOrganization();
+  const { employeeViewActive, canUseEmployeeView } = useEmployeeView();
 
   const payslipAccess = useQuery(
     (api as any).organizations.getEmployeeIdForPayslips,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId
+      ? {
+          organizationId: currentOrganizationId as Id<"organizations">,
+          employeeExperienceMode:
+            Boolean(employeeViewActive && canUseEmployeeView),
+        }
+      : "skip",
   );
 
   const employeeId = payslipAccess?.employeeId ?? null;
@@ -58,7 +75,7 @@ export default function PayslipsPage() {
   });
   const organization = useQuery(
     (api as any).organizations.getOrganization,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
   const [pinVerified, setPinVerified] = useState(false);
   const [pinValue, setPinValue] = useState("");
@@ -84,19 +101,19 @@ export default function PayslipsPage() {
 
   const payslips = useQuery(
     (api as any).payroll.getEmployeePayslips,
-    employeeId ? { employeeId } : "skip"
+    employeeId ? { employeeId } : "skip",
   );
 
   // Get employee details
   const employee = useQuery(
     (api as any).employees.getEmployee,
-    employeeId ? { employeeId } : "skip"
+    employeeId ? { employeeId } : "skip",
   );
 
   // Get organization members to find admin/accounting for comments
   const organizationMembers = useQuery(
     (api as any).organizations.getOrganizationMembers,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   // Filter payslips by month and cutoff
@@ -109,7 +126,7 @@ export default function PayslipsPage() {
     if (selectedMonth) {
       const [year, month] = selectedMonth.split("-");
       const monthStart = startOfMonth(
-        new Date(parseInt(year), parseInt(month) - 1)
+        new Date(parseInt(year), parseInt(month) - 1),
       );
       const monthEnd = endOfMonth(monthStart);
 
@@ -136,7 +153,7 @@ export default function PayslipsPage() {
     payslips.forEach((payslip: any) => {
       const date = new Date(payslip.createdAt);
       months.add(
-        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`,
       );
     });
     return Array.from(months).sort().reverse();
@@ -191,7 +208,7 @@ export default function PayslipsPage() {
     try {
       // Find admin or accounting user from organization members
       const adminOrAccountingUser = organizationMembers?.find(
-        (m: any) => m.role === "admin" || m.role === "accounting"
+        (m: any) => m.role === "admin" || m.role === "accounting",
       );
 
       if (!adminOrAccountingUser?._id) {
@@ -241,7 +258,10 @@ export default function PayslipsPage() {
     setPinError("");
     setIsVerifyingPin(true);
     try {
-      const result = await verifyPayslipPin({ employeeId, pin: pinValue.trim() });
+      const result = await verifyPayslipPin({
+        employeeId,
+        pin: pinValue.trim(),
+      });
       if (result.valid) {
         setPinVerified(true);
         setPinValue("");
@@ -257,22 +277,37 @@ export default function PayslipsPage() {
 
   const handleSetPin = async () => {
     if (!employeeId || pinToSet.length < 4) {
-      toast({ title: "Invalid PIN", description: "PIN must be at least 4 characters", variant: "destructive" });
+      toast({
+        title: "Invalid PIN",
+        description: "PIN must be at least 4 characters",
+        variant: "destructive",
+      });
       return;
     }
     if (pinToSet !== pinConfirm) {
-      toast({ title: "PINs don't match", description: "Please confirm your PIN.", variant: "destructive" });
+      toast({
+        title: "PINs don't match",
+        description: "Please confirm your PIN.",
+        variant: "destructive",
+      });
       return;
     }
     setIsSettingPin(true);
     try {
       await setPayslipPin({ employeeId, pin: pinToSet });
-      toast({ title: "PIN set", description: "You can now use this PIN to access your payslips." });
+      toast({
+        title: "PIN set",
+        description: "You can now use this PIN to access your payslips.",
+      });
       setIsSetPinOpen(false);
       setPinToSet("");
       setPinConfirm("");
     } catch (e: any) {
-      toast({ title: "Error", description: e.message || "Failed to set PIN", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: e.message || "Failed to set PIN",
+        variant: "destructive",
+      });
     } finally {
       setIsSettingPin(false);
     }
@@ -334,9 +369,7 @@ export default function PayslipsPage() {
                   }}
                   onKeyDown={(e) => e.key === "Enter" && handleVerifyPin()}
                 />
-                {pinError && (
-                  <p className="text-sm text-red-600">{pinError}</p>
-                )}
+                {pinError && <p className="text-sm text-red-600">{pinError}</p>}
               </div>
               <Button
                 className="w-full"
@@ -410,7 +443,7 @@ export default function PayslipsPage() {
                         const [year, monthNum] = month.split("-");
                         const date = new Date(
                           parseInt(year),
-                          parseInt(monthNum) - 1
+                          parseInt(monthNum) - 1,
                         );
                         return (
                           <SelectItem key={month} value={month}>
@@ -474,19 +507,30 @@ export default function PayslipsPage() {
                         {payslip.period}
                       </TableCell>
                       <TableCell>
-                        ₱{payslip.grossPay?.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}
+                        ₱
+                        {payslip.grossPay?.toLocaleString("en-US", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        }) || "0.00"}
                       </TableCell>
                       <TableCell>
                         ₱
                         {payslip.deductions
                           ?.reduce(
                             (sum: number, d: any) => sum + (d.amount || 0),
-                            0
+                            0,
                           )
-                          ?.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}
+                          ?.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          }) || "0.00"}
                       </TableCell>
                       <TableCell className="font-semibold">
-                        ₱{payslip.netPay?.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}
+                        ₱
+                        {payslip.netPay?.toLocaleString("en-US", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        }) || "0.00"}
                       </TableCell>
                       <TableCell>
                         {format(new Date(payslip.createdAt), "MMM dd, yyyy")}
@@ -621,7 +665,9 @@ export default function PayslipsPage() {
             <DialogHeader>
               <DialogTitle>Set payslip PIN</DialogTitle>
               <DialogDescription>
-                Create a PIN (at least 4 characters) to protect access to your payslips. You will need this PIN each time you open the payslips page.
+                Create a PIN (at least 4 characters) to protect access to your
+                payslips. You will need this PIN each time you open the payslips
+                page.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
@@ -661,9 +707,7 @@ export default function PayslipsPage() {
               <Button
                 onClick={handleSetPin}
                 disabled={
-                  isSettingPin ||
-                  pinToSet.length < 4 ||
-                  pinToSet !== pinConfirm
+                  isSettingPin || pinToSet.length < 4 || pinToSet !== pinConfirm
                 }
               >
                 {isSettingPin ? "Setting..." : "Set PIN"}

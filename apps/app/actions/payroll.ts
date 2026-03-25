@@ -118,6 +118,10 @@ export async function updatePayrollRunStatus(
   return PayrollService.updatePayrollRunStatus(payrollRunId, status);
 }
 
+export async function sendFinalizedPayrollPayslipEmails(payrollRunId: string) {
+  return PayrollService.sendFinalizedPayrollPayslipEmails(payrollRunId);
+}
+
 export async function deletePayrollRun(payrollRunId: string) {
   return PayrollService.deletePayrollRun(payrollRunId);
 }

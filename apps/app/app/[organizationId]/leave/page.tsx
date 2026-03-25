@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Calendar } from "lucide-react";
 import { getEmployeeLeaveCredits } from "@/actions/leave";
 import { useOrganization } from "@/hooks/organization-context";
+import { useEmployeeView } from "@/hooks/employee-view-context";
 import { LeaveColumnManagementModal } from "./_components/leave-column-management-modal";
 
 // Lazy load modals and tabs
@@ -95,6 +96,8 @@ export default function LeavePage() {
   const user = useQuery((api as any).organizations.getCurrentUser, {
     organizationId: currentOrganizationId || undefined,
   });
+  const { effectiveSelfEmployeeId, isEmployeeExperienceUI } =
+    useEmployeeView();
   const employees = useQuery(
     (api as any).employees.getEmployees,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
@@ -108,10 +111,15 @@ export default function LeavePage() {
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
   );
 
-  const isEmployee = user?.role === "employee";
-  const isAdminOrHr = user?.role === "admin" || user?.role === "hr";
-  const userEmployeeId = user?.employeeId || currentOrganization?.employeeId;
-  // HR always has employeeId, Admin may or may not have one
+  const isEmployee = isEmployeeExperienceUI;
+  const isAdminOrHr =
+    !isEmployeeExperienceUI &&
+    (user?.role === "admin" || user?.role === "hr");
+  const userEmployeeId =
+    effectiveSelfEmployeeId ??
+    user?.employeeId ??
+    currentOrganization?.employeeId ??
+    "";
   const canRequestLeave = isEmployee || (isAdminOrHr && userEmployeeId);
 
   // Only show records for active employees (requests, history, credits table)

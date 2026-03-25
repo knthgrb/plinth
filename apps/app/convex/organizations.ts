@@ -39,7 +39,7 @@ async function getUserRecord(ctx: any) {
 
   if (!userRecord) {
     throw new Error(
-      "User record not found. Please complete your account setup."
+      "User record not found. Please complete your account setup.",
     );
   }
 
@@ -95,7 +95,7 @@ async function getUserRecordOrNull(ctx: any) {
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "owner" | "admin" | "hr"
+  requiredRole?: "owner" | "admin" | "hr",
 ) {
   const userRecord = await getUserRecord(ctx);
 
@@ -106,7 +106,7 @@ async function checkAuth(
   // Check user's role in the specific organization
   const userOrg = await (ctx.db.query("userOrganizations") as any)
     .withIndex("by_user_organization", (q: any) =>
-      q.eq("userId", userRecord._id).eq("organizationId", organizationId)
+      q.eq("userId", userRecord._id).eq("organizationId", organizationId),
     )
     .first();
 
@@ -158,7 +158,7 @@ export const getUserOrganizations = query({
             employeeId: userOrg.employeeId,
             joinedAt: userOrg.joinedAt,
           };
-        })
+        }),
       );
 
       // Filter out nulls
@@ -188,7 +188,7 @@ export const getUserOrganizations = query({
       // Sort organizations: last active organization first, then by joinedAt
       if (userRecord.lastActiveOrganizationId && validOrgs.length > 0) {
         const lastActiveIndex = validOrgs.findIndex(
-          (org) => org._id === userRecord.lastActiveOrganizationId
+          (org) => org._id === userRecord.lastActiveOrganizationId,
         );
         if (lastActiveIndex > 0) {
           const lastActiveOrg = validOrgs[lastActiveIndex];
@@ -224,7 +224,7 @@ export const getCurrentUser = query({
         .withIndex("by_user_organization", (q: any) =>
           q
             .eq("userId", userRecord._id)
-            .eq("organizationId", args.organizationId)
+            .eq("organizationId", args.organizationId),
         )
         .first();
 
@@ -286,7 +286,9 @@ export const updateLastActiveOrganization = mutation({
 
     const userOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
+        q
+          .eq("userId", userRecord._id)
+          .eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -317,7 +319,7 @@ export const getUserById = query({
     if (args.organizationId) {
       const userOrg = await (ctx.db.query("userOrganizations") as any)
         .withIndex("by_user_organization", (q: any) =>
-          q.eq("userId", args.userId).eq("organizationId", args.organizationId)
+          q.eq("userId", args.userId).eq("organizationId", args.organizationId),
         )
         .first();
 
@@ -395,7 +397,7 @@ export const updateOrganization = mutation({
     firstPayDate: v.optional(v.number()),
     secondPayDate: v.optional(v.number()),
     salaryPaymentFrequency: v.optional(
-      v.union(v.literal("monthly"), v.literal("bimonthly"))
+      v.union(v.literal("monthly"), v.literal("bimonthly")),
     ),
   },
   handler: async (ctx, args) => {
@@ -404,7 +406,9 @@ export const updateOrganization = mutation({
     // Check if user is admin or accounting in this organization
     const userOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
+        q
+          .eq("userId", userRecord._id)
+          .eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -448,7 +452,9 @@ export const deleteOrganization = mutation({
     // Check if user is owner of this organization
     const userOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
+        q
+          .eq("userId", userRecord._id)
+          .eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -470,7 +476,7 @@ export const deleteOrganization = mutation({
     // Delete all user-organization relationships
     const userOrgs = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .collect();
 
@@ -500,7 +506,9 @@ export const getOrganization = query({
     // Check if user has access to this organization
     const userOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
+        q
+          .eq("userId", userRecord._id)
+          .eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -531,7 +539,9 @@ export const getOrganizationMembers = query({
     // Check if user has access to this organization
     const userOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
+        q
+          .eq("userId", userRecord._id)
+          .eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -545,7 +555,7 @@ export const getOrganizationMembers = query({
     // Get all user-organization relationships for this org
     const userOrgs = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .collect();
 
@@ -559,7 +569,7 @@ export const getOrganizationMembers = query({
           employeeId: userOrg.employeeId,
           joinedAt: userOrg.joinedAt,
         };
-      })
+      }),
     );
 
     return members;
@@ -576,7 +586,7 @@ export const addUserToOrganization = mutation({
       v.literal("owner"),
       v.literal("hr"),
       v.literal("employee"),
-      v.literal("accounting")
+      v.literal("accounting"),
     ),
     employeeId: v.optional(v.id("employees")),
   },
@@ -586,7 +596,9 @@ export const addUserToOrganization = mutation({
     // Check if current user is admin or hr in the organization
     const userOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
+        q
+          .eq("userId", userRecord._id)
+          .eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -622,7 +634,9 @@ export const addUserToOrganization = mutation({
     // Check if user is already in this organization
     const existingUserOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", targetUser._id).eq("organizationId", args.organizationId)
+        q
+          .eq("userId", targetUser._id)
+          .eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -663,7 +677,9 @@ export const removeUserFromOrganization = mutation({
     // Check if current user is admin
     const userOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
+        q
+          .eq("userId", userRecord._id)
+          .eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -676,7 +692,7 @@ export const removeUserFromOrganization = mutation({
 
     if (!isOwnerOrAdmin) {
       throw new Error(
-        "Only organization owners or admins can remove users from organization"
+        "Only organization owners or admins can remove users from organization",
       );
     }
 
@@ -688,7 +704,7 @@ export const removeUserFromOrganization = mutation({
     // Remove user-organization relationship and linked employee record
     const targetUserOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", args.userId).eq("organizationId", args.organizationId)
+        q.eq("userId", args.userId).eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -722,7 +738,7 @@ export const updateUserRoleInOrganization = mutation({
       v.literal("owner"),
       v.literal("hr"),
       v.literal("employee"),
-      v.literal("accounting")
+      v.literal("accounting"),
     ),
   },
   handler: async (ctx, args) => {
@@ -731,7 +747,9 @@ export const updateUserRoleInOrganization = mutation({
     // Check if current user is admin
     const userOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
+        q
+          .eq("userId", userRecord._id)
+          .eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -747,7 +765,7 @@ export const updateUserRoleInOrganization = mutation({
 
     if (!canUpdateRoles) {
       throw new Error(
-        "Only organization owners, admins, or HR can update user roles"
+        "Only organization owners, admins, or HR can update user roles",
       );
     }
 
@@ -758,7 +776,7 @@ export const updateUserRoleInOrganization = mutation({
     // Update user-organization relationship
     const targetUserOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", args.userId).eq("organizationId", args.organizationId)
+        q.eq("userId", args.userId).eq("organizationId", args.organizationId),
       )
       .first();
 
@@ -797,7 +815,7 @@ export const updateDefaultRequirements = mutation({
       v.object({
         type: v.string(),
         isRequired: v.optional(v.boolean()),
-      })
+      }),
     ),
   },
   handler: async (ctx, args) => {
@@ -812,7 +830,7 @@ export const updateDefaultRequirements = mutation({
     // Get all employees
     const employees = await (ctx.db.query("employees") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .collect();
 
@@ -820,7 +838,7 @@ export const updateDefaultRequirements = mutation({
     for (const employee of employees) {
       const currentRequirements = employee.requirements || [];
       const customRequirements = currentRequirements.filter(
-        (r: any) => r.isCustom
+        (r: any) => r.isCustom,
       );
 
       // Create default requirements that don't already exist
@@ -829,7 +847,7 @@ export const updateDefaultRequirements = mutation({
           // Check if this default requirement already exists for this employee
           return !currentRequirements.some(
             (existingReq: any) =>
-              existingReq.type === defaultReq.type && existingReq.isDefault
+              existingReq.type === defaultReq.type && existingReq.isDefault,
           );
         })
         .map((req: any) => ({
@@ -843,7 +861,7 @@ export const updateDefaultRequirements = mutation({
       const updatedDefaults = currentRequirements
         .filter((r: any) => r.isDefault)
         .filter((r: any) =>
-          args.requirements.some((dr: any) => dr.type === r.type)
+          args.requirements.some((dr: any) => dr.type === r.type),
         );
 
       // Combine: keep existing defaults (with their status/files), add new defaults, keep custom
@@ -863,11 +881,50 @@ export const updateDefaultRequirements = mutation({
   },
 });
 
+/**
+ * For owner/admin/hr/accounting: employee row in this org whose work email matches
+ * the user's login email. Used for "View as employee" (not returned when org role is employee).
+ */
+export const getEmployeeSelfMatchForElevatedRole = query({
+  args: { organizationId: v.id("organizations") },
+  handler: async (ctx, args) => {
+    const userRecord = await getUserRecordOrNull(ctx);
+    if (!userRecord?.email) return null;
+
+    const userOrg = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_user_organization", (q: any) =>
+        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId),
+      )
+      .first();
+
+    const role = (userOrg?.role ?? userRecord.role ?? "").toLowerCase();
+    if (role === "employee") return null;
+
+    const elevated = ["owner", "admin", "hr", "accounting"].includes(role);
+    if (!elevated) return null;
+
+    const employees = await (ctx.db.query("employees") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .collect();
+    const emailNorm = userRecord.email.trim().toLowerCase();
+    const match = employees.find(
+      (e: any) =>
+        (e.personalInfo?.email || "").trim().toLowerCase() === emailNorm,
+    );
+    if (!match) return null;
+    return { employeeId: match._id };
+  },
+});
+
 // Get employee ID and whether payslip PIN is required (for employee payslips page).
 // Resolves employeeId from userOrg, user record, or by matching employee email in org.
 export const getEmployeeIdForPayslips = query({
   args: {
     organizationId: v.id("organizations"),
+    /** When true, owner/admin/hr/accounting can resolve self via email match (employee view). */
+    employeeExperienceMode: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userRecord = await getUserRecordOrNull(ctx);
@@ -877,21 +934,29 @@ export const getEmployeeIdForPayslips = query({
       .withIndex("by_user_organization", (q: any) =>
         q
           .eq("userId", userRecord._id)
-          .eq("organizationId", args.organizationId)
+          .eq("organizationId", args.organizationId),
       )
       .first();
 
     let employeeId = userOrg?.employeeId ?? userRecord.employeeId ?? null;
 
-    if (!employeeId && (userOrg?.role === "employee" || userRecord.role === "employee")) {
+    const orgRole = (userOrg?.role ?? userRecord.role ?? "").toLowerCase();
+    const elevated = ["owner", "admin", "hr", "accounting"].includes(orgRole);
+
+    if (
+      !employeeId &&
+      (orgRole === "employee" ||
+        (args.employeeExperienceMode === true && elevated))
+    ) {
       const employees = await (ctx.db.query("employees") as any)
         .withIndex("by_organization", (q: any) =>
-          q.eq("organizationId", args.organizationId)
+          q.eq("organizationId", args.organizationId),
         )
         .collect();
+      const emailNorm = userRecord.email.trim().toLowerCase();
       const match = employees.find(
         (e: any) =>
-          e.personalInfo?.email?.toLowerCase() === userRecord.email?.toLowerCase()
+          (e.personalInfo?.email || "").trim().toLowerCase() === emailNorm,
       );
       if (match) employeeId = match._id;
     }
@@ -901,7 +966,7 @@ export const getEmployeeIdForPayslips = query({
     }
 
     const employee = await ctx.db.get(employeeId);
-    const requiresPin = !!((employee as any)?.payslipPinHash);
+    const requiresPin = !!(employee as any)?.payslipPinHash;
 
     return { employeeId, requiresPin };
   },
@@ -939,7 +1004,7 @@ export const inviteUser = mutation({
       v.literal("admin"),
       v.literal("owner"),
       v.literal("hr"),
-      v.literal("employee")
+      v.literal("employee"),
     ),
     employeeId: v.optional(v.id("employees")),
   },
@@ -966,7 +1031,7 @@ export const inviteUser = mutation({
     // Check if current user is admin, owner, or hr
     const currentUserOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", organizationId)
+        q.eq("userId", userRecord._id).eq("organizationId", organizationId),
       )
       .first();
 
@@ -1000,7 +1065,7 @@ export const inviteUser = mutation({
     // Check if user is already in this organization
     const existingUserOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", targetUser._id).eq("organizationId", organizationId)
+        q.eq("userId", targetUser._id).eq("organizationId", organizationId),
       )
       .first();
 

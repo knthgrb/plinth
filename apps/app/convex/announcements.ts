@@ -107,7 +107,9 @@ export const getAnnouncements = query({
         announcements = announcements.filter((m: any) => {
           if (m.targetAudience === "all") return true;
           if (m.targetAudience === "department") {
-            return m.departments?.includes(employee.employment.department);
+            const dept = employee.employment?.department;
+            if (dept == null) return false;
+            return m.departments?.includes(dept) ?? false;
           }
           if (m.targetAudience === "specific-employees") {
             return m.specificEmployees?.includes(args.employeeId!);
@@ -153,7 +155,9 @@ export const getUnreadAnnouncementsCount = query({
         announcements = announcements.filter((m: any) => {
           if (m.targetAudience === "all") return true;
           if (m.targetAudience === "department") {
-            return m.departments?.includes(employee.employment.department);
+            const dept = employee.employment?.department;
+            if (dept == null) return false;
+            return m.departments?.includes(dept) ?? false;
           }
           if (m.targetAudience === "specific-employees") {
             return m.specificEmployees?.includes(args.employeeId!);

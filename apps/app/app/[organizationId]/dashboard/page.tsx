@@ -252,11 +252,31 @@ export default function DashboardPage() {
       : "skip",
   );
 
+  const canViewOrgLeaveQueue = (role: string | undefined) =>
+    role === "admin" ||
+    role === "hr" ||
+    role === "owner" ||
+    role === "accounting";
+
+  const leaveQueryArgs =
+    effectiveOrganizationId && user
+      ? canViewOrgLeaveQueue(user.role)
+        ? {
+            organizationId: effectiveOrganizationId,
+            status: "pending" as const,
+          }
+        : user.role === "employee" && user.employeeId
+          ? {
+              organizationId: effectiveOrganizationId,
+              employeeId: user.employeeId,
+              status: "pending" as const,
+            }
+          : null
+      : null;
+
   const leaveRequests = useQuery(
     (api as any).leave.getLeaveRequests,
-    effectiveOrganizationId
-      ? { organizationId: effectiveOrganizationId, status: "pending" }
-      : "skip",
+    leaveQueryArgs ?? "skip",
   );
 
   // Get recent announcements
@@ -267,9 +287,15 @@ export default function DashboardPage() {
       : "skip",
   );
 
+  const canViewEvaluations = (role: string | undefined) =>
+    role === "admin" ||
+    role === "hr" ||
+    role === "owner" ||
+    role === "accounting";
+
   const evaluations = useQuery(
     (api as any).evaluations.getEvaluations,
-    effectiveOrganizationId
+    effectiveOrganizationId && user && canViewEvaluations(user.role)
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );

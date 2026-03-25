@@ -2,11 +2,19 @@
  * Email utility for sending transactional emails via SendGrid
  */
 
+export interface EmailAttachment {
+  filename: string;
+  /** Raw bytes (PDF, etc.) */
+  content: Buffer | Uint8Array;
+  type?: string;
+}
+
 interface EmailOptions {
   to: string;
   subject: string;
   html: string;
   text?: string;
+  attachments?: EmailAttachment[];
 }
 
 export async function sendEmail(options: EmailOptions): Promise<void> {
@@ -34,6 +42,16 @@ export async function sendEmail(options: EmailOptions): Promise<void> {
           },
         ],
         from: { email: from },
+        ...(options.attachments?.length
+          ? {
+              attachments: options.attachments.map((a) => ({
+                content: Buffer.from(a.content).toString("base64"),
+                filename: a.filename,
+                type: a.type ?? "application/octet-stream",
+                disposition: "attachment",
+              })),
+            }
+          : {}),
         content: [
           ...(options.text
             ? [

@@ -38,7 +38,8 @@ export default function AnnouncementsPage() {
     effectiveOrganizationId
       ? {
           organizationId: effectiveOrganizationId,
-          employeeId: currentOrganization?.employeeId,
+          employeeId:
+            currentOrganization?.employeeId ?? user?.employeeId ?? undefined,
         }
       : "skip",
   );
