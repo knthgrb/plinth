@@ -73,6 +73,23 @@ const calendarItem: NavigationItem = {
 // Role-based nav: single source of truth from utils/role-access.ts
 const navigationCategories: NavigationCategory[] = [
   {
+    title: "Communication",
+    items: [
+      {
+        name: "Announcements",
+        href: "/announcements",
+        icon: Bell,
+        roles: rolesForPath("/announcements"),
+      },
+      {
+        name: "Chat",
+        href: "/chat",
+        icon: MessageCircle,
+        roles: rolesForPath("/chat"),
+      },
+    ],
+  },
+  {
     title: "Human Resources",
     items: [
       {
@@ -130,23 +147,6 @@ const navigationCategories: NavigationCategory[] = [
         icon: Calculator,
         badge: "Beta",
         roles: rolesForPath("/accounting"),
-      },
-    ],
-  },
-  {
-    title: "Communication",
-    items: [
-      {
-        name: "Announcements",
-        href: "/announcements",
-        icon: Bell,
-        roles: rolesForPath("/announcements"),
-      },
-      {
-        name: "Chat",
-        href: "/chat",
-        icon: MessageCircle,
-        roles: rolesForPath("/chat"),
       },
     ],
   },
