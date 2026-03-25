@@ -165,11 +165,9 @@ export async function proxy(request: NextRequest) {
 
   const redirectToDefault = async () => {
     const userRole = await getUserRoleCached();
-    const orgId = cachedOrganizationId;
-    if (userRole && orgId)
-      return applyCookie(NextResponse.redirect(new URL(buildPathWithOrg(orgId, getDefaultRouteForRole(userRole)), request.url)));
-    if (userRole)
-      return applyCookie(NextResponse.redirect(new URL("/", request.url)));
+    // Avoid role-based redirects from auth routes because role cookie can be stale
+    // across organizations right after login; root app page resolves correct org+role.
+    if (userRole) return applyCookie(NextResponse.redirect(new URL("/", request.url)));
     return applyCookie(NextResponse.next());
   };
 
@@ -182,12 +180,9 @@ export async function proxy(request: NextRequest) {
   if (isAuthRoute(pathname)) return redirectToDefault();
 
   if (pathname === "/") {
-    const userRole = await getUserRoleCached();
-    if (!userRole && cachedUserRole === null)
-      return applyCookie(NextResponse.next());
-    const orgId = cachedOrganizationId;
-    const target = orgId ? buildPathWithOrg(orgId, getDefaultRouteForRole(userRole)) : getDefaultRouteForRole(userRole);
-    return applyCookie(NextResponse.redirect(new URL(target, request.url)));
+    // Let app/page.tsx compute default route from live org membership + role.
+    // This avoids incorrect redirects caused by stale role cache.
+    return applyCookie(NextResponse.next());
   }
 
   const cleanPathname = urlOrganizationId ? removeOrganizationId(pathname) : pathname;
