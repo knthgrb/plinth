@@ -26,7 +26,7 @@ export function GlobalErrorFallback({
         {title}
       </h1>
       <p className="max-w-md text-center text-sm leading-relaxed text-[rgb(115,115,115)]">
-        Please try again. If this keeps happening, contact your administrator.
+        Please try again later.
       </p>
       {reset ? (
         <Button

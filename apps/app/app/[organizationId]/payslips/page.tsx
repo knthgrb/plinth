@@ -99,6 +99,10 @@ export default function PayslipsPage() {
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [selectedCutoff, setSelectedCutoff] = useState<string>("");
 
+  // Radix Select disallows empty-string item values. We use sentinel values and map them to "" state.
+  const ALL_MONTHS_VALUE = "__all_months__";
+  const ALL_CUTOFFS_VALUE = "__all_cutoffs__";
+
   const payslips = useQuery(
     (api as any).payroll.getEmployeePayslips,
     employeeId ? { employeeId } : "skip",
@@ -431,14 +435,16 @@ export default function PayslipsPage() {
                     Month:
                   </Label>
                   <Select
-                    value={selectedMonth}
-                    onValueChange={setSelectedMonth}
+                    value={selectedMonth ? selectedMonth : undefined}
+                    onValueChange={(v) =>
+                      setSelectedMonth(v === ALL_MONTHS_VALUE ? "" : v)
+                    }
                   >
                     <SelectTrigger id="month-filter" className="w-40">
                       <SelectValue placeholder="All months" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">All months</SelectItem>
+                      <SelectItem value={ALL_MONTHS_VALUE}>All months</SelectItem>
                       {availableMonths.map((month) => {
                         const [year, monthNum] = month.split("-");
                         const date = new Date(
@@ -459,14 +465,16 @@ export default function PayslipsPage() {
                     Cutoff:
                   </Label>
                   <Select
-                    value={selectedCutoff}
-                    onValueChange={setSelectedCutoff}
+                    value={selectedCutoff ? selectedCutoff : undefined}
+                    onValueChange={(v) =>
+                      setSelectedCutoff(v === ALL_CUTOFFS_VALUE ? "" : v)
+                    }
                   >
                     <SelectTrigger id="cutoff-filter" className="w-48">
                       <SelectValue placeholder="All cutoffs" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">All cutoffs</SelectItem>
+                      <SelectItem value={ALL_CUTOFFS_VALUE}>All cutoffs</SelectItem>
                       {availableCutoffs.map((cutoff) => (
                         <SelectItem key={cutoff} value={cutoff}>
                           {cutoff}
