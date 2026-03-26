@@ -1937,6 +1937,22 @@ export const updatePayrollRun = mutation({
     deductionsEnabled: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
+    type GovSettingsEntry = {
+      employeeId: any;
+      sss: { enabled: boolean; frequency: "full" | "half" };
+      pagibig: { enabled: boolean; frequency: "full" | "half" };
+      philhealth: { enabled: boolean; frequency: "full" | "half" };
+      tax: { enabled: boolean; frequency: "full" | "half" };
+    };
+    type ManualDeductionEntry = {
+      employeeId: any;
+      deductions: Array<{ name: string; amount: number; type: string }>;
+    };
+    type IncentiveEntry = {
+      employeeId: any;
+      incentives: Array<{ name: string; amount: number; type: string }>;
+    };
+
     const payrollRun = await ctx.db.get(args.payrollRunId);
     if (!payrollRun) throw new Error("Payroll run not found");
 
@@ -1964,13 +1980,25 @@ export const updatePayrollRun = mutation({
     ) ?? {
       employeeIds: [],
     };
-    const resolvedGovernmentDeductionSettings =
-      args.governmentDeductionSettings ??
-      previousDraftConfig.governmentDeductionSettings ??
-      [];
-    const resolvedManualDeductions =
-      args.manualDeductions ?? previousDraftConfig.manualDeductions ?? [];
-    const resolvedIncentives = args.incentives ?? previousDraftConfig.incentives ?? [];
+    const resolvedGovernmentDeductionSettings: GovSettingsEntry[] = Array.isArray(
+      args.governmentDeductionSettings,
+    )
+      ? (args.governmentDeductionSettings as GovSettingsEntry[])
+      : Array.isArray(previousDraftConfig.governmentDeductionSettings)
+        ? (previousDraftConfig.governmentDeductionSettings as GovSettingsEntry[])
+        : [];
+    const resolvedManualDeductions: ManualDeductionEntry[] = Array.isArray(
+      args.manualDeductions,
+    )
+      ? (args.manualDeductions as ManualDeductionEntry[])
+      : Array.isArray(previousDraftConfig.manualDeductions)
+        ? (previousDraftConfig.manualDeductions as ManualDeductionEntry[])
+        : [];
+    const resolvedIncentives: IncentiveEntry[] = Array.isArray(args.incentives)
+      ? (args.incentives as IncentiveEntry[])
+      : Array.isArray(previousDraftConfig.incentives)
+        ? (previousDraftConfig.incentives as IncentiveEntry[])
+        : [];
     await ctx.db.patch(args.payrollRunId, {
       cutoffStart: args.cutoffStart ?? payrollRun.cutoffStart,
       cutoffEnd: args.cutoffEnd ?? payrollRun.cutoffEnd,
