@@ -88,6 +88,12 @@ function OrganizationLayoutInner({
       ? "employee"
       : (user.role ?? null);
     if (!canAccessRoute(cleanPath, roleForAccess)) {
+      // In employee experience mode, invalid pages should return to employee-safe home
+      // instead of showing forbidden while role/UI switch is in flight.
+      if (isEmployeeExperienceUI) {
+        router.replace(`/${organizationId}/announcements`);
+        return;
+      }
       router.replace(`/${organizationId}/forbidden`);
     }
   }, [

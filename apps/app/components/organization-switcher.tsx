@@ -28,6 +28,7 @@ export function OrganizationSwitcher({ disabled = false }: OrganizationSwitcherP
   } = useOrganization();
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isSelectOpen, setIsSelectOpen] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
 
   // Close select when dialog opens
   useEffect(() => {
@@ -35,6 +36,10 @@ export function OrganizationSwitcher({ disabled = false }: OrganizationSwitcherP
       setIsSelectOpen(false);
     }
   }, [isCreateDialogOpen]);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const orgInitials =
     currentOrganization?.name
@@ -67,10 +72,12 @@ export function OrganizationSwitcher({ disabled = false }: OrganizationSwitcherP
             Create Organization
           </Button>
         </div>
-        <CreateOrganizationDialog
-          open={isCreateDialogOpen}
-          onOpenChange={setIsCreateDialogOpen}
-        />
+        {isMounted && (
+          <CreateOrganizationDialog
+            open={isCreateDialogOpen}
+            onOpenChange={setIsCreateDialogOpen}
+          />
+        )}
       </>
     );
   }
@@ -159,10 +166,12 @@ export function OrganizationSwitcher({ disabled = false }: OrganizationSwitcherP
           </SelectContent>
         </Select>
       </div>
-      <CreateOrganizationDialog
-        open={isCreateDialogOpen}
-        onOpenChange={setIsCreateDialogOpen}
-      />
+      {isMounted && (
+        <CreateOrganizationDialog
+          open={isCreateDialogOpen}
+          onOpenChange={setIsCreateDialogOpen}
+        />
+      )}
     </>
   );
 }

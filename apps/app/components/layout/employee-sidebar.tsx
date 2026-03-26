@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -72,9 +72,14 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
   } = useOrganization();
   const [orgPopoverOpen, setOrgPopoverOpen] = useState(false);
   const [isCreateOrgDialogOpen, setIsCreateOrgDialogOpen] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
   const isSidebarLoading = orgsLoading || !effectiveOrganizationId;
 
   const cleanPathname = removeOrganizationId(pathname || "");
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   return (
     <div className="flex h-full flex-col w-60 border-r border-[rgb(230,230,230)] bg-white font-sans overflow-hidden">
@@ -190,10 +195,12 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
             )}
           </PopoverContent>
         </Popover>
-        <CreateOrganizationDialog
-          open={isCreateOrgDialogOpen}
-          onOpenChange={setIsCreateOrgDialogOpen}
-        />
+        {isMounted && (
+          <CreateOrganizationDialog
+            open={isCreateOrgDialogOpen}
+            onOpenChange={setIsCreateOrgDialogOpen}
+          />
+        )}
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-6">

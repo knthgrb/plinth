@@ -604,10 +604,12 @@ export function Sidebar({ onNavigate }: SidebarProps) {
             )}
           </PopoverContent>
         </Popover>
-        <CreateOrganizationDialog
-          open={isCreateOrgDialogOpen}
-          onOpenChange={setIsCreateOrgDialogOpen}
-        />
+        {isMounted && (
+          <CreateOrganizationDialog
+            open={isCreateOrgDialogOpen}
+            onOpenChange={setIsCreateOrgDialogOpen}
+          />
+        )}
       </div>
       <nav
         ref={navRef}

@@ -4215,7 +4215,30 @@ export const getEmployeePayslips = query({
       .withIndex("by_employee", (q: any) => q.eq("employeeId", args.employeeId))
       .collect();
 
-    const payslips = payslipsRaw.map((p: any) => decryptPayslipRowFromDb(p)!);
+    const payslipsDecrypted = payslipsRaw
+      .map((p: any) => decryptPayslipRowFromDb(p)!)
+      .filter(Boolean);
+
+    // Only show payslips from runs that are already finalized (or subsequently paid).
+    const runIds = Array.from(
+      new Set(
+        payslipsDecrypted
+          .map((p: any) => p.payrollRunId)
+          .filter(Boolean),
+      ),
+    );
+    const runStatusById = new Map<string, string>();
+    await Promise.all(
+      runIds.map(async (runId: any) => {
+        const run = await ctx.db.get(runId);
+        if (run) runStatusById.set(String(runId), (run as any).status || "");
+      }),
+    );
+
+    const payslips = payslipsDecrypted.filter((p: any) => {
+      const status = runStatusById.get(String(p.payrollRunId));
+      return status === "finalized" || status === "paid";
+    });
     payslips.sort((a: any, b: any) => b.createdAt - a.createdAt);
     return payslips;
   },
