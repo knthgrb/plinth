@@ -167,6 +167,10 @@ function isAttendanceDeductionName(name: string): boolean {
   );
 }
 
+function isAttendanceDeductionEntry(d: { name?: string; type?: string }): boolean {
+  return (d?.type || "").toLowerCase() === "attendance" || isAttendanceDeductionName(d?.name || "");
+}
+
 /** Round to 2 decimal places for currency */
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -1359,7 +1363,7 @@ export const createPayrollRun = mutation({
         // Manual override: use saved/edited deduction amounts as-is (from "Edit deductions" in preview).
         // Override values for SSS, PhilHealth, Pag-IBIG, Withholding Tax are used directly in computation.
         const nonAttendance = (manualDeductionEntry!.deductions as any[]).filter(
-          (d: { name: string }) => !isAttendanceDeductionName(d.name),
+          (d: { name?: string; type?: string }) => !isAttendanceDeductionEntry(d),
         );
         // When run has government deductions disabled, exclude SSS/PhilHealth/Pag-IBIG only; withholding tax follows org settings
         deductions =
@@ -1516,7 +1520,7 @@ export const createPayrollRun = mutation({
         // Add manual/custom deductions (loans, etc.) - these are separate from government deductions
         if (manualDeductionEntry && manualDeductionEntry.deductions) {
           for (const ded of manualDeductionEntry.deductions.filter(
-            (d) => !isAttendanceDeductionName(d.name),
+            (d) => !isAttendanceDeductionEntry(d),
           )) {
             deductions.push(ded);
           }
@@ -1960,6 +1964,13 @@ export const updatePayrollRun = mutation({
     ) ?? {
       employeeIds: [],
     };
+    const resolvedGovernmentDeductionSettings =
+      args.governmentDeductionSettings ??
+      previousDraftConfig.governmentDeductionSettings ??
+      [];
+    const resolvedManualDeductions =
+      args.manualDeductions ?? previousDraftConfig.manualDeductions ?? [];
+    const resolvedIncentives = args.incentives ?? previousDraftConfig.incentives ?? [];
     await ctx.db.patch(args.payrollRunId, {
       cutoffStart: args.cutoffStart ?? payrollRun.cutoffStart,
       cutoffEnd: args.cutoffEnd ?? payrollRun.cutoffEnd,
@@ -1969,11 +1980,10 @@ export const updatePayrollRun = mutation({
         buildDraftPayrollConfig({
           employeeIds: args.employeeIds ?? previousDraftConfig.employeeIds ?? [],
           manualDeductions:
-            args.manualDeductions ?? previousDraftConfig.manualDeductions,
-          incentives: args.incentives ?? previousDraftConfig.incentives,
+            resolvedManualDeductions,
+          incentives: resolvedIncentives,
           governmentDeductionSettings:
-            args.governmentDeductionSettings ??
-            previousDraftConfig.governmentDeductionSettings,
+            resolvedGovernmentDeductionSettings,
         }),
       ),
       updatedAt: Date.now(),
@@ -2070,10 +2080,10 @@ export const updatePayrollRun = mutation({
           leaveTypes,
         });
 
-        const govSettings = args.governmentDeductionSettings?.find(
+        const govSettings = resolvedGovernmentDeductionSettings.find(
           (gs) => gs.employeeId === employeeId,
         );
-        const manualDeductionEntry = args.manualDeductions?.find(
+        const manualDeductionEntry = resolvedManualDeductions.find(
           (md) => md.employeeId === employeeId,
         );
         const GOV_DEDUCTION_NAMES = new Set([
@@ -2100,7 +2110,9 @@ export const updatePayrollRun = mutation({
           // Use saved/edited deductions as-is; only refresh attendance-based ones
           const nonAttendance = (
             manualDeductionEntry!.deductions as any[]
-          ).filter((d: { name: string }) => !isAttendanceDeductionName(d.name));
+          ).filter(
+            (d: { name?: string; type?: string }) => !isAttendanceDeductionEntry(d),
+          );
           // When run has government deductions disabled, exclude SSS/PhilHealth/Pag-IBIG only; withholding tax follows org settings
           deductions =
             runDeductionsEnabled === false
@@ -2255,7 +2267,7 @@ export const updatePayrollRun = mutation({
           if (manualDeductionEntry?.deductions) {
             deductions.push(
               ...manualDeductionEntry.deductions.filter(
-                (d) => !isAttendanceDeductionName(d.name),
+                (d) => !isAttendanceDeductionEntry(d),
               ),
             );
           }
@@ -2330,7 +2342,7 @@ export const updatePayrollRun = mutation({
         }
 
         const incentives =
-          args.incentives?.find((inc) => inc.employeeId === employeeId)
+          resolvedIncentives.find((inc) => inc.employeeId === employeeId)
             ?.incentives || [];
         const totalIncentives = incentives.reduce(
           (sum, inc) => sum + inc.amount,
