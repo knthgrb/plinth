@@ -765,17 +765,51 @@ export default function PayrollPageClient() {
     preview: any,
     mode: "create_preview" | "edit_preview",
   ) => {
+    const isAttendanceName = (name: string): boolean => {
+      const n = (name || "").trim().toLowerCase();
+      return (
+        n === "late" ||
+        n === "regular day late" ||
+        n === "regular holiday late" ||
+        n === "special holiday late" ||
+        n === "undertime" ||
+        /^absent(?:\b|\s|\()/.test(n) ||
+        /^no[\s-]*work(?:\b|\s|\()/.test(n)
+      );
+    };
+    const isGovernmentDeduction = (d: Deduction): boolean =>
+      (d.type || "").toLowerCase() === "government" ||
+      ["sss", "philhealth", "pag-ibig", "pagibig", "withholding tax"].includes(
+        (d.name || "").trim().toLowerCase(),
+      );
+    const isAttendanceDeduction = (d: Deduction): boolean =>
+      (d.type || "").toLowerCase() === "attendance" || isAttendanceName(d.name);
+    const dedupePreviewEntries = (rows: Deduction[]): Deduction[] => {
+      const seen = new Set<string>();
+      return rows.filter((row) => {
+        const isGovOrAttendance =
+          isGovernmentDeduction(row) || isAttendanceDeduction(row);
+        if (!isGovOrAttendance) return true;
+        const key = `${(row.name || "").trim().toLowerCase()}|${(row.type || "").trim().toLowerCase()}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    };
+
     const noWorkDays = preview.noWorkNoPayDays || 0;
     const absentDays = Math.max(0, (preview.absences || 0) - noWorkDays);
     const absenceLabel =
       noWorkDays > 0 && absentDays === 0
         ? `No work on a holiday (${preview.absences || 0} ${(preview.absences || 0) === 1 ? "day" : "days"})`
         : `Absent (${preview.absences || 0} ${(preview.absences || 0) === 1 ? "day" : "days"})`;
+    const existingDeductions: Deduction[] = [...(preview.deductions || [])];
+    const hasAttendanceAlready = existingDeductions.some(isAttendanceDeduction);
     const attendanceDeductions: Deduction[] = [
-      ...(preview.absentDeduction > 0
+      ...(!hasAttendanceAlready && preview.absentDeduction > 0
         ? [{ name: absenceLabel, amount: preview.absentDeduction, type: "attendance" }]
         : []),
-      ...(preview.lateDeductionSpecialHoliday > 0
+      ...(!hasAttendanceAlready && preview.lateDeductionSpecialHoliday > 0
         ? [
             {
               name: "Special Holiday Late",
@@ -784,7 +818,7 @@ export default function PayrollPageClient() {
             },
           ]
         : []),
-      ...(preview.lateDeductionRegularHoliday > 0
+      ...(!hasAttendanceAlready && preview.lateDeductionRegularHoliday > 0
         ? [
             {
               name: "Regular Holiday Late",
@@ -793,7 +827,7 @@ export default function PayrollPageClient() {
             },
           ]
         : []),
-      ...((preview.lateDeductionRegularDay ?? 0) > 0
+      ...(!hasAttendanceAlready && (preview.lateDeductionRegularDay ?? 0) > 0
         ? [
             {
               name:
@@ -806,20 +840,24 @@ export default function PayrollPageClient() {
             },
           ]
         : []),
-      ...(preview.undertimeDeduction > 0
+      ...(!hasAttendanceAlready && preview.undertimeDeduction > 0
         ? [{ name: "Undertime", amount: preview.undertimeDeduction, type: "attendance" }]
         : []),
     ];
+    const initialDeductions = dedupePreviewEntries([
+      ...existingDeductions,
+      ...attendanceDeductions,
+    ]);
 
     setEditingPayslip({
       _id: `${mode}:${preview.employee?._id}`,
       employee: preview.employee,
-      deductions: [...(preview.deductions || []), ...attendanceDeductions],
+      deductions: initialDeductions,
       incentives: [...(preview.incentives || [])],
       __mode: mode,
       __employeeId: preview.employee?._id,
     });
-    setEditDeductions([...(preview.deductions || []), ...attendanceDeductions]);
+    setEditDeductions(initialDeductions);
     setEditIncentives([...(preview.incentives || [])]);
     setIsEditPayslipOpen(true);
   };
@@ -854,8 +892,22 @@ export default function PayrollPageClient() {
             /^no[\s-]*work(?:\b|\s|\()/.test(n)
           );
         };
+        const isGovernmentName = (name: string): boolean => {
+          const n = (name || "").trim().toLowerCase();
+          return (
+            n === "sss" ||
+            n === "philhealth" ||
+            n === "pag-ibig" ||
+            n === "pagibig" ||
+            n === "withholding tax"
+          );
+        };
         const manualDeductionsOnly = editDeductions.filter(
-          (d) => (d.type || "").toLowerCase() !== "attendance" && !isAttendanceName(d.name),
+          (d) =>
+            (d.type || "").toLowerCase() !== "attendance" &&
+            (d.type || "").toLowerCase() !== "government" &&
+            !isAttendanceName(d.name) &&
+            !isGovernmentName(d.name),
         );
 
         if (editingPayslip.__mode === "create_preview") {
