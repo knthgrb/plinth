@@ -1,7 +1,9 @@
 "use client";
 
 import { format } from "date-fns";
+import { Pencil } from "lucide-react";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { PayslipDetail } from "@/components/payslip-detail";
 
 interface Deduction {
@@ -39,6 +41,7 @@ export interface PayrollStep5PreviewProps {
     amount: number
   ) => void;
   onRecomputePreview?: () => void;
+  onEditPayslip?: (preview: any) => void;
 }
 
 export function PayrollStep5Preview({
@@ -46,6 +49,8 @@ export function PayrollStep5Preview({
   cutoffStart,
   cutoffEnd,
   currentOrganization,
+  canEditDeductions = false,
+  onEditPayslip,
   ..._unused
 }: PayrollStep5PreviewProps) {
   return (
@@ -62,13 +67,31 @@ export function PayrollStep5Preview({
               "MMM. dd, yyyy"
             )}`;
 
+            const isAttendanceLike = (d: any): boolean => {
+              const type = String(d?.type || "").toLowerCase();
+              const n = String(d?.name || "").trim().toLowerCase();
+              return (
+                type === "attendance" ||
+                n === "late" ||
+                n === "regular day late" ||
+                n === "regular holiday late" ||
+                n === "special holiday late" ||
+                n === "undertime" ||
+                /^absent(?:\b|\s|\()/.test(n) ||
+                /^no[\s-]*work(?:\b|\s|\()/.test(n)
+              );
+            };
+            const existingDeductions = preview.deductions || [];
+            const hasAttendanceInDeductions =
+              existingDeductions.some(isAttendanceLike);
+
             // Create a mock payslip object for preview with actual attendance data
             const mockPayslip = {
               period,
               grossPay: preview.grossPay,
               deductions: [
-                ...(preview.deductions || []),
-                ...(preview.absentDeduction > 0
+                ...existingDeductions,
+                ...(!hasAttendanceInDeductions && preview.absentDeduction > 0
                   ? [
                       (() => {
                         const noWorkDays = preview.noWorkNoPayDays || 0;
@@ -88,7 +111,7 @@ export function PayrollStep5Preview({
                       })(),
                     ]
                   : []),
-                ...(preview.lateDeductionSpecialHoliday > 0
+                ...(!hasAttendanceInDeductions && preview.lateDeductionSpecialHoliday > 0
                   ? [
                       {
                         name: "Special Holiday Late",
@@ -97,7 +120,7 @@ export function PayrollStep5Preview({
                       },
                     ]
                   : []),
-                ...(preview.lateDeductionRegularHoliday > 0
+                ...(!hasAttendanceInDeductions && preview.lateDeductionRegularHoliday > 0
                   ? [
                       {
                         name: "Regular Holiday Late",
@@ -106,7 +129,7 @@ export function PayrollStep5Preview({
                       },
                     ]
                   : []),
-                ...((preview.lateDeductionRegularDay ?? 0) > 0
+                ...(!hasAttendanceInDeductions && (preview.lateDeductionRegularDay ?? 0) > 0
                   ? [
                       {
                         name:
@@ -119,7 +142,8 @@ export function PayrollStep5Preview({
                       },
                     ]
                   : []),
-                ...(preview.lateDeduction > 0 &&
+                ...(!hasAttendanceInDeductions &&
+                preview.lateDeduction > 0 &&
                 !preview.lateDeductionSpecialHoliday &&
                 !preview.lateDeductionRegularHoliday &&
                 !preview.lateDeductionRegularDay
@@ -131,7 +155,7 @@ export function PayrollStep5Preview({
                       },
                     ]
                   : []),
-                ...(preview.undertimeDeduction > 0
+                ...(!hasAttendanceInDeductions && preview.undertimeDeduction > 0
                   ? [
                       {
                         name: "Undertime",
@@ -168,6 +192,19 @@ export function PayrollStep5Preview({
 
             return (
               <div key={idx} className="space-y-2">
+                {canEditDeductions && preview?.employee?._id && onEditPayslip && (
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onEditPayslip(preview)}
+                    >
+                      <Pencil className="h-4 w-4 mr-2" />
+                      Edit Payslip
+                    </Button>
+                  </div>
+                )}
                 <PayslipDetail
                   payslip={mockPayslip}
                   employee={preview.employee}

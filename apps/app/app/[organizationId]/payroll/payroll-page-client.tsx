@@ -761,11 +761,190 @@ export default function PayrollPageClient() {
     setIsEditPayslipOpen(true);
   };
 
+  const handleEditPreviewPayslip = (
+    preview: any,
+    mode: "create_preview" | "edit_preview",
+  ) => {
+    const noWorkDays = preview.noWorkNoPayDays || 0;
+    const absentDays = Math.max(0, (preview.absences || 0) - noWorkDays);
+    const absenceLabel =
+      noWorkDays > 0 && absentDays === 0
+        ? `No work on a holiday (${preview.absences || 0} ${(preview.absences || 0) === 1 ? "day" : "days"})`
+        : `Absent (${preview.absences || 0} ${(preview.absences || 0) === 1 ? "day" : "days"})`;
+    const attendanceDeductions: Deduction[] = [
+      ...(preview.absentDeduction > 0
+        ? [{ name: absenceLabel, amount: preview.absentDeduction, type: "attendance" }]
+        : []),
+      ...(preview.lateDeductionSpecialHoliday > 0
+        ? [
+            {
+              name: "Special Holiday Late",
+              amount: preview.lateDeductionSpecialHoliday,
+              type: "attendance",
+            },
+          ]
+        : []),
+      ...(preview.lateDeductionRegularHoliday > 0
+        ? [
+            {
+              name: "Regular Holiday Late",
+              amount: preview.lateDeductionRegularHoliday,
+              type: "attendance",
+            },
+          ]
+        : []),
+      ...((preview.lateDeductionRegularDay ?? 0) > 0
+        ? [
+            {
+              name:
+                (preview.lateDeductionSpecialHoliday > 0 ||
+                  preview.lateDeductionRegularHoliday > 0)
+                  ? "Regular day late"
+                  : "Late",
+              amount: preview.lateDeductionRegularDay,
+              type: "attendance",
+            },
+          ]
+        : []),
+      ...(preview.undertimeDeduction > 0
+        ? [{ name: "Undertime", amount: preview.undertimeDeduction, type: "attendance" }]
+        : []),
+    ];
+
+    setEditingPayslip({
+      _id: `${mode}:${preview.employee?._id}`,
+      employee: preview.employee,
+      deductions: [...(preview.deductions || []), ...attendanceDeductions],
+      incentives: [...(preview.incentives || [])],
+      __mode: mode,
+      __employeeId: preview.employee?._id,
+    });
+    setEditDeductions([...(preview.deductions || []), ...attendanceDeductions]);
+    setEditIncentives([...(preview.incentives || [])]);
+    setIsEditPayslipOpen(true);
+  };
+
   const handleSavePayslip = async () => {
     if (!editingPayslip) return;
 
     setIsSavingPayslip(true);
     try {
+      if (
+        editingPayslip.__mode === "create_preview" ||
+        editingPayslip.__mode === "edit_preview"
+      ) {
+        const employeeId = editingPayslip.__employeeId as string;
+        const totalIncentives = editIncentives.reduce(
+          (sum, incentive) => sum + (incentive.amount || 0),
+          0,
+        );
+        const totalDeductions = editDeductions.reduce(
+          (sum, deduction) => sum + (deduction.amount || 0),
+          0,
+        );
+        const isAttendanceName = (name: string): boolean => {
+          const n = (name || "").trim().toLowerCase();
+          return (
+            n === "late" ||
+            n === "regular day late" ||
+            n === "regular holiday late" ||
+            n === "special holiday late" ||
+            n === "undertime" ||
+            /^absent(?:\b|\s|\()/.test(n) ||
+            /^no[\s-]*work(?:\b|\s|\()/.test(n)
+          );
+        };
+        const manualDeductionsOnly = editDeductions.filter(
+          (d) => (d.type || "").toLowerCase() !== "attendance" && !isAttendanceName(d.name),
+        );
+
+        if (editingPayslip.__mode === "create_preview") {
+          setPreviewData((prev) =>
+            prev.map((p) => {
+              if (p.employee?._id !== employeeId) return p;
+              const availableEarnings = (p.grossPay || 0) + (p.nonTaxableAllowance || 0);
+              return {
+                ...p,
+                deductions: editDeductions,
+                incentives: editIncentives,
+                totalIncentives,
+                totalDeductions: Math.min(totalDeductions, Math.max(0, availableEarnings)),
+                netPay: Math.max(
+                  0,
+                  availableEarnings - Math.min(totalDeductions, Math.max(0, availableEarnings)),
+                ),
+              };
+            }),
+          );
+          setEmployeeDeductions((prev) => {
+            const next = prev.map((row) =>
+              row.employeeId === employeeId
+                ? { ...row, deductions: manualDeductionsOnly }
+                : row,
+            );
+            return next.some((row) => row.employeeId === employeeId)
+              ? next
+              : [...next, { employeeId, deductions: manualDeductionsOnly }];
+          });
+          setEmployeeIncentives((prev) => {
+            const next = prev.map((row) =>
+              row.employeeId === employeeId
+                ? { ...row, incentives: editIncentives }
+                : row,
+            );
+            return next.some((row) => row.employeeId === employeeId)
+              ? next
+              : [...next, { employeeId, incentives: editIncentives }];
+          });
+        } else {
+          setEditPreviewData((prev) =>
+            prev.map((p) => {
+              if (p.employee?._id !== employeeId) return p;
+              const availableEarnings = (p.grossPay || 0) + (p.nonTaxableAllowance || 0);
+              return {
+                ...p,
+                deductions: editDeductions,
+                incentives: editIncentives,
+                totalIncentives,
+                totalDeductions: Math.min(totalDeductions, Math.max(0, availableEarnings)),
+                netPay: Math.max(
+                  0,
+                  availableEarnings - Math.min(totalDeductions, Math.max(0, availableEarnings)),
+                ),
+              };
+            }),
+          );
+          setEditEmployeeDeductions((prev) => {
+            const next = prev.map((row) =>
+              row.employeeId === employeeId
+                ? { ...row, deductions: manualDeductionsOnly }
+                : row,
+            );
+            return next.some((row) => row.employeeId === employeeId)
+              ? next
+              : [...next, { employeeId, deductions: manualDeductionsOnly }];
+          });
+          setEditEmployeeIncentives((prev) => {
+            const next = prev.map((row) =>
+              row.employeeId === employeeId
+                ? { ...row, incentives: editIncentives }
+                : row,
+            );
+            return next.some((row) => row.employeeId === employeeId)
+              ? next
+              : [...next, { employeeId, incentives: editIncentives }];
+          });
+        }
+
+        setIsEditPayslipOpen(false);
+        setEditingPayslip(null);
+        toast({
+          title: "Success",
+          description: "Preview payslip updated successfully!",
+        });
+        return;
+      }
+
       await updatePayslip({
         payslipId: editingPayslip._id,
         deductions: editDeductions,
@@ -2158,6 +2337,9 @@ export default function PayrollPageClient() {
                       cutoffEnd={cutoffEnd}
                       currentOrganization={currentOrganization}
                       canEditDeductions={canEditPreviewDeductions}
+                      onEditPayslip={(preview: any) =>
+                        handleEditPreviewPayslip(preview, "create_preview")
+                      }
                       employeeDeductions={employeeDeductions}
                       previewDeductionOverrides={previewDeductionOverrides}
                       onAddDeduction={addDeduction}
@@ -2571,6 +2753,9 @@ export default function PayrollPageClient() {
                 taxDeductOnPay:
                   settings?.payrollSettings?.taxDeductOnPay ?? "first",
               }}
+              onEditPreviewPayslip={(preview: any) =>
+                handleEditPreviewPayslip(preview, "edit_preview")
+              }
             />
           </Suspense>
         )}

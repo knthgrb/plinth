@@ -81,9 +81,20 @@ export function EditPayslipDialog({
               <div key={idx} className="flex gap-2 items-end">
                 <div className="flex-1">
                   <Label className="text-xs">Name</Label>
-                  <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
-                    {deduction.name || "—"}
-                  </div>
+                  {(deduction.name || "").trim() === "" ? (
+                    <Input
+                      value={deduction.name ?? ""}
+                      onChange={(e) =>
+                        onUpdateDeduction(idx, "name", e.target.value)
+                      }
+                      placeholder="Deduction name"
+                      className="h-9"
+                    />
+                  ) : (
+                    <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
+                      {deduction.name}
+                    </div>
+                  )}
                 </div>
                 <div className="w-28">
                   <Label className="text-xs">Amount</Label>
@@ -140,9 +151,20 @@ export function EditPayslipDialog({
               <div key={idx} className="flex gap-2 items-end">
                 <div className="flex-1">
                   <Label className="text-xs">Name</Label>
-                  <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
-                    {inc.name || "—"}
-                  </div>
+                  {(inc.name || "").trim() === "" ? (
+                    <Input
+                      value={inc.name ?? ""}
+                      onChange={(e) =>
+                        onUpdateIncentive(idx, "name", e.target.value)
+                      }
+                      placeholder="Incentive name"
+                      className="h-9"
+                    />
+                  ) : (
+                    <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
+                      {inc.name}
+                    </div>
+                  )}
                 </div>
                 <div className="w-28">
                   <Label className="text-xs">Amount</Label>

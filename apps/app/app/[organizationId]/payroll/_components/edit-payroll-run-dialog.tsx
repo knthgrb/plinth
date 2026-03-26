@@ -78,6 +78,7 @@ interface EditPayrollRunDialogProps {
     taxDeductionFrequency: "once_per_month" | "twice_per_month";
     taxDeductOnPay: "first" | "second";
   };
+  onEditPreviewPayslip?: (preview: any) => void;
 }
 
 export function EditPayrollRunDialog({
@@ -116,6 +117,7 @@ export function EditPayrollRunDialog({
     taxDeductionFrequency: "twice_per_month" as const,
     taxDeductOnPay: "first" as const,
   },
+  onEditPreviewPayslip,
 }: EditPayrollRunDialogProps) {
   const handleSelectAll = () => {
     if (editSelectedEmployees.length === employees?.length) {
@@ -379,6 +381,7 @@ export function EditPayrollRunDialog({
                 }));
               }}
               onRecomputePreview={onComputeEditPreview}
+              onEditPayslip={onEditPreviewPayslip}
             />
           </Suspense>
         )}
