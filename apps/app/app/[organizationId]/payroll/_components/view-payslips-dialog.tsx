@@ -61,6 +61,19 @@ export function ViewPayslipsDialog({
                     <div className="my-6 border-t-2 border-purple-500"></div>
                   )}
                   <div className="space-y-4">
+                    {(isAdminOrAccounting &&
+                      selectedPayrollRun?.status === "draft") && (
+                      <div className="flex gap-2 justify-end">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onEditPayslip(payslip)}
+                        >
+                          <Pencil className="h-4 w-4 mr-2" />
+                          Edit Payslip
+                        </Button>
+                      </div>
+                    )}
                     <PayslipDetail
                       payslip={payslip}
                       employee={payslip.employee}
@@ -105,19 +118,6 @@ export function ViewPayslipsDialog({
                           </CardContent>
                         </Card>
                       )}
-                    {(isAdminOrAccounting &&
-                      selectedPayrollRun?.status === "draft") && (
-                      <div className="flex gap-2 justify-end">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => onEditPayslip(payslip)}
-                        >
-                          <Pencil className="h-4 w-4 mr-2" />
-                          Edit Payslip
-                        </Button>
-                      </div>
-                    )}
                   </div>
                 </div>
               ))

@@ -55,6 +55,12 @@ export function EditPayslipDialog({
 }: EditPayslipDialogProps) {
   if (!editingPayslip) return null;
 
+  const isEditableName = (entry: Deduction, section: "deduction" | "addition") => {
+    const t = (entry.type || "").toLowerCase();
+    if (section === "addition") return true;
+    return t === "custom" || t === "incentive";
+  };
+
   const employeeName =
     editingPayslip.employee?.personalInfo?.firstName &&
     editingPayslip.employee?.personalInfo?.lastName
@@ -81,7 +87,7 @@ export function EditPayslipDialog({
               <div key={idx} className="flex gap-2 items-end">
                 <div className="flex-1">
                   <Label className="text-xs">Name</Label>
-                  {(deduction.name || "").trim() === "" ? (
+                  {isEditableName(deduction, "deduction") ? (
                     <Input
                       value={deduction.name ?? ""}
                       onChange={(e) =>
@@ -139,10 +145,10 @@ export function EditPayslipDialog({
             </Button>
           </div>
 
-          {/* Incentives – only amount is editable */}
+          {/* Additions – name and amount are editable */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <Label className="text-base">Incentives</Label>
+              <Label className="text-base">Additions</Label>
               <span className="text-xs text-gray-500">
                 Override the amount (value) only
               </span>
@@ -151,7 +157,7 @@ export function EditPayslipDialog({
               <div key={idx} className="flex gap-2 items-end">
                 <div className="flex-1">
                   <Label className="text-xs">Name</Label>
-                  {(inc.name || "").trim() === "" ? (
+                  {isEditableName(inc, "addition") ? (
                     <Input
                       value={inc.name ?? ""}
                       onChange={(e) =>
@@ -199,7 +205,7 @@ export function EditPayslipDialog({
             ))}
             <Button type="button" variant="outline" size="sm" onClick={onAddIncentive}>
               <Plus className="h-4 w-4 mr-2" />
-              Add incentive
+              Add addition
             </Button>
           </div>
         </div>
