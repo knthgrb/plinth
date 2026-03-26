@@ -1602,11 +1602,19 @@ export default function PayrollPageClient() {
             })),
             ...(p.absentDeduction > 0
               ? [
-                  {
-                    name: `Absent (${p.absences || 0} ${(p.absences || 0) === 1 ? "day" : "days"})`,
-                    amount: p.absentDeduction,
-                    type: "attendance",
-                  },
+                  (() => {
+                    const noWorkDays = p.noWorkNoPayDays || 0;
+                    const absentDays = Math.max(0, (p.absences || 0) - noWorkDays);
+                    const label =
+                      noWorkDays > 0 && absentDays === 0
+                        ? `No work on a holiday (${p.absences || 0} ${(p.absences || 0) === 1 ? "day" : "days"})`
+                        : `Absent (${p.absences || 0} ${(p.absences || 0) === 1 ? "day" : "days"})`;
+                    return {
+                      name: label,
+                      amount: p.absentDeduction,
+                      type: "attendance",
+                    };
+                  })(),
                 ]
               : []),
             ...(p.lateDeductionSpecialHoliday > 0

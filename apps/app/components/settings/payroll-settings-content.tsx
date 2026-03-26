@@ -90,6 +90,7 @@ export function PayrollSettingsContent() {
       | "twice_per_month",
     taxDeductOnPay: "first" as "first" | "second",
     holidayNoWorkNoPay: false,
+    absentBeforeHolidayNoHolidayPay: true,
   });
   const [isSaving, setIsSaving] = useState(false);
 
@@ -125,6 +126,8 @@ export function PayrollSettingsContent() {
         taxDeductionFrequency: taxFreq,
         taxDeductOnPay: taxPay,
         holidayNoWorkNoPay: ps.holidayNoWorkNoPay ?? false,
+        absentBeforeHolidayNoHolidayPay:
+          ps.absentBeforeHolidayNoHolidayPay ?? true,
       });
     } else {
       setFormData((prev) => ({
@@ -158,6 +161,8 @@ export function PayrollSettingsContent() {
           taxDeductionFrequency: formData.taxDeductionFrequency,
           taxDeductOnPay: formData.taxDeductOnPay,
           holidayNoWorkNoPay: formData.holidayNoWorkNoPay,
+          absentBeforeHolidayNoHolidayPay:
+            formData.absentBeforeHolidayNoHolidayPay,
         },
       });
 
@@ -325,6 +330,30 @@ export function PayrollSettingsContent() {
               If set to No work no pay, payroll deducts one daily pay for
               monthly employees on holiday <code>no_work</code> days.
             </p>
+          </div>
+          <div className="mt-4 flex items-start space-x-2">
+            <Checkbox
+              id="absentBeforeHolidayNoHolidayPay"
+              checked={formData.absentBeforeHolidayNoHolidayPay}
+              onCheckedChange={(checked) =>
+                setFormData({
+                  ...formData,
+                  absentBeforeHolidayNoHolidayPay: checked === true,
+                })
+              }
+            />
+            <div className="space-y-1">
+              <Label
+                htmlFor="absentBeforeHolidayNoHolidayPay"
+                className="cursor-pointer font-normal"
+              >
+                No holiday additional pay if absent day before holiday
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Enabled by default. When on, holiday premium is not added if the
+                employee was absent the previous day.
+              </p>
+            </div>
           </div>
         </div>
 

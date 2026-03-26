@@ -27,6 +27,8 @@ export type PayrollRates = {
   dailyRateWorkingDaysPerYear: number;
   /** If true, holiday no_work is treated as no-work-no-pay (deduct daily pay for monthly). Default false. */
   holidayNoWorkNoPay?: boolean;
+  /** If true, holiday additional pay is removed when employee is absent the day before the holiday. Default true. */
+  absentBeforeHolidayNoHolidayPay?: boolean;
 };
 
 export type ResolvedPayrollRates = PayrollRates & {
@@ -1049,6 +1051,16 @@ export function calculatePayrollBaseFromRecords(args: {
     return false;
   });
 
+  const attendanceStatusByDay = new Map<number, string>();
+  for (const rec of attendance) {
+    const day = toLocalDayTimestamp(rec.date);
+    if (!attendanceStatusByDay.has(day) && typeof rec.status === "string") {
+      attendanceStatusByDay.set(day, rec.status);
+    }
+  }
+  const isAbsentLikeStatus = (status: string | undefined): boolean =>
+    status === "absent" || status === "leave_without_pay";
+
   const approvedLeaves = leaveRequests.filter(
     (leave: any) =>
       leave.status === "approved" &&
@@ -1151,6 +1163,14 @@ export function calculatePayrollBaseFromRecords(args: {
       const holidayInfo = getHolidayInfo(att.date, holidays, att, employee);
       const holidayType = holidayInfo.holidayType;
       const holidayApplies = holidayInfo.appliesToEmployee !== false;
+      const absentBeforeHolidayRuleEnabled =
+        payrollRates.absentBeforeHolidayNoHolidayPay !== false;
+      const prevDay = toLocalDayTimestamp(att.date) - ONE_DAY_MS;
+      const wasAbsentDayBeforeHoliday = isAbsentLikeStatus(
+        attendanceStatusByDay.get(prevDay),
+      );
+      const holidayAdditionalPayAllowed =
+        !(absentBeforeHolidayRuleEnabled && wasAbsentDayBeforeHoliday);
 
       daysWorked += dayMultiplier;
 
@@ -1198,7 +1218,11 @@ export function calculatePayrollBaseFromRecords(args: {
           (!holidayInfo.isHoliday || holidayType === "special_working")
         ) {
           // Rest day work is already paid as rest-day premium for the actual worked hours.
-        } else if (holidayType === "regular" && holidayApplies) {
+        } else if (
+          holidayType === "regular" &&
+          holidayApplies &&
+          holidayAdditionalPayAllowed
+        ) {
           const regularOTAmount =
             regularOTHours * otHourlyRate * payrollRates.regularHolidayOt;
           const excessOTAmount =
@@ -1206,7 +1230,11 @@ export function calculatePayrollBaseFromRecords(args: {
           overtimeLegalHoliday += regularOTAmount;
           overtimeLegalHolidayExcess += excessOTAmount;
           basicPay += regularOTAmount + excessOTAmount;
-        } else if (holidayType === "special" && holidayApplies) {
+        } else if (
+          holidayType === "special" &&
+          holidayApplies &&
+          holidayAdditionalPayAllowed
+        ) {
           const regularOTAmount =
             regularOTHours * otHourlyRate * payrollRates.specialHolidayOt;
           const excessOTAmount =
@@ -1232,12 +1260,20 @@ export function calculatePayrollBaseFromRecords(args: {
       const dayLateHours = getLateHoursFromAttendance(att);
       if (dayLateHours > 0) {
         lateHours += dayLateHours;
-        if (holidayType === "regular" && holidayApplies) {
+        if (
+          holidayType === "regular" &&
+          holidayApplies &&
+          holidayAdditionalPayAllowed
+        ) {
           lateDeductionRegularHoliday +=
             dayLateHours *
             hourlyRateBasicPlusAllowance *
             payrollRates.regularHolidayRate;
-        } else if (holidayType === "special" && holidayApplies) {
+        } else if (
+          holidayType === "special" &&
+          holidayApplies &&
+          holidayAdditionalPayAllowed
+        ) {
           lateDeductionSpecialHoliday +=
             dayLateHours *
             hourlyRateBasicPlusAllowance *
@@ -1254,14 +1290,22 @@ export function calculatePayrollBaseFromRecords(args: {
         undertimeDeduction += dayUndertimeHours * hourlyRateBasicPlusAllowance;
       }
 
-      if (holidayType === "regular" && holidayApplies) {
+      if (
+        holidayType === "regular" &&
+        holidayApplies &&
+        holidayAdditionalPayAllowed
+      ) {
         // Show full holiday pay on payslip; lost portion (if late) is in lateDeductionRegularHoliday
         const rate = payrollRates.regularHolidayRate;
         const fullPremium =
           holidayPremiumBase * Math.max(0, rate - 1) * dayMultiplier;
         holidayPay += fullPremium;
         holidayPayFromRegular += fullPremium;
-      } else if (holidayType === "special" && holidayApplies) {
+      } else if (
+        holidayType === "special" &&
+        holidayApplies &&
+        holidayAdditionalPayAllowed
+      ) {
         const rate = payrollRates.specialHolidayRate;
         const fullPremium =
           holidayPremiumBase * Math.max(0, rate - 1) * dayMultiplier;

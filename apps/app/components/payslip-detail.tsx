@@ -282,7 +282,7 @@ export function PayslipDetail({
     .filter((d: any) => String(d.name || "").toLowerCase().startsWith("no work"))
     .reduce((sum: number, d: any) => sum + (d.amount ?? 0), 0);
   const lessPrimaryLabel =
-    noWorkDeductionFromAttendance > 0 ? "No work" : "Absent";
+    noWorkDeductionFromAttendance > 0 ? "No work on a holiday" : "Absent";
   const holidayPayAmount = payslip.holidayPay ?? 0;
   const hasLegalHolidayOvertime = (payslip.overtimeLegalHoliday ?? 0) > 0;
   const hasSpecialHolidayOvertime = (payslip.overtimeSpecialHoliday ?? 0) > 0;

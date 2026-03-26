@@ -900,6 +900,9 @@ export default defineSchema({
         // Holiday with "no_work" attendance status: if true, treat as no-work-no-pay (deduct daily pay for monthly).
         // Default false = no-work-with-pay (no absence deduction).
         holidayNoWorkNoPay: v.optional(v.boolean()),
+        // If true, employee gets no holiday additional pay when absent the day before the holiday.
+        // Default true.
+        absentBeforeHolidayNoHolidayPay: v.optional(v.boolean()),
       }),
     ),
     // Leave type configurations

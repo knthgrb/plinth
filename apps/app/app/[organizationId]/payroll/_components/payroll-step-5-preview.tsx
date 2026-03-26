@@ -95,11 +95,22 @@ export function PayrollStep5Preview({
                 ...(preview.deductions || []),
                 ...(preview.absentDeduction > 0
                   ? [
-                      {
-                        name: `Absent (${preview.absences || 0} ${(preview.absences || 0) === 1 ? "day" : "days"})`,
-                        amount: preview.absentDeduction,
-                        type: "attendance",
-                      },
+                      (() => {
+                        const noWorkDays = preview.noWorkNoPayDays || 0;
+                        const absentDays = Math.max(
+                          0,
+                          (preview.absences || 0) - noWorkDays,
+                        );
+                        const label =
+                          noWorkDays > 0 && absentDays === 0
+                            ? `No work on a holiday (${preview.absences || 0} ${(preview.absences || 0) === 1 ? "day" : "days"})`
+                            : `Absent (${preview.absences || 0} ${(preview.absences || 0) === 1 ? "day" : "days"})`;
+                        return {
+                          name: label,
+                          amount: preview.absentDeduction,
+                          type: "attendance",
+                        };
+                      })(),
                     ]
                   : []),
                 ...(preview.lateDeductionSpecialHoliday > 0

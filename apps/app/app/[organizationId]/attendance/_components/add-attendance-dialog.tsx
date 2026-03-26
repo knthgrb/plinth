@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,6 +38,7 @@ import {
   formatNextDayLabelFromYmd,
   formatTime12Hour,
 } from "@/utils/attendance-calculations";
+import { holidayAppliesToEmployee } from "@/lib/payroll-calculations";
 
 interface AddAttendanceDialogProps {
   employees: any[] | undefined;
@@ -69,6 +72,11 @@ export function AddAttendanceDialog({
   const [useManualUndertime, setUseManualUndertime] = useState(false);
   const [notes, setNotes] = useState("");
 
+  const holidays = useQuery(
+    (api as any).holidays.getHolidays,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
+
   const getDayName = (date: Date): string => {
     const days = [
       "sunday",
@@ -92,6 +100,38 @@ export function AddAttendanceDialog({
       dayName as keyof typeof employee.schedule.defaultSchedule
     ];
   }, [selectedEmployee, selectedDate, employees]);
+
+  const canUseNoWorkStatus = useMemo(() => {
+    if (!selectedEmployee || !selectedDate || !holidays) return false;
+    const employee = employees?.find((e: any) => e._id === selectedEmployee);
+    if (!employee) return false;
+    const target = new Date(selectedDate);
+    const targetY = target.getFullYear();
+    const targetM = target.getMonth();
+    const targetD = target.getDate();
+    return holidays.some((h: any) => {
+      const holidayTs = h.offsetDate ?? h.date;
+      const hd = new Date(holidayTs);
+      const yearMatches = h.isRecurring ? true : (h.year == null || h.year === targetY);
+      if (!yearMatches) return false;
+      const dayMatches = h.isRecurring
+        ? hd.getMonth() === targetM && hd.getDate() === targetD
+        : hd.getFullYear() === targetY &&
+          hd.getMonth() === targetM &&
+          hd.getDate() === targetD;
+      if (!dayMatches) return false;
+      return (
+        (h.type === "regular" || h.type === "special") &&
+        holidayAppliesToEmployee(h, employee)
+      );
+    });
+  }, [selectedEmployee, selectedDate, holidays, employees]);
+
+  useEffect(() => {
+    if (status === "no_work" && !canUseNoWorkStatus) {
+      setStatus("absent");
+    }
+  }, [status, canUseNoWorkStatus]);
 
   // Calculate late and undertime automatically
   const calculatedLate = useMemo(() => {
@@ -325,7 +365,9 @@ export function AddAttendanceDialog({
                     <SelectItem value="absent">Absent</SelectItem>
                     <SelectItem value="leave_with_pay">Leave with pay</SelectItem>
                     <SelectItem value="leave_without_pay">Leave without pay</SelectItem>
-                    <SelectItem value="no_work">No work</SelectItem>
+                    {canUseNoWorkStatus && (
+                      <SelectItem value="no_work">No work</SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -399,7 +441,7 @@ export function AddAttendanceDialog({
                   }
                 />
                 <p className="text-xs text-gray-500">
-                  Optional: Enter overtime hours worked. Use &quot;No work&quot; for holidays when employee did not work (no additional pay).
+                  Optional: Enter overtime hours worked. &quot;No work&quot; is only available on holiday dates.
                 </p>
               </div>
               <div className="space-y-2">

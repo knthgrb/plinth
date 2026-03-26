@@ -17,34 +17,6 @@ function getManilaDateParts(ts: number) {
 function getManilaDayOfWeek(ts: number): number {
   return new Date(ts + MANILA_OFFSET_MS).getUTCDay();
 }
-function isDateRegularOrSpecialHoliday(
-  dateTs: number,
-  holidays: {
-    date: number;
-    offsetDate?: number;
-    isRecurring?: boolean;
-    year?: number;
-    type: string;
-  }[],
-): boolean {
-  return getHolidayForDate(dateTs, holidays) != null;
-}
-
-/** Returns matching holiday (regular/special) for a date, or null. Used to auto-set isHoliday/holidayType on attendance. */
-function getHolidayForDate(
-  dateTs: number,
-  holidays: {
-    date: number;
-    offsetDate?: number;
-    isRecurring?: boolean;
-    year?: number;
-    type: string;
-  }[],
-): { type: "regular" | "special" | "special_working" } | null {
-  const entry = getMatchingHolidayEntryForDate(dateTs, holidays);
-  return entry ? { type: entry.type as "regular" | "special" | "special_working" } : null;
-}
-
 /** Returns the full matching holiday entry for a date, or null. */
 function getMatchingHolidayEntryForDate(
   dateTs: number,
@@ -82,6 +54,30 @@ function getMatchingHolidayEntryForDate(
     }
   }
   return null;
+}
+
+function isNoWorkAllowedForEmployeeDate(
+  dateTs: number,
+  holidays: {
+    date: number;
+    offsetDate?: number;
+    isRecurring?: boolean;
+    year?: number;
+    type: string;
+    applyToAll?: boolean;
+    provinces?: string[];
+  }[],
+  employee: any,
+): boolean {
+  const holidayEntry = getMatchingHolidayEntryForDate(dateTs, holidays);
+  if (!holidayEntry) return false;
+  if (
+    holidayEntry.type !== "regular" &&
+    holidayEntry.type !== "special"
+  ) {
+    return false;
+  }
+  return holidayAppliesToEmployee(holidayEntry, employee);
 }
 
 // Helper to check authorization with organization context
@@ -339,6 +335,13 @@ export const createAttendance = mutation({
       .collect();
 
     const employee = await ctx.db.get(args.employeeId);
+    if (args.status === "no_work" && employee) {
+      if (!isNoWorkAllowedForEmployeeDate(args.date, holidays, employee)) {
+        throw new Error(
+          "No work status is only allowed on holidays that apply to this employee",
+        );
+      }
+    }
     if (
       !args.actualIn &&
       !args.actualOut &&
@@ -520,6 +523,16 @@ export const updateAttendance = mutation({
       )
       .collect();
 
+    if (args.status === "no_work" && employee) {
+      if (
+        !isNoWorkAllowedForEmployeeDate(attendance.date, holidays, employee)
+      ) {
+        throw new Error(
+          "No work status is only allowed on holidays that apply to this employee",
+        );
+      }
+    }
+
     if (args.status === undefined) {
       if (!currentActualIn && !currentActualOut && employee) {
         const holidayEntry = getMatchingHolidayEntryForDate(attendance.date, holidays);
@@ -668,16 +681,23 @@ export const bulkCreateAttendance = mutation({
         )
         .first();
 
+      const employee = await ctx.db.get(entry.employeeId);
       const currentActualIn = entry.actualIn ?? existing?.actualIn;
       const currentActualOut = entry.actualOut ?? existing?.actualOut;
+      const canUseNoWork = employee
+        ? isNoWorkAllowedForEmployeeDate(entry.date, holidays, employee)
+        : false;
       const resolvedStatus =
         !currentActualIn &&
         !currentActualOut &&
-        isDateRegularOrSpecialHoliday(entry.date, holidays)
+        canUseNoWork
           ? "no_work"
           : entry.status;
-
-      const employee = await ctx.db.get(entry.employeeId);
+      if (resolvedStatus === "no_work" && !canUseNoWork) {
+        throw new Error(
+          "No work status is only allowed on holidays that apply to this employee",
+        );
+      }
       const scheduleWithLunch = employee
         ? await getScheduleWithLunch(
             ctx,

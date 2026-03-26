@@ -153,16 +153,17 @@ function getDeductionAmountByNames(
 
 function isAttendanceDeductionName(name: string): boolean {
   const n = (name || "").trim().toLowerCase();
+  // Accept legacy/variant labels too (e.g. "Absent(1 day)", "No-work (1 day)").
+  const isAbsentLike = /^absent(?:\b|\s|\()/.test(n);
+  const isNoWorkLike = /^no[\s-]*work(?:\b|\s|\()/.test(n);
   return (
     n === "late" ||
     n === "regular day late" ||
     n === "regular holiday late" ||
     n === "special holiday late" ||
     n === "undertime" ||
-    n === "absent" ||
-    n.startsWith("absent ") ||
-    n === "no work" ||
-    n.startsWith("no work ")
+    isAbsentLike ||
+    isNoWorkLike
   );
 }
 
@@ -476,6 +477,7 @@ export type BasePayrollConfig = {
   dailyRateIncludesAllowance: boolean;
   dailyRateWorkingDaysPerYear: number;
   holidayNoWorkNoPay: boolean;
+  absentBeforeHolidayNoHolidayPay: boolean;
 };
 
 function derivePayrollRatesFromBase(base: BasePayrollConfig): PayrollRates {
@@ -510,6 +512,8 @@ function derivePayrollRatesFromBase(base: BasePayrollConfig): PayrollRates {
       base.dailyRateWorkingDaysPerYear ??
       DEFAULT_DAILY_RATE_WORKING_DAYS_PER_YEAR,
     holidayNoWorkNoPay: base.holidayNoWorkNoPay ?? false,
+    absentBeforeHolidayNoHolidayPay:
+      base.absentBeforeHolidayNoHolidayPay ?? true,
     regularHolidayRate: regHol,
     specialHolidayRate: specHol,
   };
@@ -532,6 +536,7 @@ export type PayrollRates = {
   dailyRateIncludesAllowance: boolean;
   dailyRateWorkingDaysPerYear: number;
   holidayNoWorkNoPay: boolean;
+  absentBeforeHolidayNoHolidayPay: boolean;
   regularHolidayRate: number;
   specialHolidayRate: number;
 };
@@ -577,6 +582,8 @@ async function getPayrollRates(
       ps.dailyRateWorkingDaysPerYear ??
       DEFAULT_DAILY_RATE_WORKING_DAYS_PER_YEAR,
     holidayNoWorkNoPay: ps.holidayNoWorkNoPay ?? false,
+    absentBeforeHolidayNoHolidayPay:
+      ps.absentBeforeHolidayNoHolidayPay ?? true,
   };
   return { rates: derivePayrollRatesFromBase(base), base };
 }
@@ -604,6 +611,7 @@ function getEmployeePayrollRates(
     dailyRateIncludesAllowance: orgBase.dailyRateIncludesAllowance,
     dailyRateWorkingDaysPerYear: orgBase.dailyRateWorkingDaysPerYear,
     holidayNoWorkNoPay: orgBase.holidayNoWorkNoPay,
+    absentBeforeHolidayNoHolidayPay: orgBase.absentBeforeHolidayNoHolidayPay,
   };
   return derivePayrollRatesFromBase(mergedBase);
 }
@@ -1518,6 +1526,9 @@ export const createPayrollRun = mutation({
         if (employee.deductions) {
           for (const deduction of employee.deductions) {
             if (deduction.isActive) {
+              // Attendance deductions are always recomputed from attendance records.
+              // Skip attendance-like custom rows to avoid double-counting on regenerate/edit.
+              if (isAttendanceDeductionName(deduction.name || "")) continue;
               const now = Date.now();
               if (
                 deduction.startDate <= now &&
@@ -1575,7 +1586,7 @@ export const createPayrollRun = mutation({
         const absentDays = Math.max(0, payrollBase.absences - noWorkDays);
         const absenceLabel =
           noWorkDays > 0 && absentDays === 0
-            ? `No work (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`
+            ? `No work on a holiday (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`
             : `Absent (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`;
         deductions.push({
           name: absenceLabel,
@@ -2252,6 +2263,9 @@ export const updatePayrollRun = mutation({
           if (employee.deductions) {
             for (const deduction of employee.deductions) {
               if (!deduction.isActive) continue;
+            // Attendance deductions are always recomputed from attendance records.
+            // Skip attendance-like custom rows to avoid double-counting on regenerate/edit.
+            if (isAttendanceDeductionName(deduction.name || "")) continue;
               const now = Date.now();
               if (
                 deduction.startDate <= now &&
@@ -2306,7 +2320,7 @@ export const updatePayrollRun = mutation({
           const absentDays = Math.max(0, payrollBase.absences - noWorkDays);
           const absenceLabel =
             noWorkDays > 0 && absentDays === 0
-              ? `No work (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`
+              ? `No work on a holiday (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`
               : `Absent (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`;
           deductions.push({
             name: absenceLabel,

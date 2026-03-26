@@ -124,6 +124,72 @@ describe("payroll calculations", () => {
     expect(result.holidayPay).toBeCloseTo(1379.31, 2);
   });
 
+  it("does not add holiday premium when absent day before holiday (default enabled)", () => {
+    const absentDate = localDate(2026, 1, 19);
+    const holidayDate = localDate(2026, 1, 20);
+    const result = calculate({
+      attendance: [
+        { date: absentDate, status: "absent" },
+        {
+          date: holidayDate,
+          status: "present",
+          actualIn: "09:00",
+          actualOut: "18:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+          isHoliday: true,
+          holidayType: "regular",
+        },
+      ],
+      holidays: [
+        {
+          date: holidayDate,
+          type: "regular",
+          isRecurring: false,
+          year: 2026,
+        },
+      ],
+      cutoffStart: absentDate,
+      cutoffEnd: holidayDate,
+    });
+    expect(result.holidayPay).toBe(0);
+  });
+
+  it("adds holiday premium when absent-day-before rule is disabled", () => {
+    const absentDate = localDate(2026, 1, 19);
+    const holidayDate = localDate(2026, 1, 20);
+    const result = calculate({
+      attendance: [
+        { date: absentDate, status: "absent" },
+        {
+          date: holidayDate,
+          status: "present",
+          actualIn: "09:00",
+          actualOut: "18:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+          isHoliday: true,
+          holidayType: "regular",
+        },
+      ],
+      holidays: [
+        {
+          date: holidayDate,
+          type: "regular",
+          isRecurring: false,
+          year: 2026,
+        },
+      ],
+      cutoffStart: absentDate,
+      cutoffEnd: holidayDate,
+      payrollRates: {
+        ...baseRates,
+        absentBeforeHolidayNoHolidayPay: false,
+      },
+    });
+    expect(result.holidayPay).toBeCloseTo(1379.31, 2);
+  });
+
   it("pays holiday premium and deducts holiday late using rate multiplier (image 2/3)", () => {
     const date = localDate(2026, 1, 20);
     // Late 5 mins on regular holiday (200%): deduction = 5/60 * hourlyRate * 2.0
@@ -1080,6 +1146,7 @@ describe("payroll calculations", () => {
     expect(result.absentDeduction).toBeCloseTo(1379.31, 2);
     expect(result.holidayPay).toBe(0);
   });
+
 
   it("treats leave_with_pay as paid (no deduction)", () => {
     const date = localDate(2026, 1, 23); // Friday

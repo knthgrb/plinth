@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +41,7 @@ import {
   calculateLate,
   calculateUndertime,
 } from "@/utils/attendance-calculations";
+import { holidayAppliesToEmployee } from "@/lib/payroll-calculations";
 
 // Parse time string to HH:mm (24h). Supports "9:00 AM", "17:00", "9:00", etc.
 function parseTimeToHHmm(input: string): string | null {
@@ -260,6 +261,10 @@ export function BulkAddAttendanceDialog({
   const bulkCreateMutation = useMutation(
     (api as any).attendance.bulkCreateAttendance,
   );
+  const holidays = useQuery(
+    (api as any).holidays.getHolidays,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
   const [bulkStartDate, setBulkStartDate] = useState(
     format(new Date(), "yyyy-MM-dd"),
@@ -333,6 +338,30 @@ export function BulkAddAttendanceDialog({
 
   const getDayName = (date: Date): string =>
     dayNamesList[date.getDay()];
+
+  const canUseNoWorkForDate = (dateTs: number, employee: any): boolean => {
+    if (!employee || !holidays) return false;
+    const target = new Date(dateTs);
+    const targetY = target.getFullYear();
+    const targetM = target.getMonth();
+    const targetD = target.getDate();
+    return holidays.some((h: any) => {
+      const holidayTs = h.offsetDate ?? h.date;
+      const hd = new Date(holidayTs);
+      const yearMatches = h.isRecurring ? true : (h.year == null || h.year === targetY);
+      if (!yearMatches) return false;
+      const dayMatches = h.isRecurring
+        ? hd.getMonth() === targetM && hd.getDate() === targetD
+        : hd.getFullYear() === targetY &&
+          hd.getMonth() === targetM &&
+          hd.getDate() === targetD;
+      if (!dayMatches) return false;
+      return (
+        (h.type === "regular" || h.type === "special") &&
+        holidayAppliesToEmployee(h, employee)
+      );
+    });
+  };
 
   // Generate list of all dates that could be included (before filtering excluded ones)
   const getAllBulkDates = () => {
@@ -561,6 +590,8 @@ export function BulkAddAttendanceDialog({
         if (!emp) error = "Employee not found";
         else if (dateStr && dateTs === 0) error = "Invalid date";
         else if (status === "present" && !actualIn && !actualOut) error = "Time In/Out required for present";
+        else if (status === "no_work" && dateTs > 0 && !canUseNoWorkForDate(dateTs, emp))
+          error = "No work is only allowed on holiday dates for this employee";
 
         const day = dateTs > 0 ? new Date(dateTs + MANILA_OFFSET_MS).getUTCDay() : -1;
         const isWeekendExcluded =
@@ -798,6 +829,19 @@ export function BulkAddAttendanceDialog({
           return;
         }
 
+        if (
+          dayTimes.status === "no_work" &&
+          !canUseNoWorkForDate(dateInfo.timestamp, employee)
+        ) {
+          toast({
+            title: "Error",
+            description: `No work is only allowed on holiday dates (${format(dateInfo.date, "MMM dd, yyyy")})`,
+            variant: "destructive",
+          });
+          setIsSubmittingBulk(false);
+          return;
+        }
+
         // For absent or leave, times are optional
         // For present, at least one time should be provided
         if (
@@ -819,7 +863,8 @@ export function BulkAddAttendanceDialog({
           dayTimes.status === "leave" ||
           dayTimes.status === "leave_with_pay" ||
           dayTimes.status === "leave_without_pay" ||
-          dayTimes.status === "absent";
+          dayTimes.status === "absent" ||
+          dayTimes.status === "no_work";
         const finalTimeIn = clearsTime ? undefined : dayTimes.timeIn || undefined;
         const finalTimeOut = clearsTime ? undefined : dayTimes.timeOut || undefined;
 
@@ -892,7 +937,7 @@ export function BulkAddAttendanceDialog({
           scheduleOut: daySchedule.out,
           actualIn: finalTimeIn,
           actualOut: finalTimeOut,
-          status: dayTimes.status as "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay",
+          status: dayTimes.status as "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay" | "no_work",
         };
 
         if (finalLate !== undefined) {
@@ -1420,6 +1465,7 @@ export function BulkAddAttendanceDialog({
                                       dayTimes.status === "leave" ||
                                       dayTimes.status === "leave_with_pay" ||
                                       dayTimes.status === "leave_without_pay" ||
+                                      dayTimes.status === "no_work" ||
                                       isSubmittingBulk
                                     }
                                     placeholder="Time in"
@@ -1471,6 +1517,7 @@ export function BulkAddAttendanceDialog({
                                       dayTimes.status === "leave" ||
                                       dayTimes.status === "leave_with_pay" ||
                                       dayTimes.status === "leave_without_pay" ||
+                                      dayTimes.status === "no_work" ||
                                       isSubmittingBulk
                                     }
                                     placeholder="Time out"
@@ -1516,14 +1563,16 @@ export function BulkAddAttendanceDialog({
                                               value === "leave" ||
                                               value === "leave_with_pay" ||
                                               value === "leave_without_pay" ||
-                                              value === "absent"
+                                              value === "absent" ||
+                                              value === "no_work"
                                                 ? ""
                                                 : newTimeIn,
                                             timeOut:
                                               value === "leave" ||
                                               value === "leave_with_pay" ||
                                               value === "leave_without_pay" ||
-                                              value === "absent"
+                                              value === "absent" ||
+                                              value === "no_work"
                                                 ? ""
                                                 : newTimeOut,
                                             status: value,
@@ -1531,21 +1580,24 @@ export function BulkAddAttendanceDialog({
                                               value === "leave" ||
                                               value === "leave_with_pay" ||
                                               value === "leave_without_pay" ||
-                                              value === "absent"
+                                              value === "absent" ||
+                                              value === "no_work"
                                                 ? ""
                                                 : currentTimes.overtime || "",
                                             late:
                                               value === "leave" ||
                                               value === "leave_with_pay" ||
                                               value === "leave_without_pay" ||
-                                              value === "absent"
+                                              value === "absent" ||
+                                              value === "no_work"
                                                 ? ""
                                                 : currentTimes.late || "",
                                             undertime:
                                               value === "leave" ||
                                               value === "leave_with_pay" ||
                                               value === "leave_without_pay" ||
-                                              value === "absent"
+                                              value === "absent" ||
+                                              value === "no_work"
                                                 ? ""
                                                 : currentTimes.undertime || "",
                                             notes: currentTimes.notes ?? "",
@@ -1579,9 +1631,14 @@ export function BulkAddAttendanceDialog({
                                       <SelectItem value="leave_without_pay">
                                         Leave without pay
                                       </SelectItem>
-                                      <SelectItem value="no_work">
-                                        No work
-                                      </SelectItem>
+                                      {canUseNoWorkForDate(
+                                        dateInfo.timestamp,
+                                        employee,
+                                      ) && (
+                                        <SelectItem value="no_work">
+                                          No work
+                                        </SelectItem>
+                                      )}
                                     </SelectContent>
                                   </Select>
                                 </TableCell>
@@ -1797,6 +1854,7 @@ export function BulkAddAttendanceDialog({
                                           dayTimes.status === "leave" ||
                                           dayTimes.status === "leave_with_pay" ||
                                           dayTimes.status === "leave_without_pay" ||
+                                          dayTimes.status === "no_work" ||
                                           isSubmittingBulk
                                         }
                                         readOnly={!dayTimes.useManualOvertime}

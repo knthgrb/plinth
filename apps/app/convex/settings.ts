@@ -133,6 +133,7 @@ export const getSettings = query({
           taxDeductionFrequency: "twice_per_month",
           taxDeductOnPay: "first",
           holidayNoWorkNoPay: false,
+          absentBeforeHolidayNoHolidayPay: true,
         },
         attendanceSettings: {
           defaultLunchBreakMinutes: 60,
@@ -185,6 +186,7 @@ export const updatePayrollSettings = mutation({
         v.union(v.literal("first"), v.literal("second")),
       ),
       holidayNoWorkNoPay: v.optional(v.boolean()),
+      absentBeforeHolidayNoHolidayPay: v.optional(v.boolean()),
     }),
   },
   handler: async (ctx, args) => {

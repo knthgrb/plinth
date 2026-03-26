@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,7 @@ import {
 } from "@/utils/attendance-calculations";
 import { Loader2 } from "lucide-react";
 import { format } from "date-fns";
+import { holidayAppliesToEmployee } from "@/lib/payroll-calculations";
 
 interface EditAttendanceDialogProps {
   isOpen: boolean;
@@ -113,6 +114,34 @@ export function EditAttendanceDialog({
   const updateAttendanceMutation = useMutation(
     (api as any).attendance.updateAttendance,
   );
+  const holidays = useQuery(
+    (api as any).holidays.getHolidays,
+    record?.organizationId ? { organizationId: record.organizationId } : "skip",
+  );
+
+  const canUseNoWorkStatus = useMemo(() => {
+    if (!record?.date || !employee || !holidays) return false;
+    const target = new Date(record.date);
+    const targetY = target.getFullYear();
+    const targetM = target.getMonth();
+    const targetD = target.getDate();
+    return holidays.some((h: any) => {
+      const holidayTs = h.offsetDate ?? h.date;
+      const hd = new Date(holidayTs);
+      const yearMatches = h.isRecurring ? true : (h.year == null || h.year === targetY);
+      if (!yearMatches) return false;
+      const dayMatches = h.isRecurring
+        ? hd.getMonth() === targetM && hd.getDate() === targetD
+        : hd.getFullYear() === targetY &&
+          hd.getMonth() === targetM &&
+          hd.getDate() === targetD;
+      if (!dayMatches) return false;
+      return (
+        (h.type === "regular" || h.type === "special") &&
+        holidayAppliesToEmployee(h, employee)
+      );
+    });
+  }, [record?.date, employee, holidays]);
 
   // Re-sync from record whenever the dialog opens or record changes. Use employee's schedule for that date when available so wrong stored schedule (e.g. 9–6) is corrected.
   useEffect(() => {
@@ -148,6 +177,12 @@ export function EditAttendanceDialog({
       setUseManualUndertime(record.undertimeManualOverride === true);
     }
   }, [record, employee, isOpen]);
+
+  useEffect(() => {
+    if (editStatus === "no_work" && !canUseNoWorkStatus) {
+      setEditStatus("absent");
+    }
+  }, [editStatus, canUseNoWorkStatus]);
 
   const lunchStart = record?.lunchStart;
   const lunchEnd = record?.lunchEnd;
@@ -342,7 +377,9 @@ export function EditAttendanceDialog({
                     <SelectItem value="absent">Absent</SelectItem>
                     <SelectItem value="leave_with_pay">Leave with pay</SelectItem>
                     <SelectItem value="leave_without_pay">Leave without pay</SelectItem>
-                    <SelectItem value="no_work">No work</SelectItem>
+                    {canUseNoWorkStatus && (
+                      <SelectItem value="no_work">No work</SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -356,6 +393,7 @@ export function EditAttendanceDialog({
                       editStatus === "leave" ||
                       editStatus === "leave_with_pay" ||
                       editStatus === "leave_without_pay" ||
+                      editStatus === "no_work" ||
                       isUpdating
                     }
                     label="Time In"
@@ -377,6 +415,7 @@ export function EditAttendanceDialog({
                       editStatus === "leave" ||
                       editStatus === "leave_with_pay" ||
                       editStatus === "leave_without_pay" ||
+                      editStatus === "no_work" ||
                       isUpdating
                     }
                     label="Time Out"
@@ -509,6 +548,7 @@ export function EditAttendanceDialog({
                     editStatus === "leave" ||
                     editStatus === "leave_with_pay" ||
                     editStatus === "leave_without_pay" ||
+                    editStatus === "no_work" ||
                     isUpdating
                   }
                 />
