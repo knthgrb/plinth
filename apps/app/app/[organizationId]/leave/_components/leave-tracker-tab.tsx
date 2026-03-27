@@ -51,6 +51,13 @@ type TrackerEmployee = {
   };
 };
 
+type LeaveTypeSetting = {
+  type: string;
+  name: string;
+  defaultCredits: number;
+  isAnniversary?: boolean;
+};
+
 type ComputedRow = {
   employeeId: string;
   employee: TrackerEmployee;
@@ -75,6 +82,9 @@ interface LeaveTrackerTabProps {
   savedRows?: TrackerOverride[];
   /** Rows keyed by year; used when leaveTrackerByYear is available */
   savedRowsByYear?: Record<number, TrackerOverride[]>;
+  leaveTrackerMode?: "general" | "by_type";
+  enableAnniversaryLeave?: boolean;
+  leaveTypes?: LeaveTypeSetting[];
 }
 
 function roundToTwo(value: number) {
@@ -173,6 +183,9 @@ export function LeaveTrackerTab({
   grantLeaveUponRegularization = true,
   savedRows,
   savedRowsByYear,
+  leaveTrackerMode = "general",
+  enableAnniversaryLeave = true,
+  leaveTypes = [],
 }: LeaveTrackerTabProps) {
   const { toast } = useToast();
   const updateLeaveTracker = useMutation(api.settings.updateLeaveTracker);
@@ -202,23 +215,33 @@ export function LeaveTrackerTab({
   }, [employees]);
 
   const computedRows = useMemo(() => {
+    const configuredTypeCreditsTotal = leaveTypes
+      .filter((t) => !t.isAnniversary)
+      .reduce((sum, t) => sum + Number(t.defaultCredits || 0), 0);
     return sortedEmployees.map((employee): ComputedRow => {
       const employeeId = employee._id as string;
       const regularizationDate =
         employee?.employment?.regularizationDate ?? undefined;
+      const anniversaryStartDate = grantLeaveUponRegularization
+        ? regularizationDate ?? employee?.employment?.hireDate
+        : employee?.employment?.hireDate;
       const prorationStartDate = grantLeaveUponRegularization
         ? regularizationDate ?? employee?.employment?.hireDate
         : employee?.employment?.hireDate;
 
       const formulaAnnualSil = proratedLeave
         ? getProratedAnnualSil(
-            annualSil,
+            leaveTrackerMode === "by_type"
+              ? configuredTypeCreditsTotal
+              : annualSil,
             prorationStartDate,
             referenceDate,
           )
-        : annualSil;
+        : leaveTrackerMode === "by_type"
+          ? configuredTypeCreditsTotal
+          : annualSil;
       const anniversaryLeave = getCompletedYearsSince(
-        regularizationDate,
+        anniversaryStartDate,
         referenceDate,
       );
       // For current year use cumulative used; for past years with no saved data use 0
@@ -240,7 +263,7 @@ export function LeaveTrackerTab({
         employee,
         formulaAnnualSil,
         annualSilValue,
-        anniversaryLeave,
+        anniversaryLeave: enableAnniversaryLeave ? anniversaryLeave : 0,
         total: roundToTwo(annualSilValue + anniversaryLeave),
         monthlyAccrual: 0,
         accrued: 0,
@@ -251,7 +274,10 @@ export function LeaveTrackerTab({
   }, [
     annualSil,
     currentYear,
+    enableAnniversaryLeave,
     grantLeaveUponRegularization,
+    leaveTrackerMode,
+    leaveTypes,
     proratedLeave,
     referenceDate,
     savedRowsMap,
@@ -429,11 +455,16 @@ export function LeaveTrackerTab({
               Leave tracker formulas
             </p>
           <p className="text-xs text-[rgb(133,133,133)]">
-            Annual SIL defaults to {formatNumber(annualSil)} from settings.
+            {leaveTrackerMode === "by_type"
+              ? "Tracker mode: By leave type."
+              : `Annual SIL defaults to ${formatNumber(annualSil)} from settings.`}
             {proratedLeave
               ? " Proration is enabled and uses the 15th-day cutoff."
-              : ` Proration is disabled, so the full ${formatNumber(annualSil)} base is used.`}{" "}
-            Anniversary leave uses full years since regularization.
+              : ` Proration is disabled, so the full ${leaveTrackerMode === "by_type" ? "leave type total" : formatNumber(annualSil)} base is used.`}{" "}
+            Anniversary leave uses full years since{" "}
+            {grantLeaveUponRegularization
+              ? "regularization date (or hire date fallback)"
+              : "hire date"}.
           </p>
           <p className="text-xs text-[rgb(133,133,133)]">
             `Monthly Accrual = Total / 12`, `Accrued = Monthly Accrual x current

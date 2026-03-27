@@ -114,7 +114,7 @@ export default function LeavePage() {
   const isEmployee = isEmployeeExperienceUI;
   const isAdminOrHr =
     !isEmployeeExperienceUI &&
-    (user?.role === "admin" || user?.role === "hr");
+    (user?.role === "owner" || user?.role === "admin" || user?.role === "hr");
   const userEmployeeId =
     effectiveSelfEmployeeId ??
     user?.employeeId ??
@@ -782,6 +782,11 @@ export default function LeavePage() {
                   }
                   proratedLeave={settings?.proratedLeave ?? true}
                   annualSil={settings?.annualSil ?? 8}
+                  leaveTrackerMode={settings?.leaveTrackerMode ?? "general"}
+                  enableAnniversaryLeave={
+                    settings?.enableAnniversaryLeave ?? true
+                  }
+                  leaveTypes={settings?.leaveTypes ?? []}
                   grantLeaveUponRegularization={
                     settings?.grantLeaveUponRegularization ?? true
                   }

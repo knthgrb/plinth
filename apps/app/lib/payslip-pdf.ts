@@ -141,61 +141,133 @@ export function renderPayslipPdfBuffer(args: {
       year: "numeric",
     });
 
-    doc.fontSize(18).text(args.organizationName, { align: "center" });
-    doc.moveDown(0.25);
-    doc.fontSize(14).text("Payslip", { align: "center" });
+    const pageWidth =
+      doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const left = doc.page.margins.left;
+    const right = left + pageWidth;
+    const rowLineHeight = 15;
+    const tableColSplit = left + pageWidth * 0.67;
+
+    const drawRule = (y: number) => {
+      doc
+        .save()
+        .moveTo(left, y)
+        .lineTo(right, y)
+        .lineWidth(0.6)
+        .strokeColor("#E5E7EB")
+        .stroke()
+        .restore();
+    };
+    const drawSectionTitle = (title: string) => {
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(10)
+        .fillColor("#374151")
+        .text(title, left, doc.y);
+      doc.moveDown(0.2);
+      drawRule(doc.y);
+      doc.moveDown(0.35);
+    };
+    const drawLabelValue = (label: string, value: string, bold = false) => {
+      const y = doc.y;
+      doc
+        .font("Helvetica")
+        .fontSize(9.5)
+        .fillColor("#374151")
+        .text(label, left, y, { width: tableColSplit - left - 8 });
+      doc
+        .font(bold ? "Helvetica-Bold" : "Helvetica")
+        .fontSize(9.5)
+        .fillColor("#111827")
+        .text(value, tableColSplit, y, { width: right - tableColSplit, align: "right" });
+      doc.y = y + rowLineHeight;
+    };
+
+    doc.font("Helvetica-Bold").fontSize(18).fillColor("#111827").text("PAYSLIP", left, doc.y, {
+      width: pageWidth,
+      align: "center",
+    });
+    doc
+      .font("Helvetica")
+      .fontSize(10)
+      .fillColor("#4B5563")
+      .text(args.organizationName, left, doc.y + 2, { width: pageWidth, align: "center" });
     doc.moveDown(1);
 
-    doc.fontSize(10);
-    doc.text(
-      `Employee: ${args.employee.personalInfo.firstName} ${args.employee.personalInfo.lastName}`,
+    drawSectionTitle("Employee Information");
+    drawLabelValue(
+      "Employee",
+      `${args.employee.personalInfo.firstName} ${args.employee.personalInfo.lastName}`,
     );
-    doc.text(`Company ID: ${args.employee.employment.employeeId}`);
-    doc.text(`Department: ${args.employee.employment.department}`);
-    doc.text(`Position: ${args.employee.employment.position}`);
-    doc.text(`Pay period: ${period}`);
-    doc.text(`Cutoff: ${start} – ${end}`);
-    doc.text(`Days worked: ${daysWorked}   Absences: ${absences}`);
-    doc.moveDown(0.75);
+    drawLabelValue("Employee ID", args.employee.employment.employeeId || "N/A");
+    drawLabelValue("Department", args.employee.employment.department || "N/A");
+    drawLabelValue("Position", args.employee.employment.position || "N/A");
+    drawLabelValue("Pay period", period || "N/A");
+    drawLabelValue("Cutoff", `${start} - ${end}`);
+    drawLabelValue("Days worked", String(daysWorked));
+    drawLabelValue("Absences", String(absences));
+    doc.moveDown(0.3);
 
-    doc.fontSize(11).text("Earnings & adjustments", { underline: true });
-    doc.moveDown(0.35);
-    doc.fontSize(10);
+    drawSectionTitle("Earnings");
+    const earningRows: Array<{ label: string; amount: number }> = [];
     const basic = num(p.basicPay);
-    if (basic > 0) doc.text(`Basic pay: ${formatPeso(basic)}`);
+    if (basic > 0) earningRows.push({ label: "Basic pay", amount: basic });
     const allowance = num(p.nonTaxableAllowance);
-    if (allowance > 0) doc.text(`Non-taxable allowance: ${formatPeso(allowance)}`);
+    if (allowance > 0) {
+      earningRows.push({ label: "Non-taxable allowance", amount: allowance });
+    }
     const hp = num(p.holidayPay);
-    if (hp > 0) doc.text(`Holiday pay: ${formatPeso(hp)}`);
+    if (hp > 0) earningRows.push({ label: "Holiday pay", amount: hp });
     const rd = num(p.restDayPay);
-    if (rd > 0) doc.text(`Rest day pay: ${formatPeso(rd)}`);
+    if (rd > 0) earningRows.push({ label: "Rest day pay", amount: rd });
     const nd = num(p.nightDiffPay);
-    if (nd > 0) doc.text(`Night differential: ${formatPeso(nd)}`);
-    for (const k of [
+    if (nd > 0) earningRows.push({ label: "Night differential", amount: nd });
+    for (const [label, value] of [
       ["Overtime (regular)", p.overtimeRegular],
       ["Overtime (rest day)", p.overtimeRestDay],
       ["Overtime (legal holiday)", p.overtimeLegalHoliday],
       ["Overtime (special holiday)", p.overtimeSpecialHoliday],
     ] as const) {
-      const v = num(k[1]);
-      if (v > 0) doc.text(`${k[0]}: ${formatPeso(v)}`);
+      const n = num(value);
+      if (n > 0) earningRows.push({ label, amount: n });
     }
     for (const inc of incentives) {
-      if (inc.amount > 0)
-        doc.text(`${inc.name}: ${formatPeso(inc.amount)}`);
+      if (inc.amount > 0) earningRows.push({ label: inc.name, amount: inc.amount });
     }
     const adj = num(p.adjustments);
-    if (adj !== 0) doc.text(`Adjustments: ${formatPeso(adj)}`);
-    doc.moveDown(0.5);
-    doc.fontSize(11).text("Deductions", { underline: true });
-    doc.moveDown(0.35);
-    doc.fontSize(10);
-    for (const d of deductions) {
-      if (d.amount > 0) doc.text(`${d.name}: ${formatPeso(d.amount)}`);
-    }
+    if (adj !== 0) earningRows.push({ label: "Adjustments", amount: adj });
+    if (earningRows.length === 0) drawLabelValue("No earnings rows", formatPeso(0));
+    for (const row of earningRows) drawLabelValue(row.label, formatPeso(row.amount));
+    drawRule(doc.y);
+    doc.moveDown(0.2);
+    drawLabelValue("Gross pay", formatPeso(gross), true);
+    doc.moveDown(0.3);
+
+    drawSectionTitle("Deductions");
+    const deductionRows = deductions.filter((d) => d.amount > 0);
+    if (deductionRows.length === 0) drawLabelValue("No deductions", formatPeso(0));
+    for (const d of deductionRows) drawLabelValue(d.name, formatPeso(d.amount));
+    const deductionTotal = deductionRows.reduce((sum, d) => sum + d.amount, 0);
+    drawRule(doc.y);
+    doc.moveDown(0.2);
+    drawLabelValue("Total deductions", formatPeso(deductionTotal), true);
+
     doc.moveDown(0.75);
-    doc.fontSize(12).text(`Gross pay: ${formatPeso(gross)}`);
-    doc.text(`Net pay: ${formatPeso(net)}`, { continued: false });
+    drawRule(doc.y);
+    doc.moveDown(0.35);
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(12)
+      .fillColor("#111827")
+      .text("NET PAY", left, doc.y, { width: tableColSplit - left - 8 });
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(14)
+      .fillColor("#111827")
+      .text(formatPeso(net), tableColSplit, doc.y - 1, {
+        width: right - tableColSplit,
+        align: "right",
+      });
 
     doc.end();
   });

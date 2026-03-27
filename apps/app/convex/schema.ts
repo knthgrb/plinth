@@ -554,6 +554,7 @@ export default defineSchema({
     overtimeLegalHoliday: v.optional(v.union(v.number(), v.string())),
     overtimeLegalHolidayExcess: v.optional(v.union(v.number(), v.string())),
     pendingDeductions: v.optional(v.union(v.number(), v.string())),
+    noWorkNoPayDays: v.optional(v.union(v.number(), v.string())),
     hasWorkedAtLeastOneDay: v.optional(v.boolean()),
     /** Employer share of gov contributions (per cutoff) for accounting total. */
     employerContributions: v.optional(
@@ -923,6 +924,12 @@ export default defineSchema({
     ),
     // Prorated leave: when true, annual leave is prorated by months worked (e.g. new hires get (annual/12)*months)
     proratedLeave: v.optional(v.boolean()),
+    // Leave tracker mode: "general" uses Annual SIL base, "by_type" uses configured leave types sum.
+    leaveTrackerMode: v.optional(
+      v.union(v.literal("general"), v.literal("by_type")),
+    ),
+    // When true, anniversary leave is included in tracker totals.
+    enableAnniversaryLeave: v.optional(v.boolean()),
     // Max unused leave days convertible to cash (default 5)
     maxConvertibleLeaveDays: v.optional(v.number()),
     // Base annual SIL used by leave tracker formulas

@@ -21,6 +21,7 @@ import { approveLeaveRequest, rejectLeaveRequest } from "@/actions/leave";
 import { createDocument } from "@/actions/documents";
 import { generateUploadUrl } from "@/actions/files";
 import { TiptapViewer } from "@/components/tiptap-viewer";
+import { SignaturePad } from "@/components/signature-pad";
 import {
   downloadElementAsPdf,
   getElementPdfBlob,
@@ -70,6 +71,7 @@ export function ReviewLeaveDialog({
   const [reviewRemarks, setReviewRemarks] = useState("");
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isSavingToDocuments, setIsSavingToDocuments] = useState(false);
+  const [approverSignatureDataUrl, setApproverSignatureDataUrl] = useState("");
   const pdfContentRef = useRef<HTMLDivElement | null>(null);
 
   const approvalInfo = useQuery(
@@ -229,7 +231,7 @@ export function ReviewLeaveDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <div className="fixed left-[-9999px] top-0 z-[-1]">
           <div
             ref={pdfContentRef}
@@ -294,6 +296,19 @@ export function ReviewLeaveDialog({
                     <img
                       src={request.signatureDataUrl}
                       alt="Employee signature"
+                      className="h-24 w-auto max-w-full object-contain"
+                    />
+                  </div>
+                </div>
+              )}
+              {approverSignatureDataUrl && (
+                <div>
+                  <p className="mb-2 text-sm font-medium">Reviewer signature</p>
+                  <div className="rounded border border-[rgb(230,230,230)] bg-white p-4">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={approverSignatureDataUrl}
+                      alt="Reviewer signature"
                       className="h-24 w-auto max-w-full object-contain"
                     />
                   </div>
@@ -377,6 +392,13 @@ export function ReviewLeaveDialog({
                 placeholder={canApprove ? "Optional remarks (required for rejection)" : "Reason for rejection (required when rejecting)"}
               />
             </div>
+            <div className="space-y-2">
+              <Label>Reviewer signature</Label>
+              <SignaturePad
+                value={approverSignatureDataUrl}
+                onChange={setApproverSignatureDataUrl}
+              />
+            </div>
           </div>
         )}
         <DialogFooter>
@@ -427,7 +449,7 @@ export function ReviewLeaveDialog({
                 <X className="mr-2 h-4 w-4" />
                 Reject
               </Button>
-              <Button onClick={handleApprove} disabled={!canApprove} title={!canApprove ? blockReason : undefined}>
+              <Button onClick={handleApprove}>
                 <Check className="mr-2 h-4 w-4" />
                 Approve
               </Button>

@@ -1847,6 +1847,10 @@ export const createPayrollRun = mutation({
               : undefined,
           pendingDeductions:
             pendingDeductions > 0 ? round2(pendingDeductions) : undefined,
+          noWorkNoPayDays:
+            (payrollBase.noWorkNoPayDays ?? 0) > 0
+              ? payrollBase.noWorkNoPayDays
+              : undefined,
           hasWorkedAtLeastOneDay,
           employerContributions:
             Object.keys(employerContributions).length > 0
@@ -2585,6 +2589,10 @@ export const updatePayrollRun = mutation({
                 : undefined,
             pendingDeductions:
               pendingDeductions > 0 ? round2(pendingDeductions) : undefined,
+            noWorkNoPayDays:
+              (payrollBase.noWorkNoPayDays ?? 0) > 0
+                ? payrollBase.noWorkNoPayDays
+                : undefined,
             hasWorkedAtLeastOneDay,
             employerContributions:
               Object.keys(employerContributions).length > 0

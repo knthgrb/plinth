@@ -27,6 +27,7 @@ const NUMERIC_KEYS = [
   "overtimeLegalHoliday",
   "overtimeLegalHolidayExcess",
   "pendingDeductions",
+  "noWorkNoPayDays",
 ] as const;
 
 export function encryptPayslipRowForDb(

@@ -27,6 +27,8 @@ export function LeaveTypesSettingsContent() {
   const updateLeaveTypes = useMutation(api.settings.updateLeaveTypes);
 
   const [proratedLeave, setProratedLeave] = useState(true);
+  const [leaveTrackerMode, setLeaveTrackerMode] = useState<"general" | "by_type">("general");
+  const [enableAnniversaryLeave, setEnableAnniversaryLeave] = useState(true);
   const [annualSil, setAnnualSil] = useState("8");
   const [grantLeaveUponRegularization, setGrantLeaveUponRegularization] =
     useState(true);
@@ -36,6 +38,8 @@ export function LeaveTypesSettingsContent() {
 
   useEffect(() => {
     setProratedLeave(settings?.proratedLeave ?? true);
+    setLeaveTrackerMode(settings?.leaveTrackerMode ?? "general");
+    setEnableAnniversaryLeave(settings?.enableAnniversaryLeave ?? true);
     setAnnualSil(String(settings?.annualSil ?? 8));
     setGrantLeaveUponRegularization(
       settings?.grantLeaveUponRegularization ?? true,
@@ -75,6 +79,8 @@ export function LeaveTypesSettingsContent() {
       await updateLeaveTypes({
         organizationId: currentOrganizationId,
         proratedLeave,
+        leaveTrackerMode,
+        enableAnniversaryLeave,
         annualSil: parsedAnnualSil,
         grantLeaveUponRegularization,
         maxConvertibleLeaveDays: parsedMaxConvertible,
@@ -132,6 +138,60 @@ export function LeaveTypesSettingsContent() {
               Maximum unused leave days convertible to cash per year. Default is
               5.
             </p>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-[#DDDDDD] bg-[rgb(250,250,250)] p-4">
+          <div className="mb-3 text-sm font-medium text-[rgb(64,64,64)]">
+            Leave tracker mode
+          </div>
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => setLeaveTrackerMode("general")}
+              className={`flex w-full items-start gap-3 rounded-lg border p-3 text-left ${
+                leaveTrackerMode === "general"
+                  ? "border-brand-purple bg-brand-purple/5"
+                  : "border-[#DDDDDD] bg-white"
+              }`}
+            >
+              <div className="mt-0.5 h-4 w-4 shrink-0">
+                {leaveTrackerMode === "general" ? (
+                  <Check className="h-4 w-4 text-brand-purple" />
+                ) : null}
+              </div>
+              <div>
+                <p className="text-sm font-medium text-[rgb(64,64,64)]">
+                  General leave
+                </p>
+                <p className="text-xs text-[rgb(133,133,133)]">
+                  Uses Annual SIL as the base pool in leave tracker.
+                </p>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => setLeaveTrackerMode("by_type")}
+              className={`flex w-full items-start gap-3 rounded-lg border p-3 text-left ${
+                leaveTrackerMode === "by_type"
+                  ? "border-brand-purple bg-brand-purple/5"
+                  : "border-[#DDDDDD] bg-white"
+              }`}
+            >
+              <div className="mt-0.5 h-4 w-4 shrink-0">
+                {leaveTrackerMode === "by_type" ? (
+                  <Check className="h-4 w-4 text-brand-purple" />
+                ) : null}
+              </div>
+              <div>
+                <p className="text-sm font-medium text-[rgb(64,64,64)]">
+                  By leave type
+                </p>
+                <p className="text-xs text-[rgb(133,133,133)]">
+                  Uses configured leave types in tracker calculations.
+                </p>
+              </div>
+            </button>
           </div>
         </div>
 
@@ -245,9 +305,24 @@ export function LeaveTypesSettingsContent() {
           <p className="text-sm font-medium text-[rgb(64,64,64)]">
             Anniversary leave
           </p>
+          <div className="mt-3 flex items-start gap-3">
+            <Checkbox
+              id="enableAnniversaryLeave"
+              checked={enableAnniversaryLeave}
+              onCheckedChange={(checked) =>
+                setEnableAnniversaryLeave(checked as boolean)
+              }
+            />
+            <Label
+              htmlFor="enableAnniversaryLeave"
+              className="cursor-pointer text-sm"
+            >
+              Enable anniversary leave in tracker totals
+            </Label>
+          </div>
           <p className="mt-1 text-xs text-[rgb(133,133,133)]">
-            Anniversary leave in the tracker is based on the employee&apos;s
-            regularization date by default.
+            Anniversary leave uses the selected start rule (regularization or
+            hire date).
           </p>
         </div>
 

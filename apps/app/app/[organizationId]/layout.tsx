@@ -110,7 +110,8 @@ function OrganizationLayoutInner({
     !isLoggingOut &&
     !!switchingToOrganizationId &&
     currentOrganizationId !== null &&
-    user !== null;
+    user !== null &&
+    user !== undefined;
   const switchingOrg = isSwitching
     ? organizations.find((o) => o._id === switchingToOrganizationId)
     : null;

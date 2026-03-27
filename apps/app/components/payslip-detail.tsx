@@ -281,8 +281,16 @@ export function PayslipDetail({
   const noWorkDeductionFromAttendance = attendanceDeductions
     .filter((d: any) => String(d.name || "").toLowerCase().startsWith("no work"))
     .reduce((sum: number, d: any) => sum + (d.amount ?? 0), 0);
+  const hasNoWorkHolidayAttendanceLabel = attendanceDeductions.some((d: any) =>
+    String(d.name || "").toLowerCase().startsWith("no work on a holiday"),
+  );
+  const noWorkNoPayDays = Number(payslip.noWorkNoPayDays || 0);
   const lessPrimaryLabel =
-    noWorkDeductionFromAttendance > 0 ? "No work on a holiday" : "Absent";
+    noWorkDeductionFromAttendance > 0 ||
+    hasNoWorkHolidayAttendanceLabel ||
+    noWorkNoPayDays > 0
+      ? "No work on a holiday"
+      : "Absent";
   const holidayPayAmount = payslip.holidayPay ?? 0;
   const hasLegalHolidayOvertime = (payslip.overtimeLegalHoliday ?? 0) > 0;
   const hasSpecialHolidayOvertime = (payslip.overtimeSpecialHoliday ?? 0) > 0;

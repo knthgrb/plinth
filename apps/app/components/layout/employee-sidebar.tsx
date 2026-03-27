@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/utils/utils";
 import { useOrganization } from "@/hooks/organization-context";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import {
   getOrganizationPath,
   removeOrganizationId,
@@ -70,6 +72,14 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
     switchOrganization,
     isLoading: orgsLoading,
   } = useOrganization();
+  const user = useQuery(
+    (api as any).organizations.getCurrentUser,
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
+  );
+  const canCreateOrganization =
+    user?.role === "owner" || user?.role === "admin" || user?.role === "hr";
   const [orgPopoverOpen, setOrgPopoverOpen] = useState(false);
   const [isCreateOrgDialogOpen, setIsCreateOrgDialogOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
@@ -130,17 +140,23 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
                 Loading...
               </div>
             ) : organizations.length === 0 ? (
-              <Button
-                variant="ghost"
-                className="w-full justify-start h-8 text-xs"
-                onClick={() => {
-                  setOrgPopoverOpen(false);
-                  setIsCreateOrgDialogOpen(true);
-                }}
-              >
-                <Plus className="h-3 w-3 mr-2" />
-                Create Organization
-              </Button>
+              canCreateOrganization ? (
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start h-8 text-xs"
+                  onClick={() => {
+                    setOrgPopoverOpen(false);
+                    setIsCreateOrgDialogOpen(true);
+                  }}
+                >
+                  <Plus className="h-3 w-3 mr-2" />
+                  Create Organization
+                </Button>
+              ) : (
+                <div className="px-3 py-4 text-center text-xs text-[rgb(133,133,133)]">
+                  No organizations available
+                </div>
+              )
             ) : (
               <>
                 <div className="max-h-[280px] overflow-y-auto space-y-0.5">
@@ -178,19 +194,21 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
                     );
                   })}
                 </div>
-                <div className="border-t border-[#DDDDDD] pt-1 mt-1">
-                  <Button
-                    variant="ghost"
-                    className="w-full justify-start h-8 text-xs"
-                    onClick={() => {
-                      setOrgPopoverOpen(false);
-                      setIsCreateOrgDialogOpen(true);
-                    }}
-                  >
-                    <Plus className="h-3 w-3 mr-2" />
-                    Create Organization
-                  </Button>
-                </div>
+                {canCreateOrganization && (
+                  <div className="border-t border-[#DDDDDD] pt-1 mt-1">
+                    <Button
+                      variant="ghost"
+                      className="w-full justify-start h-8 text-xs"
+                      onClick={() => {
+                        setOrgPopoverOpen(false);
+                        setIsCreateOrgDialogOpen(true);
+                      }}
+                    >
+                      <Plus className="h-3 w-3 mr-2" />
+                      Create Organization
+                    </Button>
+                  </div>
+                )}
               </>
             )}
           </PopoverContent>

@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useQuery } from "convex/react";
 import { useOrganization } from "@/hooks/organization-context";
+import { api } from "@/convex/_generated/api";
 import {
   Select,
   SelectContent,
@@ -25,7 +27,16 @@ export function OrganizationSwitcher({ disabled = false }: OrganizationSwitcherP
     currentOrganization,
     switchOrganization,
     isLoading,
+    effectiveOrganizationId,
   } = useOrganization();
+  const user = useQuery(
+    (api as any).organizations.getCurrentUser,
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
+  );
+  const canCreateOrganization =
+    user?.role === "owner" || user?.role === "admin" || user?.role === "hr";
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isSelectOpen, setIsSelectOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
@@ -63,14 +74,18 @@ export function OrganizationSwitcher({ disabled = false }: OrganizationSwitcherP
     return (
       <>
         <div className="px-3 py-2">
-          <Button
-            variant="outline"
-            className="w-full justify-start h-8 text-xs"
-            onClick={() => setIsCreateDialogOpen(true)}
-          >
-            <Plus className="h-3 w-3 mr-2" />
-            Create Organization
-          </Button>
+          {canCreateOrganization ? (
+            <Button
+              variant="outline"
+              className="w-full justify-start h-8 text-xs"
+              onClick={() => setIsCreateDialogOpen(true)}
+            >
+              <Plus className="h-3 w-3 mr-2" />
+              Create Organization
+            </Button>
+          ) : (
+            <div className="text-xs text-gray-500">No organizations available</div>
+          )}
         </div>
         {isMounted && (
           <CreateOrganizationDialog
@@ -149,20 +164,22 @@ export function OrganizationSwitcher({ disabled = false }: OrganizationSwitcherP
                 </SelectItem>
               );
             })}
-            <div className="border-t pt-1 mt-1">
-              <Button
-                variant="ghost"
-                className="w-full justify-start h-8 text-xs"
-                onClick={(e) => {
-                  e.preventDefault();
-                  setIsSelectOpen(false);
-                  setIsCreateDialogOpen(true);
-                }}
-              >
-                <Plus className="h-3 w-3 mr-2" />
-                Create Organization
-              </Button>
-            </div>
+            {canCreateOrganization && (
+              <div className="border-t pt-1 mt-1">
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start h-8 text-xs"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setIsSelectOpen(false);
+                    setIsCreateDialogOpen(true);
+                  }}
+                >
+                  <Plus className="h-3 w-3 mr-2" />
+                  Create Organization
+                </Button>
+              </div>
+            )}
           </SelectContent>
         </Select>
       </div>

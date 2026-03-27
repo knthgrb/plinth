@@ -218,6 +218,8 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     typeof announcementsUnreadCount === "number" ? announcementsUnreadCount : 0;
   const isSidebarLoading =
     orgsLoading || user === undefined || !effectiveOrganizationId;
+  const canCreateOrganization =
+    user?.role === "owner" || user?.role === "admin" || user?.role === "hr";
   const { isEmployeeExperienceUI } = useEmployeeView();
 
   // Filter navigation items based on user role (uses role-access effectiveRole)
@@ -539,17 +541,23 @@ export function Sidebar({ onNavigate }: SidebarProps) {
                 Loading...
               </div>
             ) : organizations.length === 0 ? (
-              <Button
-                variant="ghost"
-                className="w-full justify-start h-8 text-xs"
-                onClick={() => {
-                  setOrgPopoverOpen(false);
-                  setIsCreateOrgDialogOpen(true);
-                }}
-              >
-                <Plus className="h-3 w-3 mr-2" />
-                Create Organization
-              </Button>
+              canCreateOrganization ? (
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start h-8 text-xs"
+                  onClick={() => {
+                    setOrgPopoverOpen(false);
+                    setIsCreateOrgDialogOpen(true);
+                  }}
+                >
+                  <Plus className="h-3 w-3 mr-2" />
+                  Create Organization
+                </Button>
+              ) : (
+                <div className="px-3 py-4 text-center text-xs text-[rgb(133,133,133)]">
+                  No organizations available
+                </div>
+              )
             ) : (
               <>
                 <div className="max-h-[280px] overflow-y-auto space-y-0.5">
@@ -587,19 +595,21 @@ export function Sidebar({ onNavigate }: SidebarProps) {
                     );
                   })}
                 </div>
-                <div className="border-t border-[#DDDDDD] pt-1 mt-1">
-                  <Button
-                    variant="ghost"
-                    className="w-full justify-start h-8 text-xs"
-                    onClick={() => {
-                      setOrgPopoverOpen(false);
-                      setIsCreateOrgDialogOpen(true);
-                    }}
-                  >
-                    <Plus className="h-3 w-3 mr-2" />
-                    Create Organization
-                  </Button>
-                </div>
+                {canCreateOrganization && (
+                  <div className="border-t border-[#DDDDDD] pt-1 mt-1">
+                    <Button
+                      variant="ghost"
+                      className="w-full justify-start h-8 text-xs"
+                      onClick={() => {
+                        setOrgPopoverOpen(false);
+                        setIsCreateOrgDialogOpen(true);
+                      }}
+                    >
+                      <Plus className="h-3 w-3 mr-2" />
+                      Create Organization
+                    </Button>
+                  </div>
+                )}
               </>
             )}
           </PopoverContent>

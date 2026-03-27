@@ -116,6 +116,8 @@ export const getSettings = query({
         _id: null,
         organizationId: args.organizationId,
         proratedLeave: true,
+        leaveTrackerMode: "general",
+        enableAnniversaryLeave: true,
         annualSil: 8,
         grantLeaveUponRegularization: true,
         maxConvertibleLeaveDays: 5,
@@ -268,6 +270,10 @@ export const updateLeaveTypes = mutation({
   args: {
     organizationId: v.id("organizations"),
     proratedLeave: v.optional(v.boolean()),
+    leaveTrackerMode: v.optional(
+      v.union(v.literal("general"), v.literal("by_type")),
+    ),
+    enableAnniversaryLeave: v.optional(v.boolean()),
     annualSil: v.optional(v.number()),
     grantLeaveUponRegularization: v.optional(v.boolean()),
     leaveRequestFormTemplate: v.optional(v.string()),
@@ -287,6 +293,12 @@ export const updateLeaveTypes = mutation({
     if (args.proratedLeave !== undefined) {
       patch.proratedLeave = args.proratedLeave;
     }
+    if (args.leaveTrackerMode !== undefined) {
+      patch.leaveTrackerMode = args.leaveTrackerMode;
+    }
+    if (args.enableAnniversaryLeave !== undefined) {
+      patch.enableAnniversaryLeave = args.enableAnniversaryLeave;
+    }
     if (args.annualSil !== undefined) {
       patch.annualSil = args.annualSil;
     }
@@ -304,6 +316,8 @@ export const updateLeaveTypes = mutation({
       await ctx.db.insert("settings", {
         organizationId: args.organizationId,
         proratedLeave: args.proratedLeave ?? true,
+        leaveTrackerMode: args.leaveTrackerMode ?? "general",
+        enableAnniversaryLeave: args.enableAnniversaryLeave ?? true,
         annualSil: args.annualSil ?? 8,
         grantLeaveUponRegularization: args.grantLeaveUponRegularization ?? true,
         leaveRequestFormTemplate: args.leaveRequestFormTemplate,
