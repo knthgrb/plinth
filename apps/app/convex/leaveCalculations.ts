@@ -137,6 +137,73 @@ export function getConvertibleLeaveDays(
 }
 
 /**
+ * Leave requests in "general" tracker mode use this customLeaveType value (leaveType: "custom").
+ * Credits deduct from vacation balance first, then sick.
+ */
+export const GENERAL_LEAVE_CREDIT_KEY = "__plinth_general_leave__";
+
+function roundToTwo(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+/** Same 15th-day accrual month rule as the leave tracker UI. */
+export function getAccrualStartMonthForTracker(startDate: number) {
+  const date = new Date(startDate);
+  const month = date.getMonth() + 1;
+  return date.getDate() <= 15 ? month : month + 1;
+}
+
+/**
+ * Prorate annual SIL / per-type max like the org leave tracker (year boundary + 15th cutoff).
+ */
+export function getProratedAnnualSilTracker(
+  annualSil: number,
+  startDate: number | undefined,
+  referenceDate: number,
+) {
+  if (!startDate) return annualSil;
+
+  const start = new Date(startDate);
+  const reference = new Date(referenceDate);
+
+  if (start.getFullYear() < reference.getFullYear()) {
+    return annualSil;
+  }
+  if (start.getFullYear() > reference.getFullYear()) {
+    return 0;
+  }
+
+  const accrualStartMonth = getAccrualStartMonthForTracker(startDate);
+  if (accrualStartMonth > 12) {
+    return 0;
+  }
+
+  const monthsRemaining = 13 - accrualStartMonth;
+  return roundToTwo((annualSil / 12) * monthsRemaining);
+}
+
+/** Full calendar years since start (same as leave tracker anniversary column). */
+export function getCompletedCalendarYearsSince(
+  startDate: number | undefined,
+  referenceDate: number,
+) {
+  if (!startDate) return 0;
+
+  const start = new Date(startDate);
+  const end = new Date(referenceDate);
+  let years = end.getFullYear() - start.getFullYear();
+
+  const monthDiff = end.getMonth() - start.getMonth();
+  const dayDiff = end.getDate() - start.getDate();
+
+  if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
+    years -= 1;
+  }
+
+  return Math.max(0, years);
+}
+
+/**
  * Calculate total leave entitlement including proration and anniversary leave.
  * When grantLeaveUponRegularization is true, proration is based on months since
  * regularization date (or hire date if no regularization date). Otherwise proration

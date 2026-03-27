@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import {
   Dialog,
@@ -29,6 +29,7 @@ import {
   DEFAULT_LEAVE_REQUEST_TEMPLATE,
   fillLeaveRequestTemplate,
 } from "@/components/leave/leave-request-template";
+import { GENERAL_LEAVE_CREDIT_KEY } from "@/lib/leave-constants";
 
 function workingDaysBetween(startDate: Date, endDate: Date): number {
   let days = 0;
@@ -45,30 +46,53 @@ type LeaveCreditsData = {
   vacation?: { balance?: number };
   sick?: { balance?: number };
   custom?: Array<{ type: string; balance?: number }>;
+  generalLeave?: { available?: number };
 };
 
-function getBalanceForType(
+function resolveAvailableBalance(
   leaveCredits: LeaveCreditsData | null | undefined,
-  type: string,
+  leaveTypeKey: string,
+  leaveTrackerMode: "general" | "by_type",
 ): number | null {
   if (!leaveCredits) return 0;
-  if (type === "vacation") return leaveCredits.vacation?.balance ?? 0;
-  if (type === "sick") return leaveCredits.sick?.balance ?? 0;
-  if (["maternity", "paternity", "emergency", "custom"].includes(type)) {
+  if (leaveTrackerMode === "general") {
+    if (leaveTypeKey === GENERAL_LEAVE_CREDIT_KEY) {
+      return leaveCredits.generalLeave?.available ?? 0;
+    }
     return null;
   }
-  const custom = leaveCredits.custom?.find((c) => c.type === type);
+  if (leaveTypeKey === "vacation") return leaveCredits.vacation?.balance ?? 0;
+  if (leaveTypeKey === "sick") return leaveCredits.sick?.balance ?? 0;
+  if (["maternity", "paternity", "emergency"].includes(leaveTypeKey)) {
+    return null;
+  }
+  const custom = leaveCredits.custom?.find((c) => c.type === leaveTypeKey);
   return custom?.balance ?? 0;
 }
 
-const LEAVE_REQUEST_OPTIONS = [
-  { value: "sick", label: "Sick Leave" },
-  { value: "vacation", label: "Vacation Leave" },
-  { value: "maternity", label: "Maternity Leave" },
-  { value: "paternity", label: "Parental Leave" },
-  { value: "emergency", label: "Emergency Leave" },
-  { value: "custom", label: "Others" },
-] as const;
+function toApiLeavePayload(leaveTypeKey: string): {
+  leaveType:
+    | "vacation"
+    | "sick"
+    | "emergency"
+    | "maternity"
+    | "paternity"
+    | "custom";
+  customLeaveType?: string;
+} {
+  if (leaveTypeKey === GENERAL_LEAVE_CREDIT_KEY) {
+    return {
+      leaveType: "custom",
+      customLeaveType: GENERAL_LEAVE_CREDIT_KEY,
+    };
+  }
+  if (leaveTypeKey === "vacation") return { leaveType: "vacation" };
+  if (leaveTypeKey === "sick") return { leaveType: "sick" };
+  if (leaveTypeKey === "emergency") return { leaveType: "emergency" };
+  if (leaveTypeKey === "maternity") return { leaveType: "maternity" };
+  if (leaveTypeKey === "paternity") return { leaveType: "paternity" };
+  return { leaveType: "custom", customLeaveType: leaveTypeKey };
+}
 
 type RequestingEmployee = {
   personalInfo?: {
@@ -81,6 +105,8 @@ type RequestingEmployee = {
   };
 };
 
+type ConfiguredLeaveType = { type: string; name: string };
+
 interface RequestLeaveDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
@@ -90,6 +116,8 @@ interface RequestLeaveDialogProps {
   employee?: RequestingEmployee | null;
   leaveRequestFormTemplate?: string;
   onSuccess?: () => void;
+  leaveTrackerMode?: "general" | "by_type";
+  configuredLeaveTypes?: ConfiguredLeaveType[];
 }
 
 export function RequestLeaveDialog({
@@ -101,18 +129,38 @@ export function RequestLeaveDialog({
   employee,
   leaveRequestFormTemplate,
   onSuccess,
+  leaveTrackerMode = "general",
+  configuredLeaveTypes = [],
 }: RequestLeaveDialogProps) {
   const { toast } = useToast();
   const [formData, setFormData] = useState({
-    selectedType: "sick",
-    customLeaveType: "",
+    leaveTypeKey: GENERAL_LEAVE_CREDIT_KEY,
     startDate: "",
     endDate: "",
     reason: "",
   });
   const [signatureDataUrl, setSignatureDataUrl] = useState("");
 
-  const availableBalance = getBalanceForType(leaveCredits, formData.selectedType);
+  useEffect(() => {
+    if (!isOpen) return;
+    const firstByType = configuredLeaveTypes[0]?.type;
+    setFormData({
+      leaveTypeKey:
+        leaveTrackerMode === "by_type" && firstByType
+          ? firstByType
+          : GENERAL_LEAVE_CREDIT_KEY,
+      startDate: "",
+      endDate: "",
+      reason: "",
+    });
+    setSignatureDataUrl("");
+  }, [isOpen, leaveTrackerMode, configuredLeaveTypes]);
+
+  const availableBalance = resolveAvailableBalance(
+    leaveCredits,
+    formData.leaveTypeKey,
+    leaveTrackerMode,
+  );
   const requestedDays =
     formData.startDate && formData.endDate
       ? workingDaysBetween(
@@ -130,9 +178,16 @@ export function RequestLeaveDialog({
     availableBalance != null &&
     requestedDays > availableBalance;
 
-  const leaveTypeLabel =
-    LEAVE_REQUEST_OPTIONS.find((option) => option.value === formData.selectedType)
-      ?.label ?? "Leave";
+  const leaveTypeLabel = useMemo(() => {
+    if (leaveTrackerMode === "general") {
+      return "Annual leave";
+    }
+    const lt = configuredLeaveTypes.find(
+      (t) => t.type === formData.leaveTypeKey,
+    );
+    return lt?.name ?? "Leave";
+  }, [leaveTrackerMode, configuredLeaveTypes, formData.leaveTypeKey]);
+
   const employeeName =
     `${employee?.personalInfo?.firstName ?? ""} ${employee?.personalInfo?.lastName ?? ""}`.trim() ||
     "Employee";
@@ -143,10 +198,7 @@ export function RequestLeaveDialog({
       "{{department}}": employee?.employment?.department ?? "—",
       "{{position}}": employee?.employment?.position ?? "—",
       "{{dateRequested}}": format(new Date(), "MM/dd/yyyy"),
-      "{{leaveType}}":
-        formData.selectedType === "custom"
-          ? formData.customLeaveType || "Others"
-          : leaveTypeLabel,
+      "{{leaveType}}": leaveTypeLabel,
       "{{startDate}}": formData.startDate
         ? format(new Date(formData.startDate), "MM/dd/yyyy")
         : "—",
@@ -163,21 +215,17 @@ export function RequestLeaveDialog({
     onOpenChange(false);
   };
 
+  const byTypeNotConfigured =
+    leaveTrackerMode === "by_type" && configuredLeaveTypes.length === 0;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!organizationId || !employeeId) return;
-    if (!formData.selectedType) {
+    if (byTypeNotConfigured) {
       toast({
-        title: "Error",
-        description: "Please select a leave type",
-        variant: "destructive",
-      });
-      return;
-    }
-    if (formData.selectedType === "custom" && !formData.customLeaveType.trim()) {
-      toast({
-        title: "Error",
-        description: "Please specify the leave type",
+        title: "No leave types configured",
+        description:
+          "Ask HR to add leave types in organization settings before filing.",
         variant: "destructive",
       });
       return;
@@ -199,21 +247,14 @@ export function RequestLeaveDialog({
       return;
     }
 
-    const leaveType = formData.selectedType as
-      | "vacation"
-      | "sick"
-      | "emergency"
-      | "maternity"
-      | "paternity"
-      | "custom";
+    const payload = toApiLeavePayload(formData.leaveTypeKey);
 
     try {
       await createLeaveRequest({
         organizationId,
         employeeId,
-        leaveType,
-        customLeaveType:
-          leaveType === "custom" ? formData.customLeaveType.trim() : undefined,
+        leaveType: payload.leaveType,
+        customLeaveType: payload.customLeaveType,
         startDate: new Date(formData.startDate).getTime(),
         endDate: new Date(formData.endDate).getTime(),
         reason: formData.reason,
@@ -223,14 +264,6 @@ export function RequestLeaveDialog({
         signatureDataUrl,
       });
       onOpenChange(false);
-      setFormData({
-        selectedType: "sick",
-        customLeaveType: "",
-        startDate: "",
-        endDate: "",
-        reason: "",
-      });
-      setSignatureDataUrl("");
       toast({
         title: "Success",
         description: "Leave request submitted successfully",
@@ -260,50 +293,51 @@ export function RequestLeaveDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="grid gap-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="leaveType">
-                Leave Type <span className="text-red-500">*</span>
-              </Label>
-              <Select
-                value={formData.selectedType}
-                onValueChange={(value) =>
-                  setFormData({
-                    ...formData,
-                    selectedType: value,
-                    customLeaveType:
-                      value === "custom" ? formData.customLeaveType : "",
-                  })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select leave type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {LEAVE_REQUEST_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {formData.selectedType === "custom" && (
-                <Input
-                  value={formData.customLeaveType}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      customLeaveType: e.target.value,
-                    })
-                  }
-                  placeholder="Specify other leave type"
-                />
-              )}
-              {availableBalance != null && formData.selectedType && (
-                <p className="text-xs text-muted-foreground">
-                  Available: {availableBalance} days
-                </p>
-              )}
-            </div>
+            {leaveTrackerMode === "general" ? (
+              <div className="rounded-lg border border-[rgb(230,230,230)] bg-[rgb(250,250,250)] px-3 py-2 text-sm text-[rgb(100,100,100)]">
+                Leave type: <span className="font-medium text-[rgb(64,64,64)]">Annual leave (SIL pool)</span>
+                {availableBalance != null && (
+                  <span className="block text-xs mt-1 text-muted-foreground">
+                    Available: {availableBalance} days (incl. anniversary when
+                    enabled)
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="leaveType">
+                  Leave type <span className="text-red-500">*</span>
+                </Label>
+                {byTypeNotConfigured ? (
+                  <p className="text-sm text-destructive">
+                    No leave types are configured for this organization.
+                  </p>
+                ) : (
+                  <Select
+                    value={formData.leaveTypeKey}
+                    onValueChange={(value) =>
+                      setFormData({ ...formData, leaveTypeKey: value })
+                    }
+                  >
+                    <SelectTrigger id="leaveType">
+                      <SelectValue placeholder="Select leave type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {configuredLeaveTypes.map((lt) => (
+                        <SelectItem key={lt.type} value={lt.type}>
+                          {lt.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                {availableBalance != null && !byTypeNotConfigured && (
+                  <p className="text-xs text-muted-foreground">
+                    Available: {availableBalance} days
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -387,7 +421,11 @@ export function RequestLeaveDialog({
             </Button>
             <Button
               type="submit"
-              disabled={insufficientCredits || requestedDays <= 0}
+              disabled={
+                insufficientCredits ||
+                requestedDays <= 0 ||
+                byTypeNotConfigured
+              }
             >
               Submit Request
             </Button>

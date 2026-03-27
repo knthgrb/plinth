@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
-import { Check, FilePenLine, Info } from "lucide-react";
+import { Check, FilePenLine, Info, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,21 @@ import { useOrganization } from "@/hooks/organization-context";
 import { useSettingsModal } from "@/hooks/settings-modal-context";
 import { useToast } from "@/components/ui/use-toast";
 import { getOrganizationPath } from "@/utils/organization-routing";
+
+type TrackerTypeRow = {
+  typeKey: string;
+  name: string;
+  maxDays: string;
+};
+
+function slugifyLeaveType(name: string, index: number) {
+  const base = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "");
+  return base || `leave_type_${index + 1}`;
+}
 
 export function LeaveTypesSettingsContent() {
   const router = useRouter();
@@ -34,6 +49,9 @@ export function LeaveTypesSettingsContent() {
     useState(true);
   const [maxConvertibleLeaveDays, setMaxConvertibleLeaveDays] =
     useState("5");
+  const [trackerTypeRows, setTrackerTypeRows] = useState<TrackerTypeRow[]>(
+    [],
+  );
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -47,18 +65,49 @@ export function LeaveTypesSettingsContent() {
     setMaxConvertibleLeaveDays(
       String(settings?.maxConvertibleLeaveDays ?? 5),
     );
+    const work = (settings?.leaveTypes ?? []).filter((t) => !t.isAnniversary);
+    if (work.length > 0) {
+      setTrackerTypeRows(
+        work.map((t) => ({
+          typeKey: t.type,
+          name: t.name,
+          maxDays: String(t.defaultCredits ?? 0),
+        })),
+      );
+    } else if ((settings?.leaveTrackerMode ?? "general") === "by_type") {
+      setTrackerTypeRows([
+        { typeKey: "", name: "", maxDays: "5" },
+      ]);
+    } else {
+      setTrackerTypeRows([]);
+    }
   }, [settings]);
+
+  const setLeaveTrackerModeWithDefaultRows = (
+    mode: "general" | "by_type",
+  ) => {
+    setLeaveTrackerMode(mode);
+    if (mode === "by_type") {
+      setTrackerTypeRows((rows) =>
+        rows.length > 0
+          ? rows
+          : [{ typeKey: "", name: "", maxDays: "5" }],
+      );
+    }
+  };
 
   const handleSave = async () => {
     if (!currentOrganizationId) return;
     const parsedAnnualSil = Number(annualSil);
-    if (!Number.isFinite(parsedAnnualSil) || parsedAnnualSil < 0) {
-      toast({
-        title: "Error",
-        description: "Annual SIL must be a valid non-negative number.",
-        variant: "destructive",
-      });
-      return;
+    if (leaveTrackerMode === "general") {
+      if (!Number.isFinite(parsedAnnualSil) || parsedAnnualSil < 0) {
+        toast({
+          title: "Error",
+          description: "Annual SIL must be a valid non-negative number.",
+          variant: "destructive",
+        });
+        return;
+      }
     }
     const parsedMaxConvertible = Number(maxConvertibleLeaveDays);
     if (
@@ -74,6 +123,37 @@ export function LeaveTypesSettingsContent() {
       });
       return;
     }
+
+    const annivPreserved = (settings?.leaveTypes ?? []).filter(
+      (t) => t.isAnniversary,
+    );
+    const workPayload =
+      leaveTrackerMode === "by_type"
+        ? trackerTypeRows
+            .filter(
+              (r) =>
+                r.name.trim().length > 0 ||
+                (Number.isFinite(Number(r.maxDays)) && Number(r.maxDays) > 0),
+            )
+            .map((r, idx) => ({
+              type: r.typeKey.trim() || slugifyLeaveType(r.name, idx),
+              name: r.name.trim() || `Leave ${idx + 1}`,
+              defaultCredits: Math.max(0, Number(r.maxDays) || 0),
+              isPaid: true as const,
+              requiresApproval: true as const,
+            }))
+        : [];
+
+    if (leaveTrackerMode === "by_type" && workPayload.length === 0) {
+      toast({
+        title: "Error",
+        description:
+          "Add at least one leave type with a name or a positive max days value.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsSaving(true);
     try {
       await updateLeaveTypes({
@@ -81,9 +161,15 @@ export function LeaveTypesSettingsContent() {
         proratedLeave,
         leaveTrackerMode,
         enableAnniversaryLeave,
-        annualSil: parsedAnnualSil,
+        annualSil:
+          leaveTrackerMode === "general"
+            ? parsedAnnualSil
+            : (settings?.annualSil ?? 8),
         grantLeaveUponRegularization,
         maxConvertibleLeaveDays: parsedMaxConvertible,
+        ...(leaveTrackerMode === "by_type"
+          ? { leaveTypes: [...workPayload, ...annivPreserved] }
+          : {}),
       });
       toast({
         title: "Success",
@@ -148,7 +234,7 @@ export function LeaveTypesSettingsContent() {
           <div className="space-y-2">
             <button
               type="button"
-              onClick={() => setLeaveTrackerMode("general")}
+              onClick={() => setLeaveTrackerModeWithDefaultRows("general")}
               className={`flex w-full items-start gap-3 rounded-lg border p-3 text-left ${
                 leaveTrackerMode === "general"
                   ? "border-brand-purple bg-brand-purple/5"
@@ -171,7 +257,7 @@ export function LeaveTypesSettingsContent() {
             </button>
             <button
               type="button"
-              onClick={() => setLeaveTrackerMode("by_type")}
+              onClick={() => setLeaveTrackerModeWithDefaultRows("by_type")}
               className={`flex w-full items-start gap-3 rounded-lg border p-3 text-left ${
                 leaveTrackerMode === "by_type"
                   ? "border-brand-purple bg-brand-purple/5"
@@ -193,29 +279,138 @@ export function LeaveTypesSettingsContent() {
               </div>
             </button>
           </div>
-        </div>
-
-        <div className="rounded-lg border border-[#DDDDDD] bg-[rgb(250,250,250)] p-4">
-          <div className="space-y-2">
-            <Label
-              htmlFor="annualSil"
-              className="text-sm font-medium text-[rgb(64,64,64)]"
-            >
-              Annual SIL
-            </Label>
-            <Input
-              id="annualSil"
-              value={annualSil}
-              onChange={(event) => setAnnualSil(event.target.value)}
-              inputMode="decimal"
-              className="max-w-[220px] bg-white"
+          <div className="mt-4 flex items-start gap-3 border-t border-[#DDDDDD] pt-4">
+            <Checkbox
+              id="enableAnniversaryLeave"
+              checked={enableAnniversaryLeave}
+              onCheckedChange={(checked) =>
+                setEnableAnniversaryLeave(checked as boolean)
+              }
             />
-            <p className="text-xs text-[rgb(133,133,133)]">
-              Base SIL used by the leave tracker before proration. Default is
-              `8.00`.
-            </p>
+            <div className="space-y-1">
+              <Label
+                htmlFor="enableAnniversaryLeave"
+                className="cursor-pointer text-sm font-medium text-[rgb(64,64,64)]"
+              >
+                Enable anniversary leave in tracker totals
+              </Label>
+              <p className="text-xs text-[rgb(133,133,133)]">
+                Anniversary leave uses the start rule you set below (date of
+                regularization or date hired).
+              </p>
+            </div>
           </div>
         </div>
+
+        {leaveTrackerMode === "general" ? (
+          <div className="rounded-lg border border-[#DDDDDD] bg-[rgb(250,250,250)] p-4">
+            <div className="space-y-2">
+              <Label
+                htmlFor="annualSil"
+                className="text-sm font-medium text-[rgb(64,64,64)]"
+              >
+                Annual SIL
+              </Label>
+              <Input
+                id="annualSil"
+                value={annualSil}
+                onChange={(event) => setAnnualSil(event.target.value)}
+                inputMode="decimal"
+                className="max-w-[220px] bg-white"
+              />
+              <p className="text-xs text-[rgb(133,133,133)]">
+                Base SIL used by the leave tracker before proration. Default is
+                `8.00`.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-[#DDDDDD] bg-[rgb(250,250,250)] p-4">
+            <div className="mb-3 text-sm font-medium text-[rgb(64,64,64)]">
+              Leave types (max days per year)
+            </div>
+            <p className="mb-3 text-xs text-[rgb(133,133,133)]">
+              Each type is tracked separately in the leave tracker. When
+              proration is on, each type&apos;s max is prorated from the same
+              employee start date.
+            </p>
+            <div className="space-y-3">
+              {trackerTypeRows.map((row, index) => (
+                <div
+                  key={index}
+                  className="flex flex-col gap-2 rounded-md border border-[rgb(230,230,230)] bg-white p-3 sm:flex-row sm:items-end"
+                >
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <Label className="text-xs text-[rgb(100,100,100)]">
+                      Name
+                    </Label>
+                    <Input
+                      value={row.name}
+                      onChange={(event) => {
+                        const name = event.target.value;
+                        setTrackerTypeRows((rows) =>
+                          rows.map((r, i) =>
+                            i === index ? { ...r, name } : r,
+                          ),
+                        );
+                      }}
+                      placeholder="e.g. Vacation"
+                      className="bg-white"
+                    />
+                  </div>
+                  <div className="w-full space-y-1 sm:w-32">
+                    <Label className="text-xs text-[rgb(100,100,100)]">
+                      Max days
+                    </Label>
+                    <Input
+                      value={row.maxDays}
+                      onChange={(event) => {
+                        const maxDays = event.target.value;
+                        setTrackerTypeRows((rows) =>
+                          rows.map((r, i) =>
+                            i === index ? { ...r, maxDays } : r,
+                          ),
+                        );
+                      }}
+                      inputMode="decimal"
+                      className="bg-white"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 shrink-0 text-[rgb(133,133,133)] hover:text-destructive"
+                    onClick={() =>
+                      setTrackerTypeRows((rows) =>
+                        rows.filter((_, i) => i !== index),
+                      )
+                    }
+                    disabled={trackerTypeRows.length <= 1}
+                    aria-label="Remove leave type"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full sm:w-auto"
+                onClick={() =>
+                  setTrackerTypeRows((rows) => [
+                    ...rows,
+                    { typeKey: "", name: "", maxDays: "5" },
+                  ])
+                }
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add leave type
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div className="rounded-lg border border-[#DDDDDD] bg-[rgb(250,250,250)] p-4">
           <div className="flex items-start gap-3">
@@ -234,9 +429,9 @@ export function LeaveTypesSettingsContent() {
                 Enable proration in leave tracker
               </Label>
               <p className="text-xs text-[rgb(133,133,133)]">
-                When enabled, `Annual SIL` is computed from the remaining months
-                of the current year. When disabled, the tracker uses the full
-                configured SIL base.
+                {leaveTrackerMode === "by_type"
+                  ? "When enabled, each leave type's annual max is prorated from the remaining months of the year (15th-day cutoff). When disabled, full max days apply."
+                  : "When enabled, Annual SIL is computed from the remaining months of the current year. When disabled, the tracker uses the full configured SIL base."}
               </p>
             </div>
           </div>
@@ -299,31 +494,6 @@ export function LeaveTypesSettingsContent() {
               </div>
             </button>
           </div>
-        </div>
-
-        <div className="rounded-lg border border-[#DDDDDD] bg-[rgb(250,250,250)] p-4">
-          <p className="text-sm font-medium text-[rgb(64,64,64)]">
-            Anniversary leave
-          </p>
-          <div className="mt-3 flex items-start gap-3">
-            <Checkbox
-              id="enableAnniversaryLeave"
-              checked={enableAnniversaryLeave}
-              onCheckedChange={(checked) =>
-                setEnableAnniversaryLeave(checked as boolean)
-              }
-            />
-            <Label
-              htmlFor="enableAnniversaryLeave"
-              className="cursor-pointer text-sm"
-            >
-              Enable anniversary leave in tracker totals
-            </Label>
-          </div>
-          <p className="mt-1 text-xs text-[rgb(133,133,133)]">
-            Anniversary leave uses the selected start rule (regularization or
-            hire date).
-          </p>
         </div>
 
         <div className="space-y-3 rounded-lg border border-[#DDDDDD] bg-[rgb(250,250,250)] p-4">

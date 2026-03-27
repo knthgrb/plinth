@@ -26,6 +26,7 @@ import {
   downloadElementAsPdf,
   getElementPdfBlob,
 } from "@/components/leave/leave-request-pdf";
+import { GENERAL_LEAVE_CREDIT_KEY } from "@/lib/leave-constants";
 
 type LeaveRequestRecord = {
   _id: string;
@@ -41,6 +42,16 @@ type LeaveRequestRecord = {
   filledFormContent?: string;
   signatureDataUrl?: string;
 };
+
+function leaveTypeDisplay(request: LeaveRequestRecord) {
+  if (
+    request.leaveType === "custom" &&
+    request.customLeaveType === GENERAL_LEAVE_CREDIT_KEY
+  ) {
+    return "Annual leave";
+  }
+  return request.customLeaveType || request.leaveType;
+}
 
 type EmployeeSummary = {
   _id: string;
@@ -256,7 +267,7 @@ export function ReviewLeaveDialog({
                 </div>
                 <div>
                   <p className="font-medium">Leave Type</p>
-                  <p>{request.customLeaveType || request.leaveType}</p>
+                  <p>{leaveTypeDisplay(request)}</p>
                 </div>
                 <div>
                   <p className="font-medium">Requested Days</p>
@@ -331,7 +342,7 @@ export function ReviewLeaveDialog({
               </p>
               <p>
                 <strong>Leave Type:</strong>{" "}
-                {request.customLeaveType || request.leaveType}
+                {leaveTypeDisplay(request)}
               </p>
               <p>
                 <strong>Period:</strong>{" "}

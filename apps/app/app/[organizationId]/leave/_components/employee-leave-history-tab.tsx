@@ -16,11 +16,13 @@ interface Column {
 interface EmployeeLeaveHistoryTabProps {
   leaveHistory: any[];
   columns: Column[];
+  configuredLeaveTypes?: Array<{ type: string; name: string }>;
 }
 
 export function EmployeeLeaveHistoryTab({
   leaveHistory,
   columns,
+  configuredLeaveTypes = [],
 }: EmployeeLeaveHistoryTabProps) {
   return (
     <Card className="border-[rgb(230,230,230)] shadow-sm overflow-hidden">
@@ -33,7 +35,11 @@ export function EmployeeLeaveHistoryTab({
         </p>
       </CardHeader>
       <CardContent className="pt-0 pb-6">
-        <DynamicLeaveTable leaveRequests={leaveHistory} columns={columns} />
+        <DynamicLeaveTable
+          leaveRequests={leaveHistory}
+          columns={columns}
+          configuredLeaveTypes={configuredLeaveTypes}
+        />
       </CardContent>
     </Card>
   );

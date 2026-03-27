@@ -278,6 +278,21 @@ export const updateLeaveTypes = mutation({
     grantLeaveUponRegularization: v.optional(v.boolean()),
     leaveRequestFormTemplate: v.optional(v.string()),
     maxConvertibleLeaveDays: v.optional(v.number()),
+    leaveTypes: v.optional(
+      v.array(
+        v.object({
+          type: v.string(),
+          name: v.string(),
+          defaultCredits: v.number(),
+          isPaid: v.boolean(),
+          requiresApproval: v.boolean(),
+          maxConsecutiveDays: v.optional(v.number()),
+          carryOver: v.optional(v.boolean()),
+          maxCarryOver: v.optional(v.number()),
+          isAnniversary: v.optional(v.boolean()),
+        }),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
@@ -311,6 +326,9 @@ export const updateLeaveTypes = mutation({
     if (args.maxConvertibleLeaveDays !== undefined) {
       patch.maxConvertibleLeaveDays = args.maxConvertibleLeaveDays;
     }
+    if (args.leaveTypes !== undefined) {
+      patch.leaveTypes = args.leaveTypes;
+    }
 
     if (!settings) {
       await ctx.db.insert("settings", {
@@ -322,6 +340,7 @@ export const updateLeaveTypes = mutation({
         grantLeaveUponRegularization: args.grantLeaveUponRegularization ?? true,
         leaveRequestFormTemplate: args.leaveRequestFormTemplate,
         maxConvertibleLeaveDays: args.maxConvertibleLeaveDays ?? 5,
+        ...(args.leaveTypes !== undefined ? { leaveTypes: args.leaveTypes } : {}),
         createdAt: now,
         updatedAt: now,
       });

@@ -28,6 +28,7 @@ interface AdminLeaveHistoryTabProps {
   columns: Column[];
   employees?: any[];
   onManageColumns: () => void;
+  configuredLeaveTypes?: Array<{ type: string; name: string }>;
 }
 
 export function AdminLeaveHistoryTab({
@@ -35,6 +36,7 @@ export function AdminLeaveHistoryTab({
   columns,
   employees,
   onManageColumns,
+  configuredLeaveTypes = [],
 }: AdminLeaveHistoryTabProps) {
   const [employeeFilter, setEmployeeFilter] = useState<string>("all");
 
@@ -87,6 +89,7 @@ export function AdminLeaveHistoryTab({
           columns={columns}
           employees={employees}
           pageSize={20}
+          configuredLeaveTypes={configuredLeaveTypes}
         />
       </CardContent>
     </Card>

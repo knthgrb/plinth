@@ -160,6 +160,15 @@ export default function LeavePage() {
     return (employees ?? []).find((employee: any) => employee._id === userEmployeeId) ?? null;
   }, [employees, userEmployeeId]);
 
+  const leaveTrackerMode = (settings?.leaveTrackerMode ?? "general") as
+    | "general"
+    | "by_type";
+  const configuredLeaveTypesForRequests = useMemo(() => {
+    return (settings?.leaveTypes ?? [])
+      .filter((t: any) => !t.isAnniversary)
+      .map((t: any) => ({ type: t.type, name: t.name }));
+  }, [settings?.leaveTypes]);
+
   // Initialize columns from settings
   useEffect(() => {
     const DEFAULT_REQUESTS: Column[] = [
@@ -382,6 +391,8 @@ export default function LeavePage() {
                 leaveCredits={employeeLeaveCredits}
                 employee={requestingEmployee}
                 leaveRequestFormTemplate={settings?.leaveRequestFormTemplate}
+                leaveTrackerMode={leaveTrackerMode}
+                configuredLeaveTypes={configuredLeaveTypesForRequests}
                 onSuccess={() => {
                   if (canRequestLeave && userEmployeeId) {
                     loadEmployeeData();
@@ -430,165 +441,158 @@ export default function LeavePage() {
 
             <TabsContent value="credits" className="mt-0">
               <div className="space-y-6">
-                {employeeLeaveCredits && employeeLeaveCredits.calculations && (
+                {employeeLeaveCredits?.calculations && (
                   <Card className="border-[rgb(230,230,230)] shadow-sm">
                     <CardHeader className="pb-3">
                       <CardTitle className="text-base font-semibold text-[rgb(64,64,64)]">
                         Leave calculations
                       </CardTitle>
+                      <p className="text-xs text-[rgb(133,133,133)] mt-1">
+                        {leaveTrackerMode === "general"
+                          ? "Matches general leave tracker (SIL + anniversary when enabled)."
+                          : "Sum of configured leave type caps (each prorated if enabled) plus anniversary when enabled."}
+                      </p>
                     </CardHeader>
                     <CardContent className="space-y-3 text-sm">
                       <div className="flex justify-between text-[rgb(64,64,64)]">
                         <span className="text-[rgb(133,133,133)]">
-                          Prorated leave
+                          {leaveTrackerMode === "general"
+                            ? "Prorated SIL"
+                            : "Leave types total"}
                         </span>
                         <span className="font-medium">
-                          {employeeLeaveCredits.calculations.proratedLeave.toFixed(
-                            2
-                          )}{" "}
+                          {Number(
+                            employeeLeaveCredits.calculations.proratedLeave,
+                          ).toFixed(2)}{" "}
                           days
                         </span>
                       </div>
-                      <div className="flex justify-between text-[rgb(64,64,64)]">
-                        <span className="text-[rgb(133,133,133)]">
-                          Anniversary leave
-                        </span>
-                        <span className="font-medium">
-                          {employeeLeaveCredits.calculations.anniversaryLeave}{" "}
-                          days
-                        </span>
-                      </div>
+                      {employeeLeaveCredits.enableAnniversaryLeave ? (
+                        <div className="flex justify-between text-[rgb(64,64,64)]">
+                          <span className="text-[rgb(133,133,133)]">
+                            Anniversary leave
+                          </span>
+                          <span className="font-medium">
+                            {
+                              employeeLeaveCredits.calculations
+                                .anniversaryLeave
+                            }{" "}
+                            days
+                          </span>
+                        </div>
+                      ) : null}
                       <div className="flex justify-between border-t border-[rgb(230,230,230)] pt-3">
                         <span className="font-medium text-[rgb(64,64,64)]">
                           Total entitlement
                         </span>
                         <span className="font-semibold text-brand-purple">
-                          {employeeLeaveCredits.calculations.totalEntitlement.toFixed(
-                            2
-                          )}{" "}
+                          {Number(
+                            employeeLeaveCredits.calculations.totalEntitlement,
+                          ).toFixed(2)}{" "}
                           days
                         </span>
                       </div>
                     </CardContent>
                   </Card>
                 )}
-                <div className="grid gap-5 sm:grid-cols-2">
-                  {employeeLeaveCredits && (
-                    <>
-                      <Card className="border-[rgb(230,230,230)] shadow-sm overflow-hidden">
-                        <CardHeader className="pb-2 pt-5">
-                          <CardTitle className="flex items-center gap-2 text-base font-semibold text-[rgb(64,64,64)]">
-                            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-purple/10 text-brand-purple">
-                              <Calendar className="h-4 w-4" />
-                            </span>
-                            Vacation leave
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-3 pb-6 text-sm">
+
+                {employeeLeaveCredits &&
+                  leaveTrackerMode === "general" &&
+                  employeeLeaveCredits.generalLeave && (
+                    <Card className="border-[rgb(230,230,230)] shadow-sm overflow-hidden">
+                      <CardHeader className="pb-2 pt-5">
+                        <CardTitle className="flex items-center gap-2 text-base font-semibold text-[rgb(64,64,64)]">
+                          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-purple/10 text-brand-purple">
+                            <Calendar className="h-4 w-4" />
+                          </span>
+                          Your leave (SIL pool)
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3 pb-6 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-[rgb(133,133,133)]">
+                            Prorated SIL (before anniversary)
+                          </span>
+                          <span className="font-medium">
+                            {Number(
+                              employeeLeaveCredits.generalLeave.proratedSil,
+                            ).toFixed(2)}{" "}
+                            days
+                          </span>
+                        </div>
+                        {employeeLeaveCredits.enableAnniversaryLeave ? (
                           <div className="flex justify-between">
                             <span className="text-[rgb(133,133,133)]">
-                              Total
-                              {employeeLeaveCredits.maxCredits?.vacation != null && (
-                                <span className="ml-1 font-normal text-[rgb(133,133,133)]">
-                                  (max {employeeLeaveCredits.maxCredits.vacation} days)
-                                </span>
-                              )}
+                              Anniversary leave
                             </span>
                             <span className="font-medium">
-                              {employeeLeaveCredits.vacation.total} days
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-[rgb(133,133,133)]">
-                              Used
-                            </span>
-                            <span className="font-medium">
-                              {employeeLeaveCredits.vacation.used} days
-                            </span>
-                          </div>
-                          <div className="flex justify-between border-t border-[rgb(230,230,230)] pt-3">
-                            <span className="font-medium">Balance</span>
-                            <span className="font-semibold text-brand-purple">
-                              {employeeLeaveCredits.vacation.balance}
-                              {employeeLeaveCredits.maxCredits?.vacation != null && (
-                                <span className="ml-1 font-normal text-[rgb(133,133,133)]">
-                                  / {employeeLeaveCredits.maxCredits.vacation}
-                                </span>
-                              )}{" "}
+                              {
+                                employeeLeaveCredits.generalLeave
+                                  .anniversaryLeave
+                              }{" "}
                               days
                             </span>
                           </div>
-                        </CardContent>
-                      </Card>
+                        ) : null}
+                        <div className="flex justify-between">
+                          <span className="text-[rgb(133,133,133)]">Used</span>
+                          <span className="font-medium">
+                            {Number(
+                              employeeLeaveCredits.generalLeave.usedCombined,
+                            ).toFixed(2)}{" "}
+                            days
+                          </span>
+                        </div>
+                        <div className="flex justify-between border-t border-[rgb(230,230,230)] pt-3">
+                          <span className="font-medium text-[rgb(64,64,64)]">
+                            Available to file
+                          </span>
+                          <span className="font-semibold text-brand-purple">
+                            {Number(
+                              employeeLeaveCredits.generalLeave.available,
+                            ).toFixed(2)}{" "}
+                            days
+                          </span>
+                        </div>
+                        <p className="text-xs text-[rgb(133,133,133)]">
+                          Annual SIL base in settings:{" "}
+                          {employeeLeaveCredits.generalLeave.annualSilBase} days.
+                          Requests deduct vacation balance first, then sick.
+                        </p>
+                      </CardContent>
+                    </Card>
+                  )}
 
-                      <Card className="border-[rgb(230,230,230)] shadow-sm overflow-hidden">
-                        <CardHeader className="pb-2 pt-5">
-                          <CardTitle className="flex items-center gap-2 text-base font-semibold text-[rgb(64,64,64)]">
-                            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-purple/10 text-brand-purple">
-                              <Calendar className="h-4 w-4" />
-                            </span>
-                            Sick leave
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-3 pb-6 text-sm">
-                          <div className="flex justify-between">
-                            <span className="text-[rgb(133,133,133)]">
-                              Total
-                              {employeeLeaveCredits.maxCredits?.sick != null && (
-                                <span className="ml-1 font-normal text-[rgb(133,133,133)]">
-                                  (max {employeeLeaveCredits.maxCredits.sick} days)
-                                </span>
-                              )}
-                            </span>
-                            <span className="font-medium">
-                              {employeeLeaveCredits.sick.total} days
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-[rgb(133,133,133)]">
-                              Used
-                            </span>
-                            <span className="font-medium">
-                              {employeeLeaveCredits.sick.used} days
-                            </span>
-                          </div>
-                          <div className="flex justify-between border-t border-[rgb(230,230,230)] pt-3">
-                            <span className="font-medium">Balance</span>
-                            <span className="font-semibold text-brand-purple">
-                              {employeeLeaveCredits.sick.balance}
-                              {employeeLeaveCredits.maxCredits?.sick != null && (
-                                <span className="ml-1 font-normal text-[rgb(133,133,133)]">
-                                  / {employeeLeaveCredits.maxCredits.sick}
-                                </span>
-                              )}{" "}
-                              days
-                            </span>
-                          </div>
-                        </CardContent>
-                      </Card>
-
-                      {employeeLeaveCredits.custom &&
-                        employeeLeaveCredits.custom.length > 0 &&
-                        employeeLeaveCredits.custom.map((custom: any) => (
+                {employeeLeaveCredits &&
+                  leaveTrackerMode === "by_type" &&
+                  Array.isArray(employeeLeaveCredits.byTypeLeaves) && (
+                    <div className="grid gap-5 sm:grid-cols-2">
+                      {employeeLeaveCredits.byTypeLeaves.length === 0 ? (
+                        <p className="text-sm text-[rgb(133,133,133)] sm:col-span-2">
+                          No leave types configured yet. HR can add them in
+                          organization settings.
+                        </p>
+                      ) : (
+                        employeeLeaveCredits.byTypeLeaves.map((row: any) => (
                           <Card
-                            key={custom.type}
-                            className="border-[rgb(230,230,230)] shadow-sm overflow-hidden sm:col-span-2"
+                            key={row.type}
+                            className="border-[rgb(230,230,230)] shadow-sm overflow-hidden"
                           >
                             <CardHeader className="pb-2 pt-5">
                               <CardTitle className="flex items-center gap-2 text-base font-semibold text-[rgb(64,64,64)]">
-                                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[rgb(245,245,245)] text-[rgb(107,107,107)]">
+                                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-purple/10 text-brand-purple">
                                   <Calendar className="h-4 w-4" />
                                 </span>
-                                {custom.type}
+                                {row.name}
                               </CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-3 pb-6 text-sm">
                               <div className="flex justify-between">
                                 <span className="text-[rgb(133,133,133)]">
-                                  Total
+                                  Cap (this year)
                                 </span>
                                 <span className="font-medium">
-                                  {custom.total} days
+                                  {Number(row.cap).toFixed(2)} days
                                 </span>
                               </div>
                               <div className="flex justify-between">
@@ -596,21 +600,21 @@ export default function LeavePage() {
                                   Used
                                 </span>
                                 <span className="font-medium">
-                                  {custom.used} days
+                                  {Number(row.used).toFixed(2)} days
                                 </span>
                               </div>
                               <div className="flex justify-between border-t border-[rgb(230,230,230)] pt-3">
-                                <span className="font-medium">Balance</span>
+                                <span className="font-medium">Available</span>
                                 <span className="font-semibold text-brand-purple">
-                                  {custom.balance} days
+                                  {Number(row.balance).toFixed(2)} days
                                 </span>
                               </div>
                             </CardContent>
                           </Card>
-                        ))}
-                    </>
+                        ))
+                      )}
+                    </div>
                   )}
-                </div>
               </div>
             </TabsContent>
 
@@ -629,6 +633,7 @@ export default function LeavePage() {
                 <EmployeeLeaveHistoryTab
                   leaveHistory={employeeLeaveHistory}
                   columns={historyTableColumns}
+                  configuredLeaveTypes={configuredLeaveTypesForRequests}
                 />
               </Suspense>
             </TabsContent>
@@ -661,6 +666,8 @@ export default function LeavePage() {
                 leaveCredits={employeeLeaveCredits}
                 employee={requestingEmployee}
                 leaveRequestFormTemplate={settings?.leaveRequestFormTemplate}
+                leaveTrackerMode={leaveTrackerMode}
+                configuredLeaveTypes={configuredLeaveTypesForRequests}
                 onSuccess={() => {
                   if (canRequestLeave && userEmployeeId) {
                     loadEmployeeData();
@@ -730,6 +737,7 @@ export default function LeavePage() {
                 leaveRequests={leaveRequestsActiveOnly}
                 columns={requestsTableColumns}
                 employees={activeEmployees}
+                configuredLeaveTypes={configuredLeaveTypesForRequests}
                 onManageColumns={() => setIsRequestsColumnModalOpen(true)}
                 onReviewRequest={(request) => {
                   setReviewingRequest(request);
@@ -757,6 +765,7 @@ export default function LeavePage() {
                 )}
                 columns={historyTableColumns}
                 employees={activeEmployees}
+                configuredLeaveTypes={configuredLeaveTypesForRequests}
                 onManageColumns={() => setIsHistoryColumnModalOpen(true)}
               />
             </Suspense>

@@ -58,6 +58,12 @@ type LeaveTypeSetting = {
   isAnniversary?: boolean;
 };
 
+type TypeBreakdownEntry = {
+  typeKey: string;
+  name: string;
+  value: number;
+};
+
 type ComputedRow = {
   employeeId: string;
   employee: TrackerEmployee;
@@ -69,6 +75,8 @@ type ComputedRow = {
   accrued: number;
   availedValue: number;
   defaultAvailed: number;
+  /** Per-type prorated (or full) caps when tracker mode is by leave type. */
+  typeBreakdown?: TypeBreakdownEntry[];
 };
 
 interface LeaveTrackerTabProps {
@@ -214,10 +222,15 @@ export function LeaveTrackerTab({
     );
   }, [employees]);
 
+  const trackerNonAnniversaryTypes = useMemo(
+    () => leaveTypes.filter((t) => !t.isAnniversary),
+    [leaveTypes],
+  );
+
+  const showByTypeColumns =
+    leaveTrackerMode === "by_type" && trackerNonAnniversaryTypes.length > 0;
+
   const computedRows = useMemo(() => {
-    const configuredTypeCreditsTotal = leaveTypes
-      .filter((t) => !t.isAnniversary)
-      .reduce((sum, t) => sum + Number(t.defaultCredits || 0), 0);
     return sortedEmployees.map((employee): ComputedRow => {
       const employeeId = employee._id as string;
       const regularizationDate =
@@ -229,21 +242,38 @@ export function LeaveTrackerTab({
         ? regularizationDate ?? employee?.employment?.hireDate
         : employee?.employment?.hireDate;
 
-      const formulaAnnualSil = proratedLeave
-        ? getProratedAnnualSil(
-            leaveTrackerMode === "by_type"
-              ? configuredTypeCreditsTotal
-              : annualSil,
-            prorationStartDate,
-            referenceDate,
-          )
-        : leaveTrackerMode === "by_type"
-          ? configuredTypeCreditsTotal
+      let formulaAnnualSil: number;
+      let typeBreakdown: TypeBreakdownEntry[] | undefined;
+
+      if (showByTypeColumns) {
+        typeBreakdown = trackerNonAnniversaryTypes.map((t) => {
+          const base = Number(t.defaultCredits || 0);
+          const value = proratedLeave
+            ? getProratedAnnualSil(base, prorationStartDate, referenceDate)
+            : base;
+          return {
+            typeKey: t.type,
+            name: t.name,
+            value: roundToTwo(value),
+          };
+        });
+        formulaAnnualSil = roundToTwo(
+          typeBreakdown.reduce((sum, entry) => sum + entry.value, 0),
+        );
+      } else if (leaveTrackerMode === "by_type") {
+        formulaAnnualSil = 0;
+      } else {
+        formulaAnnualSil = proratedLeave
+          ? getProratedAnnualSil(annualSil, prorationStartDate, referenceDate)
           : annualSil;
-      const anniversaryLeave = getCompletedYearsSince(
+      }
+      const anniversaryLeaveYears = getCompletedYearsSince(
         anniversaryStartDate,
         referenceDate,
       );
+      const anniversaryLeave = enableAnniversaryLeave
+        ? anniversaryLeaveYears
+        : 0;
       // For current year use cumulative used; for past years with no saved data use 0
       const defaultAvailed =
         selectedYear < currentYear
@@ -263,12 +293,13 @@ export function LeaveTrackerTab({
         employee,
         formulaAnnualSil,
         annualSilValue,
-        anniversaryLeave: enableAnniversaryLeave ? anniversaryLeave : 0,
+        anniversaryLeave,
         total: roundToTwo(annualSilValue + anniversaryLeave),
         monthlyAccrual: 0,
         accrued: 0,
         availedValue,
         defaultAvailed,
+        typeBreakdown,
       };
     });
   }, [
@@ -276,13 +307,14 @@ export function LeaveTrackerTab({
     currentYear,
     enableAnniversaryLeave,
     grantLeaveUponRegularization,
-    leaveTrackerMode,
-    leaveTypes,
     proratedLeave,
     referenceDate,
     savedRowsMap,
     selectedYear,
+    showByTypeColumns,
     sortedEmployees,
+    trackerNonAnniversaryTypes,
+    leaveTrackerMode,
   ]);
 
   useEffect(() => {
@@ -456,15 +488,30 @@ export function LeaveTrackerTab({
             </p>
           <p className="text-xs text-[rgb(133,133,133)]">
             {leaveTrackerMode === "by_type"
-              ? "Tracker mode: By leave type."
+              ? showByTypeColumns
+                ? `Tracker mode: By leave type (${trackerNonAnniversaryTypes.length} types).`
+                : "Tracker mode: By leave type — configure leave types in settings to see columns."
               : `Annual SIL defaults to ${formatNumber(annualSil)} from settings.`}
             {proratedLeave
-              ? " Proration is enabled and uses the 15th-day cutoff."
-              : ` Proration is disabled, so the full ${leaveTrackerMode === "by_type" ? "leave type total" : formatNumber(annualSil)} base is used.`}{" "}
-            Anniversary leave uses full years since{" "}
-            {grantLeaveUponRegularization
-              ? "regularization date (or hire date fallback)"
-              : "hire date"}.
+              ? showByTypeColumns
+                ? " Proration is enabled; each type's annual max is prorated separately (15th-day cutoff)."
+                : " Proration is enabled and uses the 15th-day cutoff."
+              : ` Proration is disabled, so the full ${
+                  leaveTrackerMode === "by_type" && showByTypeColumns
+                    ? "configured per-type maximums"
+                    : formatNumber(annualSil)
+                } base is used.`}{" "}
+            {enableAnniversaryLeave ? (
+              <>
+                Anniversary leave uses full years since{" "}
+                {grantLeaveUponRegularization
+                  ? "regularization date (or hire date fallback)"
+                  : "hire date"}
+                .
+              </>
+            ) : (
+              " Anniversary leave is off for totals."
+            )}
           </p>
           <p className="text-xs text-[rgb(133,133,133)]">
             `Monthly Accrual = Total / 12`, `Accrued = Monthly Accrual x current
@@ -507,8 +554,23 @@ export function LeaveTrackerTab({
               <TableHead>Employees</TableHead>
               <TableHead>Hired Date</TableHead>
               <TableHead>Reg. Date</TableHead>
-              <TableHead className="min-w-[120px]">Annual SIL</TableHead>
-              <TableHead>Anniv Leave</TableHead>
+              {showByTypeColumns
+                ? trackerNonAnniversaryTypes.map((t) => (
+                    <TableHead
+                      key={t.type}
+                      className="min-w-[96px] text-right text-xs font-medium"
+                      title={t.name}
+                    >
+                      {t.name}
+                    </TableHead>
+                  ))
+                : null}
+              <TableHead className="min-w-[120px]">
+                {showByTypeColumns ? "Pool total" : "Annual SIL"}
+              </TableHead>
+              {enableAnniversaryLeave ? (
+                <TableHead>Anniv Leave</TableHead>
+              ) : null}
               <TableHead>Total</TableHead>
               <TableHead>Monthly Accrual</TableHead>
               <TableHead>Accrued</TableHead>
@@ -527,6 +589,16 @@ export function LeaveTrackerTab({
                 <TableCell>
                   {formatDate(row.employee?.employment?.regularizationDate)}
                 </TableCell>
+                {showByTypeColumns
+                  ? row.typeBreakdown?.map((b) => (
+                      <TableCell
+                        key={b.typeKey}
+                        className="text-right text-[rgb(100,100,100)]"
+                      >
+                        {formatNumber(b.value)}
+                      </TableCell>
+                    ))
+                  : null}
                 <TableCell>
                   <Input
                     value={draftRows[row.employeeId]?.annualSilOverride ?? ""}
@@ -535,9 +607,11 @@ export function LeaveTrackerTab({
                     inputMode="decimal"
                   />
                 </TableCell>
-                <TableCell className="bg-[rgb(248,250,252)] text-right font-medium">
-                  {formatNumber(row.anniversaryLeave)}
-                </TableCell>
+                {enableAnniversaryLeave ? (
+                  <TableCell className="bg-[rgb(248,250,252)] text-right font-medium">
+                    {formatNumber(row.anniversaryLeave)}
+                  </TableCell>
+                ) : null}
                 <TableCell className="bg-[rgb(248,250,252)] text-right font-medium">
                   {formatNumber(row.total)}
                 </TableCell>

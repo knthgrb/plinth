@@ -20,6 +20,35 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { getStatusBadgeClass, getStatusBadgeStyle } from "@/utils/colors";
+import { GENERAL_LEAVE_CREDIT_KEY } from "@/lib/leave-constants";
+
+const LEGACY_LEAVE_LABELS: Record<string, string> = {
+  vacation: "Vacation leave",
+  sick: "Sick leave",
+  emergency: "Emergency leave",
+  maternity: "Maternity leave",
+  paternity: "Parental leave",
+  custom: "Other",
+};
+
+function displayLeaveTypeLabel(
+  request: any,
+  configured: Array<{ type: string; name: string }>,
+): string {
+  if (
+    request.leaveType === "custom" &&
+    request.customLeaveType === GENERAL_LEAVE_CREDIT_KEY
+  ) {
+    return "Annual leave";
+  }
+  if (request.leaveType === "custom" && request.customLeaveType) {
+    const found = configured.find((t) => t.type === request.customLeaveType);
+    return found?.name ?? request.customLeaveType;
+  }
+  return (
+    LEGACY_LEAVE_LABELS[request.leaveType] ?? String(request.leaveType ?? "—")
+  );
+}
 
 interface Column {
   id: string;
@@ -41,6 +70,8 @@ interface DynamicLeaveTableProps {
   employees?: any[];
   onRowClick?: (request: any) => void;
   pageSize?: number;
+  /** Settings leave types (non-anniversary) for labeling custom / by-type requests */
+  configuredLeaveTypes?: Array<{ type: string; name: string }>;
 }
 
 type SortDirection = "asc" | "desc" | null;
@@ -52,6 +83,7 @@ export function DynamicLeaveTable({
   employees,
   onRowClick,
   pageSize = 0,
+  configuredLeaveTypes = [],
 }: DynamicLeaveTableProps) {
   const [sortState, setSortState] = useState<SortState>({
     field: "",
@@ -367,7 +399,10 @@ export function DynamicLeaveTable({
                           }`.trim()
                         : "Unknown";
                     } else if (column.field === "leaveType") {
-                      value = request.leaveType;
+                      value = displayLeaveTypeLabel(
+                        request,
+                        configuredLeaveTypes,
+                      );
                     } else if (column.field === "startDate") {
                       value = request.startDate;
                     } else if (column.field === "endDate") {

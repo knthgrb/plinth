@@ -30,6 +30,7 @@ interface AdminLeaveRequestsTabProps {
   employees?: any[];
   onManageColumns: () => void;
   onReviewRequest: (request: any) => void;
+  configuredLeaveTypes?: Array<{ type: string; name: string }>;
 }
 
 export function AdminLeaveRequestsTab({
@@ -38,6 +39,7 @@ export function AdminLeaveRequestsTab({
   employees,
   onManageColumns,
   onReviewRequest,
+  configuredLeaveTypes = [],
 }: AdminLeaveRequestsTabProps) {
   const [statusFilter, setStatusFilter] = useState<LeaveStatusFilter>("all");
 
@@ -144,6 +146,7 @@ export function AdminLeaveRequestsTab({
             employees={employees}
             onRowClick={onReviewRequest}
             pageSize={20}
+            configuredLeaveTypes={configuredLeaveTypes}
           />
         </CardContent>
       </Card>
