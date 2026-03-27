@@ -206,3 +206,25 @@ export async function setRoleCookieIfNeeded(
   await writeRoleCookie(response, role, organizationId);
   return response;
 }
+
+/**
+ * Remove the role cache cookie so the next navigation fetches role for the
+ * current session. Required when switching accounts: the cookie is keyed by
+ * org id only, so a previous user's role can otherwise stick for the same org.
+ */
+export function withRoleCookieCleared(response: NextResponse): NextResponse {
+  if (!roleCookieSecret) {
+    response.cookies.delete(ROLE_COOKIE_NAME);
+    return response;
+  }
+  response.cookies.set({
+    name: ROLE_COOKIE_NAME,
+    value: "",
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  });
+  return response;
+}

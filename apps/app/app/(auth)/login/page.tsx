@@ -11,6 +11,17 @@ import Link from "next/link";
 import { AuthSidePanel } from "@/components/auth-side-panel";
 
 const PENDING_SIGNOUT_KEY = "pendingSignOut";
+
+async function clearRoleCacheCookie() {
+  try {
+    await fetch("/api/auth/clear-role-cache", {
+      method: "POST",
+      credentials: "include",
+    });
+  } catch {
+    // Non-fatal: middleware will refresh role from Convex when cookie is missing
+  }
+}
 const marketingUrl =
   process.env.NEXT_PUBLIC_MARKETING_APP_URL ?? process.env.NEXT_PUBLIC_MARKETING_URL ?? "/";
 
@@ -27,7 +38,10 @@ export default function LoginPage() {
     if (typeof window === "undefined") return;
     if (sessionStorage.getItem(PENDING_SIGNOUT_KEY)) {
       sessionStorage.removeItem(PENDING_SIGNOUT_KEY);
-      authClient.signOut();
+      void (async () => {
+        await authClient.signOut();
+        await clearRoleCacheCookie();
+      })();
     }
   }, []);
 
@@ -51,6 +65,8 @@ export default function LoginPage() {
         // Ensure session is readable, then full navigation so cookies + middleware see auth
         // (client router.push alone can race Convex / role cookie on first load).
         await authClient.getSession();
+        // Drop stale pp.role from a previous account (same org → wrong role in middleware).
+        await clearRoleCacheCookie();
         const redirectParam = searchParams.get("redirect");
         window.location.assign(redirectParam || "/");
       }

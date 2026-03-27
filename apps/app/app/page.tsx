@@ -26,6 +26,10 @@ export default function AppHomePage() {
     (api as any).organizations.getUserOrganizations,
     hasSession ? {} : "skip"
   );
+  const currentUser = useQuery(
+    (api as any).auth.getCurrentUser,
+    hasSession ? {} : "skip",
+  );
 
   useEffect(() => {
     authClient.getSession().then((session) => {
@@ -40,6 +44,7 @@ export default function AppHomePage() {
       router.replace("/login");
       return;
     }
+    if (currentUser === undefined) return;
     if (organizations === undefined) return;
 
     if (organizations && organizations.length > 0) {
@@ -51,9 +56,14 @@ export default function AppHomePage() {
     }
 
     // No organizations (e.g. removed from all orgs) — show create-org option, don't redirect
-  }, [authChecked, hasSession, organizations, router]);
+  }, [authChecked, hasSession, currentUser, organizations, router]);
 
-  if (!authChecked || !hasSession || organizations === undefined) {
+  if (
+    !authChecked ||
+    !hasSession ||
+    currentUser === undefined ||
+    organizations === undefined
+  ) {
     return <MainLoader />;
   }
 

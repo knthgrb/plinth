@@ -102,6 +102,10 @@ export function SettingsModal({
     onOpenChange(false);
     clearOrganization();
     sessionStorage.setItem("pendingSignOut", "1");
+    void fetch("/api/auth/clear-role-cache", {
+      method: "POST",
+      credentials: "include",
+    });
     router.replace("/login");
   };
 
