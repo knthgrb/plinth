@@ -21,6 +21,19 @@ type TrackerTypeRow = {
   maxDays: string;
 };
 
+/** Matches `settings.leaveTypes` from Convex schema. */
+type SettingsLeaveType = {
+  type: string;
+  name: string;
+  defaultCredits: number;
+  isPaid?: boolean;
+  requiresApproval?: boolean;
+  maxConsecutiveDays?: number;
+  carryOver?: boolean;
+  maxCarryOver?: number;
+  isAnniversary?: boolean;
+};
+
 function slugifyLeaveType(name: string, index: number) {
   const base = name
     .trim()
@@ -65,7 +78,8 @@ export function LeaveTypesSettingsContent() {
     setMaxConvertibleLeaveDays(
       String(settings?.maxConvertibleLeaveDays ?? 5),
     );
-    const work = (settings?.leaveTypes ?? []).filter((t) => !t.isAnniversary);
+    const leaveTypesList = (settings?.leaveTypes ?? []) as SettingsLeaveType[];
+    const work = leaveTypesList.filter((t) => !t.isAnniversary);
     if (work.length > 0) {
       setTrackerTypeRows(
         work.map((t) => ({
@@ -124,9 +138,9 @@ export function LeaveTypesSettingsContent() {
       return;
     }
 
-    const annivPreserved = (settings?.leaveTypes ?? []).filter(
-      (t) => t.isAnniversary,
-    );
+    const annivPreserved = (
+      (settings?.leaveTypes ?? []) as SettingsLeaveType[]
+    ).filter((t) => t.isAnniversary);
     const workPayload =
       leaveTrackerMode === "by_type"
         ? trackerTypeRows
