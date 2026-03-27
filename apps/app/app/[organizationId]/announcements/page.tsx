@@ -9,6 +9,7 @@ import { Bell, Plus, ChevronDown } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { AnnouncementCard } from "./_components/announcement-card";
+import type { AnnouncementEditSnapshot } from "./_components/create-announcement-modal";
 
 const CreateAnnouncementModal = dynamic(
   () => import("./_components/create-announcement-modal").then((m) => m.CreateAnnouncementModal),
@@ -21,6 +22,8 @@ const PAGE_SIZE = 10;
 export default function AnnouncementsPage() {
   const { effectiveOrganizationId, currentOrganization } = useOrganization();
   const [createOpen, setCreateOpen] = useState(false);
+  const [editingAnnouncement, setEditingAnnouncement] =
+    useState<AnnouncementEditSnapshot | null>(null);
   const [displayCount, setDisplayCount] = useState(INITIAL_PAGE_SIZE);
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
@@ -94,9 +97,6 @@ export default function AnnouncementsPage() {
 
   const canCreate =
     user?.role === "admin" || user?.role === "hr" || user?.role === "owner";
-  const isAdminOrHr =
-    user?.role === "admin" || user?.role === "hr" || user?.role === "owner";
-
   if (!effectiveOrganizationId) return null;
 
   return (
@@ -114,7 +114,13 @@ export default function AnnouncementsPage() {
             </p>
           </div>
           {canCreate && (
-            <Button onClick={() => setCreateOpen(true)} className="shrink-0">
+            <Button
+              onClick={() => {
+                setEditingAnnouncement(null);
+                setCreateOpen(true);
+              }}
+              className="shrink-0"
+            >
               <Plus className="h-4 w-4 mr-2" />
               Create announcement
             </Button>
@@ -149,7 +155,10 @@ export default function AnnouncementsPage() {
                 <Button
                   variant="outline"
                   className="mt-4"
-                  onClick={() => setCreateOpen(true)}
+                  onClick={() => {
+                    setEditingAnnouncement(null);
+                    setCreateOpen(true);
+                  }}
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Create announcement
@@ -166,8 +175,22 @@ export default function AnnouncementsPage() {
                 announcement={announcement}
                 currentUserId={user?._id}
                 currentEmployeeId={currentOrganization?.employeeId}
-                isAdminOrHr={isAdminOrHr}
                 canReact={true}
+                onRequestEdit={(a) => {
+                  setCreateOpen(false);
+                  setEditingAnnouncement({
+                    _id: a._id,
+                    title: a.title,
+                    content: a.content,
+                    targetAudience: a.targetAudience,
+                    departments: a.departments,
+                    specificEmployees: a.specificEmployees?.map(String),
+                    acknowledgementRequired: Boolean(a.acknowledgementRequired),
+                    attachments: a.attachments,
+                    attachmentContentTypes: a.attachmentContentTypes,
+                    authorDisplayName: a.authorDisplayName,
+                  });
+                }}
               />
             </div>
           ))}
@@ -196,10 +219,19 @@ export default function AnnouncementsPage() {
       </div>
 
       <CreateAnnouncementModal
-        isOpen={createOpen}
-        onOpenChange={setCreateOpen}
+        isOpen={createOpen || Boolean(editingAnnouncement)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCreateOpen(false);
+            setEditingAnnouncement(null);
+          }
+        }}
         organizationId={effectiveOrganizationId}
-        onSuccess={() => setCreateOpen(false)}
+        editingAnnouncement={editingAnnouncement}
+        onSuccess={() => {
+          setCreateOpen(false);
+          setEditingAnnouncement(null);
+        }}
       />
     </MainLayout>
   );

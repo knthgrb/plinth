@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -22,17 +22,32 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TiptapEditor } from "@/components/tiptap-editor";
-import { createAnnouncement } from "@/actions/announcements";
+import { createAnnouncement, updateAnnouncement } from "@/actions/announcements";
 import { generateUploadUrl } from "@/actions/files";
 import { useToast } from "@/components/ui/use-toast";
 import { X, FileText, Check } from "lucide-react";
 import { useOrganization } from "@/hooks/organization-context";
 import { Id } from "@/convex/_generated/dataModel";
 
+export type AnnouncementEditSnapshot = {
+  _id: string;
+  title: string;
+  content: string;
+  targetAudience: "all" | "department" | "specific-employees";
+  departments?: string[];
+  specificEmployees?: string[];
+  acknowledgementRequired: boolean;
+  attachments?: string[];
+  attachmentContentTypes?: string[];
+  authorDisplayName?: string;
+};
+
 interface CreateAnnouncementModalProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   organizationId: string;
+  /** When set, modal edits this announcement instead of creating a new one */
+  editingAnnouncement?: AnnouncementEditSnapshot | null;
   onSuccess?: () => void;
 }
 
@@ -53,10 +68,17 @@ interface FileItem {
   uploading: boolean;
 }
 
+type ExistingAttachmentRow = {
+  id: string;
+  storageId: string;
+  contentType: string;
+};
+
 export function CreateAnnouncementModal({
   isOpen,
   onOpenChange,
   organizationId,
+  editingAnnouncement = null,
   onSuccess,
 }: CreateAnnouncementModalProps) {
   const { toast } = useToast();
@@ -78,6 +100,20 @@ export function CreateAnnouncementModal({
       : "skip",
   );
 
+  const currentUser = useQuery(
+    (api as any).organizations.getCurrentUser,
+    organizationId
+      ? { organizationId: organizationId as Id<"organizations"> }
+      : "skip",
+  );
+
+  const canChoosePostAs =
+    currentUser?.role === "admin" ||
+    currentUser?.role === "hr" ||
+    currentUser?.role === "owner";
+
+  const [postAs, setPostAs] = useState<"admin" | "user">("admin");
+
   const [formData, setFormData] = useState({
     title: "",
     content: JSON.stringify({ type: "doc", content: [] }),
@@ -89,6 +125,58 @@ export function CreateAnnouncementModal({
   const [files, setFiles] = useState<FileItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [employeeSearch, setEmployeeSearch] = useState("");
+
+  const [existingAttachments, setExistingAttachments] = useState<
+    ExistingAttachmentRow[]
+  >([]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (editingAnnouncement) {
+      setFormData({
+        title: editingAnnouncement.title,
+        content:
+          editingAnnouncement.content ||
+          JSON.stringify({ type: "doc", content: [] }),
+        targetAudience: editingAnnouncement.targetAudience,
+        departments: editingAnnouncement.departments ?? [],
+        specificEmployees: (editingAnnouncement.specificEmployees ?? []).map(
+          String,
+        ),
+        acknowledgementRequired: Boolean(
+          editingAnnouncement.acknowledgementRequired,
+        ),
+      });
+      setExistingAttachments(
+        (editingAnnouncement.attachments ?? []).map(
+          (sid: string, i: number) => ({
+            id: `existing-${i}-${sid}`,
+            storageId: sid,
+            contentType:
+              editingAnnouncement.attachmentContentTypes?.[i] ?? "",
+          }),
+        ),
+      );
+      setFiles([]);
+      setPostAs(
+        editingAnnouncement.authorDisplayName === "Admin" ? "admin" : "user",
+      );
+      setEmployeeSearch("");
+      return;
+    }
+    setFormData({
+      title: "",
+      content: JSON.stringify({ type: "doc", content: [] }),
+      targetAudience: "all",
+      departments: [],
+      specificEmployees: [],
+      acknowledgementRequired: false,
+    });
+    setExistingAttachments([]);
+    setFiles([]);
+    setPostAs("admin");
+    setEmployeeSearch("");
+  }, [isOpen, editingAnnouncement?._id]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []);
@@ -141,6 +229,10 @@ export function CreateAnnouncementModal({
         ? prev.specificEmployees.filter((id) => id !== employeeId)
         : [...prev.specificEmployees, employeeId],
     }));
+  };
+
+  const removeExistingAttachment = (id: string) => {
+    setExistingAttachments((prev) => prev.filter((a) => a.id !== id));
   };
 
   const filteredEmployees = employees?.filter((emp: any) => {
@@ -242,31 +334,68 @@ export function CreateAnnouncementModal({
         return;
       }
 
-      await createAnnouncement({
-        organizationId,
-        title: formData.title,
-        content: formData.content,
-        targetAudience: formData.targetAudience,
-        departments:
-          formData.targetAudience === "department"
-            ? formData.departments
-            : undefined,
-        specificEmployees:
-          formData.targetAudience === "specific-employees"
-            ? formData.specificEmployees
-            : undefined,
-        acknowledgementRequired: formData.acknowledgementRequired,
-        attachments: uploadedFileIds.length > 0 ? uploadedFileIds : undefined,
-        attachmentContentTypes:
-          uploadedFileIds.length > 0
-            ? files.map((f) => f.contentType)
-            : undefined,
-      });
+      const keptIds = existingAttachments.map((a) => a.storageId);
+      const keptTypes = existingAttachments.map(
+        (a) => a.contentType || "application/octet-stream",
+      );
+      const allAttachmentIds = [...keptIds, ...uploadedFileIds];
+      const allContentTypes = [
+        ...keptTypes,
+        ...files.map((f) => f.contentType),
+      ];
 
-      toast({
-        title: "Success",
-        description: "Announcement created successfully",
-      });
+      if (editingAnnouncement) {
+        await updateAnnouncement({
+          announcementId: editingAnnouncement._id,
+          organizationId,
+          title: formData.title,
+          content: formData.content,
+          targetAudience: formData.targetAudience,
+          departments:
+            formData.targetAudience === "department"
+              ? formData.departments
+              : undefined,
+          specificEmployees:
+            formData.targetAudience === "specific-employees"
+              ? formData.specificEmployees
+              : undefined,
+          acknowledgementRequired: formData.acknowledgementRequired,
+          attachments: allAttachmentIds,
+          attachmentContentTypes: allContentTypes,
+          postAs: canChoosePostAs ? postAs : "admin",
+        });
+        toast({
+          title: "Success",
+          description: "Announcement updated",
+        });
+      } else {
+        await createAnnouncement({
+          organizationId,
+          title: formData.title,
+          content: formData.content,
+          targetAudience: formData.targetAudience,
+          departments:
+            formData.targetAudience === "department"
+              ? formData.departments
+              : undefined,
+          specificEmployees:
+            formData.targetAudience === "specific-employees"
+              ? formData.specificEmployees
+              : undefined,
+          acknowledgementRequired: formData.acknowledgementRequired,
+          attachments:
+            uploadedFileIds.length > 0 ? uploadedFileIds : undefined,
+          attachmentContentTypes:
+            uploadedFileIds.length > 0
+              ? files.map((f) => f.contentType)
+              : undefined,
+          postAs: canChoosePostAs ? postAs : "admin",
+        });
+        toast({
+          title: "Success",
+          description: "Announcement created successfully",
+        });
+      }
 
       // Reset form
       setFormData({
@@ -278,14 +407,17 @@ export function CreateAnnouncementModal({
         acknowledgementRequired: false,
       });
       setFiles([]);
+      setExistingAttachments([]);
       setEmployeeSearch("");
+      setPostAs("admin");
       onOpenChange(false);
       onSuccess?.();
     } catch (error: any) {
-      console.error("Error creating announcement:", error);
+      console.error("Error saving announcement:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to create announcement",
+        description:
+          error.message || "Failed to save announcement",
         variant: "destructive",
       });
     } finally {
@@ -297,9 +429,13 @@ export function CreateAnnouncementModal({
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Create Announcement</DialogTitle>
+          <DialogTitle>
+            {editingAnnouncement ? "Edit announcement" : "Create Announcement"}
+          </DialogTitle>
           <DialogDescription>
-            Create a new announcement to share with employees.
+            {editingAnnouncement
+              ? "Update this announcement. Only you can edit announcements you created."
+              : "Create a new announcement to share with employees."}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
@@ -317,6 +453,42 @@ export function CreateAnnouncementModal({
                 required
               />
             </div>
+            {canChoosePostAs && (
+              <div className="space-y-2">
+                <Label>Post as</Label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-gray-500">Show author as:</span>
+                  <button
+                    type="button"
+                    onClick={() => setPostAs("admin")}
+                    className={`text-sm px-3 py-1.5 rounded-md border ${
+                      postAs === "admin"
+                        ? "bg-purple-100 border-purple-300 text-purple-800 font-medium"
+                        : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    Admin
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPostAs("user")}
+                    className={`text-sm px-3 py-1.5 rounded-md border ${
+                      postAs === "user"
+                        ? "bg-purple-100 border-purple-300 text-purple-800 font-medium"
+                        : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    {currentUser?.name ||
+                      currentUser?.email ||
+                      "Your name"}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Defaults to Admin so announcements appear from the organization,
+                  not your personal account.
+                </p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="targetAudience">
                 Target Audience <span className="text-red-500">*</span>
@@ -483,6 +655,7 @@ export function CreateAnnouncementModal({
                 Content <span className="text-red-500">*</span>
               </Label>
               <TiptapEditor
+                key={editingAnnouncement?._id ?? "create"}
                 content={formData.content}
                 onChange={(content) => setFormData({ ...formData, content })}
               />
@@ -501,6 +674,32 @@ export function CreateAnnouncementModal({
                   onChange={handleFileSelect}
                   className="cursor-pointer"
                 />
+                {existingAttachments.length > 0 && (
+                  <div className="space-y-2 mt-2">
+                    <p className="text-xs text-gray-500 font-medium">
+                      Current attachments
+                    </p>
+                    {existingAttachments.map((row) => (
+                      <div
+                        key={row.id}
+                        className="flex items-center gap-2 p-2 border rounded-lg bg-gray-50/80"
+                      >
+                        <FileText className="h-4 w-4 text-gray-500" />
+                        <span className="flex-1 text-sm truncate font-mono text-xs">
+                          {row.storageId.slice(0, 12)}…
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeExistingAttachment(row.id)}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {files.length > 0 && (
                   <div className="space-y-2 mt-2">
                     {files.map((fileItem) => (
@@ -570,7 +769,13 @@ export function CreateAnnouncementModal({
               Cancel
             </Button>
             <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Creating..." : "Create Announcement"}
+              {isSubmitting
+                ? editingAnnouncement
+                  ? "Saving..."
+                  : "Creating..."
+                : editingAnnouncement
+                  ? "Save changes"
+                  : "Create Announcement"}
             </Button>
           </DialogFooter>
         </form>

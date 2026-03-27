@@ -225,6 +225,7 @@ export const createAnnouncement = mutation({
     attachments: v.optional(v.array(v.id("_storage"))),
     attachmentContentTypes: v.optional(v.array(v.string())),
     acknowledgementRequired: v.boolean(),
+    postAs: v.optional(v.union(v.literal("admin"), v.literal("user"))),
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
@@ -238,6 +239,9 @@ export const createAnnouncement = mutation({
       throw new Error("Not authorized - admin, hr, or owner role required");
     }
 
+    const wantsPersonalName = args.postAs === "user";
+    const authorDisplayName = wantsPersonalName ? undefined : "Admin";
+
     const now = Date.now();
     const announcementId = await ctx.db.insert("memos", {
       organizationId: args.organizationId,
@@ -246,6 +250,7 @@ export const createAnnouncement = mutation({
       type: "announcement",
       priority: args.priority ?? "normal",
       author: userRecord._id,
+      ...(authorDisplayName ? { authorDisplayName } : {}),
       targetAudience: args.targetAudience,
       departments: args.departments,
       specificEmployees: args.specificEmployees,
@@ -286,6 +291,7 @@ export const updateAnnouncement = mutation({
     attachments: v.optional(v.array(v.id("_storage"))),
     attachmentContentTypes: v.optional(v.array(v.string())),
     acknowledgementRequired: v.optional(v.boolean()),
+    postAs: v.optional(v.union(v.literal("admin"), v.literal("user"))),
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
@@ -304,9 +310,8 @@ export const updateAnnouncement = mutation({
       throw new Error("Announcement not found");
     }
 
-    // Only author or admin/hr can update
-    if (announcement.author !== userRecord._id && userRecord.role !== "admin") {
-      throw new Error("Not authorized - only author or admin can update");
+    if (announcement.author !== userRecord._id) {
+      throw new Error("Only the author can update this announcement");
     }
 
     const updateData: any = {
@@ -329,6 +334,14 @@ export const updateAnnouncement = mutation({
       updateData.attachmentContentTypes = args.attachmentContentTypes;
     if (args.acknowledgementRequired !== undefined)
       updateData.acknowledgementRequired = args.acknowledgementRequired;
+
+    if (args.postAs !== undefined) {
+      if (args.postAs === "user") {
+        updateData.authorDisplayName = "";
+      } else {
+        updateData.authorDisplayName = "Admin";
+      }
+    }
 
     await ctx.db.patch(args.announcementId, updateData);
     return args.announcementId;
@@ -358,9 +371,8 @@ export const deleteAnnouncement = mutation({
       throw new Error("Announcement not found");
     }
 
-    // Only author or admin can delete
-    if (announcement.author !== userRecord._id && userRecord.role !== "admin") {
-      throw new Error("Not authorized - only author or admin can delete");
+    if (announcement.author !== userRecord._id) {
+      throw new Error("Only the author can delete this announcement");
     }
 
     await ctx.db.delete(args.announcementId);

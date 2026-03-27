@@ -798,6 +798,8 @@ export default defineSchema({
       v.literal("urgent"),
     ),
     author: v.id("users"),
+    /** When set (e.g. "Admin"), announcement shows this label instead of the author's name */
+    authorDisplayName: v.optional(v.string()),
     targetAudience: v.union(
       v.literal("all"),
       v.literal("department"),

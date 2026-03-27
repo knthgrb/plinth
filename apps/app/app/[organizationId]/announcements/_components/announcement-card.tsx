@@ -31,15 +31,16 @@ import { useToast } from "@/components/ui/use-toast";
 import { deleteAnnouncement } from "@/actions/announcements";
 import { getAnnouncementAttachmentUrl } from "@/actions/files";
 import { useOrganization } from "@/hooks/organization-context";
+import { useEmployeeView } from "@/hooks/employee-view-context";
 import { acknowledgeMemo } from "@/actions/memos";
 
 interface AnnouncementCardProps {
   announcement: any;
   currentUserId?: string;
   currentEmployeeId?: string;
-  isAdminOrHr: boolean;
   canReact?: boolean;
   onDelete?: () => void;
+  onRequestEdit?: (announcement: any) => void;
 }
 
 const EMOJI_OPTIONS = [
@@ -170,14 +171,15 @@ export function AnnouncementCard({
   announcement,
   currentUserId,
   currentEmployeeId,
-  isAdminOrHr,
   canReact = true,
   onDelete,
+  onRequestEdit,
 }: AnnouncementCardProps) {
   const { toast } = useToast();
-  const { currentOrganizationId } = useOrganization();
+  const { currentOrganizationId, effectiveOrganizationId } = useOrganization();
+  const { isEmployeeExperienceUI } = useEmployeeView();
   const [commentText, setCommentText] = useState("");
-  const [commentAs, setCommentAs] = useState<"user" | "admin">("user");
+  const [commentAs, setCommentAs] = useState<"user" | "admin">("admin");
   const [submittingComment, setSubmittingComment] = useState(false);
   const [previewFile, setPreviewFile] = useState<{
     url: string;
@@ -185,6 +187,32 @@ export function AnnouncementCard({
     type: string;
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+
+  const viewer = useQuery(
+    (api as any).organizations.getCurrentUser,
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId as Id<"organizations"> }
+      : "skip",
+  );
+
+  /**
+   * Admin / HR / owner only — matches who can create announcements.
+   * Hidden while "employee experience" UI is on (view as employee).
+   */
+  const isStaff =
+    viewer?.role === "admin" ||
+    viewer?.role === "hr" ||
+    viewer?.role === "owner";
+
+  const isStaffElevated = isStaff && !isEmployeeExperienceUI;
+
+  const isAnnouncementAuthor = Boolean(
+    currentUserId &&
+      String(announcement.author) === String(currentUserId),
+  );
+
+  const showAuthorActionsMenu =
+    isStaffElevated && isAnnouncementAuthor;
 
   // Get author info
   const author = useQuery(
@@ -312,7 +340,7 @@ export function AnnouncementCard({
         announcementId: announcement._id,
         organizationId: currentOrganizationId,
         content: trimmed,
-        commentAs: isAdminOrHr ? commentAs : undefined,
+        commentAs: isStaffElevated ? commentAs : undefined,
       });
       setCommentText("");
     } catch (error: any) {
@@ -454,13 +482,15 @@ export function AnnouncementCard({
     }
   };
 
-  const authorName = author?.name || author?.email || "Unknown";
-  // Check if author is admin - if name is "Admin" or we need to check role
-  // For now, we'll check if the displayed name would be "Admin" (which happens when role is admin)
-  const isAuthorAdmin = authorName === "Admin" || author?.role === "admin";
-  const authorInitials = isAuthorAdmin
+  const authorNameFromUser = author?.name || author?.email || "Unknown";
+  const displayAuthorName =
+    announcement.authorDisplayName === "Admin"
+      ? "Admin"
+      : authorNameFromUser;
+  const isShownAsAdmin = announcement.authorDisplayName === "Admin";
+  const authorInitials = isShownAsAdmin
     ? "A"
-    : authorName
+    : displayAuthorName
         .split(" ")
         .map((n: string) => n[0])
         .join("")
@@ -478,14 +508,14 @@ export function AnnouncementCard({
         <div className="flex items-start justify-between mb-1">
           <div className="flex items-center gap-2">
             <span className="font-semibold text-gray-900">
-              {author?.role === "admin" ? "Admin" : authorName}
+              {displayAuthorName}
             </span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500">
               {format(new Date(announcement.publishedDate), "h:mm a")}
             </span>
-            {isAdminOrHr && (
+            {showAuthorActionsMenu && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
@@ -493,7 +523,9 @@ export function AnnouncementCard({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => onRequestEdit?.(announcement)}
+                  >
                     <Edit className="h-4 w-4 mr-2" />
                     Edit
                   </DropdownMenuItem>
@@ -512,7 +544,7 @@ export function AnnouncementCard({
 
         <div className="mb-2">
           <h3 className="font-semibold text-lg mb-2">{announcement.title}</h3>
-          {isAdminOrHr && (
+          {isStaffElevated && (
             <p className="text-xs text-gray-500 mt-1">
               Target:{" "}
               {announcement.targetAudience === "all"
@@ -679,7 +711,7 @@ export function AnnouncementCard({
               ))}
             </ul>
           )}
-          {isAdminOrHr && (
+          {isStaffElevated && (
             <div className="flex items-center gap-2 mb-2">
               <span className="text-xs text-gray-500">Comment as:</span>
               <button

@@ -20,6 +20,7 @@ export async function createAnnouncement(data: {
   attachments?: string[];
   attachmentContentTypes?: string[];
   acknowledgementRequired: boolean;
+  postAs?: "admin" | "user";
 }) {
   return AnnouncementsService.createAnnouncement(data);
 }
@@ -37,6 +38,7 @@ export async function updateAnnouncement(data: {
   attachments?: string[];
   attachmentContentTypes?: string[];
   acknowledgementRequired?: boolean;
+  postAs?: "admin" | "user";
 }) {
   return AnnouncementsService.updateAnnouncement(data);
 }

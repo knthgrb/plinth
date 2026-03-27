@@ -28,6 +28,7 @@ export class AnnouncementsService {
     attachments?: string[];
     attachmentContentTypes?: string[];
     acknowledgementRequired: boolean;
+    postAs?: "admin" | "user";
   }) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(
@@ -45,6 +46,7 @@ export class AnnouncementsService {
         attachments: data.attachments as Id<"_storage">[] | undefined,
         attachmentContentTypes: data.attachmentContentTypes,
         acknowledgementRequired: data.acknowledgementRequired,
+        postAs: data.postAs,
       }
     );
   }
@@ -62,6 +64,7 @@ export class AnnouncementsService {
     attachments?: string[];
     attachmentContentTypes?: string[];
     acknowledgementRequired?: boolean;
+    postAs?: "admin" | "user";
   }) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(
@@ -81,6 +84,7 @@ export class AnnouncementsService {
         attachments: data.attachments as Id<"_storage">[] | undefined,
         attachmentContentTypes: data.attachmentContentTypes,
         acknowledgementRequired: data.acknowledgementRequired,
+        postAs: data.postAs,
       }
     );
   }
