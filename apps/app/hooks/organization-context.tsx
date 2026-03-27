@@ -5,6 +5,10 @@ import { useQuery, useMutation } from "convex/react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
+import { authClient } from "@/lib/auth-client";
+
+/** Convex can return [] from getUserOrganizations before Better Auth identity is wired, then real rows. */
+const AUTH_EMPTY_ORG_GRACE_MS = 900;
 
 type Organization = {
   _id: Id<"organizations">;
@@ -77,6 +81,26 @@ export function OrganizationProvider({
     (api as any).organizations.updateLastActiveOrganization,
   );
 
+  const [authChecked, setAuthChecked] = useState(false);
+  const [hasAuthSession, setHasAuthSession] = useState(false);
+  /**
+   * After session is known, treat empty org list as "real" only after grace (or once we have rows).
+   * Avoids flashing "Create organization" when [] is the pre-auth-sync placeholder.
+   */
+  const [allowEmptyOrgListUi, setAllowEmptyOrgListUi] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    authClient.getSession().then((res) => {
+      if (cancelled) return;
+      setHasAuthSession(!!res?.data?.session);
+      setAuthChecked(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Use try-catch pattern - if query fails (e.g., unauthenticated), return empty array
   const organizationsQuery = useQuery(api.organizations.getUserOrganizations, {
     // refreshKey could be used to force refetch if implemented, kept for future
@@ -84,6 +108,36 @@ export function OrganizationProvider({
 
   // Handle query errors gracefully (e.g., when user is not authenticated yet)
   const organizations = organizationsQuery || [];
+
+  useEffect(() => {
+    if (!authChecked) return;
+
+    if (!hasAuthSession) {
+      setAllowEmptyOrgListUi(true);
+      return;
+    }
+
+    if (organizationsQuery === undefined) {
+      setAllowEmptyOrgListUi(false);
+      return;
+    }
+
+    if (organizations.length > 0) {
+      setAllowEmptyOrgListUi(true);
+      return;
+    }
+
+    setAllowEmptyOrgListUi(false);
+    const id = window.setTimeout(() => {
+      setAllowEmptyOrgListUi(true);
+    }, AUTH_EMPTY_ORG_GRACE_MS);
+    return () => window.clearTimeout(id);
+  }, [
+    authChecked,
+    hasAuthSession,
+    organizationsQuery,
+    organizations.length,
+  ]);
 
   // Initialize from URL params first, then localStorage, then lastActiveOrganizationId
   useEffect(() => {
@@ -273,6 +327,7 @@ export function OrganizationProvider({
     setSwitchingToOrganizationId(null);
     setCurrentOrganizationId(null);
     setIsInitialized(false); // Allow init effect to run again after login so isLoggingOut gets cleared
+    setAllowEmptyOrgListUi(false);
     if (typeof window !== "undefined") {
       localStorage.removeItem(STORAGE_KEY);
     }
@@ -297,6 +352,14 @@ export function OrganizationProvider({
   // Expose ref so layout/loading never show switch overlay during logout (sync with clearOrganization)
   const effectiveIsLoggingOut = isLoggingOut || isLoggingOutRef.current;
 
+  const orgQueryPending = organizationsQuery === undefined;
+  const authenticatedEmptyListHold =
+    authChecked &&
+    hasAuthSession &&
+    !orgQueryPending &&
+    organizations.length === 0 &&
+    !allowEmptyOrgListUi;
+
   return (
     <OrganizationContext.Provider
       value={{
@@ -304,7 +367,11 @@ export function OrganizationProvider({
         effectiveOrganizationId,
         organizations,
         currentOrganization,
-        isLoading: !isInitialized || organizationsQuery === undefined,
+        isLoading:
+          !authChecked ||
+          orgQueryPending ||
+          !isInitialized ||
+          authenticatedEmptyListHold,
         switchingToOrganizationId: effectiveSwitchingToOrganizationId,
         isLoggingOut: effectiveIsLoggingOut,
         switchOrganization,
