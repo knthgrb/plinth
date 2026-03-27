@@ -34,6 +34,42 @@ type SettingsLeaveType = {
   isAnniversary?: boolean;
 };
 
+/** Payload shape expected by `api.settings.updateLeaveTypes` for each entry. */
+type LeaveTypeMutationEntry = {
+  type: string;
+  name: string;
+  defaultCredits: number;
+  isPaid: boolean;
+  requiresApproval: boolean;
+  maxConsecutiveDays?: number;
+  carryOver?: boolean;
+  maxCarryOver?: number;
+  isAnniversary?: boolean;
+};
+
+function toMutationLeaveType(t: SettingsLeaveType): LeaveTypeMutationEntry {
+  const entry: LeaveTypeMutationEntry = {
+    type: t.type,
+    name: t.name,
+    defaultCredits: t.defaultCredits,
+    isPaid: t.isPaid ?? true,
+    requiresApproval: t.requiresApproval ?? true,
+  };
+  if (t.maxConsecutiveDays !== undefined) {
+    entry.maxConsecutiveDays = t.maxConsecutiveDays;
+  }
+  if (t.carryOver !== undefined) {
+    entry.carryOver = t.carryOver;
+  }
+  if (t.maxCarryOver !== undefined) {
+    entry.maxCarryOver = t.maxCarryOver;
+  }
+  if (t.isAnniversary !== undefined) {
+    entry.isAnniversary = t.isAnniversary;
+  }
+  return entry;
+}
+
 function slugifyLeaveType(name: string, index: number) {
   const base = name
     .trim()
@@ -141,7 +177,7 @@ export function LeaveTypesSettingsContent() {
     const annivPreserved = (
       (settings?.leaveTypes ?? []) as SettingsLeaveType[]
     ).filter((t) => t.isAnniversary);
-    const workPayload =
+    const workPayload: LeaveTypeMutationEntry[] =
       leaveTrackerMode === "by_type"
         ? trackerTypeRows
             .filter(
@@ -153,8 +189,8 @@ export function LeaveTypesSettingsContent() {
               type: r.typeKey.trim() || slugifyLeaveType(r.name, idx),
               name: r.name.trim() || `Leave ${idx + 1}`,
               defaultCredits: Math.max(0, Number(r.maxDays) || 0),
-              isPaid: true as const,
-              requiresApproval: true as const,
+              isPaid: true,
+              requiresApproval: true,
             }))
         : [];
 
@@ -167,6 +203,16 @@ export function LeaveTypesSettingsContent() {
       });
       return;
     }
+
+    const leaveTypesForMutation: LeaveTypeMutationEntry[] | undefined =
+      leaveTrackerMode === "by_type"
+        ? [
+            ...workPayload,
+            ...annivPreserved.map((t): LeaveTypeMutationEntry =>
+              toMutationLeaveType(t),
+            ),
+          ]
+        : undefined;
 
     setIsSaving(true);
     try {
@@ -181,8 +227,8 @@ export function LeaveTypesSettingsContent() {
             : (settings?.annualSil ?? 8),
         grantLeaveUponRegularization,
         maxConvertibleLeaveDays: parsedMaxConvertible,
-        ...(leaveTrackerMode === "by_type"
-          ? { leaveTypes: [...workPayload, ...annivPreserved] }
+        ...(leaveTypesForMutation !== undefined
+          ? { leaveTypes: leaveTypesForMutation }
           : {}),
       });
       toast({
