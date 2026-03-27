@@ -3492,6 +3492,7 @@ async function computeLeaveConversionAmountsInternal(
   const grantLeaveUponRegularization =
     settings?.grantLeaveUponRegularization !== false;
   const maxConvertibleLeaveDays = settings?.maxConvertibleLeaveDays ?? 5;
+  const enableAnniversaryLeave = settings?.enableAnniversaryLeave !== false;
 
   const referenceDate = new Date(args.year, 11, 31).getTime();
 
@@ -3552,17 +3553,22 @@ async function computeLeaveConversionAmountsInternal(
     const dailyRate =
       totalBasicPay > 0 ? totalBasicPay / workingDaysPerYear : 0;
 
-    const regDate =
-      employee?.employment?.regularizationDate ??
-      employee?.employment?.hireDate;
+    const regularizationDate =
+      employee?.employment?.regularizationDate ?? undefined;
     const hireDate = employee?.employment?.hireDate;
-    const prorationStart =
-      grantLeaveUponRegularization && regDate ? regDate : hireDate;
+    const prorationStart = grantLeaveUponRegularization
+      ? regularizationDate ?? hireDate
+      : hireDate;
+    const anniversaryStart = grantLeaveUponRegularization
+      ? regularizationDate
+      : hireDate;
 
     const formulaAnnualSil = proratedLeave
       ? getProratedAnnualSil(annualSil, prorationStart, referenceDate)
       : annualSil;
-    const anniversaryLeave = getCompletedYearsSince(regDate, referenceDate);
+    const anniversaryLeave = enableAnniversaryLeave
+      ? getCompletedYearsSince(anniversaryStart, referenceDate)
+      : 0;
 
     const savedRow = rowsMap.get(empId) as
       | { annualSilOverride?: number; availed?: number }

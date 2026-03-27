@@ -640,6 +640,8 @@ export default defineSchema({
     reviewedBy: v.optional(v.id("users")),
     reviewedDate: v.optional(v.number()),
     remarks: v.optional(v.string()),
+    approvedByName: v.optional(v.string()),
+    reviewerSignatureDataUrl: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

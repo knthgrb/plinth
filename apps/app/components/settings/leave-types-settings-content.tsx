@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
-import { Check, FilePenLine, Info, Plus, Trash2 } from "lucide-react";
+import { Check, FilePenLine, Info, Lock, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,28 +47,8 @@ type LeaveTypeMutationEntry = {
   isAnniversary?: boolean;
 };
 
-function toMutationLeaveType(t: SettingsLeaveType): LeaveTypeMutationEntry {
-  const entry: LeaveTypeMutationEntry = {
-    type: t.type,
-    name: t.name,
-    defaultCredits: t.defaultCredits,
-    isPaid: t.isPaid ?? true,
-    requiresApproval: t.requiresApproval ?? true,
-  };
-  if (t.maxConsecutiveDays !== undefined) {
-    entry.maxConsecutiveDays = t.maxConsecutiveDays;
-  }
-  if (t.carryOver !== undefined) {
-    entry.carryOver = t.carryOver;
-  }
-  if (t.maxCarryOver !== undefined) {
-    entry.maxCarryOver = t.maxCarryOver;
-  }
-  if (t.isAnniversary !== undefined) {
-    entry.isAnniversary = t.isAnniversary;
-  }
-  return entry;
-}
+/** Canonical key for the fixed anniversary row in by-type mode (matches schema examples). */
+const ANNIVERSARY_LEAVE_TYPE_KEY = "anniversary";
 
 function slugifyLeaveType(name: string, index: number) {
   const base = name
@@ -76,7 +56,22 @@ function slugifyLeaveType(name: string, index: number) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_|_$/g, "");
-  return base || `leave_type_${index + 1}`;
+  const slug = base || `leave_type_${index + 1}`;
+  if (slug === ANNIVERSARY_LEAVE_TYPE_KEY) {
+    return `leave_type_${index + 1}`;
+  }
+  return slug;
+}
+
+function fixedAnniversaryLeaveEntry(): LeaveTypeMutationEntry {
+  return {
+    type: ANNIVERSARY_LEAVE_TYPE_KEY,
+    name: "Anniversary leave",
+    defaultCredits: 0,
+    isPaid: true,
+    requiresApproval: true,
+    isAnniversary: true,
+  };
 }
 
 export function LeaveTypesSettingsContent() {
@@ -174,9 +169,6 @@ export function LeaveTypesSettingsContent() {
       return;
     }
 
-    const annivPreserved = (
-      (settings?.leaveTypes ?? []) as SettingsLeaveType[]
-    ).filter((t) => t.isAnniversary);
     const workPayload: LeaveTypeMutationEntry[] =
       leaveTrackerMode === "by_type"
         ? trackerTypeRows
@@ -192,6 +184,7 @@ export function LeaveTypesSettingsContent() {
               isPaid: true,
               requiresApproval: true,
             }))
+            .filter((e) => e.type !== ANNIVERSARY_LEAVE_TYPE_KEY)
         : [];
 
     if (leaveTrackerMode === "by_type" && workPayload.length === 0) {
@@ -208,9 +201,7 @@ export function LeaveTypesSettingsContent() {
       leaveTrackerMode === "by_type"
         ? [
             ...workPayload,
-            ...annivPreserved.map((t): LeaveTypeMutationEntry =>
-              toMutationLeaveType(t),
-            ),
+            ...(enableAnniversaryLeave ? [fixedAnniversaryLeaveEntry()] : []),
           ]
         : undefined;
 
@@ -352,11 +343,12 @@ export function LeaveTypesSettingsContent() {
                 htmlFor="enableAnniversaryLeave"
                 className="cursor-pointer text-sm font-medium text-[rgb(64,64,64)]"
               >
-                Enable anniversary leave in tracker totals
+                Enable anniversary leave
               </Label>
               <p className="text-xs text-[rgb(133,133,133)]">
-                Anniversary leave uses the start rule you set below (date of
-                regularization or date hired).
+                Adds 1 day per full year of service using the start rule below.
+                In By leave type mode, Anniversary leave is a fixed row in the
+                list.
               </p>
             </div>
           </div>
@@ -395,6 +387,40 @@ export function LeaveTypesSettingsContent() {
               employee start date.
             </p>
             <div className="space-y-3">
+              {enableAnniversaryLeave ? (
+                <div className="flex flex-col gap-2 rounded-md border border-dashed border-brand-purple/40 bg-brand-purple/5 p-3 sm:flex-row sm:items-end">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <Label className="text-xs text-[rgb(100,100,100)] flex items-center gap-1.5">
+                      <Lock className="h-3 w-3 text-brand-purple" aria-hidden />
+                      Name
+                    </Label>
+                    <Input
+                      value="Anniversary leave"
+                      readOnly
+                      disabled
+                      className="bg-[rgb(250,250,250)] text-[rgb(64,64,64)]"
+                    />
+                  </div>
+                  <div className="w-full space-y-1 sm:w-32">
+                    <Label className="text-xs text-[rgb(100,100,100)]">
+                      Max days
+                    </Label>
+                    <Input
+                      value="Auto (1/yr)"
+                      readOnly
+                      disabled
+                      title="Accrues 1 day per full year; not edited here."
+                      className="bg-[rgb(250,250,250)] text-[rgb(100,100,100)]"
+                    />
+                  </div>
+                  <div
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-transparent text-[rgb(180,180,180)]"
+                    title="Fixed leave type"
+                  >
+                    <Lock className="h-4 w-4" />
+                  </div>
+                </div>
+              ) : null}
               {trackerTypeRows.map((row, index) => (
                 <div
                   key={index}
@@ -524,8 +550,9 @@ export function LeaveTypesSettingsContent() {
                   Date of regularization
                 </p>
                 <p className="text-xs text-[rgb(133,133,133)]">
-                  Default. If a regularization date exists, proration starts
-                  from that date. Otherwise it falls back to the hire date.
+                  Prorated SIL / leave types start from regularization when set,
+                  otherwise from hire. Anniversary leave only starts after a
+                  regularization date is recorded (no hire-date fallback).
                 </p>
               </div>
             </button>
@@ -549,7 +576,7 @@ export function LeaveTypesSettingsContent() {
                   Date hired
                 </p>
                 <p className="text-xs text-[rgb(133,133,133)]">
-                  Proration always starts from the employee&apos;s hire date.
+                  Proration and anniversary leave both use the hire date.
                 </p>
               </div>
             </button>

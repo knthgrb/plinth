@@ -225,7 +225,10 @@ function computeGeneralLeaveSummary(
   const prorationStartDate = grantLeaveUponRegularization
     ? regularizationDate ?? hireDate
     : hireDate;
-  const anniversaryStartDate = prorationStartDate;
+  // Anniversary counts only from regularization when that mode is on (no hire fallback).
+  const anniversaryStartDate = grantLeaveUponRegularization
+    ? regularizationDate
+    : hireDate;
 
   const proratedSil = proratedLeaveSetting
     ? getProratedAnnualSilTracker(
@@ -532,6 +535,8 @@ export const approveLeaveRequest = mutation({
   args: {
     leaveRequestId: v.id("leaveRequests"),
     remarks: v.optional(v.string()),
+    approvedByName: v.string(),
+    reviewerSignatureDataUrl: v.string(),
   },
   handler: async (ctx, args) => {
     const request = await ctx.db.get(args.leaveRequestId);
@@ -541,6 +546,15 @@ export const approveLeaveRequest = mutation({
 
     if (request.status !== "pending") {
       throw new Error("Leave request is not pending");
+    }
+
+    const approvedByTrimmed = args.approvedByName.trim();
+    const reviewerSigTrimmed = args.reviewerSignatureDataUrl.trim();
+    if (!approvedByTrimmed) {
+      throw new Error("Approved by name is required");
+    }
+    if (!reviewerSigTrimmed) {
+      throw new Error("Reviewer signature is required");
     }
 
     // Check and update leave credits
@@ -602,6 +616,8 @@ export const approveLeaveRequest = mutation({
       reviewedBy: userRecord._id,
       reviewedDate: Date.now(),
       remarks: args.remarks,
+      approvedByName: approvedByTrimmed,
+      reviewerSignatureDataUrl: reviewerSigTrimmed,
       updatedAt: Date.now(),
     });
 
@@ -812,7 +828,9 @@ export const getEmployeeLeaveCredits = query({
       );
       let sumCaps = 0;
       const enableAnniversaryLeave = settings?.enableAnniversaryLeave !== false;
-      const anniversaryStartDate = prorationStartDate;
+      const anniversaryStartDate = grantLeaveUponRegularization
+        ? regularizationDate
+        : hireDate;
       const anniversaryLeave = enableAnniversaryLeave
         ? getCompletedCalendarYearsSince(anniversaryStartDate, now)
         : 0;

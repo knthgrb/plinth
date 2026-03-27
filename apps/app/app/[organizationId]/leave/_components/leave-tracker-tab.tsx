@@ -235,8 +235,9 @@ export function LeaveTrackerTab({
       const employeeId = employee._id as string;
       const regularizationDate =
         employee?.employment?.regularizationDate ?? undefined;
+      // Anniversary: only from regularization when that setting is on (no hire fallback).
       const anniversaryStartDate = grantLeaveUponRegularization
-        ? regularizationDate ?? employee?.employment?.hireDate
+        ? regularizationDate
         : employee?.employment?.hireDate;
       const prorationStartDate = grantLeaveUponRegularization
         ? regularizationDate ?? employee?.employment?.hireDate
@@ -505,9 +506,9 @@ export function LeaveTrackerTab({
               <>
                 Anniversary leave uses full years since{" "}
                 {grantLeaveUponRegularization
-                  ? "regularization date (or hire date fallback)"
+                  ? "regularization date only (0 until that date is set)"
                   : "hire date"}
-                .
+                . Proration still falls back to hire when regularization is empty.
               </>
             ) : (
               " Anniversary leave is off for totals."

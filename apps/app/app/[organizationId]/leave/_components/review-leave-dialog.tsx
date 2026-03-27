@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Check, Download, Loader2, Save, X, AlertCircle } from "lucide-react";
@@ -41,6 +42,8 @@ type LeaveRequestRecord = {
   remarks?: string;
   filledFormContent?: string;
   signatureDataUrl?: string;
+  approvedByName?: string;
+  reviewerSignatureDataUrl?: string;
 };
 
 function leaveTypeDisplay(request: LeaveRequestRecord) {
@@ -82,6 +85,7 @@ export function ReviewLeaveDialog({
   const [reviewRemarks, setReviewRemarks] = useState("");
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isSavingToDocuments, setIsSavingToDocuments] = useState(false);
+  const [approvedBy, setApprovedBy] = useState("");
   const [approverSignatureDataUrl, setApproverSignatureDataUrl] = useState("");
   const pdfContentRef = useRef<HTMLDivElement | null>(null);
 
@@ -93,13 +97,22 @@ export function ReviewLeaveDialog({
   );
   const canApprove = approvalInfo?.canApprove !== false;
   const blockReason = approvalInfo?.blockReason;
+  const approvalFormComplete =
+    Boolean(approvedBy.trim()) && Boolean(approverSignatureDataUrl.trim());
 
   const handleApprove = async () => {
     if (!request) return;
     try {
-      await approveLeaveRequest(request._id, reviewRemarks);
+      await approveLeaveRequest(
+        request._id,
+        reviewRemarks,
+        approvedBy.trim(),
+        approverSignatureDataUrl.trim(),
+      );
       onOpenChange(false);
       setReviewRemarks("");
+      setApprovedBy("");
+      setApproverSignatureDataUrl("");
       toast({
         title: "Success",
         description: "Leave request approved successfully",
@@ -154,6 +167,21 @@ export function ReviewLeaveDialog({
   const employeeName = employee
     ? `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`
     : "Unknown Employee";
+
+  const pdfApprovedBy =
+    request.status === "pending"
+      ? approvedBy.trim()
+      : (request.approvedByName ?? "").trim();
+  const pdfReviewerSignature =
+    request.status === "pending"
+      ? approverSignatureDataUrl
+      : (request.reviewerSignatureDataUrl ?? "");
+
+  const resetReviewForm = () => {
+    setReviewRemarks("");
+    setApprovedBy("");
+    setApproverSignatureDataUrl("");
+  };
 
   const handleDownloadPdf = async () => {
     if (!pdfContentRef.current) return;
@@ -241,7 +269,13 @@ export function ReviewLeaveDialog({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) resetReviewForm();
+        onOpenChange(open);
+      }}
+    >
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <div className="fixed left-[-9999px] top-0 z-[-1]">
           <div
@@ -256,39 +290,43 @@ export function ReviewLeaveDialog({
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="font-medium">Employee</p>
-                  <p>{employeeName}</p>
-                </div>
-                <div>
-                  <p className="font-medium">Status</p>
-                  <p className="capitalize">{request.status}</p>
-                </div>
-                <div>
-                  <p className="font-medium">Leave Type</p>
-                  <p>{leaveTypeDisplay(request)}</p>
-                </div>
-                <div>
-                  <p className="font-medium">Requested Days</p>
-                  <p>{request.numberOfDays}</p>
-                </div>
-                <div>
-                  <p className="font-medium">Start Date</p>
-                  <p>{format(new Date(request.startDate), "MMM dd, yyyy")}</p>
-                </div>
-                <div>
-                  <p className="font-medium">End Date</p>
-                  <p>{format(new Date(request.endDate), "MMM dd, yyyy")}</p>
-                </div>
-              </div>
+              {!request.filledFormContent && (
+                <>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="font-medium">Employee</p>
+                      <p>{employeeName}</p>
+                    </div>
+                    <div>
+                      <p className="font-medium">Status</p>
+                      <p className="capitalize">{request.status}</p>
+                    </div>
+                    <div>
+                      <p className="font-medium">Leave Type</p>
+                      <p>{leaveTypeDisplay(request)}</p>
+                    </div>
+                    <div>
+                      <p className="font-medium">Requested Days</p>
+                      <p>{request.numberOfDays}</p>
+                    </div>
+                    <div>
+                      <p className="font-medium">Start Date</p>
+                      <p>{format(new Date(request.startDate), "MMM dd, yyyy")}</p>
+                    </div>
+                    <div>
+                      <p className="font-medium">End Date</p>
+                      <p>{format(new Date(request.endDate), "MMM dd, yyyy")}</p>
+                    </div>
+                  </div>
 
-              <div>
-                <p className="mb-2 text-sm font-medium">Reason</p>
-                <div className="rounded border border-[rgb(230,230,230)] bg-white p-4 text-sm">
-                  {request.reason}
-                </div>
-              </div>
+                  <div>
+                    <p className="mb-2 text-sm font-medium">Reason</p>
+                    <div className="rounded border border-[rgb(230,230,230)] bg-white p-4 text-sm">
+                      {request.reason}
+                    </div>
+                  </div>
+                </>
+              )}
 
               {request.filledFormContent && (
                 <div>
@@ -312,17 +350,30 @@ export function ReviewLeaveDialog({
                   </div>
                 </div>
               )}
-              {approverSignatureDataUrl && (
-                <div>
-                  <p className="mb-2 text-sm font-medium">Reviewer signature</p>
-                  <div className="rounded border border-[rgb(230,230,230)] bg-white p-4">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={approverSignatureDataUrl}
-                      alt="Reviewer signature"
-                      className="h-24 w-auto max-w-full object-contain"
-                    />
-                  </div>
+
+              {(pdfApprovedBy || pdfReviewerSignature) && (
+                <div className="space-y-3 border-t border-[rgb(230,230,230)] pt-4">
+                  {pdfApprovedBy ? (
+                    <p className="text-sm">
+                      <span className="font-medium">Approved by:</span>{" "}
+                      {pdfApprovedBy}
+                    </p>
+                  ) : null}
+                  {pdfReviewerSignature ? (
+                    <div>
+                      <p className="mb-2 text-sm font-medium">
+                        Reviewer signature
+                      </p>
+                      <div className="rounded border border-[rgb(230,230,230)] bg-white p-4">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={pdfReviewerSignature}
+                          alt="Reviewer signature"
+                          className="h-24 w-auto max-w-full object-contain"
+                        />
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -334,32 +385,61 @@ export function ReviewLeaveDialog({
               ? "Review Leave Request"
               : "Leave Request Details"}
           </DialogTitle>
-          <DialogDescription>
-            <div className="space-y-2 mt-2">
-              <p>
-                <strong>Employee:</strong>{" "}
-                {employeeName}
-              </p>
-              <p>
-                <strong>Leave Type:</strong>{" "}
-                {leaveTypeDisplay(request)}
-              </p>
-              <p>
-                <strong>Period:</strong>{" "}
-                {format(new Date(request.startDate), "MMM dd, yyyy")} -{" "}
-                {format(new Date(request.endDate), "MMM dd, yyyy")}
-              </p>
-              <p>
-                <strong>Days:</strong> {request.numberOfDays}
-              </p>
-              <p>
-                <strong>Reason:</strong> {request.reason}
-              </p>
+          <DialogDescription asChild>
+            <div className="mt-2 space-y-2 text-[rgb(64,64,64)]">
+              {request.filledFormContent ? (
+                <p className="text-sm">
+                  {request.status === "pending"
+                    ? "Review the submitted form below."
+                    : "Submitted leave form and details."}
+                </p>
+              ) : (
+                <>
+                  <p>
+                    <strong>Employee:</strong> {employeeName}
+                  </p>
+                  <p>
+                    <strong>Leave Type:</strong> {leaveTypeDisplay(request)}
+                  </p>
+                  <p>
+                    <strong>Period:</strong>{" "}
+                    {format(new Date(request.startDate), "MMM dd, yyyy")} -{" "}
+                    {format(new Date(request.endDate), "MMM dd, yyyy")}
+                  </p>
+                  <p>
+                    <strong>Days:</strong> {request.numberOfDays}
+                  </p>
+                  <p>
+                    <strong>Reason:</strong> {request.reason}
+                  </p>
+                </>
+              )}
               {request.status !== "pending" && request.remarks && (
                 <p>
                   <strong>Review notes:</strong> {request.remarks}
                 </p>
               )}
+              {request.status === "approved" &&
+                (request.approvedByName || request.reviewerSignatureDataUrl) && (
+                  <div className="space-y-2 border-t border-[rgb(230,230,230)] pt-3 text-sm">
+                    {request.approvedByName ? (
+                      <p>
+                        <strong>Approved by:</strong> {request.approvedByName}
+                      </p>
+                    ) : null}
+                    {request.reviewerSignatureDataUrl && (
+                      <div>
+                        <p className="mb-1 font-medium">Reviewer signature</p>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={request.reviewerSignatureDataUrl}
+                          alt="Reviewer signature"
+                          className="h-20 w-auto max-w-full rounded border border-[rgb(230,230,230)] object-contain p-2"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
             </div>
           </DialogDescription>
         </DialogHeader>
@@ -404,10 +484,22 @@ export function ReviewLeaveDialog({
               />
             </div>
             <div className="space-y-2">
+              <Label htmlFor="approved-by">Approved by</Label>
+              <Input
+                id="approved-by"
+                value={approvedBy}
+                onChange={(e) => setApprovedBy(e.target.value)}
+                placeholder="Full name of approver"
+                disabled={!canApprove}
+                autoComplete="name"
+              />
+            </div>
+            <div className="space-y-2">
               <Label>Reviewer signature</Label>
               <SignaturePad
                 value={approverSignatureDataUrl}
                 onChange={setApproverSignatureDataUrl}
+                disabled={!canApprove}
               />
             </div>
           </div>
@@ -441,13 +533,7 @@ export function ReviewLeaveDialog({
               Download PDF
             </Button>
           )}
-          <Button
-            variant="outline"
-            onClick={() => {
-              onOpenChange(false);
-              setReviewRemarks("");
-            }}
-          >
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           {request.status === "pending" && (
@@ -460,7 +546,10 @@ export function ReviewLeaveDialog({
                 <X className="mr-2 h-4 w-4" />
                 Reject
               </Button>
-              <Button onClick={handleApprove}>
+              <Button
+                onClick={handleApprove}
+                disabled={!canApprove || !approvalFormComplete}
+              >
                 <Check className="mr-2 h-4 w-4" />
                 Approve
               </Button>

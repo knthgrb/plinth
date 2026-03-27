@@ -26,9 +26,16 @@ export async function createLeaveRequest(data: {
 
 export async function approveLeaveRequest(
   leaveRequestId: string,
-  remarks?: string,
+  remarks: string | undefined,
+  approvedByName: string,
+  reviewerSignatureDataUrl: string,
 ) {
-  return LeaveService.approveLeaveRequest(leaveRequestId, remarks);
+  return LeaveService.approveLeaveRequest(
+    leaveRequestId,
+    remarks,
+    approvedByName,
+    reviewerSignatureDataUrl,
+  );
 }
 
 export async function rejectLeaveRequest(

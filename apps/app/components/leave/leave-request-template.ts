@@ -107,12 +107,10 @@ export const LEAVE_REQUEST_TEMPLATE_SECTIONS: TemplateSection[] = [
   {
     id: "signatures",
     label: "Add signature section",
-    description: "Insert employee and approver signature lines.",
+    description: "Insert employee signature line.",
     blocks: [
       createHeading("Signatures", 3),
       createParagraph("Employee Signature: {{signatureName}}"),
-      createParagraph("Noted by: ____________________"),
-      createParagraph("Approved by: ____________________"),
     ],
   },
 ];

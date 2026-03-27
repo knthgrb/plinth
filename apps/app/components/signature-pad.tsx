@@ -2,10 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/utils/utils";
 
 interface SignaturePadProps {
   value?: string;
   onChange: (value: string) => void;
+  disabled?: boolean;
 }
 
 function getCanvasPoint(
@@ -19,7 +21,7 @@ function getCanvasPoint(
   };
 }
 
-export function SignaturePad({ value, onChange }: SignaturePadProps) {
+export function SignaturePad({ value, onChange, disabled }: SignaturePadProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
 
@@ -58,6 +60,7 @@ export function SignaturePad({ value, onChange }: SignaturePadProps) {
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (disabled) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -71,7 +74,7 @@ export function SignaturePad({ value, onChange }: SignaturePadProps) {
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
+    if (disabled || !isDrawing) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -90,6 +93,7 @@ export function SignaturePad({ value, onChange }: SignaturePadProps) {
   };
 
   const handleClear = () => {
+    if (disabled) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -102,7 +106,12 @@ export function SignaturePad({ value, onChange }: SignaturePadProps) {
 
   return (
     <div className="space-y-2">
-      <div className="overflow-hidden rounded-md border border-[rgb(230,230,230)] bg-white">
+      <div
+        className={cn(
+          "overflow-hidden rounded-md border border-[rgb(230,230,230)] bg-white",
+          disabled && "pointer-events-none opacity-50",
+        )}
+      >
         <canvas
           ref={canvasRef}
           width={700}
@@ -115,7 +124,13 @@ export function SignaturePad({ value, onChange }: SignaturePadProps) {
         />
       </div>
       <div className="flex justify-end">
-        <Button type="button" variant="outline" size="sm" onClick={handleClear}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleClear}
+          disabled={disabled}
+        >
           Clear signature
         </Button>
       </div>
