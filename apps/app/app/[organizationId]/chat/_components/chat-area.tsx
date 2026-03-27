@@ -66,6 +66,12 @@ import {
   isEncryptedPayload,
 } from "@/lib/chat-message-crypto";
 import { useChatSessionKeys } from "./chat-session-keys-context";
+import {
+  directConversationAvatarInitials,
+  directConversationSubtitle,
+  directConversationTitle,
+  messageSenderLabelInDirect,
+} from "@/lib/chat-thread-display";
 
 function scopeMessagesToConversation(
   msgs: any[],
@@ -95,6 +101,8 @@ interface ChatAreaProps {
   currentUserId?: string;
   /** When starting a new DM, conversation is created on first message send. */
   pendingParticipant?: { _id: string; name?: string; email?: string };
+  /** Elevated users: open DM that will be created as staff "Admin" persona (separate from personal DM). */
+  pendingAsAdmin?: boolean;
   onFirstMessageSent?: (conversationId: string) => void;
   onAddMembers?: () => void;
   /** Close the current conversation (clear selection). */
@@ -108,6 +116,7 @@ export function ChatArea({
   conversation,
   currentUserId,
   pendingParticipant,
+  pendingAsAdmin = false,
   onFirstMessageSent,
   onAddMembers,
   onCloseConversation,
@@ -542,6 +551,7 @@ export function ChatArea({
         const newConversationId = await getOrCreateConversationMutation({
           organizationId: currentOrganizationId as Id<"organizations">,
           participantId: pendingParticipant._id as Id<"users">,
+          directThreadKind: pendingAsAdmin ? "staff_as_admin" : "standard",
         });
         targetConversationId = newConversationId;
         onFirstMessageSent?.(newConversationId);
@@ -584,50 +594,47 @@ export function ChatArea({
     }
   };
 
-  const displayConversation =
-    conversation ||
-    (pendingParticipant
-      ? { type: "direct" as const, participants: [pendingParticipant] }
-      : null);
+  const displayConversation = useMemo(() => {
+    if (conversation) return conversation;
+    if (!pendingParticipant) return null;
+    const base = {
+      type: "direct" as const,
+      participants: [pendingParticipant],
+    };
+    if (pendingAsAdmin && currentUserId) {
+      return {
+        ...base,
+        directThreadKind: "staff_as_admin" as const,
+        adminPersonaUserId: currentUserId,
+      };
+    }
+    return base;
+  }, [conversation, pendingParticipant, pendingAsAdmin, currentUserId]);
 
-  const getDisplayName = () => {
-    if (!displayConversation) return "";
-    if (displayConversation.type === "channel")
-      return `# ${displayConversation.name || "Channel"}`;
-    if (displayConversation.type === "group")
-      return displayConversation.name || "Group Chat";
-    // Direct: participants include current user; show the other participant
-    const otherParticipant = displayConversation.participants?.find(
-      (p: any) => p._id !== currentUserId
-    );
-    return otherParticipant?.name || otherParticipant?.email || "Unknown User";
-  };
+  const headerTitle = displayConversation
+    ? displayConversation.type === "channel"
+      ? `# ${displayConversation.name || "Channel"}`
+      : displayConversation.type === "group"
+        ? displayConversation.name || "Group Chat"
+        : directConversationTitle(displayConversation, currentUserId)
+    : "";
 
-  const getInitials = () => {
-    if (!displayConversation) return "?";
-    if (displayConversation.type === "channel") return "#";
-    if (displayConversation.type === "group") {
-      return (
-        displayConversation.name
+  const headerSubtitle = displayConversation
+    ? directConversationSubtitle(displayConversation, currentUserId)
+    : "";
+
+  const headerInitials = displayConversation
+    ? displayConversation.type === "group"
+      ? displayConversation.name
           ?.split(" ")
           .map((n: string) => n[0])
           .join("")
           .toUpperCase()
           .slice(0, 2) || "GC"
-      );
-    }
-    const otherParticipant = displayConversation.participants?.find(
-      (p: any) => p._id !== currentUserId
-    );
-    const displayName =
-      otherParticipant?.name || otherParticipant?.email || "Unknown";
-    return displayName
-      .split(" ")
-      .map((n: string) => n[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
-  };
+      : displayConversation.type === "channel"
+        ? "#"
+        : directConversationAvatarInitials(displayConversation, currentUserId)
+    : "?";
 
   if (!conversationId && !pendingParticipant) {
     return (
@@ -657,21 +664,22 @@ export function ChatArea({
               <AvatarFallback>
                 {displayConversation?.type === "group" ? (
                   <Users className="h-5 w-5" />
+                ) : displayConversation?.type === "channel" ? (
+                  "#"
                 ) : (
-                  getInitials()
+                  headerInitials
                 )}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0">
               <div className="font-medium text-gray-900 truncate">
-                {getDisplayName()}
+                {headerTitle}
               </div>
               {displayConversation?.type !== "group" &&
-                displayConversation?.type !== "channel" && (
+                displayConversation?.type !== "channel" &&
+                headerSubtitle && (
                   <div className="text-sm text-gray-500 truncate">
-                    {displayConversation?.participants?.find(
-                      (p: any) => p._id !== currentUserId
-                    )?.email || "Direct message"}
+                    {headerSubtitle}
                   </div>
                 )}
             </div>
@@ -857,6 +865,10 @@ export function ChatArea({
         ) : (
           messagesToShow?.map((message: any) => {
             const isOwnMessage = message.senderId === currentUserId;
+            const threadConv =
+              conversationId && conversation
+                ? conversation
+                : displayConversation;
             const isHovered = hoveredMessageId === message._id;
             const actionButtons = (
               <div
@@ -883,10 +895,12 @@ export function ChatArea({
                       contentSnippet:
                         message.content.slice(0, 80) +
                         (message.content.length > 80 ? "…" : ""),
-                      senderName:
-                        message.sender?.name ||
-                        message.sender?.email ||
-                        "Unknown",
+                      senderName: messageSenderLabelInDirect(
+                        message.senderId,
+                        message.sender,
+                        threadConv,
+                        currentUserId,
+                      ),
                     });
                   }}
                 >
@@ -948,9 +962,27 @@ export function ChatArea({
                       : "bg-gray-100 text-gray-900"
                   }`}
                 >
+                  {isOwnMessage &&
+                    threadConv?.type === "direct" &&
+                    threadConv.directThreadKind === "staff_as_admin" &&
+                    threadConv.adminPersonaUserId === message.senderId && (
+                      <div className="text-xs font-medium mb-1 opacity-80 text-right">
+                        {messageSenderLabelInDirect(
+                          message.senderId,
+                          message.sender,
+                          threadConv,
+                          currentUserId,
+                        )}
+                      </div>
+                    )}
                   {!isOwnMessage && (
                     <div className="text-xs font-medium mb-1 opacity-70">
-                      {message.sender?.name || message.sender?.email}
+                      {messageSenderLabelInDirect(
+                        message.senderId,
+                        message.sender,
+                        threadConv,
+                        currentUserId,
+                      )}
                     </div>
                   )}
                   {message.replyTo && (

@@ -114,10 +114,14 @@ export default function PayslipsPage() {
     employeeId ? { employeeId } : "skip",
   );
 
-  // Get organization members to find admin/accounting for comments
-  const organizationMembers = useQuery(
-    (api as any).organizations.getOrganizationMembers,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  const appealRecipient = useQuery(
+    (api as any).chat.getPayrollAppealRecipient,
+    currentOrganizationId
+      ? {
+          organizationId: currentOrganizationId as Id<"organizations">,
+          excludeUserId: user?._id as Id<"users"> | undefined,
+        }
+      : "skip",
   );
 
   // Filter payslips by month and cutoff
@@ -210,32 +214,30 @@ export default function PayslipsPage() {
 
     setIsSendingComment(true);
     try {
-      // Find admin or accounting user from organization members
-      const adminOrAccountingUser = organizationMembers?.find(
-        (m: any) => m.role === "admin" || m.role === "accounting",
-      );
-
-      if (!adminOrAccountingUser?._id) {
-        throw new Error("No admin or accounting user found to send message to");
+      const recipientId = appealRecipient?.userId;
+      if (!recipientId) {
+        throw new Error(
+          "No payroll contact found (need an owner, admin, or HR user in this organization)",
+        );
       }
 
-      // Create or get conversation with admin/accounting user
       const conversationId = await getOrCreateConversation({
         organizationId: currentOrganizationId,
-        participantId: adminOrAccountingUser._id,
+        participantId: recipientId,
+        directThreadKind: "standard",
       });
 
-      // Send message with payslip link
       const { sendMessage } = await import("@/actions/chat");
       await sendMessage({
         conversationId,
-        content: `Payslip Appeal/Comment for ${selectedPayslip.period}:\n\n${commentText}`,
+        content: `[Payslip appeal — ${selectedPayslip.period}]\n\n${commentText.trim()}`,
         payslipId: selectedPayslip._id,
       });
 
       toast({
-        title: "Success",
-        description: "Your comment/appeal has been sent to admin/accounting.",
+        title: "Appeal sent",
+        description:
+          "Your message was delivered in Chat. The recipient opens Chat, finds this conversation, and can use View Payslip on the message.",
       });
 
       setIsCommentOpen(false);
@@ -635,6 +637,13 @@ export default function PayslipsPage() {
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
+              {appealRecipient === null && (
+                <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                  No payroll contact is set up yet. Add someone with owner,
+                  admin, or HR access to this organization, then try again.
+                  Messages are delivered to their Chat inbox.
+                </p>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="comment">Your Comment/Appeal</Label>
                 <Textarea
@@ -643,6 +652,7 @@ export default function PayslipsPage() {
                   value={commentText}
                   onChange={(e) => setCommentText(e.target.value)}
                   rows={6}
+                  disabled={appealRecipient !== undefined && !appealRecipient}
                 />
               </div>
             </div>
@@ -659,7 +669,11 @@ export default function PayslipsPage() {
               </Button>
               <Button
                 onClick={handleSendComment}
-                disabled={!commentText.trim() || isSendingComment}
+                disabled={
+                  !commentText.trim() ||
+                  isSendingComment ||
+                  !appealRecipient?.userId
+                }
               >
                 {isSendingComment ? "Sending..." : "Send Comment"}
               </Button>

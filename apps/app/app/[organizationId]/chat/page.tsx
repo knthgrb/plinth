@@ -14,6 +14,7 @@ import { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { chatCache } from "@/services/chat-cache-service";
 import { ChatSessionKeysProvider } from "./_components/chat-session-keys-context";
+import { directConversationTitle } from "@/lib/chat-thread-display";
 
 const NewChatModal = dynamic(
   () => import("./_components/new-chat-modal").then((m) => m.NewChatModal),
@@ -40,6 +41,7 @@ const LIST_OR_CHAT_BREAKPOINT_PX = 1024;
 
 const CONVERSATION_PARAM = "conversation";
 const DM_PARAM = "dm";
+const DM_AS_ADMIN_PARAM = "dmAdmin";
 
 export default function ChatPage() {
   const { effectiveOrganizationId } = useOrganization();
@@ -50,6 +52,7 @@ export default function ChatPage() {
   // URL is source of truth so selection persists on refresh and back/forward
   const selectedConversationId = searchParams.get(CONVERSATION_PARAM) ?? null;
   const selectedPendingParticipantId = searchParams.get(DM_PARAM) ?? null;
+  const pendingDmAsAdmin = searchParams.get(DM_AS_ADMIN_PARAM) === "1";
 
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
@@ -108,10 +111,17 @@ export default function ChatPage() {
     }
   }, [effectiveOrganizationId]);
 
-  const setUrlParams = (conversation: string | null, dm: string | null) => {
+  const setUrlParams = (
+    conversation: string | null,
+    dm: string | null,
+    dmAsAdmin?: boolean,
+  ) => {
     const params = new URLSearchParams();
     if (conversation) params.set(CONVERSATION_PARAM, conversation);
-    if (dm) params.set(DM_PARAM, dm);
+    if (dm) {
+      params.set(DM_PARAM, dm);
+      if (dmAsAdmin) params.set(DM_AS_ADMIN_PARAM, "1");
+    }
     const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   };
@@ -221,9 +231,25 @@ export default function ChatPage() {
                     ? `# ${selectedConversation.name}`
                     : selectedConversation.type === "group"
                       ? selectedConversation.name
-                      : selectedConversation.participants?.[0]?.name ||
-                        selectedConversation.participants?.[0]?.email
-                  : pendingParticipantUser?.name || pendingParticipantUser?.email || "New message"}
+                      : directConversationTitle(
+                          selectedConversation,
+                          user?._id,
+                        )
+                  : pendingParticipantUser
+                    ? directConversationTitle(
+                        {
+                          type: "direct",
+                          participants: [pendingParticipantUser],
+                          directThreadKind: pendingDmAsAdmin
+                            ? "staff_as_admin"
+                            : undefined,
+                          adminPersonaUserId: pendingDmAsAdmin
+                            ? user?._id
+                            : undefined,
+                        },
+                        user?._id,
+                      )
+                    : "New message"}
               </span>
             </div>
           )}
@@ -236,6 +262,9 @@ export default function ChatPage() {
                 ? { _id: pendingParticipantUser._id, name: pendingParticipantUser.name, email: pendingParticipantUser.email }
                 : undefined
             }
+            pendingAsAdmin={Boolean(
+              selectedPendingParticipantId && pendingDmAsAdmin,
+            )}
             onFirstMessageSent={handleFirstMessageSent}
             onAddMembers={
               selectedConversation?.type === "group" ||

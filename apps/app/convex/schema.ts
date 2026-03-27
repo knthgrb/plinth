@@ -1080,6 +1080,12 @@ export default defineSchema({
     lastMessageAt: v.optional(v.number()),
     /** AES-256 session key for message bodies, wrapped with org KEK (see chatSessionKey.ts). */
     chatSessionKeyEnc: v.optional(v.string()),
+    /** Direct DM variant: staff official thread (shows as "Admin" to the other party). */
+    directThreadKind: v.optional(
+      v.union(v.literal("standard"), v.literal("staff_as_admin")),
+    ),
+    /** For staff_as_admin threads: user whose messages appear as Admin. */
+    adminPersonaUserId: v.optional(v.id("users")),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

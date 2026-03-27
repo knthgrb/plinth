@@ -31,6 +31,10 @@ import {
   isEncryptedPayload,
 } from "@/lib/chat-message-crypto";
 import { useChatSessionKeys } from "./chat-session-keys-context";
+import {
+  directConversationAvatarInitials,
+  directConversationTitle,
+} from "@/lib/chat-thread-display";
 
 function lastMessagePreviewText(
   conv: any,
@@ -219,38 +223,6 @@ export function ConversationList({
     };
   }, [hasMore, conversationsData?.nextCursor]);
 
-  const getDisplayName = (conv: any) => {
-    if (conv.type === "channel") return conv.name || "Channel";
-    if (conv.type === "group") return conv.name || "Group Chat";
-    const otherParticipant = conv.participants?.[0];
-    return otherParticipant?.name || otherParticipant?.email || "Unknown User";
-  };
-
-  const getInitials = (conv: any) => {
-    if (conv.type === "channel") {
-      return conv.name ? conv.name[0].toUpperCase() : "#";
-    }
-    if (conv.type === "group") {
-      return (
-        conv.name
-          ?.split(" ")
-          .map((n: string) => n[0])
-          .join("")
-          .toUpperCase()
-          .slice(0, 2) || "GC"
-      );
-    }
-    const otherParticipant = conv.participants?.[0];
-    const displayName =
-      otherParticipant?.name || otherParticipant?.email || "Unknown";
-    return displayName
-      .split(" ")
-      .map((n: string) => n[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
-  };
-
   const handleMarkAllRead = async () => {
     if (!effectiveOrganizationId) return;
     try {
@@ -291,7 +263,7 @@ export function ConversationList({
             ) : conv.type === "group" ? (
               <Users className="h-4 w-4" />
             ) : (
-              getInitials(conv)
+              directConversationAvatarInitials(conv, currentUserId)
             )}
           </AvatarFallback>
         </Avatar>
@@ -299,8 +271,8 @@ export function ConversationList({
           <div className="flex items-center gap-2">
             <span className={cn("truncate", isSelected && "font-semibold")}>
               {conv.type === "channel"
-                ? `# ${getDisplayName(conv)}`
-                : getDisplayName(conv)}
+                ? `# ${directConversationTitle(conv, currentUserId)}`
+                : directConversationTitle(conv, currentUserId)}
             </span>
             {unreadCounts && (unreadCounts[conv._id] || 0) > 0 && (
               <span

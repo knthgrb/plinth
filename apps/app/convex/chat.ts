@@ -132,44 +132,109 @@ export const getUserByEmployeeId = query({
   },
 });
 
+/** Best user to receive payslip appeals (owner → admin → hr). */
+export const getPayrollAppealRecipient = query({
+  args: {
+    organizationId: v.id("organizations"),
+    excludeUserId: v.optional(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    await checkAuth(ctx, args.organizationId);
+
+    const userOrgs = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .collect();
+
+    const priority = ["owner", "admin", "hr"] as const;
+    for (const role of priority) {
+      const row = userOrgs.find(
+        (u: any) =>
+          u.role === role &&
+          (!args.excludeUserId || u.userId !== args.excludeUserId),
+      );
+      if (row) {
+        return { userId: row.userId, role: row.role as string };
+      }
+    }
+    return null;
+  },
+});
+
+function normalizedDirectKind(conv: any): "standard" | "staff_as_admin" {
+  return conv.directThreadKind === "staff_as_admin"
+    ? "staff_as_admin"
+    : "standard";
+}
+
 // Get or create a direct conversation between two users
 export const getOrCreateConversation = mutation({
   args: {
     organizationId: v.id("organizations"),
     participantId: v.id("users"),
+    directThreadKind: v.optional(
+      v.union(v.literal("standard"), v.literal("staff_as_admin")),
+    ),
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
 
-    // Check if conversation already exists
+    const requestedKind = args.directThreadKind ?? "standard";
+
+    if (requestedKind === "staff_as_admin") {
+      const elevated =
+        userRecord.role === "owner" ||
+        userRecord.role === "admin" ||
+        userRecord.role === "hr";
+      if (!elevated) {
+        throw new Error(
+          "Only owner, admin, or HR can start an Admin direct message",
+        );
+      }
+    }
+
     const existingConversations = await (ctx.db.query("conversations") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .collect();
 
     const existing = existingConversations.find((conv: any) => {
-      return (
-        conv.type === "direct" &&
-        conv.participants.length === 2 &&
-        conv.participants.includes(userRecord._id) &&
-        conv.participants.includes(args.participantId)
-      );
+      if (
+        conv.type !== "direct" ||
+        conv.participants.length !== 2 ||
+        !conv.participants.includes(userRecord._id) ||
+        !conv.participants.includes(args.participantId)
+      ) {
+        return false;
+      }
+      const kind = normalizedDirectKind(conv);
+      if (kind !== requestedKind) return false;
+      if (requestedKind === "staff_as_admin") {
+        return conv.adminPersonaUserId === userRecord._id;
+      }
+      return !conv.adminPersonaUserId;
     });
 
     if (existing) {
       return existing._id;
     }
 
-    // Create new conversation
     const now = Date.now();
-    const conversationId = await ctx.db.insert("conversations", {
+    const doc: Record<string, unknown> = {
       organizationId: args.organizationId,
       participants: [userRecord._id, args.participantId],
       type: "direct",
       createdAt: now,
       updatedAt: now,
-    });
+    };
+    if (requestedKind === "staff_as_admin") {
+      doc.directThreadKind = "staff_as_admin";
+      doc.adminPersonaUserId = userRecord._id;
+    }
+
+    const conversationId = await ctx.db.insert("conversations", doc as any);
 
     return conversationId;
   },
@@ -644,16 +709,17 @@ export const getConversationByParticipant = query({
       )
       .collect();
 
-    const conversation = conversations.find((conv: any) => {
-      return (
+    const dms = conversations.filter(
+      (conv: any) =>
         conv.type === "direct" &&
         conv.participants.length === 2 &&
         conv.participants.includes(userRecord._id) &&
-        conv.participants.includes(args.participantId)
-      );
-    });
-
-    return conversation || null;
+        conv.participants.includes(args.participantId),
+    );
+    const standard = dms.find(
+      (conv: any) => normalizedDirectKind(conv) === "standard",
+    );
+    return standard ?? dms[0] ?? null;
   },
 });
 

@@ -5,6 +5,7 @@ import { ChatService } from "@/services/chat-service";
 export async function getOrCreateConversation(data: {
   organizationId: string;
   participantId: string;
+  directThreadKind?: "standard" | "staff_as_admin";
 }) {
   return ChatService.getOrCreateConversation(data);
 }

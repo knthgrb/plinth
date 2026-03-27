@@ -23,7 +23,10 @@ interface NewChatModalProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   /** Called when user selects someone to message. Conversation is not created until they send the first message. */
-  onSelectParticipant?: (participantId: string) => void;
+  onSelectParticipant?: (
+    participantId: string,
+    options?: { asAdmin?: boolean },
+  ) => void;
   /** @deprecated Use onSelectParticipant; conversation is created on first message send. */
   onSuccess?: (conversationId: string) => void;
 }
@@ -38,11 +41,22 @@ export function NewChatModal({
   const { toast } = useToast();
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [messageAs, setMessageAs] = useState<"self" | "admin">("self");
+
+  const currentUser = useQuery(
+    (api as any).organizations.getCurrentUser,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
 
   const organizationUsers = useQuery(
     (api as any).chat.getOrganizationUsers,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
   );
+
+  const canMessageAsAdmin =
+    currentUser?.role === "owner" ||
+    currentUser?.role === "admin" ||
+    currentUser?.role === "hr";
 
   const getOrCreateConversationMutation = useMutation(
     (api as any).chat.getOrCreateConversation
@@ -62,12 +76,18 @@ export function NewChatModal({
     setSearchQuery("");
     onOpenChange(false);
     if (onSelectParticipant) {
-      onSelectParticipant(userId);
+      onSelectParticipant(userId, {
+        asAdmin: canMessageAsAdmin && messageAs === "admin",
+      });
     } else if (onSuccess) {
       // Legacy: create conversation immediately (e.g. from other entry points)
       getOrCreateConversationMutation({
         organizationId: currentOrganizationId!,
         participantId: userId as Id<"users">,
+        directThreadKind:
+          canMessageAsAdmin && messageAs === "admin"
+            ? "staff_as_admin"
+            : "standard",
       })
         .then(onSuccess)
         .catch((err: any) => {
@@ -84,6 +104,7 @@ export function NewChatModal({
     if (!isOpen) {
       setSelectedUserId(null);
       setSearchQuery("");
+      setMessageAs("self");
     }
   }, [isOpen]);
 
@@ -97,6 +118,35 @@ export function NewChatModal({
           </DialogDescription>
         </DialogHeader>
         <div className="py-4">
+          {canMessageAsAdmin && (
+            <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50/80 p-3 space-y-2">
+              <Label className="text-gray-900">Message as</Label>
+              <p className="text-xs text-gray-500">
+                Admin threads are separate from your personal DM with the same
+                person. They only see &quot;Admin&quot; as the sender name.
+              </p>
+              <div className="flex rounded-md border border-gray-200 bg-white p-0.5 gap-0.5">
+                <Button
+                  type="button"
+                  variant={messageAs === "self" ? "default" : "ghost"}
+                  size="sm"
+                  className="flex-1 rounded-sm"
+                  onClick={() => setMessageAs("self")}
+                >
+                  Yourself
+                </Button>
+                <Button
+                  type="button"
+                  variant={messageAs === "admin" ? "default" : "ghost"}
+                  size="sm"
+                  className="flex-1 rounded-sm"
+                  onClick={() => setMessageAs("admin")}
+                >
+                  Admin
+                </Button>
+              </div>
+            </div>
+          )}
           <div className="space-y-2">
             <Label>Search Members</Label>
             <Input

@@ -17,6 +17,7 @@ export class ChatService {
   static async getOrCreateConversation(data: {
     organizationId: string;
     participantId: string;
+    directThreadKind?: "standard" | "staff_as_admin";
   }) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(
@@ -24,6 +25,7 @@ export class ChatService {
       {
         organizationId: data.organizationId as Id<"organizations">,
         participantId: data.participantId as Id<"users">,
+        directThreadKind: data.directThreadKind,
       }
     );
   }
