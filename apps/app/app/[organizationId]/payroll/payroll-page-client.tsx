@@ -176,6 +176,7 @@ import {
   getPayslipMessages,
   getPayrollRunSummary,
   computeEmployeePayroll,
+  getPayslip,
 } from "@/actions/payroll";
 import { useOrganization } from "@/hooks/organization-context";
 import { useToast } from "@/components/ui/use-toast";
@@ -316,6 +317,9 @@ export default function PayrollPageClient() {
   const [editDeductions, setEditDeductions] = useState<Deduction[]>([]);
   const [editIncentives, setEditIncentives] = useState<Deduction[]>([]);
   const [isSavingPayslip, setIsSavingPayslip] = useState(false);
+  const [regeneratingPayrollRunId, setRegeneratingPayrollRunId] = useState<
+    string | null
+  >(null);
   const [payslipConcerns, setPayslipConcerns] = useState<Record<string, any[]>>(
     {},
   );
@@ -596,21 +600,21 @@ export default function PayrollPageClient() {
       const payslipsData = await getPayslipsByPayrollRun(payrollRun._id);
       setPayslips(payslipsData);
 
-      // Load concerns for each payslip
-      const concernsMap: Record<string, any[]> = {};
-      for (const payslip of payslipsData) {
-        try {
-          const messages = await getPayslipMessages(payslip._id);
-          concernsMap[payslip._id] = messages || [];
-        } catch (error) {
-          console.error(
-            `Error loading concerns for payslip ${payslip._id}:`,
-            error,
-          );
-          concernsMap[payslip._id] = [];
-        }
-      }
-      setPayslipConcerns(concernsMap);
+      const concernEntries = await Promise.all(
+        payslipsData.map(async (payslip: { _id: string }) => {
+          try {
+            const messages = await getPayslipMessages(payslip._id);
+            return [payslip._id, messages || []] as const;
+          } catch (error) {
+            console.error(
+              `Error loading concerns for payslip ${payslip._id}:`,
+              error,
+            );
+            return [payslip._id, []] as const;
+          }
+        }),
+      );
+      setPayslipConcerns(Object.fromEntries(concernEntries));
 
       // If highlighting a specific payslip, scroll to it after load
       if (highlightPayslipId) {
@@ -722,6 +726,7 @@ export default function PayrollPageClient() {
   };
 
   const handleRegeneratePayslips = async (payrollRun: any) => {
+    setRegeneratingPayrollRunId(payrollRun._id);
     try {
       const draftConfig = payrollRun.draftConfig ?? {};
       const employeeIds = draftConfig.employeeIds ?? [];
@@ -751,6 +756,8 @@ export default function PayrollPageClient() {
         description: error.message || "Failed to regenerate payslips",
         variant: "destructive",
       });
+    } finally {
+      setRegeneratingPayrollRunId(null);
     }
   };
 
@@ -1003,9 +1010,22 @@ export default function PayrollPageClient() {
         incentives: editIncentives.length > 0 ? editIncentives : undefined,
       });
 
-      // Reload payslips and concerns
-      if (selectedPayrollRun) {
-        await handleViewPayslips(selectedPayrollRun);
+      if (selectedPayrollRun && isViewPayslipsOpen) {
+        const updated = await getPayslip(editingPayslip._id);
+        const prevEmployee = payslips.find(
+          (p: { _id: string }) => p._id === editingPayslip._id,
+        )?.employee;
+        setPayslips((prev) =>
+          prev.map((p: { _id: string; employee?: unknown }) =>
+            p._id === editingPayslip._id
+              ? {
+                  ...p,
+                  ...updated,
+                  employee: prevEmployee ?? p.employee,
+                }
+              : p,
+          ),
+        );
       }
 
       setIsEditPayslipOpen(false);
@@ -2554,6 +2574,7 @@ export default function PayrollPageClient() {
                   onViewPayslips={handleViewPayslips}
                   onEdit={handleEditPayrollRun}
                   onRegeneratePayslips={handleRegeneratePayslips}
+                  regeneratingPayrollRunId={regeneratingPayrollRunId}
                   onStatusChange={handleStatusChange}
                   onDelete={handleDeletePayrollRun}
                 />

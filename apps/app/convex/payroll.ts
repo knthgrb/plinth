@@ -33,12 +33,18 @@ function buildDraftPayrollConfig(args: {
   manualDeductions?: any[];
   incentives?: any[];
   governmentDeductionSettings?: any[];
+  /** Per-employee non-taxable allowance override when edited on payslip vs employee profile default */
+  nonTaxableAllowanceOverrides?: Array<{
+    employeeId: any;
+    amount: number;
+  }>;
 }) {
   return {
     employeeIds: args.employeeIds,
     manualDeductions: args.manualDeductions,
     incentives: args.incentives,
     governmentDeductionSettings: args.governmentDeductionSettings,
+    nonTaxableAllowanceOverrides: args.nonTaxableAllowanceOverrides,
   };
 }
 
@@ -170,6 +176,10 @@ function isAttendanceDeductionName(name: string): boolean {
 function isAttendanceDeductionEntry(d: { name?: string; type?: string }): boolean {
   return (d?.type || "").toLowerCase() === "attendance" || isAttendanceDeductionName(d?.name || "");
 }
+
+/** Regenerated payslip rows recompute this from prior cutoffs; do not carry over from old payslip into manual merge. */
+const PENDING_PREVIOUS_CUTOFF_DEDUCTION_NAME =
+  "Pending Deductions (Previous Cutoff)";
 
 /** Round to 2 decimal places for currency */
 function round2(n: number): number {
@@ -2003,6 +2013,94 @@ export const updatePayrollRun = mutation({
       : Array.isArray(previousDraftConfig.incentives)
         ? (previousDraftConfig.incentives as IncentiveEntry[])
         : [];
+
+    const existingPayslipsBeforeRegenerate = await (ctx.db.query("payslips") as any)
+      .withIndex("by_payroll_run", (q: any) =>
+        q.eq("payrollRunId", args.payrollRunId),
+      )
+      .collect();
+
+    let mergedManualDeductions: ManualDeductionEntry[] = resolvedManualDeductions;
+    let mergedIncentives: IncentiveEntry[] = resolvedIncentives;
+    let mergedNonTaxableAllowanceOverrides: Array<{
+      employeeId: any;
+      amount: number;
+    }> = Array.isArray(previousDraftConfig.nonTaxableAllowanceOverrides)
+      ? [...previousDraftConfig.nonTaxableAllowanceOverrides]
+      : [];
+
+    if (existingPayslipsBeforeRegenerate.length > 0) {
+      const organizationForAllowance = await ctx.db.get(
+        payrollRun.organizationId,
+      );
+      const payFrequencyForAllowance: PayFrequency =
+        getOrganizationPayFrequency(organizationForAllowance);
+
+      const manualByEmp = new Map<string, ManualDeductionEntry>();
+      for (const m of resolvedManualDeductions) {
+        manualByEmp.set(String(m.employeeId), {
+          employeeId: m.employeeId,
+          deductions: [...(m.deductions || [])],
+        });
+      }
+      const incByEmp = new Map<string, IncentiveEntry>();
+      for (const i of resolvedIncentives) {
+        incByEmp.set(String(i.employeeId), {
+          employeeId: i.employeeId,
+          incentives: [...(i.incentives || [])],
+        });
+      }
+      const allowanceOverridesByEmp = new Map<string, number>();
+      for (const o of mergedNonTaxableAllowanceOverrides) {
+        allowanceOverridesByEmp.set(String(o.employeeId), o.amount);
+      }
+
+      for (const raw of existingPayslipsBeforeRegenerate) {
+        const p = decryptPayslipRowFromDb(raw);
+        if (!p) continue;
+        const empId = p.employeeId;
+        const preservedDeductions = (p.deductions || []).filter(
+          (d: { name?: string; type?: string }) =>
+            !isAttendanceDeductionEntry(d) &&
+            (d.name || "") !== PENDING_PREVIOUS_CUTOFF_DEDUCTION_NAME,
+        );
+        manualByEmp.set(String(empId), {
+          employeeId: empId,
+          deductions: preservedDeductions,
+        });
+        incByEmp.set(String(empId), {
+          employeeId: empId,
+          incentives: p.incentives ? [...p.incentives] : [],
+        });
+
+        const empRow = await ctx.db.get(empId);
+        if (empRow) {
+          const employee = decryptEmployeeFromDb(empRow as any);
+          const defaultAllow = getPerCutoffAmount(
+            employee.compensation.allowance || 0,
+            payFrequencyForAllowance,
+          );
+          const actualAllow = p.nonTaxableAllowance ?? 0;
+          if (
+            Math.abs(round2(actualAllow) - round2(defaultAllow)) > 0.001
+          ) {
+            allowanceOverridesByEmp.set(String(empId), round2(actualAllow));
+          } else {
+            allowanceOverridesByEmp.delete(String(empId));
+          }
+        }
+      }
+
+      mergedManualDeductions = Array.from(manualByEmp.values());
+      mergedIncentives = Array.from(incByEmp.values());
+      mergedNonTaxableAllowanceOverrides = Array.from(
+        allowanceOverridesByEmp.entries(),
+      ).map(([employeeId, amount]) => ({
+        employeeId: employeeId as any,
+        amount,
+      }));
+    }
+
     await ctx.db.patch(args.payrollRunId, {
       cutoffStart: args.cutoffStart ?? payrollRun.cutoffStart,
       cutoffEnd: args.cutoffEnd ?? payrollRun.cutoffEnd,
@@ -2011,11 +2109,13 @@ export const updatePayrollRun = mutation({
       draftConfig: encryptDraftConfigForDb(
         buildDraftPayrollConfig({
           employeeIds: args.employeeIds ?? previousDraftConfig.employeeIds ?? [],
-          manualDeductions:
-            resolvedManualDeductions,
-          incentives: resolvedIncentives,
-          governmentDeductionSettings:
-            resolvedGovernmentDeductionSettings,
+          manualDeductions: mergedManualDeductions,
+          incentives: mergedIncentives,
+          governmentDeductionSettings: resolvedGovernmentDeductionSettings,
+          nonTaxableAllowanceOverrides:
+            mergedNonTaxableAllowanceOverrides.length > 0
+              ? mergedNonTaxableAllowanceOverrides
+              : undefined,
         }),
       ),
       updatedAt: Date.now(),
@@ -2023,11 +2123,7 @@ export const updatePayrollRun = mutation({
 
     // Always regenerate payslips for draft runs so late categorization (Regular Holiday Late vs Late) stays correct
     {
-      const existingPayslips = await (ctx.db.query("payslips") as any)
-        .withIndex("by_payroll_run", (q: any) =>
-          q.eq("payrollRunId", args.payrollRunId),
-        )
-        .collect();
+      const existingPayslips = existingPayslipsBeforeRegenerate;
       const existingEmployeeIds = existingPayslips.map(
         (p: any) => p.employeeId,
       );
@@ -2115,7 +2211,7 @@ export const updatePayrollRun = mutation({
         const govSettings = resolvedGovernmentDeductionSettings.find(
           (gs) => gs.employeeId === employeeId,
         );
-        const manualDeductionEntry = resolvedManualDeductions.find(
+        const manualDeductionEntry = mergedManualDeductions.find(
           (md) => md.employeeId === employeeId,
         );
         const GOV_DEDUCTION_NAMES = new Set([
@@ -2374,7 +2470,7 @@ export const updatePayrollRun = mutation({
         }
 
         const incentives =
-          resolvedIncentives.find((inc) => inc.employeeId === employeeId)
+          mergedIncentives.find((inc) => inc.employeeId === employeeId)
             ?.incentives || [];
         const totalIncentives = incentives.reduce(
           (sum, inc) => sum + inc.amount,
@@ -2386,10 +2482,16 @@ export const updatePayrollRun = mutation({
           payrollBase.holidayPay +
           payrollBase.nightDiffPay +
           totalIncentives;
-        const nonTaxableAllowance = getPerCutoffAmount(
+        let nonTaxableAllowance = getPerCutoffAmount(
           employee.compensation.allowance || 0,
           payFrequencyUpdate,
         );
+        const allowanceOverrideEntry = mergedNonTaxableAllowanceOverrides.find(
+          (o: { employeeId: any }) => o.employeeId === employeeId,
+        );
+        if (allowanceOverrideEntry) {
+          nonTaxableAllowance = round2(allowanceOverrideEntry.amount);
+        }
         const hasWorkedAtLeastOneDay = payrollBase.daysWorked > 0;
 
         const cutoffStartDate = new Date(cutoffStart);
@@ -4439,92 +4541,7 @@ export const updatePayslip = mutation({
       );
     }
 
-    // Helper function to detect specific changes in arrays
-    function detectArrayChanges(
-      oldArray: Array<{ name: string; amount: number; type?: string }>,
-      newArray: Array<{ name: string; amount: number; type?: string }>,
-    ): string[] {
-      const changeDetails: string[] = [];
-
-      // Create maps for easier lookup
-      const oldMap = new Map<
-        string,
-        { name: string; amount: number; type?: string }
-      >();
-      oldArray.forEach((item, idx) => {
-        oldMap.set(`${item.name}_${idx}`, item);
-      });
-
-      const newMap = new Map<
-        string,
-        { name: string; amount: number; type?: string }
-      >();
-      newArray.forEach((item, idx) => {
-        newMap.set(`${item.name}_${idx}`, item);
-      });
-
-      // Track which items we've already processed
-      const processedOld = new Set<number>();
-      const processedNew = new Set<number>();
-
-      // Find modified items (same name, different amount)
-      newArray.forEach((newItem, newIdx) => {
-        const oldItemWithSameName = oldArray.find(
-          (old, oldIdx) =>
-            old.name === newItem.name && !processedOld.has(oldIdx),
-        );
-        if (oldItemWithSameName) {
-          const oldIdx = oldArray.indexOf(oldItemWithSameName);
-          if (oldItemWithSameName.amount !== newItem.amount) {
-            changeDetails.push(
-              `Modified "${newItem.name}": ₱${oldItemWithSameName.amount.toFixed(2)} → ₱${newItem.amount.toFixed(2)}`,
-            );
-            processedOld.add(oldIdx);
-            processedNew.add(newIdx);
-          } else if (
-            (oldItemWithSameName.type || "") === (newItem.type || "")
-          ) {
-            // Same item, no change
-            processedOld.add(oldIdx);
-            processedNew.add(newIdx);
-          }
-        }
-      });
-
-      // Find added items (in new but not in old with same name/amount)
-      newArray.forEach((newItem, newIdx) => {
-        if (!processedNew.has(newIdx)) {
-          const oldItemWithSameName = oldArray.find(
-            (old) => old.name === newItem.name,
-          );
-          if (!oldItemWithSameName) {
-            changeDetails.push(
-              `Added "${newItem.name}": ₱${newItem.amount.toFixed(2)}`,
-            );
-            processedNew.add(newIdx);
-          }
-        }
-      });
-
-      // Find removed items (in old but not in new)
-      oldArray.forEach((oldItem, oldIdx) => {
-        if (!processedOld.has(oldIdx)) {
-          const newItemWithSameName = newArray.find(
-            (newItem) => newItem.name === oldItem.name,
-          );
-          if (!newItemWithSameName) {
-            changeDetails.push(
-              `Removed "${oldItem.name}": ₱${oldItem.amount.toFixed(2)}`,
-            );
-            processedOld.add(oldIdx);
-          }
-        }
-      });
-
-      return changeDetails;
-    }
-
-    // Track changes for edit history
+    // Track changes for edit history (lightweight summaries — line-by-line diffs were O(n²) and slow)
     const changes: Array<{
       field: string;
       oldValue?: any;
@@ -4537,12 +4554,13 @@ export const updatePayslip = mutation({
     const oldDeductionsStr = JSON.stringify(oldDeductions);
     const newDeductionsStr = JSON.stringify(newDeductions);
     if (oldDeductionsStr !== newDeductionsStr) {
-      const deductionChanges = detectArrayChanges(oldDeductions, newDeductions);
       changes.push({
         field: "deductions",
         oldValue: oldDeductions,
         newValue: newDeductions,
-        details: deductionChanges.length > 0 ? deductionChanges : undefined,
+        details: [
+          `Updated ${oldDeductions.length} line(s) → ${newDeductions.length} line(s)`,
+        ],
       });
     }
 
@@ -4551,12 +4569,13 @@ export const updatePayslip = mutation({
     const oldIncentivesStr = JSON.stringify(oldIncentives);
     const newIncentivesStr = JSON.stringify(newIncentives);
     if (oldIncentivesStr !== newIncentivesStr) {
-      const incentiveChanges = detectArrayChanges(oldIncentives, newIncentives);
       changes.push({
         field: "incentives",
         oldValue: oldIncentives,
         newValue: newIncentives,
-        details: incentiveChanges.length > 0 ? incentiveChanges : undefined,
+        details: [
+          `Updated ${oldIncentives.length} line(s) → ${newIncentives.length} line(s)`,
+        ],
       });
     }
 

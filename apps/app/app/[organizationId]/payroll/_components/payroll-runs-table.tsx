@@ -23,6 +23,7 @@ import {
   CheckCircle,
   Eye,
   FileText,
+  Loader2,
   MoreHorizontal,
   Pencil,
   Trash2,
@@ -36,7 +37,9 @@ interface PayrollRunsTableProps {
   onViewSummary: (run: any) => void;
   onViewPayslips: (run: any) => void;
   onEdit: (run: any) => void;
-  onRegeneratePayslips?: (run: any) => void;
+  onRegeneratePayslips?: (run: any) => void | Promise<void>;
+  /** When set, shows spinner on that run's "Regenerate payslips" action */
+  regeneratingPayrollRunId?: string | null;
   onStatusChange: (run: any, status: string) => void;
   onDelete: (run: any) => void;
 }
@@ -48,6 +51,7 @@ export function PayrollRunsTable({
   onViewPayslips,
   onEdit,
   onRegeneratePayslips,
+  regeneratingPayrollRunId = null,
   onStatusChange,
   onDelete,
 }: PayrollRunsTableProps) {
@@ -159,10 +163,17 @@ export function PayrollRunsTable({
                                 </DropdownMenuItem>
                                 {onRegeneratePayslips && (
                                   <DropdownMenuItem
-                                    onClick={() => onRegeneratePayslips(run)}
+                                    disabled={!!regeneratingPayrollRunId}
+                                    onClick={() => void onRegeneratePayslips(run)}
                                   >
-                                    <FileText className="h-4 w-4 mr-2" />
-                                    Regenerate payslips
+                                    {regeneratingPayrollRunId === run._id ? (
+                                      <Loader2 className="h-4 w-4 mr-2 animate-spin shrink-0" />
+                                    ) : (
+                                      <FileText className="h-4 w-4 mr-2" />
+                                    )}
+                                    {regeneratingPayrollRunId === run._id
+                                      ? "Regenerating…"
+                                      : "Regenerate payslips"}
                                   </DropdownMenuItem>
                                 )}
                               </>

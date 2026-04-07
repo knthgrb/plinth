@@ -153,7 +153,7 @@ export function PayrollSummaryDialog({
       <DialogContent
         hideCloseIcon
         className={cn(
-          "flex h-[min(88vh,820px)] max-h-[90vh] w-[min(96vw,1400px)] max-w-[96vw] flex-col gap-0 overflow-hidden p-0",
+          "flex max-h-[94vh] w-[min(96vw,1400px)] max-w-[96vw] flex-col gap-0 overflow-hidden p-0",
           "border-[rgb(230,230,230)] sm:rounded-xl",
         )}
       >
@@ -229,15 +229,20 @@ export function PayrollSummaryDialog({
                 )}
             </div>
 
-            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-5 py-4">
-              {/* Single scroll container: wide table only (no nested Table overflow) */}
-              <section className="flex min-h-0 flex-[1.15] flex-col rounded-lg border border-[rgb(230,230,230)] bg-white shadow-sm">
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+              {/* Attendance: tall viewport so multiple employees show; horizontal scroll inside. */}
+              <section className="flex shrink-0 flex-col rounded-lg border border-[rgb(230,230,230)] bg-white shadow-sm">
                 <div className="shrink-0 border-b border-[rgb(230,230,230)] px-3 py-2">
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-[rgb(100,100,100)]">
                     Attendance
                   </h3>
                 </div>
-                <div className="min-h-0 flex-1 overflow-auto overscroll-contain">
+                <div
+                  className={cn(
+                    "overflow-auto overscroll-contain",
+                    "min-h-[min(52vh,520px)] max-h-[min(70vh,760px)]",
+                  )}
+                >
                   <table className="w-max min-w-full border-collapse">
                     <thead
                       className={cn(
@@ -477,8 +482,8 @@ export function PayrollSummaryDialog({
                 </div>
               </section>
 
-              <div className="grid shrink-0 grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-5 min-h-0 max-h-[40vh] overflow-y-auto overflow-x-hidden pb-1">
-                <section className="rounded-lg border border-[rgb(230,230,230)] bg-white shadow-sm overflow-hidden flex flex-col min-h-0">
+              <div className="grid shrink-0 grid-cols-1 gap-4 pb-1 lg:grid-cols-2 lg:gap-5">
+                <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[rgb(230,230,230)] bg-white shadow-sm lg:max-h-[38vh] lg:overflow-y-auto">
                   <div className="shrink-0 border-b border-[rgb(230,230,230)] px-3 py-2">
                     <h3 className="text-xs font-semibold uppercase tracking-wide text-[rgb(100,100,100)]">
                       Earnings
@@ -541,7 +546,7 @@ export function PayrollSummaryDialog({
                   </div>
                 </section>
 
-                <section className="rounded-lg border border-[rgb(230,230,230)] bg-white shadow-sm overflow-hidden flex flex-col min-h-0">
+                <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[rgb(230,230,230)] bg-white shadow-sm lg:max-h-[38vh] lg:overflow-y-auto">
                   <div className="shrink-0 border-b border-[rgb(230,230,230)] px-3 py-2">
                     <h3 className="text-xs font-semibold uppercase tracking-wide text-[rgb(100,100,100)]">
                       Contributions
