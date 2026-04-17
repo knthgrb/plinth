@@ -300,7 +300,11 @@ export function ReviewLeaveDialog({
     >
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <div className="fixed left-[-9999px] top-0 z-[-1]">
-          <div ref={pdfContentRef} className="w-[794px] bg-white text-black">
+          <div
+            ref={pdfContentRef}
+            className="w-[794px] bg-white text-black"
+            data-pdf-capture-root
+          >
             <LeavePdfChrome layout={pdfLayout}>
               <div className="space-y-6 p-8">
               <div>

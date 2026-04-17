@@ -6,6 +6,13 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   LEAVE_PDF_IMAGE_DATA_URL_MAX_CHARS,
   type LeavePdfBand,
   type LeavePdfBandAlign,
@@ -88,44 +95,52 @@ function BandEditor({
 
       <div className="space-y-2">
         <Label className="text-xs">Content type</Label>
-        <select
-          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+        <Select
           value={band.kind}
-          onChange={(e) =>
+          disabled={!band.enabled}
+          onValueChange={(v) =>
             onChange({
               ...band,
-              kind: e.target.value as LeavePdfBandKind,
+              kind: v as LeavePdfBandKind,
             })
           }
-          disabled={!band.enabled}
         >
-          {KIND_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger className="h-9">
+            <SelectValue placeholder="Content type" />
+          </SelectTrigger>
+          <SelectContent>
+            {KIND_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="space-y-2">
         <Label className="text-xs">Alignment</Label>
-        <select
-          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+        <Select
           value={band.align}
-          onChange={(e) =>
+          disabled={!band.enabled || band.kind === "none"}
+          onValueChange={(v) =>
             onChange({
               ...band,
-              align: e.target.value as LeavePdfBandAlign,
+              align: v as LeavePdfBandAlign,
             })
           }
-          disabled={!band.enabled || band.kind === "none"}
         >
-          {ALIGN_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger className="h-9">
+            <SelectValue placeholder="Alignment" />
+          </SelectTrigger>
+          <SelectContent>
+            {ALIGN_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {band.enabled && band.kind === "text" ? (
@@ -190,8 +205,8 @@ export function LeavePdfLayoutEditor({
           PDF header &amp; footer
         </h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          Shown on exported leave request PDFs (download and save to documents)
-          after a request is no longer pending.
+          Shown in the live preview and on exported leave request PDFs (download
+          and save to documents) after a request is no longer pending.
         </p>
       </div>
       <BandEditor

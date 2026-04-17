@@ -19,6 +19,7 @@ import {
   LEAVE_REQUEST_TEMPLATE_SECTIONS,
 } from "@/components/leave/leave-request-template";
 import { LeavePdfLayoutEditor } from "@/components/leave/leave-pdf-layout-editor";
+import { LeavePdfChrome } from "@/components/leave/leave-pdf-chrome";
 import {
   DEFAULT_LEAVE_PDF_LAYOUT,
   normalizeLeavePdfLayout,
@@ -251,10 +252,17 @@ export default function LeaveFormTemplatePage() {
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base">Live preview</CardTitle>
+                  <p className="text-xs text-muted-foreground pt-1">
+                    Includes PDF header and footer as configured on the left.
+                  </p>
                 </CardHeader>
                 <CardContent className="pt-0">
-                  <div className="rounded-lg border border-[rgb(230,230,230)] bg-white">
-                    <TiptapViewer content={templateContent} />
+                  <div className="overflow-hidden rounded-lg border border-[rgb(230,230,230)] bg-white">
+                    <LeavePdfChrome layout={pdfLayout}>
+                      <div className="p-4">
+                        <TiptapViewer content={templateContent} />
+                      </div>
+                    </LeavePdfChrome>
                   </div>
                 </CardContent>
               </Card>

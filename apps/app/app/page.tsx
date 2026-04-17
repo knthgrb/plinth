@@ -17,10 +17,14 @@ function getDefaultRouteForRole(role: string | null | undefined): string {
   return "/dashboard";
 }
 
+const EMPTY_ORG_GRACE_MS = 1200;
+
 export default function AppHomePage() {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
   const [hasSession, setHasSession] = useState<boolean | null>(null);
+  /** Convex org query can return [] before JWT is attached; avoid flashing "No organizations". */
+  const [emptyOrgGraceElapsed, setEmptyOrgGraceElapsed] = useState(false);
 
   const organizations = useQuery(
     (api as any).organizations.getUserOrganizations,
@@ -33,6 +37,23 @@ export default function AppHomePage() {
       setAuthChecked(true);
     });
   }, []);
+
+  useEffect(() => {
+    if (!authChecked || !hasSession) {
+      setEmptyOrgGraceElapsed(false);
+      return;
+    }
+    if (organizations === undefined) return;
+    if (organizations.length > 0) {
+      setEmptyOrgGraceElapsed(false);
+      return;
+    }
+    const id = window.setTimeout(
+      () => setEmptyOrgGraceElapsed(true),
+      EMPTY_ORG_GRACE_MS,
+    );
+    return () => window.clearTimeout(id);
+  }, [authChecked, hasSession, organizations]);
 
   useEffect(() => {
     if (!authChecked) return;
@@ -58,6 +79,10 @@ export default function AppHomePage() {
   }
 
   if (organizations && organizations.length > 0) {
+    return <MainLoader />;
+  }
+
+  if (!emptyOrgGraceElapsed) {
     return <MainLoader />;
   }
 
