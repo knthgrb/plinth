@@ -27,7 +27,12 @@ import {
   downloadElementAsPdf,
   getElementPdfBlob,
 } from "@/components/leave/leave-request-pdf";
+import { LeavePdfChrome } from "@/components/leave/leave-pdf-chrome";
 import { GENERAL_LEAVE_CREDIT_KEY } from "@/lib/leave-constants";
+import {
+  normalizeLeavePdfLayout,
+  type LeavePdfLayout,
+} from "@/lib/leave-pdf-layout";
 
 type LeaveRequestRecord = {
   _id: string;
@@ -43,6 +48,7 @@ type LeaveRequestRecord = {
   filledFormContent?: string;
   signatureDataUrl?: string;
   approvedByName?: string;
+  reviewerPosition?: string;
   reviewerSignatureDataUrl?: string;
 };
 
@@ -85,9 +91,18 @@ export function ReviewLeaveDialog({
   const [reviewRemarks, setReviewRemarks] = useState("");
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isSavingToDocuments, setIsSavingToDocuments] = useState(false);
-  const [approvedBy, setApprovedBy] = useState("");
+  const [reviewedByName, setReviewedByName] = useState("");
+  const [reviewerPosition, setReviewerPosition] = useState("");
   const [approverSignatureDataUrl, setApproverSignatureDataUrl] = useState("");
   const pdfContentRef = useRef<HTMLDivElement | null>(null);
+
+  const orgSettings = useQuery(
+    (api as any).settings.getSettings,
+    organizationId ? { organizationId: organizationId as any } : "skip",
+  );
+  const pdfLayout: LeavePdfLayout = normalizeLeavePdfLayout(
+    orgSettings?.leaveRequestPdfLayout as LeavePdfLayout | undefined,
+  );
 
   const approvalInfo = useQuery(
     (api as any).leave.getLeaveRequestApprovalInfo,
@@ -98,7 +113,7 @@ export function ReviewLeaveDialog({
   const canApprove = approvalInfo?.canApprove !== false;
   const blockReason = approvalInfo?.blockReason;
   const approvalFormComplete =
-    Boolean(approvedBy.trim()) && Boolean(approverSignatureDataUrl.trim());
+    Boolean(reviewedByName.trim()) && Boolean(approverSignatureDataUrl.trim());
 
   const handleApprove = async () => {
     if (!request) return;
@@ -106,12 +121,14 @@ export function ReviewLeaveDialog({
       await approveLeaveRequest(
         request._id,
         reviewRemarks,
-        approvedBy.trim(),
+        reviewedByName.trim(),
         approverSignatureDataUrl.trim(),
+        reviewerPosition.trim() || undefined,
       );
       onOpenChange(false);
       setReviewRemarks("");
-      setApprovedBy("");
+      setReviewedByName("");
+      setReviewerPosition("");
       setApproverSignatureDataUrl("");
       toast({
         title: "Success",
@@ -168,10 +185,14 @@ export function ReviewLeaveDialog({
     ? `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`
     : "Unknown Employee";
 
-  const pdfApprovedBy =
+  const pdfReviewedBy =
     request.status === "pending"
-      ? approvedBy.trim()
+      ? reviewedByName.trim()
       : (request.approvedByName ?? "").trim();
+  const pdfReviewerPosition =
+    request.status === "pending"
+      ? reviewerPosition.trim()
+      : (request.reviewerPosition ?? "").trim();
   const pdfReviewerSignature =
     request.status === "pending"
       ? approverSignatureDataUrl
@@ -179,7 +200,8 @@ export function ReviewLeaveDialog({
 
   const resetReviewForm = () => {
     setReviewRemarks("");
-    setApprovedBy("");
+    setReviewedByName("");
+    setReviewerPosition("");
     setApproverSignatureDataUrl("");
   };
 
@@ -278,11 +300,9 @@ export function ReviewLeaveDialog({
     >
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <div className="fixed left-[-9999px] top-0 z-[-1]">
-          <div
-            ref={pdfContentRef}
-            className="w-[794px] bg-white p-8 text-black"
-          >
-            <div className="space-y-6">
+          <div ref={pdfContentRef} className="w-[794px] bg-white text-black">
+            <LeavePdfChrome layout={pdfLayout}>
+              <div className="space-y-6 p-8">
               <div>
                 <h1 className="text-2xl font-semibold">Leave Request</h1>
                 <p className="mt-1 text-sm text-gray-600">
@@ -351,13 +371,16 @@ export function ReviewLeaveDialog({
                 </div>
               )}
 
-              {(pdfApprovedBy || pdfReviewerSignature) && (
+              {(pdfReviewedBy || pdfReviewerPosition || pdfReviewerSignature) && (
                 <div className="space-y-3 border-t border-[rgb(230,230,230)] pt-4">
-                  {pdfApprovedBy ? (
+                  {pdfReviewedBy ? (
                     <p className="text-sm">
-                      <span className="font-medium">Approved by:</span>{" "}
-                      {pdfApprovedBy}
+                      <span className="font-medium">Reviewed by:</span>{" "}
+                      {pdfReviewedBy}
                     </p>
+                  ) : null}
+                  {pdfReviewerPosition ? (
+                    <p className="text-sm text-gray-700">{pdfReviewerPosition}</p>
                   ) : null}
                   {pdfReviewerSignature ? (
                     <div>
@@ -376,7 +399,8 @@ export function ReviewLeaveDialog({
                   ) : null}
                 </div>
               )}
-            </div>
+              </div>
+            </LeavePdfChrome>
           </div>
         </div>
         <DialogHeader>
@@ -420,12 +444,17 @@ export function ReviewLeaveDialog({
                 </p>
               )}
               {request.status === "approved" &&
-                (request.approvedByName || request.reviewerSignatureDataUrl) && (
+                (request.approvedByName ||
+                  request.reviewerPosition ||
+                  request.reviewerSignatureDataUrl) && (
                   <div className="space-y-2 border-t border-[rgb(230,230,230)] pt-3 text-sm">
                     {request.approvedByName ? (
                       <p>
-                        <strong>Approved by:</strong> {request.approvedByName}
+                        <strong>Reviewed by:</strong> {request.approvedByName}
                       </p>
+                    ) : null}
+                    {request.reviewerPosition?.trim() ? (
+                      <p className="text-gray-700">{request.reviewerPosition}</p>
                     ) : null}
                     {request.reviewerSignatureDataUrl && (
                       <div>
@@ -484,14 +513,27 @@ export function ReviewLeaveDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="approved-by">Approved by</Label>
+              <Label htmlFor="reviewed-by">Reviewed by</Label>
               <Input
-                id="approved-by"
-                value={approvedBy}
-                onChange={(e) => setApprovedBy(e.target.value)}
-                placeholder="Full name of approver"
+                id="reviewed-by"
+                value={reviewedByName}
+                onChange={(e) => setReviewedByName(e.target.value)}
+                placeholder="Full name of reviewer"
                 disabled={!canApprove}
                 autoComplete="name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reviewer-position">
+                Reviewer position{" "}
+                <span className="font-normal text-muted-foreground">(optional)</span>
+              </Label>
+              <Input
+                id="reviewer-position"
+                value={reviewerPosition}
+                onChange={(e) => setReviewerPosition(e.target.value)}
+                placeholder="e.g. HR Manager, Immediate Superior"
+                disabled={!canApprove}
               />
             </div>
             <div className="space-y-2">
@@ -505,7 +547,7 @@ export function ReviewLeaveDialog({
           </div>
         )}
         <DialogFooter>
-          {request.filledFormContent && (
+          {request.filledFormContent && request.status !== "pending" && (
             <Button
               variant="outline"
               onClick={handleSaveToDocuments}
@@ -519,7 +561,7 @@ export function ReviewLeaveDialog({
               Save to Documents
             </Button>
           )}
-          {request.filledFormContent && (
+          {request.filledFormContent && request.status !== "pending" && (
             <Button
               variant="outline"
               onClick={handleDownloadPdf}

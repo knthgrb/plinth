@@ -29,12 +29,14 @@ export async function approveLeaveRequest(
   remarks: string | undefined,
   approvedByName: string,
   reviewerSignatureDataUrl: string,
+  reviewerPosition?: string,
 ) {
   return LeaveService.approveLeaveRequest(
     leaveRequestId,
     remarks,
     approvedByName,
     reviewerSignatureDataUrl,
+    reviewerPosition,
   );
 }
 

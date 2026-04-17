@@ -63,6 +63,7 @@ export class LeaveService {
         reason: leave.reason,
         reviewerRemarks: leave.remarks,
         approvedByName: leave.approvedByName,
+        reviewerPosition: leave.reviewerPosition,
         leavePageUrl,
       });
 
@@ -169,6 +170,7 @@ export class LeaveService {
     remarks: string | undefined,
     approvedByName: string,
     reviewerSignatureDataUrl: string,
+    reviewerPosition?: string,
   ) {
     const convex = await getAuthedConvexClient();
     const result = await (convex.mutation as any)(
@@ -178,6 +180,7 @@ export class LeaveService {
         remarks,
         approvedByName,
         reviewerSignatureDataUrl,
+        reviewerPosition: reviewerPosition?.trim() || undefined,
       },
     );
     await LeaveService.notifyEmployeeLeaveApproved(leaveRequestId);

@@ -122,6 +122,7 @@ export const getSettings = query({
         grantLeaveUponRegularization: true,
         maxConvertibleLeaveDays: 5,
         leaveRequestFormTemplate: undefined,
+        leaveRequestPdfLayout: undefined,
         leaveTrackerRows: [],
         payrollSettings: {
           // Base configs only; compound rates (night diff on OT/holiday, holiday OT, etc.) are derived in payroll.
@@ -277,6 +278,46 @@ export const updateLeaveTypes = mutation({
     annualSil: v.optional(v.number()),
     grantLeaveUponRegularization: v.optional(v.boolean()),
     leaveRequestFormTemplate: v.optional(v.string()),
+    leaveRequestPdfLayout: v.optional(
+      v.object({
+        header: v.optional(
+          v.object({
+            enabled: v.boolean(),
+            kind: v.union(
+              v.literal("none"),
+              v.literal("text"),
+              v.literal("image"),
+            ),
+            text: v.optional(v.string()),
+            imageDataUrl: v.optional(v.string()),
+            align: v.union(
+              v.literal("left"),
+              v.literal("center"),
+              v.literal("right"),
+              v.literal("justify"),
+            ),
+          }),
+        ),
+        footer: v.optional(
+          v.object({
+            enabled: v.boolean(),
+            kind: v.union(
+              v.literal("none"),
+              v.literal("text"),
+              v.literal("image"),
+            ),
+            text: v.optional(v.string()),
+            imageDataUrl: v.optional(v.string()),
+            align: v.union(
+              v.literal("left"),
+              v.literal("center"),
+              v.literal("right"),
+              v.literal("justify"),
+            ),
+          }),
+        ),
+      }),
+    ),
     maxConvertibleLeaveDays: v.optional(v.number()),
     leaveTypes: v.optional(
       v.array(
@@ -323,6 +364,9 @@ export const updateLeaveTypes = mutation({
     if (args.leaveRequestFormTemplate !== undefined) {
       patch.leaveRequestFormTemplate = args.leaveRequestFormTemplate;
     }
+    if (args.leaveRequestPdfLayout !== undefined) {
+      patch.leaveRequestPdfLayout = args.leaveRequestPdfLayout;
+    }
     if (args.maxConvertibleLeaveDays !== undefined) {
       patch.maxConvertibleLeaveDays = args.maxConvertibleLeaveDays;
     }
@@ -339,6 +383,7 @@ export const updateLeaveTypes = mutation({
         annualSil: args.annualSil ?? 8,
         grantLeaveUponRegularization: args.grantLeaveUponRegularization ?? true,
         leaveRequestFormTemplate: args.leaveRequestFormTemplate,
+        leaveRequestPdfLayout: args.leaveRequestPdfLayout,
         maxConvertibleLeaveDays: args.maxConvertibleLeaveDays ?? 5,
         ...(args.leaveTypes !== undefined ? { leaveTypes: args.leaveTypes } : {}),
         createdAt: now,

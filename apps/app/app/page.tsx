@@ -24,10 +24,6 @@ export default function AppHomePage() {
 
   const organizations = useQuery(
     (api as any).organizations.getUserOrganizations,
-    hasSession ? {} : "skip"
-  );
-  const currentUser = useQuery(
-    (api as any).auth.getCurrentUser,
     hasSession ? {} : "skip",
   );
 
@@ -44,7 +40,6 @@ export default function AppHomePage() {
       router.replace("/login");
       return;
     }
-    if (currentUser === undefined) return;
     if (organizations === undefined) return;
 
     if (organizations && organizations.length > 0) {
@@ -56,14 +51,9 @@ export default function AppHomePage() {
     }
 
     // No organizations (e.g. removed from all orgs) — show create-org option, don't redirect
-  }, [authChecked, hasSession, currentUser, organizations, router]);
+  }, [authChecked, hasSession, organizations, router]);
 
-  if (
-    !authChecked ||
-    !hasSession ||
-    currentUser === undefined ||
-    organizations === undefined
-  ) {
+  if (!authChecked || !hasSession || organizations === undefined) {
     return <MainLoader />;
   }
 

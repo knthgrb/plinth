@@ -80,6 +80,16 @@ function isNoWorkAllowedForEmployeeDate(
   return holidayAppliesToEmployee(holidayEntry, employee);
 }
 
+/** HR-chosen statuses that must not be replaced by automatic holiday + no clock time → no_work. */
+const STATUSES_PRESERVED_ON_HOLIDAY_NO_TIME = new Set([
+  "absent",
+  "half-day",
+  "leave",
+  "leave_with_pay",
+  "leave_without_pay",
+  "no_work",
+]);
+
 // Helper to check authorization with organization context
 async function checkAuth(
   ctx: any,
@@ -345,7 +355,8 @@ export const createAttendance = mutation({
     if (
       !args.actualIn &&
       !args.actualOut &&
-      employee
+      employee &&
+      !STATUSES_PRESERVED_ON_HOLIDAY_NO_TIME.has(args.status)
     ) {
       const holidayEntry = getMatchingHolidayEntryForDate(args.date, holidays);
       if (
@@ -534,7 +545,12 @@ export const updateAttendance = mutation({
     }
 
     if (args.status === undefined) {
-      if (!currentActualIn && !currentActualOut && employee) {
+      if (
+        !currentActualIn &&
+        !currentActualOut &&
+        employee &&
+        !STATUSES_PRESERVED_ON_HOLIDAY_NO_TIME.has(attendance.status as string)
+      ) {
         const holidayEntry = getMatchingHolidayEntryForDate(attendance.date, holidays);
         if (
           holidayEntry &&
@@ -687,12 +703,14 @@ export const bulkCreateAttendance = mutation({
       const canUseNoWork = employee
         ? isNoWorkAllowedForEmployeeDate(entry.date, holidays, employee)
         : false;
-      const resolvedStatus =
+      const shouldAutoHolidayNoWork =
         !currentActualIn &&
         !currentActualOut &&
-        canUseNoWork
-          ? "no_work"
-          : entry.status;
+        canUseNoWork &&
+        !STATUSES_PRESERVED_ON_HOLIDAY_NO_TIME.has(entry.status);
+      const resolvedStatus = shouldAutoHolidayNoWork
+        ? "no_work"
+        : entry.status;
       if (resolvedStatus === "no_work" && !canUseNoWork) {
         throw new Error(
           "No work status is only allowed on holidays that apply to this employee",

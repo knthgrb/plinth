@@ -123,6 +123,43 @@ function offsetDateInYear(h: Holiday, year: number): Date | null {
   return d;
 }
 
+const ATTENDANCE_STATUSES_PRESERVED_ON_HOLIDAY_NO_TIME = new Set([
+  "absent",
+  "half-day",
+  "leave",
+  "leave_with_pay",
+  "leave_without_pay",
+  "no_work",
+]);
+
+function getEffectiveAttendanceStatusForDisplay(
+  record: {
+    status: string;
+    actualIn?: string | null;
+    actualOut?: string | null;
+  },
+  dayHolidays: Array<{ type: string }>,
+): string {
+  const noTimeRecorded = !record.actualIn && !record.actualOut;
+  if (
+    noTimeRecorded &&
+    dayHolidays.length > 0 &&
+    ATTENDANCE_STATUSES_PRESERVED_ON_HOLIDAY_NO_TIME.has(record.status)
+  ) {
+    return record.status;
+  }
+  if (noTimeRecorded && dayHolidays.length > 0) {
+    if (dayHolidays.some((h) => h.type === "special_working")) {
+      return "absent";
+    }
+    if (dayHolidays.some((h) => h.type === "regular" || h.type === "special")) {
+      return "no_work";
+    }
+    return "present";
+  }
+  return record.status;
+}
+
 export default function AttendancePage() {
   const { currentOrganizationId } = useOrganization();
   const { isEmployeeExperienceUI, effectiveSelfEmployeeId } =
@@ -536,18 +573,10 @@ export default function AttendancePage() {
           !selectedEmployee || holidayAppliesToEmployee(h, selectedEmployee),
       );
 
-      const noTimeRecorded = !record.actualIn && !record.actualOut;
-      const isRegularOrSpecialHoliday = dayHolidays.some(
-        (h) => h.type === "regular" || h.type === "special",
+      const effectiveStatus = getEffectiveAttendanceStatusForDisplay(
+        record,
+        dayHolidays,
       );
-      const effectiveStatus =
-        noTimeRecorded && dayHolidays.length > 0
-          ? dayHolidays.some((h) => h.type === "special_working")
-            ? "absent"
-            : isRegularOrSpecialHoliday
-              ? "no_work"
-              : "present"
-          : record.status;
 
       if (effectiveStatus === "absent" || effectiveStatus === "leave_without_pay") {
         absences.push({ date: record.date });
@@ -1121,22 +1150,11 @@ export default function AttendancePage() {
                                 !selectedEmployee ||
                                 holidayAppliesToEmployee(h, selectedEmployee),
                             );
-                            // Holiday with no time in/out: absent for special_working; regular/special → no_work; else present
-                            const noTimeRecorded =
-                              !record.actualIn && !record.actualOut;
-                            const isRegularOrSpecialHoliday = dayHolidays.some(
-                              (h) => h.type === "regular" || h.type === "special",
-                            );
                             const effectiveStatus =
-                              noTimeRecorded && dayHolidays.length > 0
-                                ? dayHolidays.some(
-                                    (h) => h.type === "special_working",
-                                  )
-                                  ? "absent"
-                                  : isRegularOrSpecialHoliday
-                                    ? "no_work"
-                                    : "present"
-                                : record.status;
+                              getEffectiveAttendanceStatusForDisplay(
+                                record,
+                                dayHolidays,
+                              );
                             const isAbsentOrLeave =
                               effectiveStatus === "absent" ||
                               effectiveStatus === "leave" ||

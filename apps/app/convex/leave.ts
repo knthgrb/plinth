@@ -536,6 +536,7 @@ export const approveLeaveRequest = mutation({
     leaveRequestId: v.id("leaveRequests"),
     remarks: v.optional(v.string()),
     approvedByName: v.string(),
+    reviewerPosition: v.optional(v.string()),
     reviewerSignatureDataUrl: v.string(),
   },
   handler: async (ctx, args) => {
@@ -551,7 +552,7 @@ export const approveLeaveRequest = mutation({
     const approvedByTrimmed = args.approvedByName.trim();
     const reviewerSigTrimmed = args.reviewerSignatureDataUrl.trim();
     if (!approvedByTrimmed) {
-      throw new Error("Approved by name is required");
+      throw new Error("Reviewer name is required");
     }
     if (!reviewerSigTrimmed) {
       throw new Error("Reviewer signature is required");
@@ -611,12 +612,15 @@ export const approveLeaveRequest = mutation({
     }
 
     // Update leave request
+    const positionTrimmed = args.reviewerPosition?.trim();
+
     await ctx.db.patch(args.leaveRequestId, {
       status: "approved",
       reviewedBy: userRecord._id,
       reviewedDate: Date.now(),
       remarks: args.remarks,
       approvedByName: approvedByTrimmed,
+      reviewerPosition: positionTrimmed || undefined,
       reviewerSignatureDataUrl: reviewerSigTrimmed,
       updatedAt: Date.now(),
     });

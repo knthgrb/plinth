@@ -18,6 +18,12 @@ import {
   LEAVE_REQUEST_TEMPLATE_PLACEHOLDERS,
   LEAVE_REQUEST_TEMPLATE_SECTIONS,
 } from "@/components/leave/leave-request-template";
+import { LeavePdfLayoutEditor } from "@/components/leave/leave-pdf-layout-editor";
+import {
+  DEFAULT_LEAVE_PDF_LAYOUT,
+  normalizeLeavePdfLayout,
+  type LeavePdfLayout,
+} from "@/lib/leave-pdf-layout";
 import { getOrganizationPath } from "@/utils/organization-routing";
 
 type TiptapDoc = {
@@ -56,12 +62,21 @@ export default function LeaveFormTemplatePage() {
   const [templateContent, setTemplateContent] = useState(
     DEFAULT_LEAVE_REQUEST_TEMPLATE,
   );
+  const [pdfLayout, setPdfLayout] = useState<LeavePdfLayout>(
+    DEFAULT_LEAVE_PDF_LAYOUT,
+  );
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (settings) {
       setTemplateContent(
         settings.leaveRequestFormTemplate ?? DEFAULT_LEAVE_REQUEST_TEMPLATE,
+      );
+      setPdfLayout(
+        normalizeLeavePdfLayout(
+          (settings as { leaveRequestPdfLayout?: LeavePdfLayout })
+            .leaveRequestPdfLayout,
+        ),
       );
     }
   }, [settings]);
@@ -94,6 +109,7 @@ export default function LeaveFormTemplatePage() {
         grantLeaveUponRegularization:
           settings.grantLeaveUponRegularization ?? true,
         leaveRequestFormTemplate: templateContent,
+        leaveRequestPdfLayout: pdfLayout,
       });
 
       toast({
@@ -182,6 +198,8 @@ export default function LeaveFormTemplatePage() {
                     the form.
                   </p>
                 </div>
+
+                <LeavePdfLayoutEditor value={pdfLayout} onChange={setPdfLayout} />
 
                 <div className="space-y-2">
                   <Label className="text-sm font-medium">Quick sections</Label>

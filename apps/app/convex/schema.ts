@@ -641,6 +641,7 @@ export default defineSchema({
     reviewedDate: v.optional(v.number()),
     remarks: v.optional(v.string()),
     approvedByName: v.optional(v.string()),
+    reviewerPosition: v.optional(v.string()),
     reviewerSignatureDataUrl: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -942,6 +943,47 @@ export default defineSchema({
     grantLeaveUponRegularization: v.optional(v.boolean()),
     // Leave request form template (Tiptap JSON string)
     leaveRequestFormTemplate: v.optional(v.string()),
+    // PDF export: optional header/footer (text or inline image) for leave request PDFs
+    leaveRequestPdfLayout: v.optional(
+      v.object({
+        header: v.optional(
+          v.object({
+            enabled: v.boolean(),
+            kind: v.union(
+              v.literal("none"),
+              v.literal("text"),
+              v.literal("image"),
+            ),
+            text: v.optional(v.string()),
+            imageDataUrl: v.optional(v.string()),
+            align: v.union(
+              v.literal("left"),
+              v.literal("center"),
+              v.literal("right"),
+              v.literal("justify"),
+            ),
+          }),
+        ),
+        footer: v.optional(
+          v.object({
+            enabled: v.boolean(),
+            kind: v.union(
+              v.literal("none"),
+              v.literal("text"),
+              v.literal("image"),
+            ),
+            text: v.optional(v.string()),
+            imageDataUrl: v.optional(v.string()),
+            align: v.union(
+              v.literal("left"),
+              v.literal("center"),
+              v.literal("right"),
+              v.literal("justify"),
+            ),
+          }),
+        ),
+      }),
+    ),
     // Leave tracker sheet overrides keyed by employee (legacy, no year)
     leaveTrackerRows: v.optional(
       v.array(

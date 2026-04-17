@@ -65,6 +65,12 @@ export const createAuth = (ctx: GenericCtx<DataModel>) => {
 export const getCurrentUser = query({
   args: {},
   handler: async (ctx) => {
-    return authComponent.getAuthUser(ctx);
+    try {
+      return await authComponent.getAuthUser(ctx);
+    } catch {
+      // Same race as post-login full navigation: session cookie exists but Convex JWT
+      // is not wired yet — returning null lets clients retry instead of error boundary.
+      return null;
+    }
   },
 });

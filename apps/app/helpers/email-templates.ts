@@ -122,6 +122,7 @@ export function generateLeaveRequestApprovedEmail(params: {
   reason: string;
   reviewerRemarks?: string;
   approvedByName?: string;
+  reviewerPosition?: string;
   leavePageUrl: string;
 }): { subject: string; html: string; text: string } {
   const {
@@ -133,6 +134,7 @@ export function generateLeaveRequestApprovedEmail(params: {
     reason,
     reviewerRemarks,
     approvedByName,
+    reviewerPosition,
     leavePageUrl,
   } = params;
 
@@ -143,6 +145,9 @@ export function generateLeaveRequestApprovedEmail(params: {
   const approverSafe = approvedByName?.trim()
     ? escapeHtml(approvedByName.trim())
     : "";
+  const positionSafe = reviewerPosition?.trim()
+    ? escapeHtml(reviewerPosition.trim())
+    : "";
 
   const subject = `Your leave request was approved — ${organizationName}`;
 
@@ -150,7 +155,11 @@ export function generateLeaveRequestApprovedEmail(params: {
     ? `<p><strong>Notes from reviewer:</strong> ${remarksSafe}</p>`
     : "";
   const approverBlock = approverSafe
-    ? `<p><strong>Approved by:</strong> ${approverSafe}</p>`
+    ? `<p><strong>Reviewed by:</strong> ${approverSafe}${
+        positionSafe
+          ? `<br/><span style="font-size:13px;color:#4b5563;">${positionSafe}</span>`
+          : ""
+      }</p>`
     : "";
 
   const html = `
@@ -198,7 +207,7 @@ Leave type: ${leaveTypeLabel}
 Period: ${periodLabel}
 Days: ${numberOfDays}
 Your reason: ${reason}
-${approvedByName?.trim() ? `Approved by: ${approvedByName.trim()}\n` : ""}${reviewerRemarks?.trim() ? `Notes from reviewer: ${reviewerRemarks.trim()}\n` : ""}
+${approvedByName?.trim() ? `Reviewed by: ${approvedByName.trim()}${reviewerPosition?.trim() ? ` (${reviewerPosition.trim()})` : ""}\n` : ""}${reviewerRemarks?.trim() ? `Notes from reviewer: ${reviewerRemarks.trim()}\n` : ""}
 View leave: ${leavePageUrl}
 
 © ${new Date().getFullYear()} Plinth. All rights reserved.
