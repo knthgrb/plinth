@@ -193,6 +193,101 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+type PreviousPayslipRecord = {
+  pendingDeductions?: number;
+  periodStart?: number;
+  period?: string;
+  payrollRunId?: any;
+  [key: string]: any;
+};
+
+/**
+ * Parse the legacy `period` string ("M/D/YYYY to M/D/YYYY") into a UTC-ms start.
+ * Used only to support rows created before `periodStart` existed.
+ */
+function parseLegacyPayslipPeriodStart(period: string | undefined): number | null {
+  if (!period || typeof period !== "string") return null;
+  const parts = period.split(" to ");
+  if (parts.length !== 2) return null;
+  const parsed = new Date(parts[0]);
+  const ts = parsed.getTime();
+  return Number.isFinite(ts) ? ts : null;
+}
+
+/**
+ * Return payslips whose cutoff starts in the same calendar month as `cutoffStart`
+ * and strictly before it. Uses the `by_employee_periodStart` compound index so we
+ * avoid the old "read the employee's entire payslip history" pattern.
+ *
+ * Legacy rows without `periodStart` are intentionally not returned here — run the
+ * `backfillPayslipPeriodRange` mutation once to populate them. The only user-visible
+ * impact of a not-yet-backfilled row is that its carry-over pending deductions are
+ * skipped on the next run until backfilled.
+ */
+async function findSameMonthPreviousPayslips(
+  ctx: any,
+  args: {
+    employeeId: any;
+    cutoffStart: number;
+    excludePayrollRunId?: any;
+  },
+): Promise<PreviousPayslipRecord[]> {
+  const start = new Date(args.cutoffStart);
+  const monthStart = new Date(
+    start.getFullYear(),
+    start.getMonth(),
+    1,
+  ).getTime();
+  const rangeEnd = args.cutoffStart - 1;
+  if (rangeEnd < monthStart) return [];
+
+  const rawRows = await (ctx.db.query("payslips") as any)
+    .withIndex("by_employee_periodStart", (q: any) =>
+      q
+        .eq("employeeId", args.employeeId)
+        .gte("periodStart", monthStart)
+        .lte("periodStart", rangeEnd),
+    )
+    .collect();
+
+  const decrypted: PreviousPayslipRecord[] = rawRows
+    .map((raw: any) => decryptPayslipRowFromDb(raw) as PreviousPayslipRecord)
+    .filter((p: PreviousPayslipRecord | null): p is PreviousPayslipRecord => {
+      if (!p) return false;
+      if (
+        args.excludePayrollRunId &&
+        p.payrollRunId === args.excludePayrollRunId
+      ) {
+        return false;
+      }
+      return (p.pendingDeductions ?? 0) > 0;
+    });
+
+  return decrypted;
+}
+
+/**
+ * Given candidate previous payslips in the same month, return the most recent
+ * pending-deductions amount to carry over.
+ */
+function pickMostRecentPendingDeductions(
+  previousPayslips: PreviousPayslipRecord[],
+): number {
+  if (previousPayslips.length === 0) return 0;
+  const sorted = [...previousPayslips].sort((a, b) => {
+    const aStart =
+      typeof a.periodStart === "number"
+        ? a.periodStart
+        : (parseLegacyPayslipPeriodStart(a.period) ?? 0);
+    const bStart =
+      typeof b.periodStart === "number"
+        ? b.periodStart
+        : (parseLegacyPayslipPeriodStart(b.period) ?? 0);
+    return bStart - aStart;
+  });
+  return sorted[0]?.pendingDeductions ?? 0;
+}
+
 function deriveAccountingCostItemStatus(
   amount: number,
   amountPaid: number,
@@ -1727,56 +1822,18 @@ export const createPayrollRun = mutation({
       // Check if employee worked at least 1 day
       const hasWorkedAtLeastOneDay = payrollBase.daysWorked > 0;
 
-      // Get pending deductions from previous cutoff (same month only)
-      // Check if there's a previous payslip in the same month with pending deductions
-      const cutoffStartForPending = new Date(args.cutoffStart);
-      const currentMonth = cutoffStartForPending.getMonth();
-      const currentYear = cutoffStartForPending.getFullYear();
-
-      // Find previous payslips in the same month
-      const previousPayslipsRaw = await (ctx.db.query("payslips") as any)
-        .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
-        .collect();
-      const previousPayslips = previousPayslipsRaw.map((p: any) =>
-        decryptPayslipRowFromDb(p),
+      // Carry over pending deductions from the most recent same-month cutoff.
+      // Uses the `by_employee_periodStart` index so we only read rows in the current month.
+      const sameMonthPreviousPayslips = await findSameMonthPreviousPayslips(
+        ctx,
+        {
+          employeeId,
+          cutoffStart: args.cutoffStart,
+        },
       );
-
-      const sameMonthPreviousPayslips = previousPayslips.filter((p: any) => {
-        // Parse period string to get start date
-        try {
-          const periodParts = p.period.split(" to ");
-          if (periodParts.length === 2) {
-            const payslipDate = new Date(periodParts[0]);
-            return (
-              payslipDate.getMonth() === currentMonth &&
-              payslipDate.getFullYear() === currentYear &&
-              payslipDate < cutoffStartForPending &&
-              p.pendingDeductions &&
-              p.pendingDeductions > 0
-            );
-          }
-        } catch {
-          return false;
-        }
-        return false;
-      });
-
-      // Get the most recent pending deductions from the same month
-      let previousPendingDeductions = 0;
-      if (sameMonthPreviousPayslips.length > 0) {
-        // Sort by period start date (parse from period string)
-        sameMonthPreviousPayslips.sort((a: any, b: any) => {
-          try {
-            const aPeriod = a.period.split(" to ")[0];
-            const bPeriod = b.period.split(" to ")[0];
-            return new Date(bPeriod).getTime() - new Date(aPeriod).getTime();
-          } catch {
-            return 0;
-          }
-        });
-        previousPendingDeductions =
-          sameMonthPreviousPayslips[0].pendingDeductions || 0;
-      }
+      const previousPendingDeductions = pickMostRecentPendingDeductions(
+        sameMonthPreviousPayslips,
+      );
 
       // Fixed gov deductions already in array; if employee didn't work, move to pending
       let pendingDeductions = 0;
@@ -1821,18 +1878,27 @@ export const createPayrollRun = mutation({
         0,
       );
 
-      // Calculate net pay before applying deduction limits
-      let netPay = grossPay + nonTaxableAllowance - finalTotalDeductions;
+      // Attendance items (absent/late/undertime/no-work) are earnings reductions,
+      // not cappable deductions. The cap only applies to gov + loans + advances.
+      const attendanceDeductionsTotal = deductions
+        .filter((d) => d.type === "attendance")
+        .reduce((sum, d) => sum + d.amount, 0);
+      const nonAttendanceDeductionsTotal =
+        finalTotalDeductions - attendanceDeductionsTotal;
+      const earnedAfterAttendance =
+        grossPay + nonTaxableAllowance - attendanceDeductionsTotal;
 
-      // Deductions cannot exceed net pay
-      // If deductions exceed net pay, cap them at net pay and add excess to pending
-      if (finalTotalDeductions > netPay + nonTaxableAllowance && netPay > 0) {
+      let netPay = earnedAfterAttendance - nonAttendanceDeductionsTotal;
+
+      // Non-attendance deductions cannot exceed what the employee earned
+      // after attendance adjustments. Move any excess to pending for next cutoff.
+      if (
+        nonAttendanceDeductionsTotal > earnedAfterAttendance &&
+        earnedAfterAttendance > 0
+      ) {
         const excessDeductions =
-          finalTotalDeductions - (netPay + nonTaxableAllowance);
-        // Reduce deductions proportionally or cap at net pay
-        // For simplicity, we'll add excess to pending
+          nonAttendanceDeductionsTotal - earnedAfterAttendance;
         pendingDeductions += excessDeductions;
-        // Remove excess from deductions array
         const pendingDeductionIndex = deductions.findIndex(
           (d) => d.name === "Pending Deductions (Previous Cutoff)",
         );
@@ -1846,12 +1912,10 @@ export const createPayrollRun = mutation({
           }
         }
         netPay = 0;
-      } else if (netPay < 0) {
-        // If net pay is negative, all deductions become pending
-        pendingDeductions +=
-          finalTotalDeductions - (grossPay + nonTaxableAllowance);
-        // Remove all deductions
-        deductions = [];
+      } else if (earnedAfterAttendance <= 0) {
+        // Nothing earned this cutoff; every non-attendance deduction rolls over.
+        pendingDeductions += nonAttendanceDeductionsTotal;
+        deductions = deductions.filter((d) => d.type === "attendance");
         netPay = 0;
       }
 
@@ -1887,6 +1951,8 @@ export const createPayrollRun = mutation({
           employeeId,
           payrollRunId,
           period,
+          periodStart: args.cutoffStart,
+          periodEnd: args.cutoffEnd,
           grossPay: round2(grossPay),
           basicPay: round2(payrollBase.basicPay),
           deductions: deductions.map((d) => ({
@@ -2593,50 +2659,17 @@ export const updatePayrollRun = mutation({
         }
         const hasWorkedAtLeastOneDay = payrollBase.daysWorked > 0;
 
-        const cutoffStartDate = new Date(cutoffStart);
-        const currentMonth = cutoffStartDate.getMonth();
-        const currentYear = cutoffStartDate.getFullYear();
-
-        const previousPayslipsRawUpdate = await (ctx.db.query("payslips") as any)
-          .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
-          .collect();
-        const previousPayslips = previousPayslipsRawUpdate.map((p: any) =>
-          decryptPayslipRowFromDb(p),
+        const sameMonthPreviousPayslips = await findSameMonthPreviousPayslips(
+          ctx,
+          {
+            employeeId,
+            cutoffStart,
+            excludePayrollRunId: args.payrollRunId,
+          },
         );
-
-        const sameMonthPreviousPayslips = previousPayslips.filter((p: any) => {
-          try {
-            const periodParts = p.period.split(" to ");
-            if (periodParts.length !== 2) return false;
-            const payslipStartDate = new Date(periodParts[0]);
-            return (
-              payslipStartDate.getMonth() === currentMonth &&
-              payslipStartDate.getFullYear() === currentYear &&
-              payslipStartDate < cutoffStartDate &&
-              p.pendingDeductions &&
-              p.pendingDeductions > 0 &&
-              p.payrollRunId !== args.payrollRunId
-            );
-          } catch {
-            return false;
-          }
-        });
-
-        let previousPendingDeductions = 0;
-        if (sameMonthPreviousPayslips.length > 0) {
-          sameMonthPreviousPayslips.sort((a: any, b: any) => {
-            try {
-              return (
-                new Date(b.period.split(" to ")[0]).getTime() -
-                new Date(a.period.split(" to ")[0]).getTime()
-              );
-            } catch {
-              return 0;
-            }
-          });
-          previousPendingDeductions =
-            sameMonthPreviousPayslips[0].pendingDeductions || 0;
-        }
+        const previousPendingDeductions = pickMostRecentPendingDeductions(
+          sameMonthPreviousPayslips,
+        );
 
         let pendingDeductions = 0;
         if (!hasWorkedAtLeastOneDay) {
@@ -2670,11 +2703,25 @@ export const updatePayrollRun = mutation({
           (sum, d) => sum + d.amount,
           0,
         );
-        let netPay = grossPay + nonTaxableAllowance - finalTotalDeductions;
 
-        if (finalTotalDeductions > netPay + nonTaxableAllowance && netPay > 0) {
+        // Attendance items (absent/late/undertime/no-work) are earnings reductions,
+        // not cappable deductions. The cap only applies to gov + loans + advances.
+        const attendanceDeductionsTotal = deductions
+          .filter((d) => d.type === "attendance")
+          .reduce((sum, d) => sum + d.amount, 0);
+        const nonAttendanceDeductionsTotal =
+          finalTotalDeductions - attendanceDeductionsTotal;
+        const earnedAfterAttendance =
+          grossPay + nonTaxableAllowance - attendanceDeductionsTotal;
+
+        let netPay = earnedAfterAttendance - nonAttendanceDeductionsTotal;
+
+        if (
+          nonAttendanceDeductionsTotal > earnedAfterAttendance &&
+          earnedAfterAttendance > 0
+        ) {
           const excessDeductions =
-            finalTotalDeductions - (netPay + nonTaxableAllowance);
+            nonAttendanceDeductionsTotal - earnedAfterAttendance;
           pendingDeductions += excessDeductions;
           const pendingDeductionIndex = deductions.findIndex(
             (d) => d.name === "Pending Deductions (Previous Cutoff)",
@@ -2689,10 +2736,9 @@ export const updatePayrollRun = mutation({
             }
           }
           netPay = 0;
-        } else if (netPay < 0) {
-          pendingDeductions +=
-            finalTotalDeductions - (grossPay + nonTaxableAllowance);
-          deductions = [];
+        } else if (earnedAfterAttendance <= 0) {
+          pendingDeductions += nonAttendanceDeductionsTotal;
+          deductions = deductions.filter((d) => d.type === "attendance");
           netPay = 0;
         }
 
@@ -2731,6 +2777,8 @@ export const updatePayrollRun = mutation({
             employeeId,
             payrollRunId: args.payrollRunId,
             period,
+            periodStart: cutoffStart,
+            periodEnd: cutoffEnd,
             grossPay: round2(grossPay),
             basicPay: round2(payrollBase.basicPay),
             deductions: deductions.map((d) => ({
@@ -3634,6 +3682,8 @@ export const create13thMonthRun = mutation({
           employeeId,
           payrollRunId,
           period,
+          periodStart: yearStart,
+          periodEnd: yearEnd,
           grossPay: amt,
           basicPay: amt,
           deductions: [],
@@ -3884,6 +3934,8 @@ export const createLeaveConversionRun = mutation({
           employeeId,
           payrollRunId,
           period,
+          periodStart: yearStart,
+          periodEnd: yearEnd,
           grossPay: amt,
           basicPay: amt,
           deductions: [],
@@ -4874,6 +4926,98 @@ export const sendPayslipNotification = mutation({
       payslipId: args.payslipId,
       employeeId: payslip.employeeId,
       method: args.method,
+    };
+  },
+});
+
+/**
+ * One-shot backfill for the `periodStart`/`periodEnd` fields on existing payslip rows
+ * so they can be range-queried via the `by_employee_periodStart` index.
+ *
+ * Strategy: prefer the exact cutoff from the parent `payrollRuns` row. Fall back to
+ * parsing the legacy locale-formatted `period` string only if the run is missing
+ * (shouldn't happen, but kept as a safety net).
+ *
+ * Only payroll owners/admins can invoke this; it's idempotent so re-runs are safe.
+ */
+export const backfillPayslipPeriodRange = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    /** Optional cap so a single invocation stays within Convex's mutation budget. */
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userRecord = await checkAuth(ctx, args.organizationId);
+    if (userRecord.role !== "owner" && userRecord.role !== "admin") {
+      throw new Error("Only owner or admin can backfill payslip period range");
+    }
+
+    const limit = Math.max(1, Math.min(args.limit ?? 500, 2000));
+    const payslips = await (ctx.db.query("payslips") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .collect();
+
+    const runCache = new Map<string, { cutoffStart: number; cutoffEnd: number } | null>();
+    let updated = 0;
+    let skippedAlreadySet = 0;
+    let skippedNoCutoff = 0;
+
+    for (const row of payslips) {
+      if (updated >= limit) break;
+      if (
+        typeof row.periodStart === "number" &&
+        typeof row.periodEnd === "number"
+      ) {
+        skippedAlreadySet += 1;
+        continue;
+      }
+
+      const runKey = String(row.payrollRunId);
+      let runCutoff = runCache.get(runKey);
+      if (runCutoff === undefined) {
+        const runRow = (await ctx.db.get(row.payrollRunId)) as
+          | { cutoffStart?: number; cutoffEnd?: number }
+          | null;
+        runCutoff =
+          runRow &&
+          typeof runRow.cutoffStart === "number" &&
+          typeof runRow.cutoffEnd === "number"
+            ? { cutoffStart: runRow.cutoffStart, cutoffEnd: runRow.cutoffEnd }
+            : null;
+        runCache.set(runKey, runCutoff);
+      }
+
+      let periodStart: number | null = runCutoff?.cutoffStart ?? null;
+      let periodEnd: number | null = runCutoff?.cutoffEnd ?? null;
+      if (periodStart == null || periodEnd == null) {
+        const legacyStart = parseLegacyPayslipPeriodStart(row.period);
+        if (legacyStart != null) {
+          periodStart = legacyStart;
+          // Legacy rows had no explicit end; use start of day + 1 day as a conservative end
+          // (only used for indexing, not for display).
+          periodEnd = legacyStart + 24 * 60 * 60 * 1000 - 1;
+        }
+      }
+      if (periodStart == null || periodEnd == null) {
+        skippedNoCutoff += 1;
+        continue;
+      }
+
+      await ctx.db.patch(row._id, {
+        periodStart,
+        periodEnd,
+      });
+      updated += 1;
+    }
+
+    return {
+      total: payslips.length,
+      updated,
+      skippedAlreadySet,
+      skippedNoCutoff,
+      hasMore: updated >= limit,
     };
   },
 });

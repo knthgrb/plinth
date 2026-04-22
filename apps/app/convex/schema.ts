@@ -493,6 +493,13 @@ export default defineSchema({
     employeeId: v.id("employees"),
     payrollRunId: v.id("payrollRuns"),
     period: v.string(),
+    /**
+     * Cutoff range for this payslip in epoch ms. Kept alongside the display-only `period`
+     * string so we can range-query by month without locale-dependent date parsing.
+     * Optional for backwards compatibility with rows created before this field existed.
+     */
+    periodStart: v.optional(v.number()),
+    periodEnd: v.optional(v.number()),
     /** Numeric fields may be AES-GCM ciphertext strings when ENCRYPTION_KEY is set. */
     grossPay: v.union(v.number(), v.string()),
     /** Basic pay (regular compensation) for this period - used for 13th month computation */
@@ -588,6 +595,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_employee", ["employeeId"])
+    .index("by_employee_periodStart", ["employeeId", "periodStart"])
     .index("by_payroll_run", ["payrollRunId"])
     .index("by_organization", ["organizationId"])
     .index("by_period", ["period"]),
