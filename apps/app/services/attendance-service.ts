@@ -132,4 +132,18 @@ export class AttendanceService {
       },
     );
   }
+
+  static async punchSelfAttendance(data: {
+    organizationId: string;
+    action: "in" | "out";
+  }) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.mutation as any)(
+      (api as any).attendance.punchSelfAttendance,
+      {
+        organizationId: data.organizationId as Id<"organizations">,
+        action: data.action,
+      },
+    );
+  }
 }

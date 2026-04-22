@@ -94,3 +94,10 @@ export async function recalculateEmployeeAttendance(data: {
 }) {
   return AttendanceService.recalculateEmployeeAttendance(data);
 }
+
+export async function punchSelfAttendance(data: {
+  organizationId: string;
+  action: "in" | "out";
+}) {
+  return AttendanceService.punchSelfAttendance(data);
+}

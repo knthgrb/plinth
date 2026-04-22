@@ -31,7 +31,9 @@ const ROUTE_ROLES: { routes: readonly string[]; roles: readonly Role[] }[] = [
   { routes: ["/payslips", "/employee"], roles: ROLES_ALL_AUTH },
   { routes: ["/accounting"], roles: ROLES_ACCOUNTING_PAGE },
   { routes: ["/payroll", "/assets"], roles: ROLES_HR_AND_ACCOUNTING },
-  { routes: ["/dashboard", "/employees", "/attendance", "/recruitment", "/requirements"], roles: ROLES_HR },
+  // Attendance: same as role-access (employee + accounting own records / view-as-employee, HR admin view)
+  { routes: ["/attendance"], roles: ROLES_ALL_AUTH },
+  { routes: ["/dashboard", "/employees", "/recruitment", "/requirements"], roles: ROLES_HR },
   { routes: ["/documents", "/chat", "/announcements", "/leave", "/evaluations"], roles: ROLES_ALL_AUTH },
 ];
 

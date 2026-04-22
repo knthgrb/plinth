@@ -1,7 +1,7 @@
 /**
  * Role-based access for routes and sidebar.
  * - Employee: attendance (read-only), leave, requirements, announcements, chat, documents
- * - Accounting: payroll, accounting, announcements, chat, documents, assets
+ * - Accounting: payroll, accounting, attendance (e.g. own record / view-as-employee), announcements, chat, documents, assets
  * - HR: everything except accounting
  * - Admin: all access
  */
@@ -25,7 +25,7 @@ const ROUTE_ACCESS: Record<string, OrgRole[]> = {
   "/calendar": ["admin", "owner", "hr", "employee", "accounting"],
   "/employee": ["admin", "owner", "hr", "accounting", "employee"],
   "/employees": ["admin", "owner", "hr"],
-  "/attendance": ["admin", "owner", "hr", "employee"],
+  "/attendance": ["admin", "owner", "hr", "employee", "accounting"],
   "/evaluations": ["admin", "owner", "hr"],
   "/leave": ["admin", "owner", "hr", "employee"],
   "/requirements": ["admin", "owner", "hr", "employee"],

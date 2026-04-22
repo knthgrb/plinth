@@ -155,6 +155,60 @@ async function checkAuth(
   return { ...userRecord, role: userRole, organizationId };
 }
 
+/** Resolves the employee id for the current user in this org (payslips / employee-view + punch). */
+async function resolveSelfEmployeeIdForOrg(
+  ctx: any,
+  userRecord: { _id: any; email?: string; employeeId?: any; role?: string },
+  organizationId: any,
+) {
+  const userOrg = await (ctx.db.query("userOrganizations") as any)
+    .withIndex("by_user_organization", (q: any) =>
+      q.eq("userId", userRecord._id).eq("organizationId", organizationId),
+    )
+    .first();
+
+  const fromLink = userOrg?.employeeId ?? userRecord.employeeId ?? null;
+  const orgRole = (userOrg?.role ?? userRecord.role ?? "").toLowerCase();
+  const elevated = ["owner", "admin", "hr", "accounting"].includes(orgRole);
+
+  const findByEmail = async () => {
+    const emailNorm = (userRecord.email || "").trim().toLowerCase();
+    if (!emailNorm) return null;
+    const emps = await (ctx.db.query("employees") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", organizationId),
+      )
+      .collect();
+    const m = emps.find(
+      (e: any) =>
+        (e.personalInfo?.email || "").trim().toLowerCase() === emailNorm,
+    );
+    return m?._id ?? null;
+  };
+
+  if (orgRole === "employee") {
+    if (fromLink) return fromLink;
+    return await findByEmail();
+  }
+  if (elevated) {
+    const byEmail = await findByEmail();
+    return byEmail ?? fromLink;
+  }
+  return fromLink;
+}
+
+function getManilaNowHHmm() {
+  const d = new Date(Date.now() + MANILA_OFFSET_MS);
+  const h = d.getUTCHours();
+  const m = d.getUTCMinutes();
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function getManilaTodayDateUtcMs() {
+  const p = getManilaDateParts(Date.now());
+  return Date.UTC(p.y, p.m, p.d, 0, 0, 0, 0);
+}
+
 // Helper to get the employee's scheduled in/out time for a specific date,
 // taking into account defaultSchedule and any scheduleOverrides.
 // Uses Manila timezone for day-of-week so the correct per-day schedule is used.
@@ -227,12 +281,15 @@ export const getEmployeeAttendance = query({
 
     const userRecord = await checkAuth(ctx, employee.organizationId);
 
-    // Check authorization
-    if (
-      userRecord.role === "employee" &&
-      userRecord.employeeId !== args.employeeId
-    ) {
-      throw new Error("Not authorized");
+    if (userRecord.role === "employee") {
+      const selfId = await resolveSelfEmployeeIdForOrg(
+        ctx,
+        userRecord,
+        employee.organizationId,
+      );
+      if (!selfId || selfId !== args.employeeId) {
+        throw new Error("Not authorized");
+      }
     }
 
     let attendance = await (ctx.db.query("attendance") as any)
@@ -633,6 +690,202 @@ export const deleteAttendance = mutation({
 
     await ctx.db.delete(args.attendanceId);
     return { success: true };
+  },
+});
+
+const SELF_PUNCH_IN_BLOCKED = new Set([
+  "leave",
+  "leave_with_pay",
+  "leave_without_pay",
+]);
+
+/** Time in / time out for the signed-in user only (no HR role). */
+export const punchSelfAttendance = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    action: v.union(v.literal("in"), v.literal("out")),
+  },
+  handler: async (ctx, args) => {
+    const userRecord = await checkAuth(ctx, args.organizationId);
+    const employeeId = await resolveSelfEmployeeIdForOrg(
+      ctx,
+      userRecord,
+      args.organizationId,
+    );
+    if (!employeeId) {
+      throw new Error(
+        "No employee profile is linked to your account for this organization.",
+      );
+    }
+
+    const employee = await ctx.db.get(employeeId);
+    if (!employee) throw new Error("Employee not found");
+
+    const dateTs = getManilaTodayDateUtcMs();
+    const timeStr = getManilaNowHHmm();
+
+    const existing = await (ctx.db.query("attendance") as any)
+      .withIndex("by_employee_date", (q: any) =>
+        q.eq("employeeId", employeeId).eq("date", dateTs),
+      )
+      .first();
+
+    const holidays = await (ctx.db.query("holidays") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .collect();
+
+    if (args.action === "in") {
+      if (existing?.actualIn && existing?.actualOut) {
+        throw new Error(
+          "You have already completed time in and time out for today.",
+        );
+      }
+      if (existing?.actualIn && !existing?.actualOut) {
+        throw new Error("You have already timed in. Please time out.");
+      }
+      if (
+        existing &&
+        !existing.actualIn &&
+        SELF_PUNCH_IN_BLOCKED.has(existing.status as string)
+      ) {
+        throw new Error(
+          "This day is already marked on your schedule. Contact HR to change it.",
+        );
+      }
+
+      const scheduleWithLunch = await getScheduleWithLunch(
+        ctx,
+        employee as any,
+        dateTs,
+        args.organizationId,
+      );
+      const scheduleIn = scheduleWithLunch?.scheduleIn ?? "09:00";
+      const scheduleOut = scheduleWithLunch?.scheduleOut ?? "18:00";
+      const lunchStart = scheduleWithLunch?.lunchStart;
+      const lunchEnd = scheduleWithLunch?.lunchEnd;
+      const now = Date.now();
+
+      if (!existing) {
+        const holidayEntry = getMatchingHolidayEntryForDate(
+          dateTs,
+          holidays,
+        );
+        let isHoliday: boolean | undefined;
+        let holidayType: "regular" | "special" | "special_working" | undefined;
+        if (
+          holidayEntry &&
+          holidayAppliesToEmployee(holidayEntry, employee)
+        ) {
+          isHoliday = true;
+          holidayType = holidayEntry.type as
+            | "regular"
+            | "special"
+            | "special_working";
+        }
+
+        const calculatedLate = calculateLate(scheduleIn, timeStr, lunchStart);
+        const insertPayload: Record<string, unknown> = {
+          organizationId: args.organizationId,
+          employeeId,
+          date: dateTs,
+          scheduleIn,
+          scheduleOut,
+          actualIn: timeStr,
+          late: calculatedLate > 0 ? calculatedLate : 0,
+          undertime: 0,
+          status: "present" as const,
+          createdAt: now,
+          updatedAt: now,
+        };
+        if (isHoliday === true) insertPayload.isHoliday = true;
+        if (holidayType != null) insertPayload.holidayType = holidayType;
+        if (lunchStart != null) insertPayload.lunchStart = lunchStart;
+        if (lunchEnd != null) insertPayload.lunchEnd = lunchEnd;
+
+        await ctx.db.insert("attendance", insertPayload as any);
+        return { success: true, action: "in" as const };
+      }
+
+      // Existing row, no time in yet: fill time in
+      const lateRecalc = calculateLate(scheduleIn, timeStr, lunchStart);
+      const updates: any = {
+        actualIn: timeStr,
+        status: "present",
+        late: lateRecalc > 0 ? lateRecalc : 0,
+        lateManualOverride: false,
+        updatedAt: now,
+      };
+      if (scheduleWithLunch?.scheduleIn != null) {
+        updates.scheduleIn = scheduleWithLunch.scheduleIn;
+      }
+      if (scheduleWithLunch?.scheduleOut != null) {
+        updates.scheduleOut = scheduleWithLunch.scheduleOut;
+      }
+      if (scheduleWithLunch?.lunchStart != null) {
+        updates.lunchStart = scheduleWithLunch.lunchStart;
+        updates.lunchEnd = scheduleWithLunch.lunchEnd;
+      }
+      await ctx.db.patch(existing._id, updates);
+      return { success: true, action: "in" as const };
+    }
+
+    // action === "out"
+    if (!existing) {
+      throw new Error("Time in first before time out.");
+    }
+    if (!existing.actualIn) {
+      throw new Error("Time in first before time out.");
+    }
+    if (existing.actualOut) {
+      throw new Error("You have already timed out for today.");
+    }
+
+    const scheduleWithLunch = await getScheduleWithLunch(
+      ctx,
+      employee as any,
+      dateTs,
+      args.organizationId,
+    );
+    const resolvedScheduleInVal =
+      scheduleWithLunch?.scheduleIn ?? existing.scheduleIn;
+    const resolvedScheduleOutVal =
+      scheduleWithLunch?.scheduleOut ?? existing.scheduleOut;
+    const lunchStart =
+      scheduleWithLunch?.lunchStart ?? existing.lunchStart;
+    const lunchEnd = scheduleWithLunch?.lunchEnd ?? existing.lunchEnd;
+
+    const currentStatus = existing.status;
+    const calculatedUndertime =
+      currentStatus === "present" || currentStatus === "half-day"
+        ? calculateUndertime(
+            resolvedScheduleInVal,
+            resolvedScheduleOutVal,
+            existing.actualIn,
+            timeStr,
+            lunchStart,
+            lunchEnd,
+          )
+        : 0;
+    const calculatedLate =
+      currentStatus === "present" && existing.actualIn
+        ? calculateLate(
+            resolvedScheduleInVal,
+            existing.actualIn,
+            lunchStart,
+          )
+        : 0;
+
+    await ctx.db.patch(existing._id, {
+      actualOut: timeStr,
+      late: calculatedLate > 0 ? calculatedLate : 0,
+      undertime: calculatedUndertime > 0 ? calculatedUndertime : 0,
+      lateManualOverride: false,
+      undertimeManualOverride: false,
+      updatedAt: Date.now(),
+    });
+    return { success: true, action: "out" as const };
   },
 });
 

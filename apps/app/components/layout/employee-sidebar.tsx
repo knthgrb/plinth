@@ -9,6 +9,7 @@ import {
   FileText,
   MessageCircle,
   Bell,
+  Clock,
   ChevronDown,
   Plus,
 } from "lucide-react";
@@ -52,6 +53,7 @@ const navigationCategories: NavCategory[] = [
     title: "",
     items: [
       { name: "Calendar", href: "/calendar", icon: Calendar },
+      { name: "Attendance", href: "/attendance", icon: Clock },
       { name: "Payslips", href: "/payslips", icon: Receipt },
       { name: "Leave", href: "/leave", icon: Calendar, badge: "Beta" },
       { name: "Documents", href: "/documents", icon: FileText },

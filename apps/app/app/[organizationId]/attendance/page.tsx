@@ -56,6 +56,7 @@ import {
 } from "@/components/ui/dialog";
 import { useOrganization } from "@/hooks/organization-context";
 import { useEmployeeView } from "@/hooks/employee-view-context";
+import { useToast } from "@/components/ui/use-toast";
 import { holidayAppliesToEmployee } from "@/lib/payroll-calculations";
 import {
   getAttendanceStatusLabel,
@@ -173,7 +174,11 @@ export default function AttendancePage() {
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
   const isReadOnly =
-    user?.role === "employee" || isEmployeeExperienceUI;
+    user?.role === "employee" ||
+    isEmployeeExperienceUI ||
+    user?.role === "accounting";
+
+  const { toast } = useToast();
 
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20; // min 20 per page
@@ -183,6 +188,10 @@ export default function AttendancePage() {
 
   const [selectedEmployeeFilter, setSelectedEmployeeFilter] =
     useState<string>("");
+  const idForTable =
+    isReadOnly && effectiveSelfEmployeeId
+      ? effectiveSelfEmployeeId
+      : selectedEmployeeFilter;
   const individualPageSize = 20;
   const [individualPage, setIndividualPage] = useState(1);
 
@@ -196,6 +205,7 @@ export default function AttendancePage() {
 
   // Create employee modal (when no employees)
   const [isCreateEmployeeOpen, setIsCreateEmployeeOpen] = useState(false);
+  const [punching, setPunching] = useState(false);
 
   // Filter states
   const [selectedMonth, setSelectedMonth] = useState(
@@ -210,21 +220,13 @@ export default function AttendancePage() {
 
   useEffect(() => {
     setIndividualPage(1);
-  }, [selectedEmployeeFilter, selectedMonth]);
+  }, [idForTable, selectedMonth]);
 
   useEffect(() => {
-    if (
-      isEmployeeExperienceUI &&
-      effectiveSelfEmployeeId &&
-      !selectedEmployeeFilter
-    ) {
+    if (isReadOnly && effectiveSelfEmployeeId && !selectedEmployeeFilter) {
       setSelectedEmployeeFilter(effectiveSelfEmployeeId);
     }
-  }, [
-    isEmployeeExperienceUI,
-    effectiveSelfEmployeeId,
-    selectedEmployeeFilter,
-  ]);
+  }, [isReadOnly, effectiveSelfEmployeeId, selectedEmployeeFilter]);
 
   // When opening summary modal, default to current page month
   useEffect(() => {
@@ -286,20 +288,74 @@ export default function AttendancePage() {
       : "skip",
   );
 
-  // Individual attendance (default view)
-  const individualAttendance = useQuery(
+  // Individual attendance: employees use getEmployeeAttendance (no HR role); admin/HR use getAttendance
+  const individualAttendanceAsEmployee = useQuery(
+    (api as any).attendance.getEmployeeAttendance,
+    currentOrganizationId &&
+      isReadOnly &&
+      idForTable &&
+      idForTable !== "__create__"
+      ? {
+          employeeId: idForTable,
+          startDate: monthStart,
+          endDate: monthEnd,
+        }
+      : "skip",
+  );
+  const individualAttendanceAsAdmin = useQuery(
     (api as any).attendance.getAttendance,
     currentOrganizationId &&
-      selectedEmployeeFilter &&
-      selectedEmployeeFilter !== "__create__"
+      !isReadOnly &&
+      idForTable &&
+      idForTable !== "__create__"
       ? {
           organizationId: currentOrganizationId,
           startDate: monthStart,
           endDate: monthEnd,
-          employeeId: selectedEmployeeFilter,
+          employeeId: idForTable,
         }
       : "skip",
   );
+  const individualAttendance = isReadOnly
+    ? individualAttendanceAsEmployee
+    : individualAttendanceAsAdmin;
+
+  const manilaDayTs = (() => {
+    const o = 8 * 60 * 60 * 1000;
+    const d = new Date(Date.now() + o);
+    return Date.UTC(
+      d.getUTCFullYear(),
+      d.getUTCMonth(),
+      d.getUTCDate(),
+      0,
+      0,
+      0,
+      0,
+    );
+  })();
+
+  const todaysSelfAttendance = useQuery(
+    (api as any).attendance.getEmployeeAttendance,
+    currentOrganizationId && isReadOnly && effectiveSelfEmployeeId
+      ? {
+          employeeId: effectiveSelfEmployeeId,
+          startDate: manilaDayTs,
+          endDate: manilaDayTs,
+        }
+      : "skip",
+  );
+  const todaysPunchRow = Array.isArray(todaysSelfAttendance)
+    ? todaysSelfAttendance[0]
+    : undefined;
+
+  const employeePayslipSelf = useQuery(
+    (api as any).organizations.getEmployeeIdForPayslips,
+    currentOrganizationId && isReadOnly && user?.role === "employee"
+      ? { organizationId: currentOrganizationId }
+      : "skip",
+  );
+  const selfEmployeeIdLoading =
+    isReadOnly && user?.role === "employee" && employeePayslipSelf === undefined;
 
   // Map of holidays by local start-of-day timestamp for selected month.
   // If a holiday has an offset date, only the offset day is shown (Holiday offset); otherwise the main date is shown (Holiday).
@@ -452,6 +508,9 @@ export default function AttendancePage() {
   const deleteAttendanceMutation = useMutation(
     (api as any).attendance.deleteAttendance,
   );
+  const punchSelfAttendance = useMutation(
+    (api as any).attendance.punchSelfAttendance,
+  );
 
   const handleEdit = (record: any) => {
     setEditingRecord(record);
@@ -481,6 +540,32 @@ export default function AttendancePage() {
     if (!isDeleting) {
       setRecordToDelete(null);
       setDeleteError(null);
+    }
+  };
+
+  const handlePunch = async (action: "in" | "out") => {
+    if (!currentOrganizationId) return;
+    setPunching(true);
+    try {
+      await punchSelfAttendance({
+        organizationId: currentOrganizationId,
+        action,
+      });
+      toast({
+        title: action === "in" ? "Timed in" : "Timed out",
+        description:
+          action === "in"
+            ? "Your time in was recorded."
+            : "Your time out was recorded.",
+      });
+    } catch (e: any) {
+      toast({
+        title: "Could not update attendance",
+        description: e?.message || "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setPunching(false);
     }
   };
 
@@ -539,16 +624,12 @@ export default function AttendancePage() {
   );
 
   const selectedEmployee =
-    employees && selectedEmployeeFilter && selectedEmployeeFilter !== "__create__"
-      ? employees.find((emp: any) => emp._id === selectedEmployeeFilter) ?? null
+    employees && idForTable && idForTable !== "__create__"
+      ? employees.find((emp: any) => emp._id === idForTable) ?? null
       : null;
 
   const employeeSummary = useMemo(() => {
-    if (
-      !individualAttendance ||
-      !selectedEmployeeFilter ||
-      selectedEmployeeFilter === "__create__"
-    ) {
+    if (!individualAttendance || !idForTable || idForTable === "__create__") {
       return {
         lates: [] as { date: number; minutes: number }[],
         absences: [] as { date: number }[],
@@ -562,8 +643,8 @@ export default function AttendancePage() {
     const undertimes: { date: number; minutes: number }[] = [];
     const overtimes: { date: number; start: string; end: string }[] = [];
 
-    const selectedEmployee = selectedEmployeeFilter
-      ? (employees as any[])?.find((e: any) => e._id === selectedEmployeeFilter)
+    const selectedEmployee = idForTable
+      ? (employees as any[])?.find((e: any) => e._id === idForTable)
       : null;
 
     individualAttendance.forEach((record: any) => {
@@ -637,7 +718,7 @@ export default function AttendancePage() {
     overtimes.sort((a, b) => a.date - b.date);
 
     return { lates, absences, undertimes, overtimes };
-  }, [individualAttendance, holidaysByDateForMonth, selectedEmployeeFilter, employees]);
+  }, [individualAttendance, holidaysByDateForMonth, idForTable, employees]);
 
   return (
     <MainLayout>
@@ -765,53 +846,57 @@ export default function AttendancePage() {
             <div className="flex flex-col gap-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 flex-wrap">
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 flex-wrap">
-                  <Select
-                    value={selectedEmployeeFilter}
-                    onValueChange={(value) => {
-                      if (value === "__create__") {
-                        setSelectedEmployeeFilter("__create__");
-                        setIsCreateEmployeeOpen(true);
-                        return;
-                      }
-                      setSelectedEmployeeFilter(value);
-                    }}
-                  >
-                    <SelectTrigger className="w-full sm:w-[200px] h-8 text-xs">
-                      <SelectValue placeholder="Employee" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {employees && employees.length === 0 ? (
-                        <SelectItem value="__create__">
-                          <span className="flex items-center gap-2 text-brand-purple font-medium">
-                            <Plus className="h-4 w-4" />
-                            Add employee
-                          </span>
-                        </SelectItem>
-                      ) : (
-                        employees?.map((emp: any) => (
-                          <SelectItem key={emp._id} value={emp._id}>
-                            {emp.personalInfo.firstName}{" "}
-                            {emp.personalInfo.lastName}
-                          </SelectItem>
-                        ))
+                  {!isReadOnly && (
+                    <>
+                      <Select
+                        value={selectedEmployeeFilter}
+                        onValueChange={(value) => {
+                          if (value === "__create__") {
+                            setSelectedEmployeeFilter("__create__");
+                            setIsCreateEmployeeOpen(true);
+                            return;
+                          }
+                          setSelectedEmployeeFilter(value);
+                        }}
+                      >
+                        <SelectTrigger className="w-full sm:w-[200px] h-8 text-xs">
+                          <SelectValue placeholder="Employee" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {employees && employees.length === 0 ? (
+                            <SelectItem value="__create__">
+                              <span className="flex items-center gap-2 text-brand-purple font-medium">
+                                <Plus className="h-4 w-4" />
+                                Add employee
+                              </span>
+                            </SelectItem>
+                          ) : (
+                            employees?.map((emp: any) => (
+                              <SelectItem key={emp._id} value={emp._id}>
+                                {emp.personalInfo.firstName}{" "}
+                                {emp.personalInfo.lastName}
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                      {employees && employees.length === 0 && (
+                        <Suspense fallback={null}>
+                          <CreateEmployeeDialog
+                            open={isCreateEmployeeOpen}
+                            onOpenChange={(open) => {
+                              setIsCreateEmployeeOpen(open);
+                              if (!open && selectedEmployeeFilter === "__create__")
+                                setSelectedEmployeeFilter("");
+                            }}
+                            organizationId={currentOrganizationId}
+                            onSuccess={(newEmployeeId) => {
+                              setSelectedEmployeeFilter(newEmployeeId);
+                            }}
+                          />
+                        </Suspense>
                       )}
-                    </SelectContent>
-                  </Select>
-                  {employees && employees.length === 0 && (
-                    <Suspense fallback={null}>
-                      <CreateEmployeeDialog
-                        open={isCreateEmployeeOpen}
-                        onOpenChange={(open) => {
-                          setIsCreateEmployeeOpen(open);
-                          if (!open && selectedEmployeeFilter === "__create__")
-                            setSelectedEmployeeFilter("");
-                        }}
-                        organizationId={currentOrganizationId}
-                        onSuccess={(newEmployeeId) => {
-                          setSelectedEmployeeFilter(newEmployeeId);
-                        }}
-                      />
-                    </Suspense>
+                    </>
                   )}
                   <Popover
                     open={monthPickerOpen}
@@ -983,22 +1068,65 @@ export default function AttendancePage() {
                     </SelectContent>
                   </Select>
                 </div>
-                {selectedEmployeeFilter &&
-                  selectedEmployeeFilter !== "__create__" && (
+                {idForTable && idForTable !== "__create__" && (
                     <Button
                       variant="outline"
                       className="h-8 shrink-0 rounded-lg border-[#DDDDDD] bg-white text-xs shadow-sm px-3 [&_svg]:text-current hover:bg-[rgb(250,250,250)] hover:border-[rgb(150,150,150)]"
                       style={{ color: "rgb(64,64,64)" }}
                       onClick={() => setIsEmployeeSummaryOpen(true)}
                     >
-                      View employee summary
+                      {isReadOnly
+                        ? "View your month summary"
+                        : "View employee summary"}
                     </Button>
                   )}
               </div>
+              {isReadOnly && effectiveSelfEmployeeId && (
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      if (todaysPunchRow?.actualIn && todaysPunchRow?.actualOut)
+                        return;
+                      if (!todaysPunchRow?.actualIn) void handlePunch("in");
+                      else void handlePunch("out");
+                    }}
+                    disabled={
+                      punching ||
+                      todaysSelfAttendance === undefined ||
+                      !!(
+                        todaysPunchRow?.actualIn && todaysPunchRow?.actualOut
+                      )
+                    }
+                    className="h-9 bg-[#695eff] hover:bg-[#5a4ed6] text-white"
+                  >
+                    {punching ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin inline" />
+                        Saving…
+                      </>
+                    ) : todaysPunchRow?.actualIn &&
+                      todaysPunchRow?.actualOut ? (
+                      "Done for today"
+                    ) : todaysPunchRow?.actualIn && !todaysPunchRow?.actualOut ? (
+                      "Time out"
+                    ) : (
+                      "Time in"
+                    )}
+                  </Button>
+                  {todaysPunchRow?.actualIn && todaysPunchRow?.actualOut ? (
+                    <p className="text-xs text-gray-500">
+                      You are clocked out for today.
+                    </p>
+                  ) : null}
+                </div>
+              )}
             </div>
           </CardHeader>
           <CardContent className="flex-1 overflow-hidden flex flex-col">
-            {employees === undefined ? (
+            {user === undefined ||
+            selfEmployeeIdLoading ||
+            (!isReadOnly && employees === undefined) ? (
               <div className="h-full overflow-y-auto overflow-x-auto -mx-4 sm:mx-0">
                 <div className="min-w-full inline-block align-middle">
                   <Table>
@@ -1063,16 +1191,26 @@ export default function AttendancePage() {
                   </Table>
                 </div>
               </div>
-            ) : !selectedEmployeeFilter ||
-            selectedEmployeeFilter === "__create__" ? (
+            ) : isReadOnly && !effectiveSelfEmployeeId && !selfEmployeeIdLoading ? (
+              <div className="text-center py-12 text-gray-500 max-w-md mx-auto">
+                <p className="text-lg font-medium mb-2">
+                  No employee profile linked
+                </p>
+                <p className="text-sm">
+                  We could not link your account to an employee in this
+                  organization. Contact HR if you need access to your attendance.
+                </p>
+              </div>
+            ) : !isReadOnly &&
+              (!idForTable || idForTable === "__create__") ? (
               <div className="text-center py-12 text-gray-500">
                 <p className="text-lg font-medium mb-2">
-                  {employees.length === 0
+                  {employees?.length === 0
                     ? "No employees yet"
                     : "Please select an employee"}
                 </p>
                 <p className="text-sm">
-                  {employees.length === 0
+                  {employees?.length === 0
                     ? "Use the dropdown above to create an employee, then view their attendance here."
                     : "Choose an employee from the list to view their attendance records"}
                 </p>
@@ -1127,9 +1265,9 @@ export default function AttendancePage() {
                               className="text-center text-gray-500 py-8"
                             >
                               <p className="text-sm sm:text-base">
-                                No attendance records found for selected
-                                employee in{" "}
-                                {format(selectedMonthDate, "MMMM yyyy")}
+                                {isReadOnly
+                                  ? "No attendance records for this month."
+                                  : `No attendance records found for the selected employee in ${format(selectedMonthDate, "MMMM yyyy")}.`}
                               </p>
                             </TableCell>
                           </TableRow>
@@ -1138,9 +1276,9 @@ export default function AttendancePage() {
                             const dayKey = startOfDay(
                               new Date(record.date),
                             ).getTime();
-                            const selectedEmployee = selectedEmployeeFilter
+                            const selectedEmployee = idForTable
                               ? (employees as any[])?.find(
-                                  (e: any) => e._id === selectedEmployeeFilter,
+                                  (e: any) => e._id === idForTable,
                                 )
                               : null;
                             const dayHolidays = (
@@ -1378,12 +1516,14 @@ export default function AttendancePage() {
           <DialogContent className="max-w-lg w-full">
             <DialogHeader>
               <DialogTitle className="text-lg">
-                Employee Summary
+                {isReadOnly ? "Your month summary" : "Employee summary"}
               </DialogTitle>
               <DialogDescription>
-                {selectedEmployee
-                  ? `${selectedEmployee.personalInfo.firstName} ${selectedEmployee.personalInfo.lastName} – ${format(selectedMonthDate, "MMMM yyyy")}`
-                  : format(selectedMonthDate, "MMMM yyyy")}
+                {isReadOnly
+                  ? format(selectedMonthDate, "MMMM yyyy")
+                  : selectedEmployee
+                    ? `${selectedEmployee.personalInfo.firstName} ${selectedEmployee.personalInfo.lastName} – ${format(selectedMonthDate, "MMMM yyyy")}`
+                    : format(selectedMonthDate, "MMMM yyyy")}
               </DialogDescription>
             </DialogHeader>
             {individualAttendance === undefined ? (
@@ -1391,7 +1531,9 @@ export default function AttendancePage() {
                 <div className="text-center">
                   <Loader2 className="h-6 w-6 animate-spin text-[#695eff] mx-auto mb-2" />
                   <p className="text-sm text-gray-600">
-                    Loading employee attendance...
+                    {isReadOnly
+                      ? "Loading your summary…"
+                      : "Loading employee attendance..."}
                   </p>
                 </div>
               </div>
@@ -1402,8 +1544,9 @@ export default function AttendancePage() {
                 employeeSummary.undertimes.length === 0 &&
                 employeeSummary.overtimes.length === 0 ? (
                   <p className="text-sm text-gray-500">
-                    No summary data for this employee in{" "}
-                    {format(selectedMonthDate, "MMMM yyyy")}.
+                    {isReadOnly
+                      ? "No summary data."
+                      : `No summary data for this employee in ${format(selectedMonthDate, "MMMM yyyy")}.`}
                   </p>
                 ) : (
                   <>

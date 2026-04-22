@@ -250,6 +250,35 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     }))
     .filter((category) => category.items.length > 0); // Only show categories with visible items
 
+  // Accounting view: Finance section first (above Communication), Accounting before Payroll
+  const displayCategories = (() => {
+    if (!isAccountingStaff) {
+      return filteredCategories;
+    }
+    const withSortedFinance = filteredCategories.map((c) => {
+      if (c.title !== "Finance") return c;
+      return {
+        ...c,
+        items: [...c.items].sort((a, b) => {
+          if (a.name === "Accounting" && b.name === "Payroll") return -1;
+          if (a.name === "Payroll" && b.name === "Accounting") return 1;
+          return 0;
+        }),
+      };
+    });
+    const fi = withSortedFinance.findIndex((c) => c.title === "Finance");
+    const ci = withSortedFinance.findIndex(
+      (c) => c.title === "Communication",
+    );
+    if (fi === -1 || ci === -1) return withSortedFinance;
+    if (fi < ci) return withSortedFinance;
+    const next = [...withSortedFinance];
+    const [financeCat] = next.splice(fi, 1);
+    const newCommIdx = next.findIndex((c) => c.title === "Communication");
+    next.splice(newCommIdx, 0, financeCat);
+    return next;
+  })();
+
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [isMounted, setIsMounted] = useState(false);
   const [isScrolling, setIsScrolling] = useState(false);
@@ -663,7 +692,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
               </div>
             )}
             {/* Categories with headers */}
-            {filteredCategories.map((category) => (
+            {displayCategories.map((category) => (
               <div key={category.title} className="space-y-1">
                 <h2
                   className="px-3 text-xs font-medium"
