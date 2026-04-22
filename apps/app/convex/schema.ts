@@ -649,7 +649,13 @@ export default defineSchema({
     .index("by_employee", ["employeeId"])
     .index("by_status", ["status"])
     .index("by_organization", ["organizationId"])
-    .index("by_date_range", ["startDate", "endDate"]),
+    .index("by_date_range", ["startDate", "endDate"])
+    // Payroll: approved leaves that can overlap a pay period (endDate gte period start) without scanning full history
+    .index("by_employee_status_endDate", [
+      "employeeId",
+      "status",
+      "endDate",
+    ]),
 
   // Leave types table (custom leave types)
   leaveTypes: defineTable({

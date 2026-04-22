@@ -56,23 +56,38 @@ function getScheduledTimesForDate(date: number, employeeSchedule: any): { schedu
   return { scheduleIn: daySchedule.in, scheduleOut: daySchedule.out };
 }
 
+/** Pre-fetched per payroll run to avoid N× org-wide shift reads in getScheduleWithLunch. */
+export type ScheduleLunchContext = {
+  orgShifts: any[];
+  defaultLunchStart: string;
+  defaultLunchEnd: string;
+};
+
 /** Get schedule + lunch for an employee on a date.
  * When the employee has both a shift and a per-day schedule (defaultSchedule/scheduleOverrides),
  * the per-day schedule for this date is used first so late/undertime match the actual day (e.g. Mon 2–11 vs Tue 1–10).
  * For lunch when using per-day schedule: auto-match an org shift whose scheduleIn/scheduleOut equal this day's in/out
  * and use that shift's lunch; else fall back to the employee's tied shift lunch, then org default.
  * Only when there is no per-day schedule for the date do we fall back to the shift (e.g. UK 2–11).
+ *
+ * Pass `cache` when processing many days (e.g. payroll) to read org shifts and defaults once.
  */
 export async function getScheduleWithLunch(
   ctx: any,
   employee: { shiftId?: any; schedule?: any },
   date: number,
   organizationId: any,
+  cache?: ScheduleLunchContext,
 ): Promise<{ scheduleIn: string; scheduleOut: string; lunchStart: string; lunchEnd: string; lunchMinutes: number } | null> {
   let scheduleIn: string;
   let scheduleOut: string;
   let lunchStart: string;
   let lunchEnd: string;
+
+  const defaultLunch = () => ({
+    start: cache?.defaultLunchStart ?? "12:00",
+    end: cache?.defaultLunchEnd ?? "13:00",
+  });
 
   const fromPerDay =
     employee.schedule != null
@@ -83,9 +98,11 @@ export async function getScheduleWithLunch(
     scheduleIn = fromPerDay.scheduleIn;
     scheduleOut = fromPerDay.scheduleOut;
     // Resolve lunch for this day: match org shift by schedule times so each day gets correct lunch (late/undertime).
-    const orgShifts = await (ctx.db.query("shifts") as any)
-      .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
-      .collect();
+    const orgShifts =
+      cache?.orgShifts ??
+      (await (ctx.db.query("shifts") as any)
+        .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
+        .collect());
     const matchingShift = orgShifts.find(
       (s: any) =>
         s.scheduleIn === scheduleIn && s.scheduleOut === scheduleOut,
@@ -99,20 +116,36 @@ export async function getScheduleWithLunch(
         lunchStart = fallbackShift.lunchStart;
         lunchEnd = fallbackShift.lunchEnd;
       } else {
+        if (cache) {
+          const d = defaultLunch();
+          lunchStart = d.start;
+          lunchEnd = d.end;
+        } else {
+          const settings = await (ctx.db.query("settings") as any)
+            .withIndex("by_organization", (q: any) =>
+              q.eq("organizationId", organizationId),
+            )
+            .first();
+          const att = settings?.attendanceSettings;
+          lunchStart = att?.defaultLunchStart ?? "12:00";
+          lunchEnd = att?.defaultLunchEnd ?? "13:00";
+        }
+      }
+    } else {
+      if (cache) {
+        const d = defaultLunch();
+        lunchStart = d.start;
+        lunchEnd = d.end;
+      } else {
         const settings = await (ctx.db.query("settings") as any)
-          .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
+          .withIndex("by_organization", (q: any) =>
+            q.eq("organizationId", organizationId),
+          )
           .first();
         const att = settings?.attendanceSettings;
         lunchStart = att?.defaultLunchStart ?? "12:00";
         lunchEnd = att?.defaultLunchEnd ?? "13:00";
       }
-    } else {
-      const settings = await (ctx.db.query("settings") as any)
-        .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
-        .first();
-      const att = settings?.attendanceSettings;
-      lunchStart = att?.defaultLunchStart ?? "12:00";
-      lunchEnd = att?.defaultLunchEnd ?? "13:00";
     }
   } else if (employee.shiftId) {
     const shift = await ctx.db.get(employee.shiftId);

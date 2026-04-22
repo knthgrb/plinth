@@ -18,7 +18,10 @@ import {
   getSSSContribution,
   getSSSContributionByEmployeeDeduction,
 } from "./sss";
-import { getScheduleWithLunch } from "./shifts";
+import {
+  getScheduleWithLunch,
+  type ScheduleLunchContext,
+} from "./shifts";
 import {
   calculateNightDiffWorkHoursForAttendance,
   calculatePayrollBaseFromRecords,
@@ -85,16 +88,20 @@ async function captureDraftDependencySnapshot(ctx: any, args: {
 }): Promise<DraftDependencySnapshot> {
   let attendance = 0;
   let employees = 0;
+  const _rangeEnd = args.cutoffEnd + 24 * 60 * 60 * 1000 - 1;
   for (const employeeId of args.employeeIds) {
     const emp = await ctx.db.get(employeeId);
     employees = maxTs(employees, emp);
     const rows = await (ctx.db.query("attendance") as any)
-      .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
+      .withIndex("by_employee_date", (q: any) =>
+        q
+          .eq("employeeId", employeeId)
+          .gte("date", args.cutoffStart)
+          .lte("date", _rangeEnd),
+      )
       .collect();
     for (const row of rows) {
-      if (row.date >= args.cutoffStart && row.date <= args.cutoffEnd) {
-        attendance = maxTs(attendance, row);
-      }
+      attendance = maxTs(attendance, row);
     }
   }
 
@@ -781,6 +788,7 @@ async function enrichAttendanceRecordWithSchedule(
   ctx: any,
   employee: any,
   att: any,
+  scheduleLunchContext?: ScheduleLunchContext,
 ): Promise<any> {
   let lunchStart: string | null = att.lunchStart ?? null;
   let lunchEnd: string | null = att.lunchEnd ?? null;
@@ -792,6 +800,7 @@ async function enrichAttendanceRecordWithSchedule(
     employee,
     att.date,
     employee.organizationId,
+    scheduleLunchContext,
   );
   if (scheduleWithLunch) {
     lunchStart = lunchStart ?? scheduleWithLunch.lunchStart;
@@ -815,14 +824,19 @@ async function enrichAttendanceRecordWithSchedule(
     }
   }
   if (lunchStart == null || lunchEnd == null) {
-    const settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", employee.organizationId),
-      )
-      .first();
-    const attSettings = settings?.attendanceSettings;
-    lunchStart = lunchStart ?? attSettings?.defaultLunchStart ?? "12:00";
-    lunchEnd = lunchEnd ?? attSettings?.defaultLunchEnd ?? "13:00";
+    if (scheduleLunchContext) {
+      lunchStart = lunchStart ?? scheduleLunchContext.defaultLunchStart;
+      lunchEnd = lunchEnd ?? scheduleLunchContext.defaultLunchEnd;
+    } else {
+      const settings = await (ctx.db.query("settings") as any)
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", employee.organizationId),
+        )
+        .first();
+      const attSettings = settings?.attendanceSettings;
+      lunchStart = lunchStart ?? attSettings?.defaultLunchStart ?? "12:00";
+      lunchEnd = lunchEnd ?? attSettings?.defaultLunchEnd ?? "13:00";
+    }
   }
 
   const updates: Record<string, unknown> = {};
@@ -835,6 +849,52 @@ async function enrichAttendanceRecordWithSchedule(
     updates.scheduleOut = scheduleOut;
   if (Object.keys(updates).length === 0) return att;
   return { ...att, ...updates };
+}
+
+/** One load per org per payroll run / batch; avoids N× org shifts+settings per employee. */
+async function loadScheduleLunchContextForOrg(
+  ctx: any,
+  organizationId: any,
+): Promise<ScheduleLunchContext> {
+  const [orgShifts, settingsRow] = await Promise.all([
+    (ctx.db.query("shifts") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", organizationId),
+      )
+      .collect(),
+    (ctx.db.query("settings") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", organizationId),
+      )
+      .first(),
+  ]);
+  const att = settingsRow?.attendanceSettings;
+  return {
+    orgShifts,
+    defaultLunchStart: att?.defaultLunchStart ?? "12:00",
+    defaultLunchEnd: att?.defaultLunchEnd ?? "13:00",
+  };
+}
+
+/**
+ * Overlap: endDate >= cutoffStart && startDate <= cutoffEnd.
+ * Uses by_employee_status_endDate to avoid reading every past leave for the employee.
+ */
+async function getApprovedLeaveRequestsForPayrollPeriod(
+  ctx: any,
+  employeeId: any,
+  cutoffStart: number,
+  cutoffEnd: number,
+): Promise<any[]> {
+  return await (ctx.db.query("leaveRequests") as any)
+    .withIndex("by_employee_status_endDate", (q: any) =>
+      q
+        .eq("employeeId", employeeId)
+        .eq("status", "approved")
+        .gte("endDate", cutoffStart),
+    )
+    .filter((q: any) => q.lte(q.field("startDate"), cutoffEnd))
+    .collect();
 }
 
 function getMonthlyBasicForTax(
@@ -866,6 +926,8 @@ async function buildEmployeePayrollBase(
     payrollRates?: PayrollRates;
     holidays?: any[];
     leaveTypes?: any[];
+    /** When set, skips re-fetching all org shifts + settings (callers running many employees per org should set this). */
+    scheduleLunchContext?: ScheduleLunchContext;
   },
 ): Promise<PayrollBaseResult> {
   const { cutoffStart, cutoffEnd, payFrequency } = args;
@@ -878,8 +940,23 @@ async function buildEmployeePayrollBase(
     payrollRates = getEmployeePayrollRates(employee, res.base);
   }
 
+  const scheduleLunchContext: ScheduleLunchContext =
+    args.scheduleLunchContext ??
+    (await loadScheduleLunchContextForOrg(ctx, employee.organizationId));
+
+  // Index range: pay period plus a small buffer so overnight / segment logic in calculatePayrollBaseFromRecords
+  // still sees prior-day rows whose work extends into the period (we do not load full employment history).
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const attendanceQueryStart = cutoffStart - 5 * MS_PER_DAY;
+  const attendanceQueryEnd = cutoffEnd + 2 * MS_PER_DAY;
+
   const attendance = await (ctx.db.query("attendance") as any)
-    .withIndex("by_employee", (q: any) => q.eq("employeeId", employee._id))
+    .withIndex("by_employee_date", (q: any) =>
+      q
+        .eq("employeeId", employee._id)
+        .gte("date", attendanceQueryStart)
+        .lte("date", attendanceQueryEnd),
+    )
     .collect();
 
   const holidays =
@@ -890,14 +967,11 @@ async function buildEmployeePayrollBase(
       )
       .collect());
 
-  const leaveRequests = await (ctx.db.query("leaveRequests") as any)
-    .withIndex("by_employee", (q: any) => q.eq("employeeId", employee._id))
-    .collect();
-  const approvedLeaves = leaveRequests.filter(
-    (leave: any) =>
-      leave.status === "approved" &&
-      leave.startDate <= cutoffEnd &&
-      leave.endDate >= cutoffStart,
+  const approvedLeaves = await getApprovedLeaveRequestsForPayrollPeriod(
+    ctx,
+    employee._id,
+    cutoffStart,
+    cutoffEnd,
   );
 
   const leaveTypes =
@@ -912,7 +986,12 @@ async function buildEmployeePayrollBase(
   // Schedule fallback lets "early in / late timeout" records still get night diff from the scheduled shift.
   const attendanceEnriched = await Promise.all(
     attendance.map((att: any) =>
-      enrichAttendanceRecordWithSchedule(ctx, employee, att),
+      enrichAttendanceRecordWithSchedule(
+        ctx,
+        employee,
+        att,
+        scheduleLunchContext,
+      ),
     ),
   );
 
@@ -1280,37 +1359,41 @@ export const createPayrollRun = mutation({
       .collect();
 
     // Backfill isHoliday/holidayType on attendance. Only set when holiday applies to this employee's province.
+    const _cutRangeEnd = args.cutoffEnd + 24 * 60 * 60 * 1000 - 1;
     for (const employeeId of args.employeeIds) {
       const employeeRow = await ctx.db.get(employeeId);
       const employee = employeeRow
         ? decryptEmployeeFromDb(employeeRow)
         : null;
       const attendance = await (ctx.db.query("attendance") as any)
-        .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
+        .withIndex("by_employee_date", (q: any) =>
+          q
+            .eq("employeeId", employeeId)
+            .gte("date", args.cutoffStart)
+            .lte("date", _cutRangeEnd),
+        )
         .collect();
       for (const rec of attendance) {
-        if (rec.date >= args.cutoffStart && rec.date <= args.cutoffEnd) {
-          const holiday = holidays.find((h: any) =>
-            holidayMatchesDateLib(h, rec.date),
-          );
-          if (
-            holiday &&
-            employee &&
-            holidayAppliesToEmployee(holiday, employee)
-          ) {
-            await ctx.db.patch(rec._id, {
-              isHoliday: true,
-              holidayType: holiday.type,
-              updatedAt: now,
-            });
-          } else if (rec.isHoliday || rec.holidayType) {
-            // Holiday deleted or doesn't apply to this employee's province — clear
-            await ctx.db.patch(rec._id, {
-              isHoliday: false,
-              holidayType: undefined,
-              updatedAt: now,
-            });
-          }
+        const holiday = holidays.find((h: any) =>
+          holidayMatchesDateLib(h, rec.date),
+        );
+        if (
+          holiday &&
+          employee &&
+          holidayAppliesToEmployee(holiday, employee)
+        ) {
+          await ctx.db.patch(rec._id, {
+            isHoliday: true,
+            holidayType: holiday.type,
+            updatedAt: now,
+          });
+        } else if (rec.isHoliday || rec.holidayType) {
+          // Holiday deleted or doesn't apply to this employee's province — clear
+          await ctx.db.patch(rec._id, {
+            isHoliday: false,
+            holidayType: undefined,
+            updatedAt: now,
+          });
         }
       }
     }
@@ -1319,6 +1402,11 @@ export const createPayrollRun = mutation({
         q.eq("organizationId", args.organizationId),
       )
       .collect();
+
+    const createRunScheduleLunchContext = await loadScheduleLunchContextForOrg(
+      ctx,
+      args.organizationId,
+    );
 
     // Compute and create payslips for each employee
     for (const employeeId of args.employeeIds) {
@@ -1336,6 +1424,7 @@ export const createPayrollRun = mutation({
         payrollRates: rates,
         holidays,
         leaveTypes,
+        scheduleLunchContext: createRunScheduleLunchContext,
       });
 
       // Get government deduction settings for this employee
@@ -2160,34 +2249,43 @@ export const updatePayrollRun = mutation({
         .collect();
 
       const nowUpdate = Date.now();
+      const _MS = 24 * 60 * 60 * 1000;
+      const rangeEnd = cutoffEnd + _MS - 1;
       for (const employeeId of employeeIds) {
         const attendance = await (ctx.db.query("attendance") as any)
-          .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
+          .withIndex("by_employee_date", (q: any) =>
+            q
+              .eq("employeeId", employeeId)
+              .gte("date", cutoffStart)
+              .lte("date", rangeEnd),
+          )
           .collect();
         for (const rec of attendance) {
-          if (rec.date >= cutoffStart && rec.date <= cutoffEnd) {
-            const holiday = holidays.find((h: any) =>
-              holidayMatchesDateLib(h, rec.date),
-            );
-            const empRow = (await ctx.db.get(employeeId)) as any;
-            const emp = empRow ? decryptEmployeeFromDb(empRow) : null;
-            if (holiday && emp && holidayAppliesToEmployee(holiday, emp)) {
-              await ctx.db.patch(rec._id, {
-                isHoliday: true,
-                holidayType: holiday.type,
-                updatedAt: nowUpdate,
-              });
-            } else if (rec.isHoliday || rec.holidayType) {
-              await ctx.db.patch(rec._id, {
-                isHoliday: false,
-                holidayType: undefined,
-                updatedAt: nowUpdate,
-              });
-            }
+          const holiday = holidays.find((h: any) =>
+            holidayMatchesDateLib(h, rec.date),
+          );
+          const empRow = (await ctx.db.get(employeeId)) as any;
+          const emp = empRow ? decryptEmployeeFromDb(empRow) : null;
+          if (holiday && emp && holidayAppliesToEmployee(holiday, emp)) {
+            await ctx.db.patch(rec._id, {
+              isHoliday: true,
+              holidayType: holiday.type,
+              updatedAt: nowUpdate,
+            });
+          } else if (rec.isHoliday || rec.holidayType) {
+            await ctx.db.patch(rec._id, {
+              isHoliday: false,
+              holidayType: undefined,
+              updatedAt: nowUpdate,
+            });
           }
         }
       }
 
+      const runScheduleLunchContext = await loadScheduleLunchContextForOrg(
+        ctx,
+        payrollRun.organizationId,
+      );
       for (const employeeId of employeeIds) {
         const employeeRow = (await ctx.db.get(employeeId)) as any;
         if (
@@ -2206,6 +2304,7 @@ export const updatePayrollRun = mutation({
           payrollRates: rates,
           holidays,
           leaveTypes,
+          scheduleLunchContext: runScheduleLunchContext,
         });
 
         const govSettings = resolvedGovernmentDeductionSettings.find(
@@ -3381,12 +3480,6 @@ async function compute13thMonthAmountsInternal(
   );
   const runIds = new Set(regularRuns.map((r: any) => r._id));
 
-  const allPayslips = await (ctx.db.query("payslips") as any)
-    .withIndex("by_organization", (q: any) =>
-      q.eq("organizationId", args.organizationId),
-    )
-    .collect();
-
   const results: Array<{
     employeeId: any;
     employee: any;
@@ -3406,22 +3499,33 @@ async function compute13thMonthAmountsInternal(
     )
     .collect();
 
+  const thirteenthMonthScheduleLunchContext =
+    await loadScheduleLunchContextForOrg(ctx, args.organizationId);
+
+  const runsInYear = regularRuns.filter(
+    (r: any) => r.cutoffStart >= yearStart && r.cutoffEnd <= yearEnd,
+  );
+  const payslipsInYear = (
+    await Promise.all(
+      runsInYear.map((run: any) =>
+        (ctx.db.query("payslips") as any)
+          .withIndex("by_payroll_run", (q: any) =>
+            q.eq("payrollRunId", run._id),
+          )
+          .collect(),
+      ),
+    )
+  ).flat() as any[];
+
   for (const employeeId of employeeIds) {
     const employee = employees.find((e: any) => e._id === employeeId);
     if (!employee) continue;
 
     let totalBasicPay = 0;
 
-    const empPayslips = allPayslips.filter(
+    const empPayslips = payslipsInYear.filter(
       (p: any) =>
-        p.employeeId === employeeId &&
-        runIds.has(p.payrollRunId) &&
-        (() => {
-          const run = regularRuns.find((r: any) => r._id === p.payrollRunId);
-          return (
-            run && run.cutoffStart >= yearStart && run.cutoffEnd <= yearEnd
-          );
-        })(),
+        p.employeeId === employeeId && runIds.has(p.payrollRunId),
     );
 
     if (empPayslips.length > 0) {
@@ -3460,6 +3564,7 @@ async function compute13thMonthAmountsInternal(
           payrollRates: rates,
           holidays,
           leaveTypes,
+          scheduleLunchContext: thirteenthMonthScheduleLunchContext,
         });
         totalBasicPay += base.basicPay;
       }
@@ -3826,26 +3931,28 @@ export const getPayrollRunSummary = query({
 
     const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-    // Fetch attendance the same way as the attendance page: by_organization then filter by date range
-    // (getAttendance uses this so we get the same set of records the user sees on the attendance page)
-    let periodAttendance = await (ctx.db.query("attendance") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", payrollRun.organizationId),
-      )
-      .collect();
-
-    // Inclusive date range: include any record on or between cutoff start and end
+    // Per-employee date index + buffer (same as buildEmployeePayrollBase): avoids loading an entire org's history.
+    const attQueryStart = payrollRun.cutoffStart - 5 * ONE_DAY_MS;
+    const attQueryEnd = payrollRun.cutoffEnd + 2 * ONE_DAY_MS;
     const rangeEnd =
       payrollRun.cutoffEnd +
       ONE_DAY_MS -
       1; /* include full last day (e.g. 23:59:59.999) */
+    const perEmployeeAttendance = await Promise.all(
+      employeeIds.map((id: any) =>
+        (ctx.db.query("attendance") as any)
+          .withIndex("by_employee_date", (q: any) =>
+            q
+              .eq("employeeId", id)
+              .gte("date", attQueryStart)
+              .lte("date", attQueryEnd),
+          )
+          .collect(),
+      ),
+    );
+    let periodAttendance = perEmployeeAttendance.flat();
     periodAttendance = periodAttendance.filter(
       (a: any) => a.date >= payrollRun.cutoffStart && a.date <= rangeEnd,
-    );
-
-    // Restrict to employees in this payroll run
-    periodAttendance = periodAttendance.filter((a: any) =>
-      employeeIds.includes(a.employeeId),
     );
 
     // Get all employees
@@ -3876,6 +3983,25 @@ export const getPayrollRunSummary = query({
         q.eq("organizationId", payrollRun.organizationId),
       )
       .collect();
+
+    const [orgShiftsForSummary, settingsRowSummary] = await Promise.all([
+      (ctx.db.query("shifts") as any)
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", payrollRun.organizationId),
+        )
+        .collect(),
+      (ctx.db.query("settings") as any)
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", payrollRun.organizationId),
+        )
+        .first(),
+    ]);
+    const attSetSummary = settingsRowSummary?.attendanceSettings;
+    const scheduleLunchContextForSummary: ScheduleLunchContext = {
+      orgShifts: orgShiftsForSummary,
+      defaultLunchStart: attSetSummary?.defaultLunchStart ?? "12:00",
+      defaultLunchEnd: attSetSummary?.defaultLunchEnd ?? "13:00",
+    };
 
     // Get all approved leave requests for all employees in the period
     const allLeaveRequests = await (ctx.db.query("leaveRequests") as any)
@@ -4078,6 +4204,7 @@ export const getPayrollRunSummary = query({
               ctx,
               employee,
               att,
+              scheduleLunchContextForSummary,
             );
             nightDiffHours =
               calculateNightDiffWorkHoursForAttendance(enriched);
@@ -4119,6 +4246,7 @@ export const getPayrollRunSummary = query({
           payrollRates: employeeRates,
           holidays: holidaysForPayroll,
           leaveTypes,
+          scheduleLunchContext: scheduleLunchContextForSummary,
         });
 
         return {
