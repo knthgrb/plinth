@@ -67,6 +67,7 @@ import {
   formatTime12Hour,
   calculateLate as attendanceCalculateLate,
   calculateUndertime as attendanceCalculateUndertime,
+  MANILA_OFFSET_MS,
 } from "@/utils/attendance-calculations";
 
 // Lazy load modal components
@@ -93,6 +94,12 @@ const CreateEmployeeDialog = lazy(() =>
     default: mod.CreateEmployeeDialog,
   })),
 );
+
+function getManilaPunchTimePreview(): string {
+  const d = new Date(Date.now() + MANILA_OFFSET_MS);
+  const hhmm = `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+  return formatTime12Hour(hhmm);
+}
 
 type Holiday = {
   _id: string;
@@ -206,6 +213,10 @@ export default function AttendancePage() {
   // Create employee modal (when no employees)
   const [isCreateEmployeeOpen, setIsCreateEmployeeOpen] = useState(false);
   const [punching, setPunching] = useState(false);
+  const [punchConfirm, setPunchConfirm] = useState<{
+    action: "in" | "out";
+    timeLabel: string;
+  } | null>(null);
 
   // Filter states
   const [selectedMonth, setSelectedMonth] = useState(
@@ -569,6 +580,13 @@ export default function AttendancePage() {
     }
   };
 
+  const handlePunchConfirm = async () => {
+    if (!punchConfirm) return;
+    const action = punchConfirm.action;
+    setPunchConfirm(null);
+    await handlePunch(action);
+  };
+
   // Generate all dates in the selected month
   // Transform attendance data by employee and date (for summary modal — uses summary month)
   const attendanceByEmployeeAndDate = (() => {
@@ -838,6 +856,64 @@ export default function AttendancePage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+
+          <Dialog
+            open={!!punchConfirm}
+            onOpenChange={(open) => {
+              if (!open && !punching) setPunchConfirm(null);
+            }}
+          >
+            <DialogContent
+              className="max-w-sm"
+              hideCloseIcon={punching}
+              onPointerDownOutside={(e) => punching && e.preventDefault()}
+              onEscapeKeyDown={(e) => punching && e.preventDefault()}
+            >
+              <DialogHeader>
+                <DialogTitle>
+                  {punchConfirm?.action === "in" ? "Time in?" : "Time out?"}
+                </DialogTitle>
+                <DialogDescription>
+                  {punchConfirm ? (
+                    <>
+                      {punchConfirm.action === "in"
+                        ? "Record your time in at "
+                        : "Record your time out at "}
+                      <span className="font-semibold text-foreground">
+                        {punchConfirm.timeLabel}
+                      </span>{" "}
+                      (Manila). The time saved will be when you press Confirm.
+                    </>
+                  ) : null}
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter className="gap-2 sm:gap-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setPunchConfirm(null)}
+                  disabled={punching}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  className="bg-[#695eff] hover:bg-[#5a4ed6] text-white"
+                  onClick={() => void handlePunchConfirm()}
+                  disabled={punching}
+                >
+                  {punching ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin inline" />
+                      Saving…
+                    </>
+                  ) : (
+                    "Confirm"
+                  )}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
 
         {/* Attendance Records */}
@@ -1088,8 +1164,19 @@ export default function AttendancePage() {
                     onClick={() => {
                       if (todaysPunchRow?.actualIn && todaysPunchRow?.actualOut)
                         return;
-                      if (!todaysPunchRow?.actualIn) void handlePunch("in");
-                      else void handlePunch("out");
+                      if (todaysPunchRow?.actualIn && !todaysPunchRow?.actualOut) {
+                        setPunchConfirm({
+                          action: "out",
+                          timeLabel: getManilaPunchTimePreview(),
+                        });
+                        return;
+                      }
+                      if (!todaysPunchRow?.actualIn) {
+                        setPunchConfirm({
+                          action: "in",
+                          timeLabel: getManilaPunchTimePreview(),
+                        });
+                      }
                     }}
                     disabled={
                       punching ||
