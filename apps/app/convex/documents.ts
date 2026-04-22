@@ -71,6 +71,32 @@ async function checkAuth(
   return { ...userRecord, role: userRole, organizationId };
 }
 
+function canViewAllDocumentsInOrg(role: string | undefined) {
+  return role === "owner" || role === "admin";
+}
+
+function isEmptyTipTapBody(content: string | undefined) {
+  if (!content) return true;
+  try {
+    const c = JSON.parse(content);
+    return !c?.content || c.content.length === 0;
+  } catch {
+    return String(content).trim() === "";
+  }
+}
+
+/** File upload: empty body + at least one attachment. */
+function isUploadedFileOnlyRecord(doc: {
+  content: string;
+  attachments?: (string | null)[];
+}) {
+  return (
+    isEmptyTipTapBody(doc.content) &&
+    Array.isArray(doc.attachments) &&
+    doc.attachments.length > 0
+  );
+}
+
 // Get documents for organization (general storage)
 export const getDocuments = query({
   args: {
@@ -95,6 +121,13 @@ export const getDocuments = query({
       )
       .collect();
 
+    // Per-user private library: only owner and admin can list the whole org.
+    if (!canViewAllDocumentsInOrg(userRecord.role)) {
+      documents = documents.filter(
+        (doc: any) => doc.createdBy === userRecord._id,
+      );
+    }
+
     // Filter by type if specified
     if (args.type) {
       documents = documents.filter((doc: any) => doc.type === args.type);
@@ -116,9 +149,15 @@ export const getDocument = query({
     const document = await ctx.db.get(args.documentId);
     if (!document) throw new Error("Document not found");
 
-    await checkAuth(ctx, document.organizationId);
+    const userRecord = await checkAuth(ctx, document.organizationId);
 
-    // All authenticated users in the organization can view documents
+    if (
+      !canViewAllDocumentsInOrg(userRecord.role) &&
+      document.createdBy !== userRecord._id
+    ) {
+      throw new Error("Not authorized to view this document");
+    }
+
     return document;
   },
 });
@@ -158,6 +197,7 @@ export const createDocument = mutation({
       attachments: args.attachments,
       isShared: args.isShared || false,
       sharedWith: args.sharedWith || [],
+      contentVersion: 1,
       createdAt: now,
       updatedAt: now,
     });
@@ -191,18 +231,44 @@ export const updateDocument = mutation({
     const document = await ctx.db.get(args.documentId);
     if (!document) throw new Error("Document not found");
 
-    await checkAuth(ctx, document.organizationId);
+    const userRecord = await checkAuth(ctx, document.organizationId);
 
-    // All authenticated users in the organization can update documents
+    const canMutate =
+      canViewAllDocumentsInOrg(userRecord.role) ||
+      document.createdBy === userRecord._id;
+    if (!canMutate) {
+      throw new Error("Not authorized to update this document");
+    }
 
-    const updates: any = { updatedAt: Date.now() };
+    if (isUploadedFileOnlyRecord(document as any)) {
+      throw new Error(
+        "Uploaded files cannot be edited in the document editor. Re-upload the file to replace it, or create a new Plinth document for rich text.",
+      );
+    }
+
+    const now = Date.now();
+    const updates: any = { updatedAt: now };
     if (args.title !== undefined) updates.title = args.title;
-    if (args.content !== undefined) updates.content = args.content;
     if (args.type !== undefined) updates.type = args.type;
     if (args.category !== undefined) updates.category = args.category;
     if (args.attachments !== undefined) updates.attachments = args.attachments;
     if (args.isShared !== undefined) updates.isShared = args.isShared;
     if (args.sharedWith !== undefined) updates.sharedWith = args.sharedWith;
+
+    if (args.content !== undefined && args.content !== document.content) {
+      const currentVersion = document.contentVersion ?? 1;
+      await ctx.db.insert("documentVersions", {
+        documentId: args.documentId,
+        organizationId: document.organizationId,
+        version: currentVersion,
+        title: document.title,
+        content: document.content,
+        createdAt: now,
+        createdBy: userRecord._id,
+      });
+      updates.content = args.content;
+      updates.contentVersion = currentVersion + 1;
+    }
 
     await ctx.db.patch(args.documentId, updates);
     return { success: true };
@@ -218,9 +284,21 @@ export const deleteDocument = mutation({
     const document = await ctx.db.get(args.documentId);
     if (!document) throw new Error("Document not found");
 
-    await checkAuth(ctx, document.organizationId);
+    const userRecord = await checkAuth(ctx, document.organizationId);
 
-    // All authenticated users in the organization can delete documents
+    const canMutate =
+      canViewAllDocumentsInOrg(userRecord.role) ||
+      document.createdBy === userRecord._id;
+    if (!canMutate) {
+      throw new Error("Not authorized to delete this document");
+    }
+
+    const versionRows = await (ctx.db.query("documentVersions") as any)
+      .withIndex("by_document", (q: any) => q.eq("documentId", args.documentId))
+      .collect();
+    for (const row of versionRows) {
+      await ctx.db.delete(row._id);
+    }
 
     await ctx.db.delete(args.documentId);
     return { success: true };

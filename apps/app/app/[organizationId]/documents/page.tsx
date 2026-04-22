@@ -53,17 +53,12 @@ import { deleteDocument } from "@/actions/documents";
 import { generateUploadUrl, getFileUrl } from "@/actions/files";
 import { createDocument } from "@/actions/documents";
 import { useToast } from "@/components/ui/use-toast";
+import { isFileOnlyDocument, openInNewTab } from "@/lib/document-utils";
 
 export default function DocumentsPage() {
   const router = useRouter();
   const { effectiveOrganizationId } = useOrganization();
   const { toast } = useToast();
-  const user = useQuery(
-    (api as any).organizations.getCurrentUser,
-    effectiveOrganizationId
-      ? { organizationId: effectiveOrganizationId }
-      : "skip",
-  );
 
   const documents = useQuery(
     (api as any).documents.getDocuments,
@@ -223,18 +218,7 @@ export default function DocumentsPage() {
     return type.replace(/_/g, " ");
   };
 
-  // Check if document is file-only (no content or empty content)
-  const isFileOnly = (doc: any) => {
-    if (!doc) return false;
-    if (!doc.content) return true;
-    try {
-      const content =
-        typeof doc.content === "string" ? JSON.parse(doc.content) : doc.content;
-      return !content || !content.content || content.content.length === 0;
-    } catch {
-      return typeof doc.content === "string" && doc.content.trim() === "";
-    }
-  };
+  const isFileOnly = (doc: any) => (doc ? isFileOnlyDocument(doc) : false);
 
   const validateFile = (file: File): { valid: boolean; error?: string } => {
     // Check file size
@@ -396,6 +380,7 @@ export default function DocumentsPage() {
   };
 
   const handleEdit = (doc: any) => {
+    if (isFileOnlyDocument(doc)) return;
     router.push(
       getOrganizationPath(effectiveOrganizationId, `/documents/${doc._id}/edit`)
     );
@@ -427,7 +412,7 @@ export default function DocumentsPage() {
   const handleDownloadFile = async (storageId: string) => {
     try {
       const url = await getFileUrl(storageId);
-      window.open(url, "_blank");
+      openInNewTab(url);
     } catch (error: any) {
       toast({
         title: "Error",
@@ -834,17 +819,19 @@ export default function DocumentsPage() {
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleEdit(doc);
-                              }}
-                              title="Edit"
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Button>
+                            {!fileOnly && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleEdit(doc);
+                                }}
+                                title="Edit"
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="sm"
@@ -1147,7 +1134,7 @@ export default function DocumentsPage() {
                     <div className="space-y-4">
                       {previewFileUrl &&
                       isPreviewableFile(previewFileUrl, previewFileType) ? (
-                        <div className="border rounded-lg overflow-hidden bg-gray-50">
+                        <div className="border rounded-lg overflow-hidden bg-white">
                           {previewError ? (
                             <div className="flex flex-col items-center justify-center p-8 min-h-[400px]">
                               <FileText className="h-16 w-16 text-gray-400 mb-4" />
@@ -1157,8 +1144,7 @@ export default function DocumentsPage() {
                               <Button
                                 variant="outline"
                                 onClick={() =>
-                                  previewFileUrl &&
-                                  window.open(previewFileUrl, "_blank")
+                                  previewFileUrl && openInNewTab(previewFileUrl)
                                 }
                               >
                                 <Download className="h-4 w-4 mr-2" />
@@ -1179,7 +1165,7 @@ export default function DocumentsPage() {
                                   variant="outline"
                                   onClick={() =>
                                     previewFileUrl &&
-                                    window.open(previewFileUrl, "_blank")
+                                    openInNewTab(previewFileUrl)
                                   }
                                 >
                                   <Download className="h-4 w-4 mr-2" />
@@ -1198,8 +1184,7 @@ export default function DocumentsPage() {
                           <Button
                             variant="outline"
                             onClick={() =>
-                              previewFileUrl &&
-                              window.open(previewFileUrl, "_blank")
+                              previewFileUrl && openInNewTab(previewFileUrl)
                             }
                           >
                             <Download className="h-4 w-4 mr-2" />
@@ -1367,14 +1352,15 @@ export default function DocumentsPage() {
             <DialogFooter>
               {previewFileUrl && (
                 <Button
+                  type="button"
                   variant="outline"
-                  onClick={() => window.open(previewFileUrl, "_blank")}
+                  onClick={() => openInNewTab(previewFileUrl!)}
                 >
                   <Download className="h-4 w-4 mr-2" />
                   Open in New Tab
                 </Button>
               )}
-              {!isFileOnly(previewDocument) && (
+              {previewDocument && !isFileOnly(previewDocument) && (
                 <Button
                   variant="outline"
                   onClick={() => {

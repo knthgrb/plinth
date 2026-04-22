@@ -105,7 +105,7 @@ export default function NewDocumentPage() {
         </div>
 
         {/* Editor Content */}
-        <div className="flex-1 overflow-y-auto bg-gray-50">
+        <div className="flex-1 overflow-y-auto bg-white">
           <div className="max-w-5xl mx-auto px-8 py-6">
             <Card>
               <CardContent className="p-6 space-y-6">

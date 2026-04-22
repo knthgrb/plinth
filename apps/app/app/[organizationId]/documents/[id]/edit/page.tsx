@@ -22,6 +22,7 @@ import { updateDocument } from "@/actions/documents";
 import { TiptapEditor } from "@/components/tiptap-editor";
 import { useToast } from "@/components/ui/use-toast";
 import { getOrganizationPath } from "@/utils/organization-routing";
+import { isFileOnlyDocument } from "@/lib/document-utils";
 
 export default function EditDocumentPage() {
   const router = useRouter();
@@ -45,6 +46,18 @@ export default function EditDocumentPage() {
 
   useEffect(() => {
     if (document) {
+      if (isFileOnlyDocument(document as any)) {
+        setIsLoading(false);
+        toast({
+          title: "Not editable",
+          description:
+            "Uploaded files are not opened in the editor. Use preview or re-upload to replace a file.",
+        });
+        router.replace(
+          getOrganizationPath(currentOrganizationId, "/documents"),
+        );
+        return;
+      }
       setFormData({
         title: document.title,
         type: document.type,
@@ -56,7 +69,7 @@ export default function EditDocumentPage() {
       });
       setIsLoading(false);
     }
-  }, [document]);
+  }, [document, currentOrganizationId, router, toast]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -162,7 +175,7 @@ export default function EditDocumentPage() {
         </div>
 
         {/* Editor Content */}
-        <div className="flex-1 overflow-y-auto bg-gray-50">
+        <div className="flex-1 overflow-y-auto bg-white">
           <div className="max-w-5xl mx-auto px-8 py-6">
             <Card>
               <CardContent className="p-6 space-y-6">

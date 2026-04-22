@@ -9,11 +9,12 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Calendar } from "lucide-react";
+import { Plus } from "lucide-react";
 import { getEmployeeLeaveCredits } from "@/actions/leave";
 import { useOrganization } from "@/hooks/organization-context";
 import { useEmployeeView } from "@/hooks/employee-view-context";
 import { LeaveColumnManagementModal } from "./_components/leave-column-management-modal";
+import { EmployeeSelfCreditsContent } from "./_components/employee-self-credits-content";
 
 // Lazy load modals and tabs
 const RequestLeaveDialog = dynamic(
@@ -145,6 +146,14 @@ export default function LeavePage() {
     []
   );
   const [historyTableColumns, setHistoryTableColumns] = useState<Column[]>([]);
+
+  const selfViewHistoryColumns = useMemo(
+    () =>
+      historyTableColumns.filter(
+        (c) => c.id !== "employee" && c.field !== "employee",
+      ),
+    [historyTableColumns],
+  );
 
   // Employee view states
   const [employeeLeaveCredits, setEmployeeLeaveCredits] = useState<any>(null);
@@ -440,182 +449,10 @@ export default function LeavePage() {
             <div className="mt-6" />
 
             <TabsContent value="credits" className="mt-0">
-              <div className="space-y-6">
-                {employeeLeaveCredits?.calculations && (
-                  <Card className="border-[rgb(230,230,230)] shadow-sm">
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-base font-semibold text-[rgb(64,64,64)]">
-                        Leave calculations
-                      </CardTitle>
-                      <p className="text-xs text-[rgb(133,133,133)] mt-1">
-                        {leaveTrackerMode === "general"
-                          ? "Matches general leave tracker (SIL + anniversary when enabled)."
-                          : "Sum of configured leave type caps (each prorated if enabled) plus anniversary when enabled."}
-                      </p>
-                    </CardHeader>
-                    <CardContent className="space-y-3 text-sm">
-                      <div className="flex justify-between text-[rgb(64,64,64)]">
-                        <span className="text-[rgb(133,133,133)]">
-                          {leaveTrackerMode === "general"
-                            ? "Prorated SIL"
-                            : "Leave types total"}
-                        </span>
-                        <span className="font-medium">
-                          {Number(
-                            employeeLeaveCredits.calculations.proratedLeave,
-                          ).toFixed(2)}{" "}
-                          days
-                        </span>
-                      </div>
-                      {employeeLeaveCredits.enableAnniversaryLeave ? (
-                        <div className="flex justify-between text-[rgb(64,64,64)]">
-                          <span className="text-[rgb(133,133,133)]">
-                            Anniversary leave
-                          </span>
-                          <span className="font-medium">
-                            {
-                              employeeLeaveCredits.calculations
-                                .anniversaryLeave
-                            }{" "}
-                            days
-                          </span>
-                        </div>
-                      ) : null}
-                      <div className="flex justify-between border-t border-[rgb(230,230,230)] pt-3">
-                        <span className="font-medium text-[rgb(64,64,64)]">
-                          Total entitlement
-                        </span>
-                        <span className="font-semibold text-brand-purple">
-                          {Number(
-                            employeeLeaveCredits.calculations.totalEntitlement,
-                          ).toFixed(2)}{" "}
-                          days
-                        </span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {employeeLeaveCredits &&
-                  leaveTrackerMode === "general" &&
-                  employeeLeaveCredits.generalLeave && (
-                    <Card className="border-[rgb(230,230,230)] shadow-sm overflow-hidden">
-                      <CardHeader className="pb-2 pt-5">
-                        <CardTitle className="flex items-center gap-2 text-base font-semibold text-[rgb(64,64,64)]">
-                          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-purple/10 text-brand-purple">
-                            <Calendar className="h-4 w-4" />
-                          </span>
-                          Your leave (SIL pool)
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-3 pb-6 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-[rgb(133,133,133)]">
-                            Prorated SIL (before anniversary)
-                          </span>
-                          <span className="font-medium">
-                            {Number(
-                              employeeLeaveCredits.generalLeave.proratedSil,
-                            ).toFixed(2)}{" "}
-                            days
-                          </span>
-                        </div>
-                        {employeeLeaveCredits.enableAnniversaryLeave ? (
-                          <div className="flex justify-between">
-                            <span className="text-[rgb(133,133,133)]">
-                              Anniversary leave
-                            </span>
-                            <span className="font-medium">
-                              {
-                                employeeLeaveCredits.generalLeave
-                                  .anniversaryLeave
-                              }{" "}
-                              days
-                            </span>
-                          </div>
-                        ) : null}
-                        <div className="flex justify-between">
-                          <span className="text-[rgb(133,133,133)]">Used</span>
-                          <span className="font-medium">
-                            {Number(
-                              employeeLeaveCredits.generalLeave.usedCombined,
-                            ).toFixed(2)}{" "}
-                            days
-                          </span>
-                        </div>
-                        <div className="flex justify-between border-t border-[rgb(230,230,230)] pt-3">
-                          <span className="font-medium text-[rgb(64,64,64)]">
-                            Available to file
-                          </span>
-                          <span className="font-semibold text-brand-purple">
-                            {Number(
-                              employeeLeaveCredits.generalLeave.available,
-                            ).toFixed(2)}{" "}
-                            days
-                          </span>
-                        </div>
-                        <p className="text-xs text-[rgb(133,133,133)]">
-                          Annual SIL base in settings:{" "}
-                          {employeeLeaveCredits.generalLeave.annualSilBase} days.
-                          Requests deduct vacation balance first, then sick.
-                        </p>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                {employeeLeaveCredits &&
-                  leaveTrackerMode === "by_type" &&
-                  Array.isArray(employeeLeaveCredits.byTypeLeaves) && (
-                    <div className="grid gap-5 sm:grid-cols-2">
-                      {employeeLeaveCredits.byTypeLeaves.length === 0 ? (
-                        <p className="text-sm text-[rgb(133,133,133)] sm:col-span-2">
-                          No leave types configured yet. HR can add them in
-                          organization settings.
-                        </p>
-                      ) : (
-                        employeeLeaveCredits.byTypeLeaves.map((row: any) => (
-                          <Card
-                            key={row.type}
-                            className="border-[rgb(230,230,230)] shadow-sm overflow-hidden"
-                          >
-                            <CardHeader className="pb-2 pt-5">
-                              <CardTitle className="flex items-center gap-2 text-base font-semibold text-[rgb(64,64,64)]">
-                                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-purple/10 text-brand-purple">
-                                  <Calendar className="h-4 w-4" />
-                                </span>
-                                {row.name}
-                              </CardTitle>
-                            </CardHeader>
-                            <CardContent className="space-y-3 pb-6 text-sm">
-                              <div className="flex justify-between">
-                                <span className="text-[rgb(133,133,133)]">
-                                  Cap (this year)
-                                </span>
-                                <span className="font-medium">
-                                  {Number(row.cap).toFixed(2)} days
-                                </span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-[rgb(133,133,133)]">
-                                  Used
-                                </span>
-                                <span className="font-medium">
-                                  {Number(row.used).toFixed(2)} days
-                                </span>
-                              </div>
-                              <div className="flex justify-between border-t border-[rgb(230,230,230)] pt-3">
-                                <span className="font-medium">Available</span>
-                                <span className="font-semibold text-brand-purple">
-                                  {Number(row.balance).toFixed(2)} days
-                                </span>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        ))
-                      )}
-                    </div>
-                  )}
-              </div>
+              <EmployeeSelfCreditsContent
+                leaveTrackerMode={leaveTrackerMode}
+                employeeLeaveCredits={employeeLeaveCredits}
+              />
             </TabsContent>
 
             <TabsContent value="history" className="mt-0">
@@ -632,7 +469,7 @@ export default function LeavePage() {
               >
                 <EmployeeLeaveHistoryTab
                   leaveHistory={employeeLeaveHistory}
-                  columns={historyTableColumns}
+                  columns={selfViewHistoryColumns}
                   configuredLeaveTypes={configuredLeaveTypesForRequests}
                 />
               </Suspense>

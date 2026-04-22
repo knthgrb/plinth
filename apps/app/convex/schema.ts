@@ -1214,10 +1214,25 @@ export default defineSchema({
     sharedWith: v.optional(v.array(v.id("users"))), // Users who can view this document
     createdAt: v.number(),
     updatedAt: v.number(),
+    /** Increments when body content is replaced; first version is 1. Used for version history. */
+    contentVersion: v.optional(v.number()),
   })
     .index("by_organization", ["organizationId"])
     .index("by_employee", ["employeeId"])
     .index("by_creator", ["createdBy"]),
+
+  /** Past snapshots when a Plinth document's body is edited; announcements use copied content, not this table. */
+  documentVersions: defineTable({
+    documentId: v.id("documents"),
+    organizationId: v.id("organizations"),
+    version: v.number(),
+    title: v.string(),
+    content: v.string(),
+    createdAt: v.number(),
+    createdBy: v.id("users"),
+  })
+    .index("by_document", ["documentId"])
+    .index("by_organization", ["organizationId"]),
 
   // Accounting cost items (categoryName: "Employee Related Cost" | "Operational Cost")
   accountingCostItems: defineTable({
