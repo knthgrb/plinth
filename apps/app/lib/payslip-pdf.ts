@@ -212,7 +212,19 @@ export function renderPayslipPdfBuffer(args: {
     const earningRows: Array<{ label: string; amount: number }> = [];
     const basic = num(p.basicPay);
     if (basic > 0) earningRows.push({ label: "Basic pay", amount: basic });
-    const allowance = num(p.nonTaxableAllowance);
+    // Absence deduction can overflow past the taxable gross and reduce the non-taxable
+    // allowance the employee actually takes home. Mirror the on-screen payslip so the
+    // PDF agrees with the screen total when absences consume everything.
+    const rawAllowance = num(p.nonTaxableAllowance);
+    const attendanceDeductionsTotal = deductions
+      .filter(
+        (d) =>
+          d.type === "attendance" ||
+          /^(absent|late|undertime|no-?work|no\s+work)/i.test(d.name || ""),
+      )
+      .reduce((sum, d) => sum + d.amount, 0);
+    const unabsorbedAbsence = Math.max(0, attendanceDeductionsTotal - gross);
+    const allowance = Math.max(0, rawAllowance - unabsorbedAbsence);
     if (allowance > 0) {
       earningRows.push({ label: "Non-taxable allowance", amount: allowance });
     }

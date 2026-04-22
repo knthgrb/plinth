@@ -396,9 +396,24 @@ export function PayslipDetail({
   );
 
   // Non-taxable items (allowances, transportation)
-  const nonTaxableAllowance =
+  const rawNonTaxableAllowance =
     payslip.nonTaxableAllowance || employee?.compensation?.allowance || 0;
   const transportation = 0; // Can be added later
+
+  // When attendance deductions exceed taxable gross, the unabsorbed deficit is
+  // applied against the non-taxable allowance as well. Without this, the payslip
+  // would show a ₱2,500 allowance with ₱0 net pay, which doesn't reconcile visually
+  // (basic + allowance − absences already collapsed the employee's take-home to 0).
+  const totalAttendanceDeductions =
+    absentDeduction + lateDeduction + undertimeDeduction;
+  const unabsorbedAbsence = Math.max(
+    0,
+    totalAttendanceDeductions - storedGrossPay,
+  );
+  const nonTaxableAllowance = Math.max(
+    0,
+    rawNonTaxableAllowance - unabsorbedAbsence,
+  );
 
   // Total earnings
   const totalEarnings =

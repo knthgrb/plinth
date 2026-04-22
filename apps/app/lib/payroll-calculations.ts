@@ -38,6 +38,14 @@ export type ResolvedPayrollRates = PayrollRates & {
 
 export type PayrollBaseResult = {
   basicPay: number;
+  /**
+   * Ratio of days the employee was actually in the company during this cutoff.
+   * 1.0 = employed the full cutoff. < 1.0 = hired mid-cutoff (or left mid-cutoff
+   * once we add termination handling). Callers can multiply monthly-preloaded
+   * amounts (e.g. non-taxable allowance) by this to keep them consistent with
+   * the pro-rated basic pay.
+   */
+  employmentProrationRatio: number;
   daysWorked: number;
   absences: number;
   noWorkNoPayDays?: number;
@@ -1032,9 +1040,25 @@ export function calculatePayrollBaseFromRecords(args: {
   const payDivisor = payFrequency === "monthly" ? 1 : 2;
   const cutoffStartDay = toLocalDayTimestamp(cutoffStart);
   const cutoffEndDay = toLocalDayTimestamp(cutoffEnd);
+
+  // Mid-cutoff hires (e.g., hire date April 6 inside a Mar 26–Apr 10 cutoff) must not
+  // be treated as absent for days before they were employed. We clamp all attendance /
+  // absence accrual to the employment window, and pro-rate monthly basic pay by the
+  // ratio of working days employed vs. working days in the full cutoff.
+  const hireDateRaw =
+    typeof employee?.employment?.hireDate === "number"
+      ? employee.employment.hireDate
+      : null;
+  const hireDateDay =
+    hireDateRaw != null ? toLocalDayTimestamp(hireDateRaw) : cutoffStartDay;
+  const effectiveStartDay = Math.max(cutoffStartDay, hireDateDay);
+  const hiredMidCutoff = effectiveStartDay > cutoffStartDay;
+
   // Include any record that has work on at least one calendar day in the period (so overnight shifts that extend into the period are never missed).
+  // Records strictly before the hire date are ignored — those days never belonged to this employee.
   const periodAttendance = attendance.filter((record: any) => {
     const recordDay = toLocalDayTimestamp(record.date);
+    if (recordDay < effectiveStartDay) return false;
     if (recordDay >= cutoffStartDay && recordDay <= cutoffEndDay) return true;
     if (record.actualIn && record.actualOut) {
       const segs = getSegmentsByManilaDay(
@@ -1044,7 +1068,11 @@ export function calculatePayrollBaseFromRecords(args: {
       );
       const anySegmentInPeriod = segs.some((seg) => {
         const dayTs = toLocalDayTimestamp(seg.dayTimestamp);
-        return dayTs >= cutoffStartDay && dayTs <= cutoffEndDay;
+        return (
+          dayTs >= effectiveStartDay &&
+          dayTs >= cutoffStartDay &&
+          dayTs <= cutoffEndDay
+        );
       });
       if (anySegmentInPeriod) return true;
     }
@@ -1126,6 +1154,34 @@ export function calculatePayrollBaseFromRecords(args: {
     salaryType === "monthly"
       ? getPerCutoffAmount(employee.compensation.basicSalary || 0, payFrequency)
       : 0;
+
+  // For monthly employees hired mid-cutoff, pro-rate the preloaded basic pay by the
+  // ratio of non-rest days actually inside the employment window. Without this the
+  // employee would receive the full half-month pay and simultaneously be charged
+  // absences for days they weren't even employed (see screenshot: April 6 hire in
+  // a Mar 26–Apr 10 cutoff showed ₱10,000 basic with ₱13,793 absence deduction).
+  let employmentProrationRatio = 1;
+  if (hiredMidCutoff) {
+    let totalWorkingDays = 0;
+    let employedWorkingDays = 0;
+    const cursor = new Date(cutoffStartDay);
+    const limit = new Date(cutoffEndDay);
+    while (cursor <= limit) {
+      const dayTs = cursor.getTime();
+      if (!isRestDay(dayTs, employee.schedule)) {
+        totalWorkingDays += 1;
+        if (dayTs >= effectiveStartDay) {
+          employedWorkingDays += 1;
+        }
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    employmentProrationRatio =
+      totalWorkingDays > 0 ? employedWorkingDays / totalWorkingDays : 0;
+    if (salaryType === "monthly") {
+      basicPay = basicPay * employmentProrationRatio;
+    }
+  }
   let daysWorked = 0;
   let absences = 0;
   let noWorkNoPayDays = 0;
@@ -1373,7 +1429,9 @@ export function calculatePayrollBaseFromRecords(args: {
   const attendanceDates = new Set(
     periodAttendance.map((record: any) => toLocalDayTimestamp(record.date)),
   );
-  const currentDate = new Date(toLocalDayTimestamp(cutoffStart));
+  // Start the "missing attendance = absent" walk at the employment window so
+  // pre-hire calendar days are never counted as absences.
+  const currentDate = new Date(effectiveStartDay);
   const lastDate = new Date(toLocalDayTimestamp(cutoffEnd));
 
   while (currentDate <= lastDate) {
@@ -1417,6 +1475,7 @@ export function calculatePayrollBaseFromRecords(args: {
   // Round all monetary amounts to nearest hundredths for payslip
   return {
     basicPay: round2(basicPay),
+    employmentProrationRatio,
     daysWorked,
     absences,
     noWorkNoPayDays: noWorkNoPayDays > 0 ? noWorkNoPayDays : undefined,

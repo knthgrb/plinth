@@ -1806,10 +1806,14 @@ export const createPayrollRun = mutation({
         0,
       );
 
-      // Non-taxable allowance: monthly value, split by pay frequency
-      const nonTaxableAllowance = getPerCutoffAmount(
-        employee.compensation.allowance || 0,
-        payFrequency,
+      // Non-taxable allowance: monthly value, split by pay frequency, and
+      // pro-rated to the employment window for mid-cutoff hires so the allowance
+      // is paid consistently with the pro-rated basic pay.
+      const nonTaxableAllowance = round2(
+        getPerCutoffAmount(
+          employee.compensation.allowance || 0,
+          payFrequency,
+        ) * (payrollBase.employmentProrationRatio ?? 1),
       );
 
       // Calculate gross pay (total earnings: basic pay + holiday pay + rest day OT + overtime + incentives)
@@ -2647,9 +2651,13 @@ export const updatePayrollRun = mutation({
           payrollBase.holidayPay +
           payrollBase.nightDiffPay +
           totalIncentives;
-        let nonTaxableAllowance = getPerCutoffAmount(
-          employee.compensation.allowance || 0,
-          payFrequencyUpdate,
+        // Non-taxable allowance: monthly value, split by pay frequency, and
+        // pro-rated to the employment window for mid-cutoff hires.
+        let nonTaxableAllowance = round2(
+          getPerCutoffAmount(
+            employee.compensation.allowance || 0,
+            payFrequencyUpdate,
+          ) * (payrollBase.employmentProrationRatio ?? 1),
         );
         const allowanceOverrideEntry = mergedNonTaxableAllowanceOverrides.find(
           (o: { employeeId: any }) => o.employeeId === employeeId,
