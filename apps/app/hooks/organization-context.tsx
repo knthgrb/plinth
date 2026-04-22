@@ -8,7 +8,7 @@ import { Id } from "@/convex/_generated/dataModel";
 import { authClient } from "@/lib/auth-client";
 
 /** Convex can return [] from getUserOrganizations before Better Auth identity is wired, then real rows. */
-const AUTH_EMPTY_ORG_GRACE_MS = 900;
+const AUTH_EMPTY_ORG_GRACE_MS = 2000;
 
 type Organization = {
   _id: Id<"organizations">;

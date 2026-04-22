@@ -17,7 +17,7 @@ function getDefaultRouteForRole(role: string | null | undefined): string {
   return "/dashboard";
 }
 
-const EMPTY_ORG_GRACE_MS = 1200;
+const EMPTY_ORG_GRACE_MS = 2000;
 
 export default function AppHomePage() {
   const router = useRouter();

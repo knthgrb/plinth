@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 import { useLoaderOverlay } from "@/hooks/loader-overlay-context";
 
 const LOADER_TAIL_MS = 700;
@@ -12,7 +12,7 @@ const LOADER_TAIL_MS = 700;
 export function MainLoader() {
   const { register, unregisterAfter } = useLoaderOverlay();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     register();
     return () => {
       unregisterAfter(LOADER_TAIL_MS);

@@ -24,7 +24,7 @@ const LoaderOverlayContext = createContext<
 
 function LoaderOverlayUI() {
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/90 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-white">
       <div className="h-[120px] w-[120px] sm:h-[168px] sm:w-[168px] md:h-[240px] md:w-[240px] lg:h-[300px] lg:w-[300px] xl:h-[360px] xl:w-[360px]">
         <DotLottieReact
           src="/loader.lottie"
