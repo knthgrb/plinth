@@ -243,20 +243,6 @@ export function PayslipDetail({
     hourlyRate = dailyRate / 8;
   }
 
-  const workedDaysDisplay = Number.isInteger(daysWorked)
-    ? String(daysWorked)
-    : daysWorked.toLocaleString("en-US", {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 2,
-      });
-  const firstCutoffPayLabel =
-    isMidCutoffHire && salaryType === "monthly"
-      ? `Pay (₱${dailyRate.toLocaleString("en-US", {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        })} × ${workedDaysDisplay} ${daysWorked === 1 ? "day" : "days"})`
-      : "Basic Pay";
-
   const getAttendanceDeductionAmount = (matcher: (name: string) => boolean) =>
     payslip.deductions?.reduce((sum: number, deduction: any) => {
       if (deduction.type !== "attendance") return sum;
@@ -406,6 +392,23 @@ export function PayslipDetail({
       : "Holiday";
 
   const basicPay = payslip.basicPay ?? fullBasicPay;
+  const displayedDailyRate =
+    isMidCutoffHire && salaryType === "monthly" && daysWorked > 0
+      ? basicPay / daysWorked
+      : dailyRate;
+  const workedDaysDisplay = Number.isInteger(daysWorked)
+    ? String(daysWorked)
+    : daysWorked.toLocaleString("en-US", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      });
+  const firstCutoffPayLabel =
+    isMidCutoffHire && salaryType === "monthly"
+      ? `Pay (₱${displayedDailyRate.toLocaleString("en-US", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })} × ${workedDaysDisplay} ${daysWorked === 1 ? "day" : "days"})`
+      : "Basic Pay";
   const attendanceDeductionTotal =
     absentDeduction + lateDeduction + undertimeDeduction;
   const taxableGrossEarnings = Math.max(
