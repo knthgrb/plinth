@@ -253,7 +253,7 @@ function StripeKpiCard({
   accent: React.ReactNode;
 }) {
   return (
-    <Card className="border-[#dfe3ea] bg-[#f7f8fb] shadow-none">
+    <Card className="border-[#dfe3ea] bg-white shadow-none">
       <CardContent className="p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-2">
@@ -656,8 +656,8 @@ export default function DashboardPage() {
             </h1>
           </div>
 
-          <div className="bg-[#f7f8fb] rounded-lg p-2">
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="flex flex-col gap-2 bg-[#f7f8fb] rounded-lg p-2">
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
               <StripeKpiCard
                 title="Headcount"
                 value={totalEmployees.toLocaleString()}
@@ -684,7 +684,7 @@ export default function DashboardPage() {
               />
             </div>
 
-            <div className="grid gap-3 xl:grid-cols-12">
+            <div className="grid gap-2 xl:grid-cols-12">
               <DashboardPanel
                 eyebrow="Activity"
                 title="People and operations trend"
