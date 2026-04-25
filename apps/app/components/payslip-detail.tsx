@@ -420,11 +420,18 @@ export function PayslipDetail({
     !isMidCutoffHire &&
     storedNonTaxableAllowance >
       Math.max(expectedCutoffAllowance, employee?.compensation?.allowance ?? 0);
+  const shouldFallbackToExpectedAllowance =
+    salaryType === "monthly" &&
+    !isMidCutoffHire &&
+    storedNonTaxableAllowance <= 0 &&
+    expectedCutoffAllowance > 0;
   const rawNonTaxableAllowance =
     isMidCutoffHire && salaryType === "monthly"
       ? 0
       : hasInvalidStoredAllowance
         ? expectedCutoffAllowance
+        : shouldFallbackToExpectedAllowance
+          ? expectedCutoffAllowance
         : storedNonTaxableAllowance;
   const transportation = 0; // Can be added later
   const excessAttendanceOverTaxable = Math.max(

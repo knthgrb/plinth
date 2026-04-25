@@ -6,6 +6,19 @@ import {
   decryptEmployeeFromDb,
 } from "./employeeCompensationCrypto";
 
+function assertHireDateIsNotFuture(hireDate: number) {
+  const today = new Date();
+  const todayStart = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  ).getTime();
+
+  if (hireDate > todayStart) {
+    throw new Error("Hire date cannot be in the future");
+  }
+}
+
 // Helper to check authorization with organization context
 async function checkAuth(
   ctx: any,
@@ -455,6 +468,7 @@ export const createEmployee = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
+    assertHireDateIsNotFuture(args.employment.hireDate);
 
     // Get organization default requirements
     const organization = await ctx.db.get(args.organizationId);
@@ -628,6 +642,9 @@ export const updateEmployee = mutation({
     if (!employee) throw new Error("Employee not found");
 
     const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
+    if (args.employment?.hireDate !== undefined) {
+      assertHireDateIsNotFuture(args.employment.hireDate);
+    }
 
     const updates: any = { updatedAt: Date.now() };
     if (args.personalInfo) {

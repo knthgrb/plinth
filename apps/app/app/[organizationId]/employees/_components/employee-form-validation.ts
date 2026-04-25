@@ -1,5 +1,20 @@
 import { z } from "zod";
 
+function isFutureDateInput(value: string): boolean {
+  if (!value) return false;
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return false;
+
+  const today = new Date();
+  const todayStart = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  );
+
+  return parsed.getTime() > todayStart.getTime();
+}
+
 export const employeeFormSchema = z.object({
   firstName: z.string().trim().min(1, "First name is required"),
   lastName: z.string().trim().min(1, "Last name is required"),
@@ -14,7 +29,13 @@ export const employeeFormSchema = z.object({
   position: z.string().trim().min(1, "Position is required"),
   department: z.string().trim().min(1, "Department is required"),
   employmentType: z.string().trim().min(1, "Employment type is required"),
-  hireDate: z.string().trim().min(1, "Hire date is required"),
+  hireDate: z
+    .string()
+    .trim()
+    .min(1, "Hire date is required")
+    .refine((value) => !isFutureDateInput(value), {
+      message: "Hire date cannot be in the future",
+    }),
   regularizationDate: z.string().trim().optional(),
   basicSalary: z
     .string()

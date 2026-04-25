@@ -1051,8 +1051,14 @@ export function calculatePayrollBaseFromRecords(args: {
     typeof employee?.employment?.hireDate === "number"
       ? employee.employment.hireDate
       : null;
-  const hireDateDay =
+  const hireDateDayRaw =
     hireDateRaw != null ? toLocalDayTimestamp(hireDateRaw) : cutoffStartDay;
+  // Guard against inconsistent employee data where the stored hire date is
+  // after the payroll cutoff even though attendance exists in that cutoff.
+  // In that case we should not zero the payslip; treat the cutoff itself as the
+  // earliest valid payroll window and let attendance drive earnings.
+  const hireDateDay =
+    hireDateDayRaw > cutoffEndDay ? cutoffStartDay : hireDateDayRaw;
   const effectiveStartDay = Math.max(cutoffStartDay, hireDateDay);
   const hiredMidCutoff = effectiveStartDay > cutoffStartDay;
   const dailyizedFirstCutoff = salaryType === "monthly" && hiredMidCutoff;

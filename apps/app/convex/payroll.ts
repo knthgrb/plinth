@@ -1167,6 +1167,40 @@ function getExpectedCutoffAllowanceForEmployee(
   );
 }
 
+function shouldTreatZeroAllowanceAsExplicitOverride(args: {
+  employee: any;
+  cutoffStart: number;
+  cutoffEnd: number;
+  actualAllowance: number;
+}): boolean {
+  if (args.actualAllowance > 0) return false;
+  const hireDateRaw =
+    typeof args.employee?.employment?.hireDate === "number"
+      ? args.employee.employment.hireDate
+      : null;
+  if (hireDateRaw == null) return false;
+  const hireDate = new Date(hireDateRaw);
+  const cutoffStartDate = new Date(args.cutoffStart);
+  const cutoffEndDate = new Date(args.cutoffEnd);
+  const hireDay = new Date(
+    hireDate.getFullYear(),
+    hireDate.getMonth(),
+    hireDate.getDate(),
+  ).getTime();
+  const cutoffStartDay = new Date(
+    cutoffStartDate.getFullYear(),
+    cutoffStartDate.getMonth(),
+    cutoffStartDate.getDate(),
+  ).getTime();
+  const cutoffEndDay = new Date(
+    cutoffEndDate.getFullYear(),
+    cutoffEndDate.getMonth(),
+    cutoffEndDate.getDate(),
+  ).getTime();
+
+  return hireDay >= cutoffStartDay && hireDay <= cutoffEndDay;
+}
+
 type PayrollLine = {
   name: string;
   amount: number;
@@ -2352,6 +2386,19 @@ export const updatePayrollRun = mutation({
           const monthlyAllowance = round2(employee.compensation.allowance || 0);
           const maxReasonableAllowance = Math.max(defaultAllow, monthlyAllowance);
           if (actualAllow > maxReasonableAllowance) {
+            allowanceOverridesByEmp.delete(String(empId));
+            continue;
+          }
+          if (
+            actualAllow <= 0 &&
+            defaultAllow > 0 &&
+            !shouldTreatZeroAllowanceAsExplicitOverride({
+              employee,
+              cutoffStart: args.cutoffStart ?? payrollRun.cutoffStart,
+              cutoffEnd: args.cutoffEnd ?? payrollRun.cutoffEnd,
+              actualAllowance: actualAllow,
+            })
+          ) {
             allowanceOverridesByEmp.delete(String(empId));
             continue;
           }

@@ -1265,4 +1265,39 @@ describe("payroll calculations", () => {
     expect(result.basicPay).toBeCloseTo(expectedDailyRate, 2);
     expect(result.absentDeduction).toBe(0);
   });
+
+  it("does not zero payroll when hire date is after cutoff but attendance exists in the cutoff", () => {
+    const cutoffStart = localDate(2026, 2, 26);
+    const cutoffEnd = localDate(2026, 3, 10);
+    const inconsistentFutureHireDate = localDate(2026, 6, 8);
+    const workedDate = localDate(2026, 3, 6);
+
+    const result = calculate({
+      employee: createEmployee({
+        employment: {
+          employeeId: "E-1",
+          position: "Designer",
+          department: "Creative",
+          employmentType: "regular",
+          hireDate: inconsistentFutureHireDate,
+          status: "active",
+        },
+      }),
+      attendance: [
+        {
+          date: workedDate,
+          status: "present",
+          actualIn: "09:00",
+          actualOut: "18:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+        },
+      ],
+      cutoffStart,
+      cutoffEnd,
+    });
+
+    expect(result.basicPay).toBeGreaterThan(0);
+    expect(result.daysWorked).toBe(1);
+  });
 });
