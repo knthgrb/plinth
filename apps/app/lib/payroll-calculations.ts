@@ -78,6 +78,8 @@ export type PayrollBaseResult = {
   dailyRate: number;
   hourlyRate: number;
   salaryType: "monthly" | "daily" | "hourly";
+  /** Monthly employee hired inside the cutoff; base earnings are dailyized for this first partial cutoff. */
+  dailyizedFirstCutoff?: boolean;
   payDivisor: number;
   payrollRates: ResolvedPayrollRates;
 };
@@ -1053,6 +1055,7 @@ export function calculatePayrollBaseFromRecords(args: {
     hireDateRaw != null ? toLocalDayTimestamp(hireDateRaw) : cutoffStartDay;
   const effectiveStartDay = Math.max(cutoffStartDay, hireDateDay);
   const hiredMidCutoff = effectiveStartDay > cutoffStartDay;
+  const dailyizedFirstCutoff = salaryType === "monthly" && hiredMidCutoff;
 
   // Include any record that has work on at least one calendar day in the period (so overnight shifts that extend into the period are never missed).
   // Records strictly before the hire date are ignored — those days never belonged to this employee.
@@ -1151,7 +1154,7 @@ export function calculatePayrollBaseFromRecords(args: {
   );
 
   let basicPay =
-    salaryType === "monthly"
+    salaryType === "monthly" && !dailyizedFirstCutoff
       ? getPerCutoffAmount(employee.compensation.basicSalary || 0, payFrequency)
       : 0;
 
@@ -1178,7 +1181,7 @@ export function calculatePayrollBaseFromRecords(args: {
     }
     employmentProrationRatio =
       totalWorkingDays > 0 ? employedWorkingDays / totalWorkingDays : 0;
-    if (salaryType === "monthly") {
+    if (salaryType === "monthly" && !dailyizedFirstCutoff) {
       basicPay = basicPay * employmentProrationRatio;
     }
   }
@@ -1231,7 +1234,7 @@ export function calculatePayrollBaseFromRecords(args: {
       daysWorked += dayMultiplier;
 
       if (
-        salaryType !== "monthly" &&
+        (salaryType !== "monthly" || dailyizedFirstCutoff) &&
         !(
           isRestDayForEmployee &&
           holidayType !== "regular" &&
@@ -1396,23 +1399,29 @@ export function calculatePayrollBaseFromRecords(args: {
       if (shouldDeductNoWorkHoliday) {
         absences += 1;
         noWorkNoPayDays += 1;
-        if (salaryType === "monthly") {
+        if (salaryType === "monthly" && !dailyizedFirstCutoff) {
           absentDeduction += dailyRateForAbsence;
         }
+      } else if (dailyizedFirstCutoff) {
+        // First partial cutoff for a monthly employee is dailyized: a no-work-with-pay
+        // holiday should still count as one paid day because there is no preloaded
+        // semi-monthly base to absorb it.
+        daysWorked += 1;
+        basicPay += dailyRate;
       }
       continue;
     } else if (att.status === "leave" || att.status === "leave_with_pay") {
       // leave = legacy, treat as leave_with_pay
       if (isPaidLeave(att.date)) {
         daysWorked += 1;
-        if (salaryType !== "monthly") {
+        if (salaryType !== "monthly" || dailyizedFirstCutoff) {
           basicPay += dailyRate;
         }
       }
     } else if (att.status === "leave_without_pay" || att.status === "absent") {
       if (isPaidLeave(att.date)) {
         daysWorked += 1;
-        if (salaryType !== "monthly") {
+        if (salaryType !== "monthly" || dailyizedFirstCutoff) {
           basicPay += dailyRate;
         }
         continue;
@@ -1420,7 +1429,7 @@ export function calculatePayrollBaseFromRecords(args: {
       // Absent (or leave without pay) on any day, including regular/special holiday:
       // do NOT grant holiday additional pay; just apply normal absence deduction.
       absences += 1;
-      if (salaryType === "monthly") {
+      if (salaryType === "monthly" && !dailyizedFirstCutoff) {
         absentDeduction += dailyRateForAbsence;
       }
     }
@@ -1442,7 +1451,7 @@ export function calculatePayrollBaseFromRecords(args: {
 
     if (isPaidLeave(dateTs)) {
       daysWorked += 1;
-      if (salaryType !== "monthly") {
+      if (salaryType !== "monthly" || dailyizedFirstCutoff) {
         basicPay += dailyRate;
       }
       continue;
@@ -1454,7 +1463,7 @@ export function calculatePayrollBaseFromRecords(args: {
     // Missing attendance entry for a workday (holiday or not) is treated as absence:
     // no holiday premium on non-worked holidays; only standard absence deduction.
     absences += 1;
-    if (salaryType === "monthly") {
+    if (salaryType === "monthly" && !dailyizedFirstCutoff) {
       absentDeduction += dailyRateForAbsence;
     }
   }
@@ -1504,6 +1513,7 @@ export function calculatePayrollBaseFromRecords(args: {
     dailyRate: round2(dailyRate),
     hourlyRate: round2(hourlyRate),
     salaryType,
+    dailyizedFirstCutoff: dailyizedFirstCutoff || undefined,
     payDivisor,
     payrollRates,
   };

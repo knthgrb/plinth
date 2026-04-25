@@ -1179,4 +1179,90 @@ describe("payroll calculations", () => {
     expect(result.absences).toBe(0);
     expect(result.absentDeduction).toBe(0);
   });
+
+  it("dailyizes a monthly employee hired mid-cutoff instead of preloading semi-monthly basic pay", () => {
+    const cutoffStart = localDate(2026, 2, 26);
+    const cutoffEnd = localDate(2026, 3, 10);
+    const hireDate = localDate(2026, 3, 6);
+    const workedDate = localDate(2026, 3, 6);
+    const absentDate = localDate(2026, 3, 7);
+
+    const result = calculate({
+      employee: createEmployee({
+        employment: {
+          employeeId: "E-1",
+          position: "Staff",
+          department: "Ops",
+          employmentType: "regular",
+          hireDate,
+          status: "active",
+        },
+      }),
+      attendance: [
+        {
+          date: workedDate,
+          status: "present",
+          actualIn: "09:00",
+          actualOut: "18:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+        },
+        {
+          date: absentDate,
+          status: "absent",
+        },
+      ],
+      cutoffStart,
+      cutoffEnd,
+    });
+
+    const expectedDailyRate = (24_000 + 6_000) * (12 / 261);
+    expect(result.dailyizedFirstCutoff).toBe(true);
+    expect(result.basicPay).toBeCloseTo(expectedDailyRate, 2);
+    expect(result.absentDeduction).toBe(0);
+  });
+
+  it("pays a no-work holiday day in dailyized first cutoff mode when holiday no-work-no-pay is disabled", () => {
+    const cutoffStart = localDate(2026, 2, 26);
+    const cutoffEnd = localDate(2026, 3, 10);
+    const hireDate = localDate(2026, 3, 6);
+    const holidayDate = localDate(2026, 3, 9);
+
+    const result = calculate({
+      employee: createEmployee({
+        employment: {
+          employeeId: "E-1",
+          position: "Staff",
+          department: "Ops",
+          employmentType: "regular",
+          hireDate,
+          status: "active",
+        },
+      }),
+      attendance: [
+        {
+          date: holidayDate,
+          status: "no_work",
+          isHoliday: true,
+          holidayType: "regular",
+        },
+      ],
+      holidays: [
+        {
+          date: holidayDate,
+          type: "regular",
+          isRecurring: false,
+          year: 2026,
+        },
+      ],
+      cutoffStart,
+      cutoffEnd,
+    });
+
+    const expectedDailyRate = (24_000 + 6_000) * (12 / 261);
+    expect(result.dailyizedFirstCutoff).toBe(true);
+    expect(result.daysWorked).toBe(1);
+    expect(result.basicPay).toBeCloseTo(expectedDailyRate, 2);
+    expect(result.absentDeduction).toBe(0);
+  });
 });

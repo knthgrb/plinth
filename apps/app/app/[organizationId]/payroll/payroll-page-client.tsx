@@ -175,7 +175,7 @@ import {
   deletePayrollRun,
   getPayslipMessages,
   getPayrollRunSummary,
-  computeEmployeePayroll,
+  computePayrollPreviewBatch,
   getPayslip,
 } from "@/actions/payroll";
 import { useOrganization } from "@/hooks/organization-context";
@@ -1282,275 +1282,54 @@ export default function PayrollPageClient() {
 
     setIsProcessing(true);
     try {
-      const preview: any[] = [];
+      const preview = await computePayrollPreviewBatch({
+        organizationId: effectiveOrganizationId,
+        cutoffStart: dateStringToLocalMs(cutoffStart),
+        cutoffEnd: dateStringToLocalMs(cutoffEnd),
+        employeeIds: selectedEmployees,
+        deductionsEnabled,
+        governmentDeductionSettings,
+        manualDeductions: employeeDeductions.filter(
+          (entry) => entry.deductions.length > 0,
+        ),
+        incentives: employeeIncentives.filter(
+          (entry) => entry.incentives.length > 0,
+        ),
+      });
 
-      for (const employeeId of selectedEmployees) {
-        const employee = employees?.find((e: any) => e._id === employeeId);
-        if (!employee) continue;
-
-        // Convert cutoff dates to timestamps (local midnight so summary aligns with attendance)
-        const cutoffStartTs = dateStringToLocalMs(cutoffStart);
-        const cutoffEndTs = dateStringToLocalMs(cutoffEnd);
-
-        // Use backend payroll computation so preview matches final payslip
-        const payroll = await computeEmployeePayroll({
-          employeeId,
-          cutoffStart: cutoffStartTs,
-          cutoffEnd: cutoffEndTs,
-        });
-
-        // Build deductions array from structured deductions object.
-        // Respect government deduction settings from Step 3 so preview matches
-        // what will be applied when the payroll run is created.
-        const deductions: Deduction[] = [];
-
-        const govSettings = governmentDeductionSettings.find(
-          (gs) => gs.employeeId === employeeId,
-        );
-
-        // Helper to get effective government deduction amount based on settings
-        const applyGovSetting = (
-          enabled: boolean | undefined,
-          frequency: "full" | "half" | undefined,
-          baseAmount: number | undefined,
-        ): number => {
-          if (!baseAmount || baseAmount <= 0) return 0;
-          if (enabled === false) return 0;
-          if (frequency === "half") return baseAmount / 2;
-          return baseAmount;
-        };
-
-        // SSS, PhilHealth, Pag-IBIG only when deductionsEnabled; withholding tax follows org settings independently
-        if (deductionsEnabled) {
-          const sssAmount = applyGovSetting(
-            govSettings?.sss.enabled,
-            govSettings?.sss.frequency,
-            payroll.deductions?.sss,
-          );
-          if (sssAmount > 0) {
-            deductions.push({
-              name: "SSS",
-              amount: sssAmount,
-              type: "government",
-            });
-          }
-
-          const philhealthAmount = applyGovSetting(
-            govSettings?.philhealth.enabled,
-            govSettings?.philhealth.frequency,
-            payroll.deductions?.philhealth,
-          );
-          if (philhealthAmount > 0) {
-            deductions.push({
-              name: "PhilHealth",
-              amount: philhealthAmount,
-              type: "government",
-            });
-          }
-
-          const pagibigAmount = applyGovSetting(
-            govSettings?.pagibig.enabled,
-            govSettings?.pagibig.frequency,
-            payroll.deductions?.pagibig,
-          );
-          if (pagibigAmount > 0) {
-            deductions.push({
-              name: "Pag-IBIG",
-              amount: pagibigAmount,
-              type: "government",
-            });
-          }
-        }
-
-        const taxAmount =
-          govSettings && govSettings.tax.enabled === false
-            ? 0
-            : payroll.deductions?.withholdingTax || 0;
-        if (taxAmount > 0) {
-          deductions.push({
-            name: "Withholding Tax",
-            amount: taxAmount,
-            type: "government",
-          });
-        }
-        if (payroll.deductions?.custom && payroll.deductions.custom > 0) {
-          deductions.push({
-            name: "Other Deductions",
-            amount: payroll.deductions.custom,
-            type: "custom",
-          });
-        }
-
-        // Add manual/custom deductions entered in the UI for preview purposes
-        const empDeductions = employeeDeductions.find(
-          (ed) => ed.employeeId === employeeId,
-        );
-        if (empDeductions) {
-          deductions.push(...empDeductions.deductions);
-        }
-
-        // Apply amount overrides from Edit deductions (e.g. SSS, PhilHealth, Pag-IBIG)
-        const overrides = previewDeductionOverrides[employeeId];
-        if (overrides) {
-          for (const d of deductions) {
-            if (overrides[d.name] !== undefined) {
-              d.amount = overrides[d.name];
-            }
-          }
-        }
-
-        const manualIncentives =
-          employeeIncentives.find((ei) => ei.employeeId === employeeId)
-            ?.incentives || [];
-        const totalIncentives = manualIncentives.reduce(
-          (sum, incentive) => sum + incentive.amount,
+      const normalizedPreview = (preview || []).map((row: any) => {
+        const deductions = (row.deductions || []).map((deduction: any) => ({
+          ...deduction,
+          amount:
+            previewDeductionOverrides[row.employeeId]?.[deduction.name] ??
+            deduction.amount,
+        }));
+        const totalDeductions = deductions.reduce(
+          (sum: number, deduction: any) => sum + (deduction.amount || 0),
           0,
         );
-        const incentives = manualIncentives;
-
-        // Non-taxable allowance follows the organization's pay frequency
-        const allowance = employee.compensation.allowance || 0;
-        const payDivisor =
-          currentOrganization?.salaryPaymentFrequency === "monthly" ? 1 : 2;
-        const nonTaxableAllowance = allowance / payDivisor;
-
-        // Daily rate formula from settings: (basic + allowance?) × 12/workingDaysPerYear (matches backend)
-        const dailyRateIncludesAllowance =
-          settings?.payrollSettings?.dailyRateIncludesAllowance ?? true;
-        const dailyRateWorkingDaysPerYear =
-          settings?.payrollSettings?.dailyRateWorkingDaysPerYear ?? 261;
-
-        // Calculate basic pay based on actual attendance
-        const salaryType = employee.compensation.salaryType || "monthly";
-        const monthlySalary = employee.compensation.basicSalary || 0;
-        const daysWorked = payroll.daysWorked || 0;
-        const absences = payroll.absences || 0;
-        const lateHours = payroll.lateHours || 0;
-        const undertimeHours = payroll.undertimeHours || 0;
-
-        let fullBasicPay = payroll.basicPay || 0;
-        let dailyRate = 0;
-        let hourlyRate = 0;
-        let basicDailyRate = 0;
-        let basicHourlyRate = 0;
-
-        if (salaryType === "monthly") {
-          fullBasicPay = monthlySalary / payDivisor;
-          // Daily rate = (basic + allowance?) × 12/261 (matches backend)
-          const monthlyBase =
-            monthlySalary + (dailyRateIncludesAllowance ? allowance : 0);
-          dailyRate = monthlyBase * (12 / dailyRateWorkingDaysPerYear);
-          hourlyRate = dailyRate / 8;
-          basicDailyRate = monthlySalary * (12 / dailyRateWorkingDaysPerYear);
-          basicHourlyRate = basicDailyRate / 8;
-        } else if (salaryType === "daily") {
-          dailyRate = monthlySalary;
-          hourlyRate = dailyRate / 8;
-          basicDailyRate = dailyRate;
-          basicHourlyRate = hourlyRate;
-        } else if (salaryType === "hourly") {
-          dailyRate = monthlySalary * 8;
-          hourlyRate = monthlySalary;
-          basicDailyRate = dailyRate;
-          basicHourlyRate = hourlyRate;
-        }
-
-        // Absence always uses (basic + allowance) × 12/261
-        const dailyRateForAbsence =
-          salaryType === "monthly"
-            ? (monthlySalary + (allowance ?? 0)) *
-              (12 / dailyRateWorkingDaysPerYear)
-            : basicDailyRate;
-        const hourlyRateBasicPlusAllowance =
-          salaryType === "monthly"
-            ? ((monthlySalary + (allowance ?? 0)) *
-                (12 / dailyRateWorkingDaysPerYear)) /
-              8
-            : hourlyRate;
-
-        // Use backend-calculated attendance deductions (categorized late) when available
-        const calculatedAbsences = absences;
-        const lateDeduction =
-          (payroll as any).lateDeduction ??
-          lateHours * hourlyRateBasicPlusAllowance;
-        const lateDeductionRegularDay =
-          (payroll as any).lateDeductionRegularDay ?? 0;
-        const lateDeductionRegularHoliday =
-          (payroll as any).lateDeductionRegularHoliday ?? 0;
-        const lateDeductionSpecialHoliday =
-          (payroll as any).lateDeductionSpecialHoliday ?? 0;
-        const undertimeDeduction =
-          (payroll as any).undertimeDeduction ??
-          undertimeHours * hourlyRateBasicPlusAllowance;
-        const absentDeduction =
-          (payroll as any).absentDeduction ??
-          (salaryType === "monthly"
-            ? calculatedAbsences * dailyRateForAbsence
-            : 0);
-
-        // Total deductions = government + custom + attendance deductions
-        const governmentAndCustomDeductions =
-          deductions.reduce((sum, d) => sum + d.amount, 0) || 0;
-        const rawTotalDeductions =
-          governmentAndCustomDeductions +
-          lateDeduction +
-          undertimeDeduction +
-          absentDeduction;
-
-        const grossPay =
-          (payroll.grossPay || 0) -
-          (payroll.incentiveTotal || 0) +
-          totalIncentives;
-
-        // Apply same rule as backend: deductions should not exceed available earnings
-        // availableEarnings = gross pay + non-taxable allowance
-        const availableEarnings = grossPay + nonTaxableAllowance;
-        const totalDeductions = Math.min(
-          rawTotalDeductions,
-          Math.max(0, availableEarnings),
+        const totalIncentives = (row.incentives || []).reduce(
+          (sum: number, incentive: any) => sum + (incentive.amount || 0),
+          0,
         );
 
-        // Net pay cannot go below 0 in preview
-        const netPay = Math.max(0, availableEarnings - totalDeductions);
-
-        preview.push({
-          employee,
-          payroll,
-          basicPay: fullBasicPay, // Show full basic pay (₱5,000 for bi-monthly)
-          daysWorked,
-          absences: calculatedAbsences, // Use calculated absences (working days - days worked)
-          lateHours,
-          undertimeHours,
-          overtimeHours: payroll.overtimeHours || 0,
-          holidayPay: payroll.holidayPay || 0,
-          holidayPayType: payroll.holidayPayType,
-          restDayPay: payroll.restDayPay || 0,
-          nightDiffPay: payroll.nightDiffPay || 0,
-          nightDiffBreakdown: payroll.nightDiffBreakdown,
-          overtimeRegular: payroll.overtimeRegular || 0,
-          overtimeRestDay: payroll.overtimeRestDay || 0,
-          overtimeRestDayExcess: payroll.overtimeRestDayExcess || 0,
-          overtimeSpecialHoliday: payroll.overtimeSpecialHoliday || 0,
-          overtimeSpecialHolidayExcess:
-            payroll.overtimeSpecialHolidayExcess || 0,
-          overtimeLegalHoliday: payroll.overtimeLegalHoliday || 0,
-          overtimeLegalHolidayExcess: payroll.overtimeLegalHolidayExcess || 0,
-          lateDeduction,
-          lateDeductionRegularDay,
-          lateDeductionRegularHoliday,
-          lateDeductionSpecialHoliday,
-          undertimeDeduction,
-          absentDeduction,
-          incentives,
-          totalIncentives,
-          nonTaxableAllowance,
+        return {
+          ...row,
+          payroll: row,
+          employee: row.employee,
           deductions,
           totalDeductions,
-          grossPay,
-          netPay,
-        });
-      }
-      setPreviewData(preview);
+          totalIncentives,
+          netPay: Math.max(
+            0,
+            (row.grossPay || 0) +
+              (row.nonTaxableAllowance || 0) -
+              totalDeductions,
+          ),
+        };
+      });
+
+      setPreviewData(normalizedPreview);
       setCurrentStep(5);
     } catch (error) {
       console.error("Error computing preview:", error);
@@ -1575,246 +1354,54 @@ export default function PayrollPageClient() {
 
     setIsComputingEditPreview(true);
     try {
-      const preview: any[] = [];
+      const preview = await computePayrollPreviewBatch({
+        organizationId: effectiveOrganizationId,
+        cutoffStart: dateStringToLocalMs(editCutoffStart),
+        cutoffEnd: dateStringToLocalMs(editCutoffEnd),
+        employeeIds: editSelectedEmployees,
+        deductionsEnabled: editDeductionsEnabled,
+        governmentDeductionSettings: editGovernmentDeductionSettings,
+        manualDeductions: editEmployeeDeductions.filter(
+          (entry) => entry.deductions.length > 0,
+        ),
+        incentives: editEmployeeIncentives.filter(
+          (entry) => entry.incentives.length > 0,
+        ),
+      });
 
-      for (const employeeId of editSelectedEmployees) {
-        const employee = employees?.find((e: any) => e._id === employeeId);
-        if (!employee) continue;
-
-        const cutoffStartTs = dateStringToLocalMs(editCutoffStart);
-        const cutoffEndTs = dateStringToLocalMs(editCutoffEnd);
-
-        const payroll = await computeEmployeePayroll({
-          employeeId,
-          cutoffStart: cutoffStartTs,
-          cutoffEnd: cutoffEndTs,
-        });
-
-        const deductions: Deduction[] = [];
-        const govSettings = editGovernmentDeductionSettings.find(
-          (gs) => gs.employeeId === employeeId,
-        );
-
-        const applyGovSetting = (
-          enabled: boolean | undefined,
-          frequency: "full" | "half" | undefined,
-          baseAmount: number | undefined,
-        ): number => {
-          if (!baseAmount || baseAmount <= 0) return 0;
-          if (enabled === false) return 0;
-          if (frequency === "half") return baseAmount / 2;
-          return baseAmount;
-        };
-
-        // SSS, PhilHealth, Pag-IBIG only when editDeductionsEnabled; withholding tax follows org settings independently
-        if (editDeductionsEnabled) {
-          const sssAmount = applyGovSetting(
-            govSettings?.sss.enabled,
-            govSettings?.sss.frequency,
-            payroll.deductions?.sss,
-          );
-          if (sssAmount > 0)
-            deductions.push({
-              name: "SSS",
-              amount: sssAmount,
-              type: "government",
-            });
-
-          const philhealthAmount = applyGovSetting(
-            govSettings?.philhealth.enabled,
-            govSettings?.philhealth.frequency,
-            payroll.deductions?.philhealth,
-          );
-          if (philhealthAmount > 0)
-            deductions.push({
-              name: "PhilHealth",
-              amount: philhealthAmount,
-              type: "government",
-            });
-
-          const pagibigAmount = applyGovSetting(
-            govSettings?.pagibig.enabled,
-            govSettings?.pagibig.frequency,
-            payroll.deductions?.pagibig,
-          );
-          if (pagibigAmount > 0)
-            deductions.push({
-              name: "Pag-IBIG",
-              amount: pagibigAmount,
-              type: "government",
-            });
-        }
-
-        const taxAmount =
-          govSettings && govSettings.tax.enabled === false
-            ? 0
-            : payroll.deductions?.withholdingTax || 0;
-        if (taxAmount > 0)
-          deductions.push({
-            name: "Withholding Tax",
-            amount: taxAmount,
-            type: "government",
-          });
-        if (payroll.deductions?.custom && payroll.deductions.custom > 0)
-          deductions.push({
-            name: "Other Deductions",
-            amount: payroll.deductions.custom,
-            type: "custom",
-          });
-
-        const empDeductions = editEmployeeDeductions.find(
-          (ed) => ed.employeeId === employeeId,
-        );
-        if (empDeductions) deductions.push(...empDeductions.deductions);
-
-        const overrides = editPreviewDeductionOverrides[employeeId];
-        if (overrides) {
-          for (const d of deductions) {
-            if (overrides[d.name] !== undefined) d.amount = overrides[d.name];
-          }
-        }
-
-        const manualIncentives =
-          editEmployeeIncentives.find((ei) => ei.employeeId === employeeId)
-            ?.incentives || [];
-        const totalIncentives = manualIncentives.reduce(
-          (sum, incentive) => sum + incentive.amount,
+      const normalizedPreview = (preview || []).map((row: any) => {
+        const deductions = (row.deductions || []).map((deduction: any) => ({
+          ...deduction,
+          amount:
+            editPreviewDeductionOverrides[row.employeeId]?.[deduction.name] ??
+            deduction.amount,
+        }));
+        const totalDeductions = deductions.reduce(
+          (sum: number, deduction: any) => sum + (deduction.amount || 0),
           0,
         );
-        const incentives = manualIncentives;
-
-        const allowance = employee.compensation.allowance || 0;
-        const payDivisor =
-          currentOrganization?.salaryPaymentFrequency === "monthly" ? 1 : 2;
-        const nonTaxableAllowance = allowance / payDivisor;
-
-        const dailyRateIncludesAllowance =
-          settings?.payrollSettings?.dailyRateIncludesAllowance ?? true;
-        const dailyRateWorkingDaysPerYear =
-          settings?.payrollSettings?.dailyRateWorkingDaysPerYear ?? 261;
-
-        const salaryType = employee.compensation.salaryType || "monthly";
-        const monthlySalary = employee.compensation.basicSalary || 0;
-        const daysWorked = payroll.daysWorked || 0;
-        const absences = payroll.absences || 0;
-        const lateHours = payroll.lateHours || 0;
-        const undertimeHours = payroll.undertimeHours || 0;
-
-        let fullBasicPay = payroll.basicPay || 0;
-        let dailyRate = 0;
-        let hourlyRate = 0;
-        let basicDailyRate = 0;
-        let basicHourlyRate = 0;
-
-        if (salaryType === "monthly") {
-          fullBasicPay = monthlySalary / payDivisor;
-          const monthlyBase =
-            monthlySalary + (dailyRateIncludesAllowance ? allowance : 0);
-          dailyRate = monthlyBase * (12 / dailyRateWorkingDaysPerYear);
-          hourlyRate = dailyRate / 8;
-          basicDailyRate = monthlySalary * (12 / dailyRateWorkingDaysPerYear);
-          basicHourlyRate = basicDailyRate / 8;
-        } else if (salaryType === "daily") {
-          dailyRate = monthlySalary;
-          hourlyRate = dailyRate / 8;
-          basicDailyRate = dailyRate;
-          basicHourlyRate = hourlyRate;
-        } else if (salaryType === "hourly") {
-          dailyRate = monthlySalary * 8;
-          hourlyRate = monthlySalary;
-          basicDailyRate = dailyRate;
-          basicHourlyRate = hourlyRate;
-        }
-
-        const dailyRateForAbsence =
-          salaryType === "monthly"
-            ? (monthlySalary + (allowance ?? 0)) *
-              (12 / dailyRateWorkingDaysPerYear)
-            : basicDailyRate;
-        const hourlyRateBasicPlusAllowance =
-          salaryType === "monthly"
-            ? ((monthlySalary + (allowance ?? 0)) *
-                (12 / dailyRateWorkingDaysPerYear)) /
-              8
-            : hourlyRate;
-
-        const calculatedAbsences = absences;
-        const lateDeduction =
-          (payroll as any).lateDeduction ??
-          lateHours * hourlyRateBasicPlusAllowance;
-        const lateDeductionRegularDay =
-          (payroll as any).lateDeductionRegularDay ?? 0;
-        const lateDeductionRegularHoliday =
-          (payroll as any).lateDeductionRegularHoliday ?? 0;
-        const lateDeductionSpecialHoliday =
-          (payroll as any).lateDeductionSpecialHoliday ?? 0;
-        const undertimeDeduction =
-          (payroll as any).undertimeDeduction ??
-          undertimeHours * hourlyRateBasicPlusAllowance;
-        const absentDeduction =
-          (payroll as any).absentDeduction ??
-          (salaryType === "monthly"
-            ? calculatedAbsences * dailyRateForAbsence
-            : 0);
-
-        const governmentAndCustomDeductions =
-          deductions.reduce((sum, d) => sum + d.amount, 0) || 0;
-        const rawTotalDeductions =
-          governmentAndCustomDeductions +
-          lateDeduction +
-          undertimeDeduction +
-          absentDeduction;
-
-        const grossPay =
-          (payroll.grossPay || 0) -
-          (payroll.incentiveTotal || 0) +
-          totalIncentives;
-
-        const availableEarnings = grossPay + nonTaxableAllowance;
-        const totalDeductions = Math.min(
-          rawTotalDeductions,
-          Math.max(0, availableEarnings),
+        const totalIncentives = (row.incentives || []).reduce(
+          (sum: number, incentive: any) => sum + (incentive.amount || 0),
+          0,
         );
-        const netPay = Math.max(0, availableEarnings - totalDeductions);
 
-        preview.push({
-          employee,
-          payroll,
-          basicPay: fullBasicPay,
-          daysWorked,
-          absences: calculatedAbsences,
-          lateHours,
-          undertimeHours,
-          overtimeHours: payroll.overtimeHours || 0,
-          holidayPay: payroll.holidayPay || 0,
-          holidayPayType: payroll.holidayPayType,
-          restDayPay: payroll.restDayPay || 0,
-          nightDiffPay: payroll.nightDiffPay || 0,
-          nightDiffBreakdown: payroll.nightDiffBreakdown,
-          overtimeRegular: payroll.overtimeRegular || 0,
-          overtimeRestDay: payroll.overtimeRestDay || 0,
-          overtimeRestDayExcess: payroll.overtimeRestDayExcess || 0,
-          overtimeSpecialHoliday: payroll.overtimeSpecialHoliday || 0,
-          overtimeSpecialHolidayExcess:
-            payroll.overtimeSpecialHolidayExcess || 0,
-          overtimeLegalHoliday: payroll.overtimeLegalHoliday || 0,
-          overtimeLegalHolidayExcess: payroll.overtimeLegalHolidayExcess || 0,
-          lateDeduction,
-          lateDeductionRegularDay,
-          lateDeductionRegularHoliday,
-          lateDeductionSpecialHoliday,
-          undertimeDeduction,
-          absentDeduction,
-          incentives,
-          totalIncentives,
-          nonTaxableAllowance,
+        return {
+          ...row,
+          payroll: row,
+          employee: row.employee,
           deductions,
           totalDeductions,
-          grossPay,
-          netPay,
-        });
-      }
-      setEditPreviewData(preview);
+          totalIncentives,
+          netPay: Math.max(
+            0,
+            (row.grossPay || 0) +
+              (row.nonTaxableAllowance || 0) -
+              totalDeductions,
+          ),
+        };
+      });
+
+      setEditPreviewData(normalizedPreview);
       setEditPayrollStep(5);
     } catch (error) {
       console.error("Error computing edit preview:", error);
@@ -1845,82 +1432,11 @@ export default function PayrollPageClient() {
             (x: any) => x.employee?._id === employeeId,
           );
           if (!p) return { employeeId, deductions: [] };
-          const deductions = [
-            ...(p.deductions || []).map((d: any) => ({
-              name: d.name,
-              amount: d.amount,
-              type: d.type || "government",
-            })),
-            ...(p.absentDeduction > 0
-              ? [
-                  (() => {
-                    const noWorkDays = p.noWorkNoPayDays || 0;
-                    const absentDays = Math.max(0, (p.absences || 0) - noWorkDays);
-                    const label =
-                      noWorkDays > 0 && absentDays === 0
-                        ? `No work on a holiday (${p.absences || 0} ${(p.absences || 0) === 1 ? "day" : "days"})`
-                        : `Absent (${p.absences || 0} ${(p.absences || 0) === 1 ? "day" : "days"})`;
-                    return {
-                      name: label,
-                      amount: p.absentDeduction,
-                      type: "attendance",
-                    };
-                  })(),
-                ]
-              : []),
-            ...(p.lateDeductionSpecialHoliday > 0
-              ? [
-                  {
-                    name: "Special Holiday Late",
-                    amount: p.lateDeductionSpecialHoliday,
-                    type: "attendance",
-                  },
-                ]
-              : []),
-            ...(p.lateDeductionRegularHoliday > 0
-              ? [
-                  {
-                    name: "Regular Holiday Late",
-                    amount: p.lateDeductionRegularHoliday,
-                    type: "attendance",
-                  },
-                ]
-              : []),
-            ...((p.lateDeductionRegularDay ?? 0) > 0
-              ? [
-                  {
-                    name:
-                      (p.lateDeductionSpecialHoliday > 0 ||
-                        p.lateDeductionRegularHoliday > 0)
-                        ? "Regular day late"
-                        : "Late",
-                    amount: p.lateDeductionRegularDay,
-                    type: "attendance",
-                  },
-                ]
-              : []),
-            ...(p.lateDeduction > 0 &&
-            !p.lateDeductionSpecialHoliday &&
-            !p.lateDeductionRegularHoliday &&
-            !p.lateDeductionRegularDay
-              ? [
-                  {
-                    name: "Late",
-                    amount: p.lateDeduction,
-                    type: "attendance",
-                  },
-                ]
-              : []),
-            ...(p.undertimeDeduction > 0
-              ? [
-                  {
-                    name: "Undertime",
-                    amount: p.undertimeDeduction,
-                    type: "attendance",
-                  },
-                ]
-              : []),
-          ];
+          const deductions = (p.deductions || []).map((d: any) => ({
+            name: d.name,
+            amount: d.amount,
+            type: d.type || "government",
+          }));
           return { employeeId, deductions };
         });
       } else {
@@ -2174,9 +1690,22 @@ export default function PayrollPageClient() {
     setEditSubmitStatus(status);
     setIsSavingPayrollRun(true);
     try {
-      const manualDeductions = editEmployeeDeductions.filter(
-        (ed) => ed.deductions.length > 0,
-      );
+      const manualDeductions =
+        editPreviewData.length > 0 && editSelectedEmployees.length > 0
+          ? editSelectedEmployees.map((employeeId: string) => {
+              const row = editPreviewData.find(
+                (entry: any) => entry.employee?._id === employeeId,
+              );
+              return {
+                employeeId,
+                deductions: (row?.deductions || []).map((d: any) => ({
+                  name: d.name,
+                  amount: d.amount,
+                  type: d.type || "government",
+                })),
+              };
+            })
+          : editEmployeeDeductions.filter((ed) => ed.deductions.length > 0);
       const incentives = editEmployeeIncentives.filter(
         (ei) => ei.incentives.length > 0,
       );

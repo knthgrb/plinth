@@ -85,6 +85,66 @@ export class PayrollService {
     );
   }
 
+  static async computePayrollPreviewBatch(data: {
+    organizationId: string;
+    cutoffStart: number;
+    cutoffEnd: number;
+    employeeIds: string[];
+    deductionsEnabled?: boolean;
+    manualDeductions?: Array<{
+      employeeId: string;
+      deductions: Array<{
+        name: string;
+        amount: number;
+        type: string;
+      }>;
+    }>;
+    governmentDeductionSettings?: Array<{
+      employeeId: string;
+      sss: { enabled: boolean; frequency: "full" | "half" };
+      pagibig: { enabled: boolean; frequency: "full" | "half" };
+      philhealth: { enabled: boolean; frequency: "full" | "half" };
+      tax: { enabled: boolean; frequency: "full" | "half" };
+    }>;
+    incentives?: Array<{
+      employeeId: string;
+      incentives: Array<{
+        name: string;
+        amount: number;
+        type: string;
+      }>;
+    }>;
+  }) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.query as any)(
+      (api as any).payroll.computePayrollPreviewBatch,
+      {
+        organizationId: data.organizationId as Id<"organizations">,
+        cutoffStart: data.cutoffStart,
+        cutoffEnd: data.cutoffEnd,
+        employeeIds: data.employeeIds as Id<"employees">[],
+        deductionsEnabled: data.deductionsEnabled,
+        manualDeductions: data.manualDeductions?.map((entry) => ({
+          employeeId: entry.employeeId as Id<"employees">,
+          deductions: entry.deductions,
+        })),
+        governmentDeductionSettings: data.governmentDeductionSettings?.map(
+          (entry) => ({
+            employeeId: entry.employeeId as Id<"employees">,
+            sss: entry.sss,
+            pagibig: entry.pagibig,
+            philhealth: entry.philhealth,
+            tax: entry.tax,
+          }),
+        ),
+        incentives: data.incentives?.map((entry) => ({
+          employeeId: entry.employeeId as Id<"employees">,
+          incentives: entry.incentives,
+        })),
+      },
+    );
+  }
+
   static async getPayslip(payslipId: string) {
     const convex = await getAuthedConvexClient();
     return await (convex.query as any)((api as any).payroll.getPayslip, {

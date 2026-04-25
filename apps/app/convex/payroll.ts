@@ -1135,6 +1135,500 @@ function getHoursWorkedFromAttendance(att: {
   return 8 * dayMultiplier + (att.overtime ?? 0);
 }
 
+function recalculatePersistedPayslipTotals(args: {
+  grossPay: number;
+  previousIncentives?: PayrollLine[];
+  nextIncentives?: PayrollLine[];
+  nextDeductions: PayrollLine[];
+  nextNonTaxableAllowance: number;
+}) {
+  const previousIncentivesTotal = sumLineAmounts(args.previousIncentives ?? []);
+  const nextIncentivesTotal = sumLineAmounts(args.nextIncentives ?? []);
+  const preservedTaxableBase = round2(args.grossPay - previousIncentivesTotal);
+  const nextGrossPay = round2(preservedTaxableBase + nextIncentivesTotal);
+  const totalDeductions = round2(sumLineAmounts(args.nextDeductions));
+  const totalEarnings = round2(nextGrossPay + args.nextNonTaxableAllowance);
+  const nextNetPay = round2(Math.max(0, totalEarnings - totalDeductions));
+
+  return {
+    grossPay: nextGrossPay,
+    totalDeductions,
+    totalEarnings,
+    netPay: nextNetPay,
+  };
+}
+
+type PayrollLine = {
+  name: string;
+  amount: number;
+  type: string;
+};
+
+type EmployeeGovSettings = {
+  employeeId: any;
+  sss: { enabled: boolean; frequency: "full" | "half" };
+  pagibig: { enabled: boolean; frequency: "full" | "half" };
+  philhealth: { enabled: boolean; frequency: "full" | "half" };
+  tax: { enabled: boolean; frequency: "full" | "half" };
+};
+
+type EmployeeLineSet = {
+  employeeId: any;
+  deductions?: PayrollLine[];
+  incentives?: PayrollLine[];
+};
+
+const GOV_DEDUCTION_NAMES = new Set([
+  "SSS",
+  "PhilHealth",
+  "Pag-IBIG",
+  "Withholding Tax",
+]);
+
+const GOV_DEDUCTIONS_EXCEPT_TAX = new Set(["SSS", "PhilHealth", "Pag-IBIG"]);
+
+function applyGovSettingAmount(
+  enabled: boolean | undefined,
+  frequency: "full" | "half" | undefined,
+  amount: number,
+): number {
+  if (!amount || amount <= 0) return 0;
+  if (enabled === false) return 0;
+  if (frequency === "half") return round2(amount / 2);
+  return round2(amount);
+}
+
+function isGovernmentDeductionName(name: string): boolean {
+  return GOV_DEDUCTION_NAMES.has((name || "").trim());
+}
+
+function buildAttendanceDeductionLines(
+  payrollBase: PayrollBaseResult,
+): PayrollLine[] {
+  const lines: PayrollLine[] = [];
+  const hasHolidayLate =
+    payrollBase.lateDeductionSpecialHoliday > 0 ||
+    payrollBase.lateDeductionRegularHoliday > 0;
+
+  if (payrollBase.lateDeductionSpecialHoliday > 0) {
+    lines.push({
+      name: "Special Holiday Late",
+      amount: payrollBase.lateDeductionSpecialHoliday,
+      type: "attendance",
+    });
+  }
+  if (payrollBase.lateDeductionRegularHoliday > 0) {
+    lines.push({
+      name: "Regular Holiday Late",
+      amount: payrollBase.lateDeductionRegularHoliday,
+      type: "attendance",
+    });
+  }
+  if (payrollBase.lateDeductionRegularDay > 0) {
+    lines.push({
+      name: hasHolidayLate ? "Regular day late" : "Late",
+      amount: payrollBase.lateDeductionRegularDay,
+      type: "attendance",
+    });
+  }
+  if (payrollBase.undertimeDeduction > 0) {
+    lines.push({
+      name: "Undertime",
+      amount: payrollBase.undertimeDeduction,
+      type: "attendance",
+    });
+  }
+  if (payrollBase.absentDeduction > 0) {
+    const noWorkDays = payrollBase.noWorkNoPayDays ?? 0;
+    const absentDays = Math.max(0, payrollBase.absences - noWorkDays);
+    const absenceLabel =
+      noWorkDays > 0 && absentDays === 0
+        ? `No work on a holiday (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`
+        : `Absent (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`;
+    lines.push({
+      name: absenceLabel,
+      amount: payrollBase.absentDeduction,
+      type: "attendance",
+    });
+  }
+
+  return lines;
+}
+
+function sumLineAmounts(lines: PayrollLine[]): number {
+  return lines.reduce((sum, line) => sum + (line.amount || 0), 0);
+}
+
+function getEmployeeIncentiveLines(
+  employee: any,
+  payFrequency: PayFrequency,
+  manualIncentives?: PayrollLine[],
+): PayrollLine[] {
+  if (manualIncentives) {
+    return manualIncentives.map((line) => ({
+      name: line.name,
+      amount: round2(line.amount || 0),
+      type: line.type || "incentive",
+    }));
+  }
+
+  const lines: PayrollLine[] = [];
+  if (!employee.incentives) return lines;
+
+  for (const incentive of employee.incentives) {
+    if (!incentive.isActive) continue;
+    let amount = 0;
+    if (incentive.frequency === "monthly") {
+      amount = getPerCutoffAmount(incentive.amount, payFrequency);
+    } else if (incentive.frequency === "per-cutoff") {
+      amount = incentive.amount;
+    }
+    if (amount > 0) {
+      lines.push({
+        name: incentive.name,
+        amount: round2(amount),
+        type: incentive.type || "incentive",
+      });
+    }
+  }
+
+  return lines;
+}
+
+async function buildCanonicalPayrollResult(ctx: any, args: {
+  employeeId: any;
+  employee: any;
+  cutoffStart: number;
+  cutoffEnd: number;
+  payFrequency: PayFrequency;
+  payrollBase: PayrollBaseResult;
+  deductionsEnabled: boolean;
+  taxSettings: {
+    taxDeductionFrequency: "once_per_month" | "twice_per_month";
+    taxDeductOnPay: "first" | "second";
+  };
+  govSettings?: EmployeeGovSettings;
+  manualDeductionEntry?: { employeeId: any; deductions: PayrollLine[] };
+  incentiveEntry?: { employeeId: any; incentives: PayrollLine[] };
+  excludePayrollRunId?: any;
+  nonTaxableAllowanceOverride?: number;
+}) {
+  const employee = args.employee;
+  const payrollBase = args.payrollBase;
+  const now = Date.now();
+  const hasWorkedAtLeastOneDay = payrollBase.daysWorked > 0;
+  const attendanceDeductions = buildAttendanceDeductionLines(payrollBase);
+
+  const monthlyBasicForTax = getMonthlyBasicForTax(
+    employee,
+    payrollBase.payrollRates.dailyRateWorkingDaysPerYear,
+  );
+  const sssContribution = getSSSContribution(monthlyBasicForTax);
+  const annualBasic = monthlyBasicForTax * 12;
+  const annualSSS = sssContribution.employeeShare * 12;
+  const annualPhilhealth = PHILHEALTH_EMPLOYEE_MONTHLY * 12;
+  const annualPagibig = PAGIBIG_EMPLOYEE_MONTHLY * 12;
+  const annualTaxableIncome = Math.max(
+    0,
+    annualBasic - annualSSS - annualPhilhealth - annualPagibig,
+  );
+  const annualTax = computeAnnualTaxFromBasic(annualTaxableIncome);
+  const monthlyTax = round2(annualTax / 12);
+
+  const baseGovAmounts = {
+    sss: getGovDeductionAmount(
+      sssContribution.employeeShare,
+      args.cutoffStart,
+      args.payFrequency,
+    ),
+    philhealth: getGovDeductionAmount(
+      PHILHEALTH_EMPLOYEE_MONTHLY,
+      args.cutoffStart,
+      args.payFrequency,
+    ),
+    pagibig: getGovDeductionAmount(
+      PAGIBIG_EMPLOYEE_MONTHLY,
+      args.cutoffStart,
+      args.payFrequency,
+    ),
+    tax: getTaxDeductionAmount(
+      monthlyTax,
+      args.cutoffStart,
+      args.payFrequency,
+      args.taxSettings.taxDeductionFrequency,
+      args.taxSettings.taxDeductOnPay,
+    ),
+  };
+
+  let deductions: PayrollLine[] = [];
+  const manualDeductionLines = args.manualDeductionEntry?.deductions ?? [];
+  const hasOverrideGovernmentDeductions = manualDeductionLines.some((line) =>
+    isGovernmentDeductionName(line.name),
+  );
+
+  if (hasOverrideGovernmentDeductions) {
+    const nonAttendanceOverrideLines = manualDeductionLines.filter(
+      (line) => !isAttendanceDeductionEntry(line),
+    );
+    deductions =
+      args.deductionsEnabled === false
+        ? nonAttendanceOverrideLines.filter(
+            (line) => !GOV_DEDUCTIONS_EXCEPT_TAX.has(line.name),
+          )
+        : [...nonAttendanceOverrideLines];
+
+    const hasTaxOverride = deductions.some(
+      (line) => line.name === "Withholding Tax",
+    );
+    if (!hasTaxOverride) {
+      const taxEnabled = !args.govSettings
+        ? baseGovAmounts.tax > 0
+        : args.govSettings.tax.enabled && baseGovAmounts.tax > 0;
+      if (taxEnabled) {
+        deductions.push({
+          name: "Withholding Tax",
+          amount: round2(baseGovAmounts.tax),
+          type: "government",
+        });
+      }
+    }
+  } else {
+    if (args.deductionsEnabled) {
+      const sssAmount = applyGovSettingAmount(
+        args.govSettings?.sss.enabled,
+        args.govSettings?.sss.frequency,
+        baseGovAmounts.sss,
+      );
+      const philhealthAmount = applyGovSettingAmount(
+        args.govSettings?.philhealth.enabled,
+        args.govSettings?.philhealth.frequency,
+        baseGovAmounts.philhealth,
+      );
+      const pagibigAmount = applyGovSettingAmount(
+        args.govSettings?.pagibig.enabled,
+        args.govSettings?.pagibig.frequency,
+        baseGovAmounts.pagibig,
+      );
+
+      if (sssAmount > 0) {
+        deductions.push({ name: "SSS", amount: sssAmount, type: "government" });
+      }
+      if (philhealthAmount > 0) {
+        deductions.push({
+          name: "PhilHealth",
+          amount: philhealthAmount,
+          type: "government",
+        });
+      }
+      if (pagibigAmount > 0) {
+        deductions.push({
+          name: "Pag-IBIG",
+          amount: pagibigAmount,
+          type: "government",
+        });
+      }
+    }
+
+    const taxEnabled = !args.govSettings
+      ? baseGovAmounts.tax > 0
+      : args.govSettings.tax.enabled && baseGovAmounts.tax > 0;
+    if (taxEnabled) {
+      deductions.push({
+        name: "Withholding Tax",
+        amount: round2(baseGovAmounts.tax),
+        type: "government",
+      });
+    }
+
+    for (const line of manualDeductionLines.filter(
+      (entry) => !isAttendanceDeductionEntry(entry),
+    )) {
+      deductions.push({
+        name: line.name,
+        amount: round2(line.amount || 0),
+        type: line.type,
+      });
+    }
+
+    if (employee.deductions) {
+      for (const deduction of employee.deductions) {
+        if (!deduction.isActive) continue;
+        if (isAttendanceDeductionName(deduction.name || "")) continue;
+        if (
+          deduction.startDate > now ||
+          (deduction.endDate && deduction.endDate < now)
+        ) {
+          continue;
+        }
+        deductions.push({
+          name: deduction.name,
+          amount: round2(
+            deduction.frequency === "monthly"
+              ? getPerCutoffAmount(deduction.amount, args.payFrequency)
+              : deduction.amount,
+          ),
+          type: deduction.type,
+        });
+      }
+    }
+  }
+
+  deductions.push(...attendanceDeductions);
+
+  const incentives = getEmployeeIncentiveLines(
+    employee,
+    args.payFrequency,
+    args.incentiveEntry?.incentives,
+  );
+  const totalIncentives = sumLineAmounts(incentives);
+
+  const isDailyizedFirstCutoff = payrollBase.dailyizedFirstCutoff === true;
+  let nonTaxableAllowance =
+    args.nonTaxableAllowanceOverride !== undefined
+      ? round2(args.nonTaxableAllowanceOverride)
+      : isDailyizedFirstCutoff
+        ? 0
+        : round2(
+            getPerCutoffAmount(
+              employee.compensation.allowance || 0,
+              args.payFrequency,
+            ) * (payrollBase.employmentProrationRatio ?? 1),
+          );
+
+  const grossPay = round2(
+    payrollBase.basicPay +
+      payrollBase.holidayPay +
+      payrollBase.nightDiffPay +
+      totalIncentives,
+  );
+
+  const sameMonthPreviousPayslips = await findSameMonthPreviousPayslips(ctx, {
+    employeeId: args.employeeId,
+    cutoffStart: args.cutoffStart,
+    excludePayrollRunId: args.excludePayrollRunId,
+  });
+  const previousPendingDeductions = pickMostRecentPendingDeductions(
+    sameMonthPreviousPayslips,
+  );
+
+  let pendingDeductions = 0;
+  if (!hasWorkedAtLeastOneDay) {
+    const govTotal = deductions
+      .filter((line) => isGovernmentDeductionName(line.name))
+      .reduce((sum, line) => sum + line.amount, 0);
+    pendingDeductions = round2(govTotal);
+    deductions = deductions.filter(
+      (line) => !isGovernmentDeductionName(line.name),
+    );
+  }
+
+  if (hasWorkedAtLeastOneDay && previousPendingDeductions > 0) {
+    deductions.push({
+      name: PENDING_PREVIOUS_CUTOFF_DEDUCTION_NAME,
+      amount: round2(previousPendingDeductions),
+      type: "government",
+    });
+  } else if (previousPendingDeductions > 0) {
+    pendingDeductions = round2(
+      pendingDeductions + previousPendingDeductions,
+    );
+  }
+
+  deductions = deductions
+    .map((line) => ({
+      name: line.name,
+      amount: round2(line.amount || 0),
+      type: line.type,
+    }))
+    .filter((line) => line.amount > 0);
+
+  const totalDeductions = sumLineAmounts(deductions);
+  const attendanceDeductionsTotal = sumLineAmounts(
+    deductions.filter((line) => line.type === "attendance"),
+  );
+  const nonAttendanceDeductionsTotal = round2(
+    totalDeductions - attendanceDeductionsTotal,
+  );
+  const totalEarnings = round2(grossPay + nonTaxableAllowance);
+  const earnedAfterAttendance = round2(totalEarnings - attendanceDeductionsTotal);
+
+  let netPay = round2(earnedAfterAttendance - nonAttendanceDeductionsTotal);
+
+  if (
+    nonAttendanceDeductionsTotal > earnedAfterAttendance &&
+    earnedAfterAttendance > 0
+  ) {
+    const excessDeductions = round2(
+      nonAttendanceDeductionsTotal - earnedAfterAttendance,
+    );
+    pendingDeductions = round2(pendingDeductions + excessDeductions);
+    const pendingIndex = deductions.findIndex(
+      (line) => line.name === PENDING_PREVIOUS_CUTOFF_DEDUCTION_NAME,
+    );
+    if (pendingIndex >= 0) {
+      const remaining = round2(deductions[pendingIndex].amount - excessDeductions);
+      if (remaining <= 0) {
+        deductions.splice(pendingIndex, 1);
+      } else {
+        deductions[pendingIndex].amount = remaining;
+      }
+    }
+    netPay = 0;
+  } else if (earnedAfterAttendance <= 0) {
+    pendingDeductions = round2(
+      pendingDeductions + nonAttendanceDeductionsTotal,
+    );
+    deductions = deductions.filter((line) => line.type === "attendance");
+    netPay = 0;
+  }
+
+  const employeeSSSAmount = getDeductionAmountByNames(deductions, ["sss"]);
+  const employeePhilhealthAmount = getDeductionAmountByNames(deductions, [
+    "philhealth",
+  ]);
+  const employeePagibigAmount = getDeductionAmountByNames(deductions, [
+    "pag-ibig",
+    "pagibig",
+  ]);
+  const employerContributions: {
+    sss?: number;
+    philhealth?: number;
+    pagibig?: number;
+  } = {};
+  if (employeeSSSAmount > 0) {
+    employerContributions.sss = round2(
+      getSSSContributionByEmployeeDeduction(employeeSSSAmount).employerShare,
+    );
+  }
+  if (employeePhilhealthAmount > 0) {
+    employerContributions.philhealth = round2(employeePhilhealthAmount);
+  }
+  if (employeePagibigAmount > 0) {
+    employerContributions.pagibig = round2(employeePagibigAmount);
+  }
+
+  return {
+    grossPay,
+    basicPay: round2(payrollBase.basicPay),
+    deductions,
+    incentives,
+    nonTaxableAllowance:
+      nonTaxableAllowance > 0 ? round2(nonTaxableAllowance) : undefined,
+    totalEarnings,
+    totalDeductions: round2(sumLineAmounts(deductions)),
+    taxableGrossEarnings: grossPay,
+    netPay: round2(Math.max(0, netPay)),
+    pendingDeductions:
+      pendingDeductions > 0 ? round2(pendingDeductions) : undefined,
+    hasWorkedAtLeastOneDay,
+    employerContributions:
+      Object.keys(employerContributions).length > 0
+        ? employerContributions
+        : undefined,
+    dailyizedFirstCutoff: isDailyizedFirstCutoff,
+  };
+}
+
 // Compute payroll for employee
 export const computeEmployeePayroll = query({
   args: {
@@ -1158,143 +1652,20 @@ export const computeEmployeePayroll = query({
       cutoffEnd: args.cutoffEnd,
       payFrequency,
     });
-
-    // Add incentives
-    let incentiveTotal = 0;
-    if (employee.incentives) {
-      for (const incentive of employee.incentives) {
-        if (incentive.isActive) {
-          if (incentive.frequency === "monthly") {
-            incentiveTotal += getPerCutoffAmount(
-              incentive.amount,
-              payFrequency,
-            );
-          } else if (incentive.frequency === "per-cutoff") {
-            incentiveTotal += incentive.amount;
-          }
-        }
-      }
-    }
-
-    // Calculate gross pay (total earnings before any deductions)
-    const grossPay =
-      payrollBase.basicPay +
-      payrollBase.holidayPay +
-      payrollBase.nightDiffPay +
-      incentiveTotal;
-
-    // Check if employee worked at least 1 day
-    const hasWorkedAtLeastOneDay = payrollBase.daysWorked > 0;
-
-    // Government deductions: based on monthly amounts, split per cutoff by pay frequency.
-    // Tax uses TRAIN 2025 brackets; taxable income = basic - SSS - PhilHealth - Pag-IBIG.
-    const monthlyBasicForTax = getMonthlyBasicForTax(
-      employee,
-      payrollBase.payrollRates.dailyRateWorkingDaysPerYear,
-    );
-
-    const sssMonthly = getSSSContribution(monthlyBasicForTax);
-    const annualBasic = monthlyBasicForTax * 12;
-    const annualSSS = sssMonthly.employeeShare * 12;
-    const annualPhilhealth = PHILHEALTH_EMPLOYEE_MONTHLY * 12;
-    const annualPagibig = PAGIBIG_EMPLOYEE_MONTHLY * 12;
-    const annualTaxableIncome = Math.max(
-      0,
-      annualBasic - annualSSS - annualPhilhealth - annualPagibig,
-    );
-    const annualTax = computeAnnualTaxFromBasic(annualTaxableIncome);
-    const monthlyTax = round2(annualTax / 12);
-
-    const sssAmount = getGovDeductionAmount(
-      sssMonthly.employeeShare,
-      args.cutoffStart,
-      payFrequency,
-    );
-    const philhealthAmount = getGovDeductionAmount(
-      PHILHEALTH_EMPLOYEE_MONTHLY,
-      args.cutoffStart,
-      payFrequency,
-    );
-    const pagibigAmount = getGovDeductionAmount(
-      PAGIBIG_EMPLOYEE_MONTHLY,
-      args.cutoffStart,
-      payFrequency,
-    );
     const taxSettings = await getTaxDeductionSettings(
       ctx,
       employee.organizationId,
     );
-    const withholdingTaxAmount = getTaxDeductionAmount(
-      monthlyTax,
-      args.cutoffStart,
+    const canonical = await buildCanonicalPayrollResult(ctx, {
+      employeeId: args.employeeId,
+      employee,
+      cutoffStart: args.cutoffStart,
+      cutoffEnd: args.cutoffEnd,
       payFrequency,
-      taxSettings.taxDeductionFrequency,
-      taxSettings.taxDeductOnPay,
-    );
-
-    // Total deductions = attendance deductions + government deductions + custom deductions
-    // If employee didn't work at least 1 day, no government deductions (they'll be pending)
-    let totalDeductions =
-      payrollBase.lateDeduction +
-      payrollBase.undertimeDeduction +
-      payrollBase.absentDeduction;
-    let pendingDeductions = 0;
-
-    if (hasWorkedAtLeastOneDay) {
-      totalDeductions += sssAmount + philhealthAmount + pagibigAmount;
-    } else {
-      // No deductions if employee didn't work - set as pending for next cutoff
-      pendingDeductions = sssAmount + philhealthAmount + pagibigAmount;
-    }
-
-    // Add custom deductions
-    if (employee.deductions) {
-      for (const deduction of employee.deductions) {
-        if (deduction.isActive) {
-          const now = Date.now();
-          if (
-            deduction.startDate <= now &&
-            (!deduction.endDate || deduction.endDate >= now)
-          ) {
-            if (deduction.frequency === "monthly") {
-              totalDeductions += getPerCutoffAmount(
-                deduction.amount,
-                payFrequency,
-              );
-            } else if (deduction.frequency === "per-cutoff") {
-              totalDeductions += deduction.amount;
-            }
-          }
-        }
-      }
-    }
-
-    // Tax: TRAIN 2025 brackets on taxable income (basic - SSS - PhilHealth - Pag-IBIG)
-    if (hasWorkedAtLeastOneDay) {
-      totalDeductions += withholdingTaxAmount;
-    } else {
-      pendingDeductions += withholdingTaxAmount;
-    }
-
-    // Calculate net pay before applying deduction limits
-    let netPay = grossPay - totalDeductions;
-
-    // Deductions cannot exceed net pay (before non-taxable allowance)
-    // If deductions exceed net pay, cap them at net pay
-    if (totalDeductions > netPay && netPay > 0) {
-      // Reduce deductions proportionally or cap at net pay
-      // For now, we'll cap total deductions at net pay
-      const excessDeductions = totalDeductions - netPay;
-      totalDeductions = netPay;
-      // Add excess to pending deductions
-      pendingDeductions += excessDeductions;
-      netPay = 0;
-    } else if (netPay < 0) {
-      // If net pay is negative, all deductions become pending
-      pendingDeductions += totalDeductions - grossPay;
-      totalDeductions = grossPay;
-      netPay = 0;
-    }
+      payrollBase,
+      deductionsEnabled: true,
+      taxSettings,
+    });
 
     return {
       employeeId: args.employeeId,
@@ -1326,28 +1697,161 @@ export const computeEmployeePayroll = query({
       lateDeductionSpecialHoliday: payrollBase.lateDeductionSpecialHoliday,
       absentDeduction: payrollBase.absentDeduction,
       undertimeDeduction: payrollBase.undertimeDeduction,
-      incentiveTotal,
-      grossPay,
-      deductions: {
-        sss: sssAmount,
-        philhealth: philhealthAmount,
-        pagibig: pagibigAmount,
-        withholdingTax: withholdingTaxAmount,
-        custom:
-          totalDeductions -
-          payrollBase.lateDeduction -
-          payrollBase.undertimeDeduction -
-          payrollBase.absentDeduction -
-          sssAmount -
-          philhealthAmount -
-          pagibigAmount -
-          withholdingTaxAmount,
-      },
-      totalDeductions,
-      netPay,
-      pendingDeductions: pendingDeductions > 0 ? pendingDeductions : undefined,
-      hasWorkedAtLeastOneDay,
+      deductions: canonical.deductions,
+      incentives: canonical.incentives,
+      incentiveTotal: sumLineAmounts(canonical.incentives),
+      grossPay: canonical.grossPay,
+      taxableGrossEarnings: canonical.taxableGrossEarnings,
+      totalEarnings: canonical.totalEarnings,
+      totalDeductions: canonical.totalDeductions,
+      nonTaxableAllowance: canonical.nonTaxableAllowance ?? 0,
+      netPay: canonical.netPay,
+      pendingDeductions: canonical.pendingDeductions,
+      hasWorkedAtLeastOneDay: canonical.hasWorkedAtLeastOneDay,
+      dailyizedFirstCutoff: canonical.dailyizedFirstCutoff,
     };
+  },
+});
+
+export const computePayrollPreviewBatch = query({
+  args: {
+    organizationId: v.id("organizations"),
+    cutoffStart: v.number(),
+    cutoffEnd: v.number(),
+    employeeIds: v.array(v.id("employees")),
+    deductionsEnabled: v.optional(v.boolean()),
+    manualDeductions: v.optional(
+      v.array(
+        v.object({
+          employeeId: v.id("employees"),
+          deductions: v.array(
+            v.object({
+              name: v.string(),
+              amount: v.number(),
+              type: v.string(),
+            }),
+          ),
+        }),
+      ),
+    ),
+    incentives: v.optional(
+      v.array(
+        v.object({
+          employeeId: v.id("employees"),
+          incentives: v.array(
+            v.object({
+              name: v.string(),
+              amount: v.number(),
+              type: v.string(),
+            }),
+          ),
+        }),
+      ),
+    ),
+    governmentDeductionSettings: v.optional(
+      v.array(
+        v.object({
+          employeeId: v.id("employees"),
+          sss: v.object({
+            enabled: v.boolean(),
+            frequency: v.union(v.literal("full"), v.literal("half")),
+          }),
+          pagibig: v.object({
+            enabled: v.boolean(),
+            frequency: v.union(v.literal("full"), v.literal("half")),
+          }),
+          philhealth: v.object({
+            enabled: v.boolean(),
+            frequency: v.union(v.literal("full"), v.literal("half")),
+          }),
+          tax: v.object({
+            enabled: v.boolean(),
+            frequency: v.union(v.literal("full"), v.literal("half")),
+          }),
+        }),
+      ),
+    ),
+  },
+  handler: async (ctx, args) => {
+    await checkAuth(ctx, args.organizationId);
+
+    const organization = await ctx.db.get(args.organizationId);
+    if (!organization) {
+      throw new Error("Organization not found");
+    }
+
+    const payFrequency = getOrganizationPayFrequency(organization);
+    const baseRates = (await getPayrollRates(ctx, args.organizationId)).base;
+    const holidays = await (ctx.db.query("holidays") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .collect();
+    const leaveTypes = await (ctx.db.query("leaveTypes") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .collect();
+    const scheduleLunchContext = await loadScheduleLunchContextForOrg(
+      ctx,
+      args.organizationId,
+    );
+    const taxSettings = await getTaxDeductionSettings(ctx, args.organizationId);
+    const deductionsEnabled = args.deductionsEnabled ?? true;
+
+    const results = await Promise.all(
+      args.employeeIds.map(async (employeeId) => {
+        const employeeRow = await ctx.db.get(employeeId);
+        if (
+          !employeeRow ||
+          employeeRow.organizationId !== args.organizationId
+        ) {
+          return null;
+        }
+
+        const employee = decryptEmployeeFromDb(employeeRow);
+        const employeeRates = getEmployeePayrollRates(employee, baseRates);
+        const payrollBase = await buildEmployeePayrollBase(ctx, {
+          employee: employeeRow,
+          cutoffStart: args.cutoffStart,
+          cutoffEnd: args.cutoffEnd,
+          payFrequency,
+          payrollRates: employeeRates,
+          holidays,
+          leaveTypes,
+          scheduleLunchContext,
+        });
+
+        const canonical = await buildCanonicalPayrollResult(ctx, {
+          employeeId,
+          employee,
+          cutoffStart: args.cutoffStart,
+          cutoffEnd: args.cutoffEnd,
+          payFrequency,
+          payrollBase,
+          deductionsEnabled,
+          taxSettings,
+          govSettings: args.governmentDeductionSettings?.find(
+            (entry) => entry.employeeId === employeeId,
+          ),
+          manualDeductionEntry: args.manualDeductions?.find(
+            (entry) => entry.employeeId === employeeId,
+          ),
+          incentiveEntry: args.incentives?.find(
+            (entry) => entry.employeeId === employeeId,
+          ),
+        });
+
+        return {
+          employeeId,
+          employee,
+          ...payrollBase,
+          ...canonical,
+        };
+      }),
+    );
+
+    return results.filter(Boolean);
   },
 });
 
@@ -1526,428 +2030,25 @@ export const createPayrollRun = mutation({
       const govSettings = args.governmentDeductionSettings?.find(
         (gs) => gs.employeeId === employeeId,
       );
-
-      // Check if manual deductions are provided for this employee
       const manualDeductionEntry = args.manualDeductions?.find(
         (md) => md.employeeId === employeeId,
       );
-
-      const GOV_DEDUCTION_NAMES_CREATE = new Set([
-        "SSS",
-        "PhilHealth",
-        "Pag-IBIG",
-        "Withholding Tax",
-      ]);
-      // SSS, PhilHealth, Pag-IBIG only - withholding tax follows org settings independently
-      const GOV_DEDUCTIONS_EXCEPT_TAX = new Set([
-        "SSS",
-        "PhilHealth",
-        "Pag-IBIG",
-      ]);
-      const hasOverrideDeductionsCreate =
-        manualDeductionEntry?.deductions?.length &&
-        manualDeductionEntry.deductions.some((d: { name: string }) =>
-          GOV_DEDUCTION_NAMES_CREATE.has(d.name),
-        );
-
-      let deductions: Array<{ name: string; amount: number; type: string }> =
-        [];
-
-      if (hasOverrideDeductionsCreate) {
-        // Manual override: use saved/edited deduction amounts as-is (from "Edit deductions" in preview).
-        // Override values for SSS, PhilHealth, Pag-IBIG, Withholding Tax are used directly in computation.
-        const nonAttendance = (manualDeductionEntry!.deductions as any[]).filter(
-          (d: { name?: string; type?: string }) => !isAttendanceDeductionEntry(d),
-        );
-        // When run has government deductions disabled, exclude SSS/PhilHealth/Pag-IBIG only; withholding tax follows org settings
-        deductions =
-          deductionsEnabled === false
-            ? nonAttendance.filter(
-                (d: { name: string }) => !GOV_DEDUCTIONS_EXCEPT_TAX.has(d.name),
-              )
-            : [...nonAttendance];
-        // Withholding tax follows org settings independently: ensure it's present when it applies (override may not include it)
-        const hasTaxInOverride = deductions.some(
-          (d) => d.name === "Withholding Tax",
-        );
-        if (!hasTaxInOverride) {
-          const monthlyBasicForTax = getMonthlyBasicForTax(
-            employee,
-            payrollBase.payrollRates.dailyRateWorkingDaysPerYear,
-          );
-          const sssContribution = getSSSContribution(monthlyBasicForTax);
-          const annualBasic = monthlyBasicForTax * 12;
-          const annualSSS = sssContribution.employeeShare * 12;
-          const annualPhilhealth = PHILHEALTH_EMPLOYEE_MONTHLY * 12;
-          const annualPagibig = PAGIBIG_EMPLOYEE_MONTHLY * 12;
-          const annualTaxableIncome = Math.max(
-            0,
-            annualBasic - annualSSS - annualPhilhealth - annualPagibig,
-          );
-          const annualTax = computeAnnualTaxFromBasic(annualTaxableIncome);
-          const monthlyTax = round2(annualTax / 12);
-          const taxAmount = getTaxDeductionAmount(
-            monthlyTax,
-            args.cutoffStart,
-            payFrequency,
-            taxSettings.taxDeductionFrequency,
-            taxSettings.taxDeductOnPay,
-          );
-          const taxApplies = taxAmount > 0;
-          const taxEnabled = !govSettings
-            ? taxApplies
-            : govSettings.tax.enabled && taxApplies;
-          if (taxEnabled) {
-            deductions.push({
-              name: "Withholding Tax",
-              amount: taxAmount,
-              type: "government",
-            });
-          }
-        }
-      } else {
-        const monthlyBasicForTax = getMonthlyBasicForTax(
-          employee,
-          payrollBase.payrollRates.dailyRateWorkingDaysPerYear,
-        );
-
-        const sssContribution = getSSSContribution(monthlyBasicForTax);
-        const sssEmployeeMonthly = sssContribution.employeeShare;
-        const sssEmployerMonthly = sssContribution.employerShare;
-        const philhealthEmployeeMonthly = PHILHEALTH_EMPLOYEE_MONTHLY;
-        const philhealthEmployerMonthly = PHILHEALTH_EMPLOYER_MONTHLY;
-        const pagibigEmployeeMonthly = PAGIBIG_EMPLOYEE_MONTHLY;
-        const pagibigEmployerMonthly = PAGIBIG_EMPLOYER_MONTHLY;
-
-        const sssEmployeeAmount = getGovDeductionAmount(
-          sssEmployeeMonthly,
-          args.cutoffStart,
-          payFrequency,
-        );
-        const philhealthEmployeeAmount = getGovDeductionAmount(
-          philhealthEmployeeMonthly,
-          args.cutoffStart,
-          payFrequency,
-        );
-        const pagibigEmployeeAmount = getGovDeductionAmount(
-          pagibigEmployeeMonthly,
-          args.cutoffStart,
-          payFrequency,
-        );
-
-        // TRAIN: taxable income = gross - mandatory contributions (SSS, PhilHealth, Pag-IBIG)
-        const annualBasic = monthlyBasicForTax * 12;
-        const annualSSS = sssEmployeeMonthly * 12;
-        const annualPhilhealth = philhealthEmployeeMonthly * 12;
-        const annualPagibig = pagibigEmployeeMonthly * 12;
-        const annualTaxableIncome = Math.max(
-          0,
-          annualBasic - annualSSS - annualPhilhealth - annualPagibig,
-        );
-        const annualTax = computeAnnualTaxFromBasic(annualTaxableIncome);
-        const monthlyTax = round2(annualTax / 12);
-
-        const taxAmount = getTaxDeductionAmount(
-          monthlyTax,
-          args.cutoffStart,
-          payFrequency,
-          taxSettings.taxDeductionFrequency,
-          taxSettings.taxDeductOnPay,
-        );
-
-        const runDeductionsEnabled = deductionsEnabled;
-
-        // Add SSS, PhilHealth, Pag-IBIG only when run has deductions enabled; per-employee override via govSettings
-        if (runDeductionsEnabled) {
-          if (govSettings) {
-            if (govSettings.sss.enabled) {
-              deductions.push({
-                name: "SSS",
-                amount: sssEmployeeAmount,
-                type: "government",
-              });
-            }
-            if (govSettings.philhealth.enabled) {
-              deductions.push({
-                name: "PhilHealth",
-                amount: philhealthEmployeeAmount,
-                type: "government",
-              });
-            }
-            if (govSettings.pagibig.enabled) {
-              deductions.push({
-                name: "Pag-IBIG",
-                amount: pagibigEmployeeAmount,
-                type: "government",
-              });
-            }
-          } else {
-            deductions.push(
-              { name: "SSS", amount: sssEmployeeAmount, type: "government" },
-              {
-                name: "PhilHealth",
-                amount: philhealthEmployeeAmount,
-                type: "government",
-              },
-              {
-                name: "Pag-IBIG",
-                amount: pagibigEmployeeAmount,
-                type: "government",
-              },
-            );
-          }
-        }
-
-        // Withholding tax follows org settings independently of deductionsEnabled (twice_per_month = both pays; once_per_month = selected pay only; getTaxDeductionAmount returns 0 when not applicable)
-        const taxApplies = taxAmount > 0;
-        const taxEnabled = !govSettings
-          ? taxApplies
-          : govSettings.tax.enabled && taxApplies;
-        if (taxEnabled) {
-          deductions.push({
-            name: "Withholding Tax",
-            amount: taxAmount,
-            type: "government",
-          });
-        }
-
-        // Add manual/custom deductions (loans, etc.) - these are separate from government deductions
-        if (manualDeductionEntry && manualDeductionEntry.deductions) {
-          for (const ded of manualDeductionEntry.deductions.filter(
-            (d) => !isAttendanceDeductionEntry(d),
-          )) {
-            deductions.push(ded);
-          }
-        }
-
-        // Add employee's custom deductions (loans, etc.)
-        if (employee.deductions) {
-          for (const deduction of employee.deductions) {
-            if (deduction.isActive) {
-              // Attendance deductions are always recomputed from attendance records.
-              // Skip attendance-like custom rows to avoid double-counting on regenerate/edit.
-              if (isAttendanceDeductionName(deduction.name || "")) continue;
-              const now = Date.now();
-              if (
-                deduction.startDate <= now &&
-                (!deduction.endDate || deduction.endDate >= now)
-              ) {
-                deductions.push({
-                  name: deduction.name,
-                  amount:
-                    deduction.frequency === "monthly"
-                      ? getPerCutoffAmount(deduction.amount, payFrequency)
-                      : deduction.amount,
-                  type: deduction.type,
-                });
-              }
-            }
-          }
-        }
-      }
-
-      // Add attendance-based deductions (categorized: holiday late vs regular late)
-      // When there are holiday lates, show "Regular day late" for regular-day lates; otherwise generic "Late"
-      const hasHolidayLate =
-        payrollBase.lateDeductionSpecialHoliday > 0 ||
-        payrollBase.lateDeductionRegularHoliday > 0;
-      if (payrollBase.lateDeductionSpecialHoliday > 0) {
-        deductions.push({
-          name: "Special Holiday Late",
-          amount: payrollBase.lateDeductionSpecialHoliday,
-          type: "attendance",
-        });
-      }
-      if (payrollBase.lateDeductionRegularHoliday > 0) {
-        deductions.push({
-          name: "Regular Holiday Late",
-          amount: payrollBase.lateDeductionRegularHoliday,
-          type: "attendance",
-        });
-      }
-      if (payrollBase.lateDeductionRegularDay > 0) {
-        deductions.push({
-          name: hasHolidayLate ? "Regular day late" : "Late",
-          amount: payrollBase.lateDeductionRegularDay,
-          type: "attendance",
-        });
-      }
-      if (payrollBase.undertimeDeduction > 0) {
-        deductions.push({
-          name: "Undertime",
-          amount: payrollBase.undertimeDeduction,
-          type: "attendance",
-        });
-      }
-      if (payrollBase.absentDeduction > 0) {
-        const noWorkDays = payrollBase.noWorkNoPayDays ?? 0;
-        const absentDays = Math.max(0, payrollBase.absences - noWorkDays);
-        const absenceLabel =
-          noWorkDays > 0 && absentDays === 0
-            ? `No work on a holiday (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`
-            : `Absent (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`;
-        deductions.push({
-          name: absenceLabel,
-          amount: payrollBase.absentDeduction,
-          type: "attendance",
-        });
-      }
-
-      // Calculate total deductions (government + custom + attendance deductions)
-      const totalDeductions = deductions.reduce((sum, d) => sum + d.amount, 0);
-
-      // Get incentives for this employee
       const incentiveEntry = args.incentives?.find(
         (inc) => inc.employeeId === employeeId,
       );
-      const incentives = incentiveEntry?.incentives || [];
-      const totalIncentives = incentives.reduce(
-        (sum, inc) => sum + inc.amount,
-        0,
-      );
-
-      // Non-taxable allowance: monthly value, split by pay frequency, and
-      // pro-rated to the employment window for mid-cutoff hires so the allowance
-      // is paid consistently with the pro-rated basic pay.
-      const nonTaxableAllowance = round2(
-        getPerCutoffAmount(
-          employee.compensation.allowance || 0,
-          payFrequency,
-        ) * (payrollBase.employmentProrationRatio ?? 1),
-      );
-
-      // Calculate gross pay (total earnings: basic pay + holiday pay + rest day OT + overtime + incentives)
-      const grossPay =
-        payrollBase.basicPay +
-        payrollBase.holidayPay +
-        payrollBase.nightDiffPay +
-        totalIncentives;
-
-      // Check if employee worked at least 1 day
-      const hasWorkedAtLeastOneDay = payrollBase.daysWorked > 0;
-
-      // Carry over pending deductions from the most recent same-month cutoff.
-      // Uses the `by_employee_periodStart` index so we only read rows in the current month.
-      const sameMonthPreviousPayslips = await findSameMonthPreviousPayslips(
-        ctx,
-        {
-          employeeId,
-          cutoffStart: args.cutoffStart,
-        },
-      );
-      const previousPendingDeductions = pickMostRecentPendingDeductions(
-        sameMonthPreviousPayslips,
-      );
-
-      // Fixed gov deductions already in array; if employee didn't work, move to pending
-      let pendingDeductions = 0;
-
-      if (!hasWorkedAtLeastOneDay) {
-        // Sum of government deductions we already pushed (fixed 250 each or half)
-        const govTotal = deductions
-          .filter(
-            (d) =>
-              d.name === "SSS" ||
-              d.name === "PhilHealth" ||
-              d.name === "Pag-IBIG" ||
-              d.name === "Withholding Tax",
-          )
-          .reduce((sum, d) => sum + d.amount, 0);
-        pendingDeductions = govTotal;
-        deductions = deductions.filter(
-          (d) =>
-            d.name !== "SSS" &&
-            d.name !== "PhilHealth" &&
-            d.name !== "Pag-IBIG" &&
-            d.name !== "Withholding Tax",
-        );
-      }
-
-      // Add previous pending deductions to current deductions if employee worked
-      if (hasWorkedAtLeastOneDay && previousPendingDeductions > 0) {
-        // Add pending deductions from previous cutoff
-        deductions.push({
-          name: "Pending Deductions (Previous Cutoff)",
-          amount: previousPendingDeductions,
-          type: "government",
-        });
-      } else if (previousPendingDeductions > 0) {
-        // If still no work, keep it pending
-        pendingDeductions += previousPendingDeductions;
-      }
-
-      // Recalculate total deductions with updated tax and pending deductions
-      const finalTotalDeductions = deductions.reduce(
-        (sum, d) => sum + d.amount,
-        0,
-      );
-
-      // Attendance items (absent/late/undertime/no-work) are earnings reductions,
-      // not cappable deductions. The cap only applies to gov + loans + advances.
-      const attendanceDeductionsTotal = deductions
-        .filter((d) => d.type === "attendance")
-        .reduce((sum, d) => sum + d.amount, 0);
-      const nonAttendanceDeductionsTotal =
-        finalTotalDeductions - attendanceDeductionsTotal;
-      const earnedAfterAttendance =
-        grossPay + nonTaxableAllowance - attendanceDeductionsTotal;
-
-      let netPay = earnedAfterAttendance - nonAttendanceDeductionsTotal;
-
-      // Non-attendance deductions cannot exceed what the employee earned
-      // after attendance adjustments. Move any excess to pending for next cutoff.
-      if (
-        nonAttendanceDeductionsTotal > earnedAfterAttendance &&
-        earnedAfterAttendance > 0
-      ) {
-        const excessDeductions =
-          nonAttendanceDeductionsTotal - earnedAfterAttendance;
-        pendingDeductions += excessDeductions;
-        const pendingDeductionIndex = deductions.findIndex(
-          (d) => d.name === "Pending Deductions (Previous Cutoff)",
-        );
-        if (pendingDeductionIndex >= 0) {
-          const pendingAmount = deductions[pendingDeductionIndex].amount;
-          if (excessDeductions >= pendingAmount) {
-            deductions.splice(pendingDeductionIndex, 1);
-          } else {
-            deductions[pendingDeductionIndex].amount =
-              pendingAmount - excessDeductions;
-          }
-        }
-        netPay = 0;
-      } else if (earnedAfterAttendance <= 0) {
-        // Nothing earned this cutoff; every non-attendance deduction rolls over.
-        pendingDeductions += nonAttendanceDeductionsTotal;
-        deductions = deductions.filter((d) => d.type === "attendance");
-        netPay = 0;
-      }
-
-      const employeeSSSAmount = getDeductionAmountByNames(deductions, ["sss"]);
-      const employeePhilhealthAmount = getDeductionAmountByNames(deductions, [
-        "philhealth",
-      ]);
-      const employeePagibigAmount = getDeductionAmountByNames(deductions, [
-        "pag-ibig",
-        "pagibig",
-      ]);
-      const employerContributions: {
-        sss?: number;
-        philhealth?: number;
-        pagibig?: number;
-      } = {};
-      if (employeeSSSAmount > 0) {
-        employerContributions.sss = round2(
-          getSSSContributionByEmployeeDeduction(employeeSSSAmount)
-            .employerShare,
-        );
-      }
-      if (employeePhilhealthAmount > 0) {
-        employerContributions.philhealth = round2(employeePhilhealthAmount);
-      }
-      if (employeePagibigAmount > 0) {
-        employerContributions.pagibig = round2(employeePagibigAmount);
-      }
+      const canonical = await buildCanonicalPayrollResult(ctx, {
+        employeeId,
+        employee,
+        cutoffStart: args.cutoffStart,
+        cutoffEnd: args.cutoffEnd,
+        payFrequency,
+        payrollBase,
+        deductionsEnabled,
+        taxSettings,
+        govSettings,
+        manualDeductionEntry,
+        incentiveEntry,
+      });
       await ctx.db.insert(
         "payslips",
         encryptPayslipRowForDb({
@@ -1957,16 +2058,13 @@ export const createPayrollRun = mutation({
           period,
           periodStart: args.cutoffStart,
           periodEnd: args.cutoffEnd,
-          grossPay: round2(grossPay),
-          basicPay: round2(payrollBase.basicPay),
-          deductions: deductions.map((d) => ({
-            ...d,
-            amount: round2(d.amount),
-          })),
-          incentives: incentives.length > 0 ? incentives : undefined,
-          nonTaxableAllowance:
-            nonTaxableAllowance > 0 ? round2(nonTaxableAllowance) : undefined,
-          netPay: round2(netPay),
+          grossPay: canonical.grossPay,
+          basicPay: canonical.basicPay,
+          deductions: canonical.deductions,
+          incentives:
+            canonical.incentives.length > 0 ? canonical.incentives : undefined,
+          nonTaxableAllowance: canonical.nonTaxableAllowance,
+          netPay: canonical.netPay,
           daysWorked: payrollBase.daysWorked,
           absences: payrollBase.absences,
           lateHours: payrollBase.lateHours,
@@ -2014,17 +2112,13 @@ export const createPayrollRun = mutation({
             payrollBase.overtimeLegalHolidayExcess > 0
               ? round2(payrollBase.overtimeLegalHolidayExcess)
               : undefined,
-          pendingDeductions:
-            pendingDeductions > 0 ? round2(pendingDeductions) : undefined,
+          pendingDeductions: canonical.pendingDeductions,
           noWorkNoPayDays:
             (payrollBase.noWorkNoPayDays ?? 0) > 0
               ? payrollBase.noWorkNoPayDays
               : undefined,
-          hasWorkedAtLeastOneDay,
-          employerContributions:
-            Object.keys(employerContributions).length > 0
-              ? employerContributions
-              : undefined,
+          hasWorkedAtLeastOneDay: canonical.hasWorkedAtLeastOneDay,
+          employerContributions: canonical.employerContributions,
           createdAt: now,
         }) as any,
       );
@@ -2383,400 +2477,27 @@ export const updatePayrollRun = mutation({
         const manualDeductionEntry = mergedManualDeductions.find(
           (md) => md.employeeId === employeeId,
         );
-        const GOV_DEDUCTION_NAMES = new Set([
-          "SSS",
-          "PhilHealth",
-          "Pag-IBIG",
-          "Withholding Tax",
-        ]);
-        const GOV_DEDUCTIONS_EXCEPT_TAX_UPDATE = new Set([
-          "SSS",
-          "PhilHealth",
-          "Pag-IBIG",
-        ]);
-        const hasOverrideDeductions =
-          manualDeductionEntry?.deductions?.length &&
-          manualDeductionEntry.deductions.some((d: { name: string }) =>
-            GOV_DEDUCTION_NAMES.has(d.name),
-          );
-
-        let deductions: Array<{ name: string; amount: number; type: string }> =
-          [];
-
-        if (hasOverrideDeductions) {
-          // Use saved/edited deductions as-is; only refresh attendance-based ones
-          const nonAttendance = (
-            manualDeductionEntry!.deductions as any[]
-          ).filter(
-            (d: { name?: string; type?: string }) => !isAttendanceDeductionEntry(d),
-          );
-          // When run has government deductions disabled, exclude SSS/PhilHealth/Pag-IBIG only; withholding tax follows org settings
-          deductions =
-            runDeductionsEnabled === false
-              ? nonAttendance.filter(
-                  (d: { name: string }) =>
-                    !GOV_DEDUCTIONS_EXCEPT_TAX_UPDATE.has(d.name),
-                )
-              : [...nonAttendance];
-          // Withholding tax follows org settings independently: ensure it's present when it applies (override may not include it)
-          const hasTaxInOverrideUpdate = deductions.some(
-            (d) => d.name === "Withholding Tax",
-          );
-          if (!hasTaxInOverrideUpdate) {
-            const monthlyBasicForTaxOverride = getMonthlyBasicForTax(
-              employee,
-              payrollBase.payrollRates.dailyRateWorkingDaysPerYear,
-            );
-            const sssContributionOverride = getSSSContribution(
-              monthlyBasicForTaxOverride,
-            );
-            const annualBasicOverride = monthlyBasicForTaxOverride * 12;
-            const annualSSSOverride =
-              sssContributionOverride.employeeShare * 12;
-            const annualPhilhealthOverride = PHILHEALTH_EMPLOYEE_MONTHLY * 12;
-            const annualPagibigOverride = PAGIBIG_EMPLOYEE_MONTHLY * 12;
-            const annualTaxableIncomeOverride = Math.max(
-              0,
-              annualBasicOverride -
-                annualSSSOverride -
-                annualPhilhealthOverride -
-                annualPagibigOverride,
-            );
-            const annualTaxOverride = computeAnnualTaxFromBasic(
-              annualTaxableIncomeOverride,
-            );
-            const monthlyTaxOverride = round2(annualTaxOverride / 12);
-            const taxAmountOverride = getTaxDeductionAmount(
-              monthlyTaxOverride,
-              cutoffStart,
-              payFrequencyUpdate,
-              taxSettingsUpdate.taxDeductionFrequency,
-              taxSettingsUpdate.taxDeductOnPay,
-            );
-            const taxAppliesOverride = taxAmountOverride > 0;
-            const taxEnabledOverride = !govSettings
-              ? taxAppliesOverride
-              : govSettings.tax.enabled && taxAppliesOverride;
-            if (taxEnabledOverride) {
-              deductions.push({
-                name: "Withholding Tax",
-                amount: taxAmountOverride,
-                type: "government",
-              });
-            }
-          }
-        } else {
-          const monthlyBasicForTax = getMonthlyBasicForTax(
-            employee,
-            payrollBase.payrollRates.dailyRateWorkingDaysPerYear,
-          );
-          const sssContribution = getSSSContribution(monthlyBasicForTax);
-
-          const sssEmployeeAmount = getGovDeductionAmount(
-            sssContribution.employeeShare,
-            cutoffStart,
-            payFrequencyUpdate,
-          );
-          const philhealthEmployeeAmount = getGovDeductionAmount(
-            PHILHEALTH_EMPLOYEE_MONTHLY,
-            cutoffStart,
-            payFrequencyUpdate,
-          );
-          const pagibigEmployeeAmount = getGovDeductionAmount(
-            PAGIBIG_EMPLOYEE_MONTHLY,
-            cutoffStart,
-            payFrequencyUpdate,
-          );
-
-          // TRAIN: taxable income = basic - SSS - PhilHealth - Pag-IBIG
-          const annualBasic = monthlyBasicForTax * 12;
-          const annualSSS = sssContribution.employeeShare * 12;
-          const annualPhilhealth = PHILHEALTH_EMPLOYEE_MONTHLY * 12;
-          const annualPagibig = PAGIBIG_EMPLOYEE_MONTHLY * 12;
-          const annualTaxableIncome = Math.max(
-            0,
-            annualBasic - annualSSS - annualPhilhealth - annualPagibig,
-          );
-          const annualTax = computeAnnualTaxFromBasic(annualTaxableIncome);
-          const monthlyTax = round2(annualTax / 12);
-
-          const taxAmount = getTaxDeductionAmount(
-            monthlyTax,
-            cutoffStart,
-            payFrequencyUpdate,
-            taxSettingsUpdate.taxDeductionFrequency,
-            taxSettingsUpdate.taxDeductOnPay,
-          );
-
-          if (runDeductionsEnabled) {
-            if (govSettings) {
-              if (govSettings.sss.enabled) {
-                deductions.push({
-                  name: "SSS",
-                  amount: sssEmployeeAmount,
-                  type: "government",
-                });
-              }
-              if (govSettings.philhealth.enabled) {
-                deductions.push({
-                  name: "PhilHealth",
-                  amount: philhealthEmployeeAmount,
-                  type: "government",
-                });
-              }
-              if (govSettings.pagibig.enabled) {
-                deductions.push({
-                  name: "Pag-IBIG",
-                  amount: pagibigEmployeeAmount,
-                  type: "government",
-                });
-              }
-            } else {
-              deductions.push(
-                { name: "SSS", amount: sssEmployeeAmount, type: "government" },
-                {
-                  name: "PhilHealth",
-                  amount: philhealthEmployeeAmount,
-                  type: "government",
-                },
-                {
-                  name: "Pag-IBIG",
-                  amount: pagibigEmployeeAmount,
-                  type: "government",
-                },
-              );
-            }
-          }
-
-          // Withholding tax follows org settings independently of deductionsEnabled
-          const taxAppliesUpdate = taxAmount > 0;
-          const taxEnabledUpdate = !govSettings
-            ? taxAppliesUpdate
-            : govSettings.tax.enabled && taxAppliesUpdate;
-          if (taxEnabledUpdate) {
-            deductions.push({
-              name: "Withholding Tax",
-              amount: taxAmount,
-              type: "government",
-            });
-          }
-
-          if (manualDeductionEntry?.deductions) {
-            deductions.push(
-              ...manualDeductionEntry.deductions.filter(
-                (d) => !isAttendanceDeductionEntry(d),
-              ),
-            );
-          }
-
-          if (employee.deductions) {
-            for (const deduction of employee.deductions) {
-              if (!deduction.isActive) continue;
-            // Attendance deductions are always recomputed from attendance records.
-            // Skip attendance-like custom rows to avoid double-counting on regenerate/edit.
-            if (isAttendanceDeductionName(deduction.name || "")) continue;
-              const now = Date.now();
-              if (
-                deduction.startDate <= now &&
-                (!deduction.endDate || deduction.endDate >= now)
-              ) {
-                deductions.push({
-                  name: deduction.name,
-                  amount:
-                    deduction.frequency === "monthly"
-                      ? getPerCutoffAmount(deduction.amount, payFrequencyUpdate)
-                      : deduction.amount,
-                  type: deduction.type,
-                });
-              }
-            }
-          }
-        }
-
-        const hasHolidayLateUpdate =
-          payrollBase.lateDeductionSpecialHoliday > 0 ||
-          payrollBase.lateDeductionRegularHoliday > 0;
-        if (payrollBase.lateDeductionSpecialHoliday > 0) {
-          deductions.push({
-            name: "Special Holiday Late",
-            amount: payrollBase.lateDeductionSpecialHoliday,
-            type: "attendance",
-          });
-        }
-        if (payrollBase.lateDeductionRegularHoliday > 0) {
-          deductions.push({
-            name: "Regular Holiday Late",
-            amount: payrollBase.lateDeductionRegularHoliday,
-            type: "attendance",
-          });
-        }
-        if (payrollBase.lateDeductionRegularDay > 0) {
-          deductions.push({
-            name: hasHolidayLateUpdate ? "Regular day late" : "Late",
-            amount: payrollBase.lateDeductionRegularDay,
-            type: "attendance",
-          });
-        }
-        if (payrollBase.undertimeDeduction > 0) {
-          deductions.push({
-            name: "Undertime",
-            amount: payrollBase.undertimeDeduction,
-            type: "attendance",
-          });
-        }
-        if (payrollBase.absentDeduction > 0) {
-          const noWorkDays = payrollBase.noWorkNoPayDays ?? 0;
-          const absentDays = Math.max(0, payrollBase.absences - noWorkDays);
-          const absenceLabel =
-            noWorkDays > 0 && absentDays === 0
-              ? `No work on a holiday (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`
-              : `Absent (${payrollBase.absences} ${payrollBase.absences === 1 ? "day" : "days"})`;
-          deductions.push({
-            name: absenceLabel,
-            amount: payrollBase.absentDeduction,
-            type: "attendance",
-          });
-        }
-
-        const incentives =
-          mergedIncentives.find((inc) => inc.employeeId === employeeId)
-            ?.incentives || [];
-        const totalIncentives = incentives.reduce(
-          (sum, inc) => sum + inc.amount,
-          0,
-        );
-
-        const grossPay =
-          payrollBase.basicPay +
-          payrollBase.holidayPay +
-          payrollBase.nightDiffPay +
-          totalIncentives;
-        // Non-taxable allowance: monthly value, split by pay frequency, and
-        // pro-rated to the employment window for mid-cutoff hires.
-        let nonTaxableAllowance = round2(
-          getPerCutoffAmount(
-            employee.compensation.allowance || 0,
-            payFrequencyUpdate,
-          ) * (payrollBase.employmentProrationRatio ?? 1),
-        );
         const allowanceOverrideEntry = mergedNonTaxableAllowanceOverrides.find(
-          (o: { employeeId: any }) => o.employeeId === employeeId,
+          (entry: { employeeId: any }) => entry.employeeId === employeeId,
         );
-        if (allowanceOverrideEntry) {
-          nonTaxableAllowance = round2(allowanceOverrideEntry.amount);
-        }
-        const hasWorkedAtLeastOneDay = payrollBase.daysWorked > 0;
-
-        const sameMonthPreviousPayslips = await findSameMonthPreviousPayslips(
-          ctx,
-          {
-            employeeId,
-            cutoffStart,
-            excludePayrollRunId: args.payrollRunId,
-          },
+        const incentiveEntry = mergedIncentives.find(
+          (entry) => entry.employeeId === employeeId,
         );
-        const previousPendingDeductions = pickMostRecentPendingDeductions(
-          sameMonthPreviousPayslips,
-        );
-
-        let pendingDeductions = 0;
-        if (!hasWorkedAtLeastOneDay) {
-          const govTotal = deductions
-            .filter((d) =>
-              ["SSS", "PhilHealth", "Pag-IBIG", "Withholding Tax"].includes(
-                d.name,
-              ),
-            )
-            .reduce((sum, d) => sum + d.amount, 0);
-          pendingDeductions = govTotal;
-          deductions = deductions.filter(
-            (d) =>
-              !["SSS", "PhilHealth", "Pag-IBIG", "Withholding Tax"].includes(
-                d.name,
-              ),
-          );
-        }
-
-        if (hasWorkedAtLeastOneDay && previousPendingDeductions > 0) {
-          deductions.push({
-            name: "Pending Deductions (Previous Cutoff)",
-            amount: previousPendingDeductions,
-            type: "government",
-          });
-        } else if (previousPendingDeductions > 0) {
-          pendingDeductions += previousPendingDeductions;
-        }
-
-        const finalTotalDeductions = deductions.reduce(
-          (sum, d) => sum + d.amount,
-          0,
-        );
-
-        // Attendance items (absent/late/undertime/no-work) are earnings reductions,
-        // not cappable deductions. The cap only applies to gov + loans + advances.
-        const attendanceDeductionsTotal = deductions
-          .filter((d) => d.type === "attendance")
-          .reduce((sum, d) => sum + d.amount, 0);
-        const nonAttendanceDeductionsTotal =
-          finalTotalDeductions - attendanceDeductionsTotal;
-        const earnedAfterAttendance =
-          grossPay + nonTaxableAllowance - attendanceDeductionsTotal;
-
-        let netPay = earnedAfterAttendance - nonAttendanceDeductionsTotal;
-
-        if (
-          nonAttendanceDeductionsTotal > earnedAfterAttendance &&
-          earnedAfterAttendance > 0
-        ) {
-          const excessDeductions =
-            nonAttendanceDeductionsTotal - earnedAfterAttendance;
-          pendingDeductions += excessDeductions;
-          const pendingDeductionIndex = deductions.findIndex(
-            (d) => d.name === "Pending Deductions (Previous Cutoff)",
-          );
-          if (pendingDeductionIndex >= 0) {
-            const pendingAmount = deductions[pendingDeductionIndex].amount;
-            if (excessDeductions >= pendingAmount) {
-              deductions.splice(pendingDeductionIndex, 1);
-            } else {
-              deductions[pendingDeductionIndex].amount =
-                pendingAmount - excessDeductions;
-            }
-          }
-          netPay = 0;
-        } else if (earnedAfterAttendance <= 0) {
-          pendingDeductions += nonAttendanceDeductionsTotal;
-          deductions = deductions.filter((d) => d.type === "attendance");
-          netPay = 0;
-        }
-
-        const employeeSSSAmount = getDeductionAmountByNames(deductions, [
-          "sss",
-        ]);
-        const employeePhilhealthAmount = getDeductionAmountByNames(deductions, [
-          "philhealth",
-        ]);
-        const employeePagibigAmount = getDeductionAmountByNames(deductions, [
-          "pag-ibig",
-          "pagibig",
-        ]);
-        const employerContributions: {
-          sss?: number;
-          philhealth?: number;
-          pagibig?: number;
-        } = {};
-        if (employeeSSSAmount > 0) {
-          employerContributions.sss = round2(
-            getSSSContributionByEmployeeDeduction(employeeSSSAmount)
-              .employerShare,
-          );
-        }
-        if (employeePhilhealthAmount > 0) {
-          employerContributions.philhealth = round2(employeePhilhealthAmount);
-        }
-        if (employeePagibigAmount > 0) {
-          employerContributions.pagibig = round2(employeePagibigAmount);
-        }
+        const canonical = await buildCanonicalPayrollResult(ctx, {
+          employeeId,
+          employee,
+          cutoffStart,
+          cutoffEnd,
+          payFrequency: payFrequencyUpdate,
+          payrollBase,
+          deductionsEnabled: runDeductionsEnabled,
+          taxSettings: taxSettingsUpdate,
+          govSettings,
+          manualDeductionEntry,
+          incentiveEntry,
+          excludePayrollRunId: args.payrollRunId,
+          nonTaxableAllowanceOverride: allowanceOverrideEntry?.amount,
+        });
 
         await ctx.db.insert(
           "payslips",
@@ -2787,16 +2508,13 @@ export const updatePayrollRun = mutation({
             period,
             periodStart: cutoffStart,
             periodEnd: cutoffEnd,
-            grossPay: round2(grossPay),
-            basicPay: round2(payrollBase.basicPay),
-            deductions: deductions.map((d) => ({
-              ...d,
-              amount: round2(d.amount),
-            })),
-            incentives: incentives.length > 0 ? incentives : undefined,
-            nonTaxableAllowance:
-              nonTaxableAllowance > 0 ? round2(nonTaxableAllowance) : undefined,
-            netPay: round2(netPay),
+            grossPay: canonical.grossPay,
+            basicPay: canonical.basicPay,
+            deductions: canonical.deductions,
+            incentives:
+              canonical.incentives.length > 0 ? canonical.incentives : undefined,
+            nonTaxableAllowance: canonical.nonTaxableAllowance,
+            netPay: canonical.netPay,
             daysWorked: payrollBase.daysWorked,
             absences: payrollBase.absences,
             lateHours: payrollBase.lateHours,
@@ -2844,17 +2562,13 @@ export const updatePayrollRun = mutation({
               payrollBase.overtimeLegalHolidayExcess > 0
                 ? round2(payrollBase.overtimeLegalHolidayExcess)
                 : undefined,
-            pendingDeductions:
-              pendingDeductions > 0 ? round2(pendingDeductions) : undefined,
+            pendingDeductions: canonical.pendingDeductions,
             noWorkNoPayDays:
               (payrollBase.noWorkNoPayDays ?? 0) > 0
                 ? payrollBase.noWorkNoPayDays
                 : undefined,
-            hasWorkedAtLeastOneDay,
-            employerContributions:
-              Object.keys(employerContributions).length > 0
-                ? employerContributions
-                : undefined,
+            hasWorkedAtLeastOneDay: canonical.hasWorkedAtLeastOneDay,
+            employerContributions: canonical.employerContributions,
             createdAt: Date.now(),
           }) as any,
         );
@@ -4674,28 +4388,14 @@ export const updatePayslip = mutation({
         ? args.nonTaxableAllowance
         : payslip.nonTaxableAllowance || 0;
 
-    const totalDeductions = newDeductions.reduce(
-      (sum: number, d: { amount: number }) => sum + d.amount,
-      0,
-    );
-    const totalIncentives = newIncentives.reduce(
-      (sum: number, inc: { amount: number }) => sum + inc.amount,
-      0,
-    );
-
-    // Recalculate gross pay and net pay
-    // Get basic pay from original gross pay minus original incentives
     const originalIncentives = payslip.incentives || [];
-    const originalTotalIncentives = originalIncentives.reduce(
-      (sum: number, inc: { amount: number }) => sum + inc.amount,
-      0,
-    );
-    const basicPay = payslip.grossPay - originalTotalIncentives;
-
-    const newGrossPay = round2(basicPay + totalIncentives);
-    const newNetPay = round2(
-      newGrossPay + newNonTaxableAllowance - totalDeductions,
-    );
+    const recalculatedTotals = recalculatePersistedPayslipTotals({
+      grossPay: payslip.grossPay ?? 0,
+      previousIncentives: originalIncentives,
+      nextIncentives: newIncentives,
+      nextDeductions: newDeductions,
+      nextNonTaxableAllowance: newNonTaxableAllowance,
+    });
     const editedEmployeeSSSAmount = getDeductionAmountByNames(newDeductions, [
       "sss",
     ]);
@@ -4809,8 +4509,8 @@ export const updatePayslip = mutation({
           newNonTaxableAllowance > 0
             ? round2(newNonTaxableAllowance)
             : undefined,
-        grossPay: newGrossPay,
-        netPay: newNetPay,
+        grossPay: recalculatedTotals.grossPay,
+        netPay: recalculatedTotals.netPay,
         employerContributions:
           Object.keys(updatedEmployerContributions).length > 0
             ? updatedEmployerContributions

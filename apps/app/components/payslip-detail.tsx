@@ -254,24 +254,16 @@ export function PayslipDetail({
   const storedUndertimeDeduction = getAttendanceDeductionAmount((name) =>
     name.includes("undertime"),
   );
-  const lateDeduction =
-    lateHours > 0
-      ? lateHours * hourlyRateBasicPlusAllowance
-      : storedLateDeduction || 0;
-  const undertimeDeduction =
-    undertimeHours > 0
-      ? undertimeHours * hourlyRateBasicPlusAllowance
-      : storedUndertimeDeduction || 0;
+  const lateDeduction = storedLateDeduction || 0;
+  const undertimeDeduction = storedUndertimeDeduction || 0;
   // Absence uses (basic + allowance) × 12/261
   const dailyRateForAbsence =
     salaryType === "monthly"
       ? (monthlySalary + (allowance ?? 0)) * (12 / dailyRateWorkingDaysPerYear)
       : dailyRate;
-  const absentDeduction =
-    getAttendanceDeductionAmount(
-      (name) => name.startsWith("absent") || name.startsWith("no work"),
-    ) ||
-    (salaryType === "monthly" ? calculatedAbsences * dailyRateForAbsence : 0);
+  const absentDeduction = getAttendanceDeductionAmount(
+    (name) => name.startsWith("absent") || name.startsWith("no work"),
+  );
   // Get attendance deductions by name for display (Special Holiday Late, Regular Holiday Late, Late)
   const attendanceDeductions =
     payslip.deductions?.filter((d: any) => d.type === "attendance") || [];
@@ -385,35 +377,13 @@ export function PayslipDetail({
                     : "Special Holiday"
       : "Holiday";
 
-  // Basic pay shows the full amount (₱5,000 for bi-monthly)
-  // Deductions are shown separately in the "Less" section
-  const basicPay = fullBasicPay;
-
-  // Gross pay is the taxable earnings before attendance deductions.
-  const taxableGrossEarnings = Math.max(
-    0,
-    storedGrossPay - absentDeduction - lateDeduction - undertimeDeduction,
-  );
+  const basicPay = payslip.basicPay ?? fullBasicPay;
+  const taxableGrossEarnings = storedGrossPay;
 
   // Non-taxable items (allowances, transportation)
-  const rawNonTaxableAllowance =
-    payslip.nonTaxableAllowance || employee?.compensation?.allowance || 0;
+  const rawNonTaxableAllowance = payslip.nonTaxableAllowance || 0;
   const transportation = 0; // Can be added later
-
-  // When attendance deductions exceed taxable gross, the unabsorbed deficit is
-  // applied against the non-taxable allowance as well. Without this, the payslip
-  // would show a ₱2,500 allowance with ₱0 net pay, which doesn't reconcile visually
-  // (basic + allowance − absences already collapsed the employee's take-home to 0).
-  const totalAttendanceDeductions =
-    absentDeduction + lateDeduction + undertimeDeduction;
-  const unabsorbedAbsence = Math.max(
-    0,
-    totalAttendanceDeductions - storedGrossPay,
-  );
-  const nonTaxableAllowance = Math.max(
-    0,
-    rawNonTaxableAllowance - unabsorbedAbsence,
-  );
+  const nonTaxableAllowance = rawNonTaxableAllowance;
 
   // Total earnings
   const totalEarnings =
@@ -476,14 +446,9 @@ export function PayslipDetail({
     (loanDeductionsWithAmount.reduce((s: number, d: any) => s + d.amount, 0) ||
       0);
 
-  // Net pay: when we display recomputed late/undertime (basic+allowance), adjust so slip totals stay consistent
-  const attendanceAdjustment =
-    lateDeduction -
-    storedLateDeduction +
-    (undertimeDeduction - storedUndertimeDeduction);
   const netPay =
     typeof payslip.netPay === "number"
-      ? Math.max(0, payslip.netPay - attendanceAdjustment)
+      ? Math.max(0, payslip.netPay)
       : Math.max(0, totalEarnings - totalDeductionsRightColumn);
 
   // Get specific deduction amounts
