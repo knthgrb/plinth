@@ -1502,6 +1502,12 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
       totalIncentives,
   );
 
+  const qualifiesForFirstCutoffTax =
+    !isDailyizedFirstCutoff || grossPay > 20_833;
+  if (!qualifiesForFirstCutoffTax) {
+    deductions = deductions.filter((line) => line.name !== "Withholding Tax");
+  }
+
   const sameMonthPreviousPayslips = await findSameMonthPreviousPayslips(ctx, {
     employeeId: args.employeeId,
     cutoffStart: args.cutoffStart,

@@ -27,6 +27,10 @@ export function PayslipDetail({
   const dateHired = employee?.employment?.hireDate
     ? format(new Date(employee.employment.hireDate), "MMMM dd, yyyy")
     : "N/A";
+  const hireDateTs =
+    typeof employee?.employment?.hireDate === "number"
+      ? employee.employment.hireDate
+      : undefined;
 
   const cutoffDate =
     cutoffStart && cutoffEnd
@@ -96,6 +100,12 @@ export function PayslipDetail({
   );
   const dailyRateWorkingDaysPerYear =
     settings?.payrollSettings?.dailyRateWorkingDaysPerYear ?? 261;
+  const isMidCutoffHire =
+    hireDateTs != null &&
+    cutoffStart != null &&
+    cutoffEnd != null &&
+    hireDateTs >= cutoffStart &&
+    hireDateTs <= cutoffEnd;
 
   // Calculate basic pay based on actual attendance
   // For monthly employees: daily rate = (basic + allowance?) × 12/261
@@ -228,6 +238,20 @@ export function PayslipDetail({
     dailyRate = monthlySalary * (12 / dailyRateWorkingDaysPerYear);
     hourlyRate = dailyRate / 8;
   }
+
+  const workedDaysDisplay = Number.isInteger(daysWorked)
+    ? String(daysWorked)
+    : daysWorked.toLocaleString("en-US", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      });
+  const firstCutoffPayLabel =
+    isMidCutoffHire && salaryType === "monthly"
+      ? `Pay (₱${dailyRate.toLocaleString("en-US", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })} × ${workedDaysDisplay} ${daysWorked === 1 ? "day" : "days"})`
+      : "Basic Pay";
 
   const getAttendanceDeductionAmount = (matcher: (name: string) => boolean) =>
     payslip.deductions?.reduce((sum: number, deduction: any) => {
@@ -378,10 +402,18 @@ export function PayslipDetail({
       : "Holiday";
 
   const basicPay = payslip.basicPay ?? fullBasicPay;
-  const taxableGrossEarnings = storedGrossPay;
+  const attendanceDeductionTotal =
+    absentDeduction + lateDeduction + undertimeDeduction;
+  const taxableGrossEarnings = Math.max(
+    0,
+    storedGrossPay - attendanceDeductionTotal,
+  );
 
   // Non-taxable items (allowances, transportation)
-  const rawNonTaxableAllowance = payslip.nonTaxableAllowance || 0;
+  const rawNonTaxableAllowance =
+    isMidCutoffHire && salaryType === "monthly"
+      ? 0
+      : payslip.nonTaxableAllowance || 0;
   const transportation = 0; // Can be added later
   const nonTaxableAllowance = rawNonTaxableAllowance;
 
@@ -526,7 +558,7 @@ export function PayslipDetail({
             <h2 className="font-bold text-lg mb-4">EARNINGS</h2>
             <div className="space-y-3">
               <div className="flex justify-between">
-                <span>Basic Pay</span>
+                <span>{firstCutoffPayLabel}</span>
                 <span className="font-semibold">
                   ₱
                   {basicPay.toLocaleString("en-US", {
