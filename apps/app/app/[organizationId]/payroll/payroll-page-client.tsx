@@ -169,6 +169,7 @@ import {
   createPayrollRun,
   getPayrollRuns,
   getPayslipsByPayrollRun,
+  getPayslipListByPayrollRun,
   updatePayslip,
   updatePayrollRunStatus,
   updatePayrollRun,
@@ -322,6 +323,15 @@ export default function PayrollPageClient() {
   >(null);
   const [payslipConcerns, setPayslipConcerns] = useState<Record<string, any[]>>(
     {},
+  );
+  const [payslipDetailsById, setPayslipDetailsById] = useState<
+    Record<string, any>
+  >({});
+  const [loadingPayslipDetailsById, setLoadingPayslipDetailsById] = useState<
+    Record<string, boolean>
+  >({});
+  const [expandedPayslipId, setExpandedPayslipId] = useState<string | null>(
+    null,
   );
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [summaryData, setSummaryData] = useState<any>(null);
@@ -596,25 +606,21 @@ export default function PayrollPageClient() {
     setSelectedPayrollRun(payrollRun);
     setIsViewPayslipsOpen(true);
     setIsLoadingPayslips(true);
+    setExpandedPayslipId(highlightPayslipId ?? null);
+    setPayslipDetailsById({});
+    setPayslipConcerns({});
     try {
-      const payslipsData = await getPayslipsByPayrollRun(payrollRun._id);
+      const payslipsData = await getPayslipListByPayrollRun(payrollRun._id);
       setPayslips(payslipsData);
 
-      const concernEntries = await Promise.all(
-        payslipsData.map(async (payslip: { _id: string }) => {
-          try {
-            const messages = await getPayslipMessages(payslip._id);
-            return [payslip._id, messages || []] as const;
-          } catch (error) {
-            console.error(
-              `Error loading concerns for payslip ${payslip._id}:`,
-              error,
-            );
-            return [payslip._id, []] as const;
-          }
-        }),
-      );
-      setPayslipConcerns(Object.fromEntries(concernEntries));
+      if (highlightPayslipId) {
+        const highlightedPayslip = payslipsData.find(
+          (payslip: { _id: string }) => payslip._id === highlightPayslipId,
+        );
+        if (highlightedPayslip) {
+          await handleOpenPayslipDetails(highlightedPayslip);
+        }
+      }
 
       // If highlighting a specific payslip, scroll to it after load
       if (highlightPayslipId) {
@@ -652,6 +658,51 @@ export default function PayrollPageClient() {
       });
     } finally {
       setIsLoadingPayslips(false);
+    }
+  };
+
+  const handleOpenPayslipDetails = async (payslipSummary: any) => {
+    const payslipId = payslipSummary._id;
+    setExpandedPayslipId((current) =>
+      current === payslipId ? null : payslipId,
+    );
+
+    if (payslipDetailsById[payslipId] || loadingPayslipDetailsById[payslipId]) {
+      return;
+    }
+
+    setLoadingPayslipDetailsById((prev) => ({
+      ...prev,
+      [payslipId]: true,
+    }));
+
+    try {
+      const detail = await getPayslip(payslipId);
+      setPayslipDetailsById((prev) => ({
+        ...prev,
+        [payslipId]: detail,
+      }));
+
+      const concernCount = detail?.concernSummary?.messageCount ?? 0;
+      if (concernCount > 0 && !payslipConcerns[payslipId]) {
+        const messages = await getPayslipMessages(payslipId);
+        setPayslipConcerns((prev) => ({
+          ...prev,
+          [payslipId]: messages || [],
+        }));
+      }
+    } catch (error) {
+      console.error("Error loading payslip details:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load payslip details",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingPayslipDetailsById((prev) => ({
+        ...prev,
+        [payslipId]: false,
+      }));
     }
   };
 
@@ -1012,16 +1063,22 @@ export default function PayrollPageClient() {
 
       if (selectedPayrollRun && isViewPayslipsOpen) {
         const updated = await getPayslip(editingPayslip._id);
-        const prevEmployee = payslips.find(
-          (p: { _id: string }) => p._id === editingPayslip._id,
-        )?.employee;
+        setPayslipDetailsById((prev) => ({
+          ...prev,
+          [editingPayslip._id]: updated,
+        }));
         setPayslips((prev) =>
-          prev.map((p: { _id: string; employee?: unknown }) =>
+          prev.map((p: any) =>
             p._id === editingPayslip._id
               ? {
                   ...p,
-                  ...updated,
-                  employee: prevEmployee ?? p.employee,
+                  grossPay: updated.grossPay ?? p.grossPay,
+                  basicPay: updated.basicPay ?? p.basicPay,
+                  nonTaxableAllowance:
+                    updated.nonTaxableAllowance ?? p.nonTaxableAllowance,
+                  netPay: updated.netPay ?? p.netPay,
+                  employee: updated.employee ?? p.employee,
+                  concernSummary: updated.concernSummary ?? p.concernSummary,
                 }
               : p,
           ),
@@ -2188,9 +2245,13 @@ export default function PayrollPageClient() {
               selectedPayrollRun={selectedPayrollRun}
               payslips={payslips}
               isLoadingPayslips={isLoadingPayslips}
+              payslipDetailsById={payslipDetailsById}
+              loadingPayslipDetailsById={loadingPayslipDetailsById}
+              expandedPayslipId={expandedPayslipId}
               payslipConcerns={payslipConcerns}
               currentOrganization={currentOrganization}
               isAdminOrAccounting={isAdminOrAccounting}
+              onTogglePayslip={handleOpenPayslipDetails}
               onEditPayslip={handleEditPayslip}
             />
           </Suspense>

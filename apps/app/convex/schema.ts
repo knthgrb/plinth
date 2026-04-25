@@ -491,6 +491,28 @@ export default defineSchema({
   payslips: defineTable({
     organizationId: v.id("organizations"),
     employeeId: v.id("employees"),
+    employeeSnapshot: v.optional(
+      v.union(
+        v.string(),
+        v.object({
+          personalInfo: v.object({
+            firstName: v.optional(v.string()),
+            lastName: v.optional(v.string()),
+            email: v.optional(v.string()),
+          }),
+          employment: v.object({
+            employeeId: v.optional(v.string()),
+            hireDate: v.optional(v.number()),
+            position: v.optional(v.string()),
+          }),
+          compensation: v.object({
+            salaryType: v.optional(v.string()),
+            basicSalary: v.optional(v.number()),
+            allowance: v.optional(v.number()),
+          }),
+        }),
+      ),
+    ),
     payrollRunId: v.id("payrollRuns"),
     period: v.string(),
     /**
@@ -591,6 +613,12 @@ export default defineSchema({
           ),
         }),
       ),
+    ),
+    concernSummary: v.optional(
+      v.object({
+        messageCount: v.number(),
+        lastMessageAt: v.optional(v.number()),
+      }),
     ),
     createdAt: v.number(),
   })

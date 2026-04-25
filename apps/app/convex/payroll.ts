@@ -193,6 +193,100 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+function buildEmployeeSnapshot(employee: any) {
+  return {
+    personalInfo: {
+      firstName: employee?.personalInfo?.firstName,
+      lastName: employee?.personalInfo?.lastName,
+      email: employee?.personalInfo?.email,
+    },
+    employment: {
+      employeeId: employee?.employment?.employeeId,
+      hireDate:
+        typeof employee?.employment?.hireDate === "number"
+          ? employee.employment.hireDate
+          : undefined,
+      position: employee?.employment?.position,
+    },
+    compensation: {
+      salaryType: employee?.compensation?.salaryType,
+      basicSalary:
+        typeof employee?.compensation?.basicSalary === "number"
+          ? employee.compensation.basicSalary
+          : undefined,
+      allowance:
+        typeof employee?.compensation?.allowance === "number"
+          ? employee.compensation.allowance
+          : undefined,
+    },
+  };
+}
+
+function getPayslipEmployeeFromSnapshot(payslip: any) {
+  const snapshot = payslip?.employeeSnapshot;
+  if (!snapshot || typeof snapshot !== "object") return null;
+  return {
+    _id: payslip.employeeId,
+    organizationId: payslip.organizationId,
+    personalInfo: snapshot.personalInfo ?? {},
+    employment: snapshot.employment ?? {},
+    compensation: snapshot.compensation ?? {},
+  };
+}
+
+function normalizeConcernSummary(summary: any) {
+  if (!summary || typeof summary !== "object") {
+    return {
+      messageCount: 0,
+      lastMessageAt: undefined,
+    };
+  }
+  return {
+    messageCount:
+      typeof summary.messageCount === "number" && summary.messageCount > 0
+        ? summary.messageCount
+        : 0,
+    lastMessageAt:
+      typeof summary.lastMessageAt === "number"
+        ? summary.lastMessageAt
+        : undefined,
+  };
+}
+
+async function computeConcernSummaryForPayslip(
+  ctx: any,
+  payslipId: any,
+  storedSummary?: any,
+) {
+  const normalized = normalizeConcernSummary(storedSummary);
+  if (normalized.messageCount > 0 || normalized.lastMessageAt != null) {
+    return normalized;
+  }
+
+  const messages = await (ctx.db.query("messages") as any)
+    .withIndex("by_payslip", (q: any) => q.eq("payslipId", payslipId))
+    .collect();
+
+  if (messages.length === 0) {
+    return normalized;
+  }
+
+  let lastMessageAt = 0;
+  for (const message of messages) {
+    if (
+      typeof message?.createdAt === "number" &&
+      message.createdAt > lastMessageAt
+    ) {
+      lastMessageAt = message.createdAt;
+    }
+  }
+
+  return {
+    messageCount: messages.length,
+    lastMessageAt: lastMessageAt || undefined,
+  };
+}
+
 type PreviousPayslipRecord = {
   pendingDeductions?: number;
   periodStart?: number;
@@ -2103,6 +2197,7 @@ export const createPayrollRun = mutation({
         encryptPayslipRowForDb({
           organizationId: args.organizationId,
           employeeId,
+          employeeSnapshot: buildEmployeeSnapshot(employee),
           payrollRunId,
           period,
           periodStart: args.cutoffStart,
@@ -2168,6 +2263,9 @@ export const createPayrollRun = mutation({
               : undefined,
           hasWorkedAtLeastOneDay: canonical.hasWorkedAtLeastOneDay,
           employerContributions: canonical.employerContributions,
+          concernSummary: {
+            messageCount: 0,
+          },
           createdAt: now,
         }) as any,
       );
@@ -2572,6 +2670,7 @@ export const updatePayrollRun = mutation({
           encryptPayslipRowForDb({
             organizationId: payrollRun.organizationId,
             employeeId,
+            employeeSnapshot: buildEmployeeSnapshot(employee),
             payrollRunId: args.payrollRunId,
             period,
             periodStart: cutoffStart,
@@ -2637,6 +2736,9 @@ export const updatePayrollRun = mutation({
                 : undefined,
             hasWorkedAtLeastOneDay: canonical.hasWorkedAtLeastOneDay,
             employerContributions: canonical.employerContributions,
+            concernSummary: {
+              messageCount: 0,
+            },
             createdAt: Date.now(),
           }) as any,
         );
@@ -3464,12 +3566,15 @@ export const create13thMonthRun = mutation({
     for (const employeeId of args.employeeIds) {
       const amt = amountMap.get(employeeId) ?? 0;
       if (amt <= 0) continue;
+      const employeeRow = await ctx.db.get(employeeId);
+      const employee = employeeRow ? decryptEmployeeFromDb(employeeRow as any) : null;
 
       await ctx.db.insert(
         "payslips",
         encryptPayslipRowForDb({
           organizationId: args.organizationId,
           employeeId,
+          employeeSnapshot: employee ? buildEmployeeSnapshot(employee) : undefined,
           payrollRunId,
           period,
           periodStart: yearStart,
@@ -3483,6 +3588,9 @@ export const create13thMonthRun = mutation({
           lateHours: 0,
           undertimeHours: 0,
           overtimeHours: 0,
+          concernSummary: {
+            messageCount: 0,
+          },
           createdAt: now,
         }) as any,
       );
@@ -3716,12 +3824,15 @@ export const createLeaveConversionRun = mutation({
     for (const employeeId of args.employeeIds) {
       const amt = amountMap.get(employeeId) ?? 0;
       if (amt <= 0) continue;
+      const employeeRow = await ctx.db.get(employeeId);
+      const employee = employeeRow ? decryptEmployeeFromDb(employeeRow as any) : null;
 
       await ctx.db.insert(
         "payslips",
         encryptPayslipRowForDb({
           organizationId: args.organizationId,
           employeeId,
+          employeeSnapshot: employee ? buildEmployeeSnapshot(employee) : undefined,
           payrollRunId,
           period,
           periodStart: yearStart,
@@ -3735,6 +3846,9 @@ export const createLeaveConversionRun = mutation({
           lateHours: 0,
           undertimeHours: 0,
           overtimeHours: 0,
+          concernSummary: {
+            messageCount: 0,
+          },
           createdAt: now,
         }) as any,
       );
@@ -4244,9 +4358,19 @@ export const getPayrollFinalizePayslipRecipients = query({
 
     for (const raw of payslipsRaw) {
       const payslip = decryptPayslipRowFromDb(raw)!;
-      const employeeRow = await ctx.db.get(payslip.employeeId);
-      if (!employeeRow) continue;
-      const employee = decryptEmployeeFromDb(employeeRow as any);
+      let employee = getPayslipEmployeeFromSnapshot(payslip);
+      if (!employee) {
+        const employeeRow = await ctx.db.get(payslip.employeeId);
+        if (!employeeRow) continue;
+        const decrypted = decryptEmployeeFromDb(employeeRow as any);
+        employee = {
+          _id: decrypted._id,
+          organizationId: decrypted.organizationId,
+          personalInfo: decrypted.personalInfo,
+          employment: decrypted.employment,
+          compensation: decrypted.compensation,
+        };
+      }
       const workEmail = String(employee.personalInfo?.email || "").trim();
       const name =
         `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`.trim();
@@ -4287,6 +4411,68 @@ export const getPayrollFinalizePayslipRecipients = query({
   },
 });
 
+export const getPayslipListByPayrollRun = query({
+  args: {
+    payrollRunId: v.id("payrollRuns"),
+  },
+  handler: async (ctx, args) => {
+    const payrollRun = await ctx.db.get(args.payrollRunId);
+    if (!payrollRun) throw new Error("Payroll run not found");
+
+    await checkAuth(ctx, payrollRun.organizationId);
+
+    const payslipsRaw = await (ctx.db.query("payslips") as any)
+      .withIndex("by_payroll_run", (q: any) =>
+        q.eq("payrollRunId", args.payrollRunId),
+      )
+      .collect();
+
+    return Promise.all(
+      payslipsRaw.map(async (raw: any) => {
+        const payslip = decryptPayslipRowFromDb(raw)!;
+        let employee = getPayslipEmployeeFromSnapshot(payslip);
+
+        if (!employee) {
+          const employeeRow = (await ctx.db.get(payslip.employeeId)) as any;
+          if (employeeRow) {
+            const decrypted = decryptEmployeeFromDb(employeeRow);
+            employee = {
+              _id: decrypted._id,
+              organizationId: decrypted.organizationId,
+              personalInfo: decrypted.personalInfo,
+              employment: decrypted.employment,
+              compensation: decrypted.compensation,
+            };
+          }
+        }
+
+        const concernSummary = await computeConcernSummaryForPayslip(
+          ctx,
+          payslip._id,
+          payslip.concernSummary,
+        );
+
+        return {
+          _id: payslip._id,
+          organizationId: payslip.organizationId,
+          employeeId: payslip.employeeId,
+          payrollRunId: payslip.payrollRunId,
+          period: payslip.period,
+          periodStart: payslip.periodStart,
+          periodEnd: payslip.periodEnd,
+          grossPay: payslip.grossPay ?? 0,
+          basicPay: payslip.basicPay ?? 0,
+          nonTaxableAllowance: payslip.nonTaxableAllowance ?? 0,
+          netPay: payslip.netPay ?? 0,
+          createdAt: payslip.createdAt,
+          employee,
+          concernSummary,
+        };
+      }),
+    );
+  },
+});
+
 // Get payslips by payroll run
 export const getPayslipsByPayrollRun = query({
   args: {
@@ -4296,7 +4482,7 @@ export const getPayslipsByPayrollRun = query({
     const payrollRun = await ctx.db.get(args.payrollRunId);
     if (!payrollRun) throw new Error("Payroll run not found");
 
-    const userRecord = await checkAuth(ctx, payrollRun.organizationId);
+    await checkAuth(ctx, payrollRun.organizationId);
 
     const payslipsRaw = await (ctx.db.query("payslips") as any)
       .withIndex("by_payroll_run", (q: any) =>
@@ -4304,31 +4490,35 @@ export const getPayslipsByPayrollRun = query({
       )
       .collect();
 
-    // Get employee details for each payslip
-    const payslipsWithEmployees = await Promise.all(
+    return Promise.all(
       payslipsRaw.map(async (raw: any) => {
         const payslip = decryptPayslipRowFromDb(raw)!;
-        const employeeRow = (await ctx.db.get(payslip.employeeId)) as any;
-        if (!employeeRow) {
-          return {
-            ...payslip,
-            employee: null,
-          };
+        let employee = getPayslipEmployeeFromSnapshot(payslip);
+        if (!employee) {
+          const employeeRow = (await ctx.db.get(payslip.employeeId)) as any;
+          if (employeeRow) {
+            const decrypted = decryptEmployeeFromDb(employeeRow);
+            employee = {
+              _id: decrypted._id,
+              organizationId: decrypted.organizationId,
+              personalInfo: decrypted.personalInfo,
+              employment: decrypted.employment,
+              compensation: decrypted.compensation,
+            };
+          }
         }
-        const employee = decryptEmployeeFromDb(employeeRow);
+
         return {
           ...payslip,
-          employee: {
-            _id: employee._id,
-            personalInfo: employee.personalInfo,
-            employment: employee.employment,
-            compensation: employee.compensation,
-          },
+          employee,
+          concernSummary: await computeConcernSummaryForPayslip(
+            ctx,
+            payslip._id,
+            payslip.concernSummary,
+          ),
         };
       }),
     );
-
-    return payslipsWithEmployees;
   },
 });
 
@@ -4404,7 +4594,30 @@ export const getPayslip = query({
       throw new Error("Not authorized");
     }
 
-    return payslip;
+    let employee = getPayslipEmployeeFromSnapshot(payslip);
+    if (!employee) {
+      const employeeRow = (await ctx.db.get(payslip.employeeId)) as any;
+      if (employeeRow) {
+        const decrypted = decryptEmployeeFromDb(employeeRow);
+        employee = {
+          _id: decrypted._id,
+          organizationId: decrypted.organizationId,
+          personalInfo: decrypted.personalInfo,
+          employment: decrypted.employment,
+          compensation: decrypted.compensation,
+        };
+      }
+    }
+
+    return {
+      ...payslip,
+      employee,
+      concernSummary: await computeConcernSummaryForPayslip(
+        ctx,
+        payslip._id,
+        payslip.concernSummary,
+      ),
+    };
   },
 });
 

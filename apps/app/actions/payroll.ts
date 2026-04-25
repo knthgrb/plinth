@@ -120,6 +120,10 @@ export async function getPayslipsByPayrollRun(payrollRunId: string) {
   return PayrollService.getPayslipsByPayrollRun(payrollRunId);
 }
 
+export async function getPayslipListByPayrollRun(payrollRunId: string) {
+  return PayrollService.getPayslipListByPayrollRun(payrollRunId);
+}
+
 export async function sendPayslipNotification(
   payslipId: string,
   method: "email" | "chat"

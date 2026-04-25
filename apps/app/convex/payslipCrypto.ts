@@ -59,6 +59,9 @@ export function encryptPayslipRowForDb(
       out.employerContributions,
     ) as any;
   }
+  if (out.employeeSnapshot && typeof out.employeeSnapshot === "object") {
+    out.employeeSnapshot = maybeEncryptJsonForStorage(out.employeeSnapshot) as any;
+  }
   return out;
 }
 
@@ -106,6 +109,18 @@ export function decryptPayslipRowFromDb(
       out.employerContributions = undefined;
     }
   }
+  if (typeof out.employeeSnapshot === "string") {
+    try {
+      out.employeeSnapshot = decryptJsonFromStorage(out.employeeSnapshot);
+    } catch {
+      out.employeeSnapshot = undefined;
+    }
+  } else if (
+    out.employeeSnapshot != null &&
+    typeof out.employeeSnapshot !== "object"
+  ) {
+    out.employeeSnapshot = undefined;
+  }
   return out;
 }
 
@@ -147,6 +162,13 @@ export function encryptPayslipPartialForDb(
     out.employerContributions = maybeEncryptJsonForStorage(
       out.employerContributions,
     ) as any;
+  }
+  if (
+    "employeeSnapshot" in out &&
+    out.employeeSnapshot &&
+    typeof out.employeeSnapshot === "object"
+  ) {
+    out.employeeSnapshot = maybeEncryptJsonForStorage(out.employeeSnapshot) as any;
   }
   return out;
 }

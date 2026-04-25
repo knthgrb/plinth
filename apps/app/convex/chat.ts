@@ -534,6 +534,31 @@ export const sendMessage = mutation({
       updatedAt: now,
     });
 
+    if (args.payslipId) {
+      const payslip = await ctx.db.get(args.payslipId);
+      if (payslip) {
+        const currentSummary =
+          (payslip as any).concernSummary &&
+          typeof (payslip as any).concernSummary === "object"
+            ? (payslip as any).concernSummary
+            : null;
+        const currentCount =
+          typeof currentSummary?.messageCount === "number"
+            ? currentSummary.messageCount
+            : 0;
+        const currentLastMessageAt =
+          typeof currentSummary?.lastMessageAt === "number"
+            ? currentSummary.lastMessageAt
+            : 0;
+        await ctx.db.patch(args.payslipId, {
+          concernSummary: {
+            messageCount: currentCount + 1,
+            lastMessageAt: Math.max(currentLastMessageAt, now),
+          },
+        });
+      }
+    }
+
     return messageId;
   },
 });

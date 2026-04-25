@@ -232,6 +232,16 @@ export class PayrollService {
     );
   }
 
+  static async getPayslipListByPayrollRun(payrollRunId: string) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.query as any)(
+      (api as any).payroll.getPayslipListByPayrollRun,
+      {
+        payrollRunId: payrollRunId as Id<"payrollRuns">,
+      }
+    );
+  }
+
   static async sendPayslipNotification(
     payslipId: string,
     method: "email" | "chat"
