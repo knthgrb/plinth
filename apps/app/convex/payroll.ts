@@ -1158,6 +1158,15 @@ function recalculatePersistedPayslipTotals(args: {
   };
 }
 
+function getExpectedCutoffAllowanceForEmployee(
+  employee: any,
+  payFrequency: PayFrequency,
+): number {
+  return round2(
+    getPerCutoffAmount(employee?.compensation?.allowance || 0, payFrequency),
+  );
+}
+
 type PayrollLine = {
   name: string;
   amount: number;
@@ -2335,11 +2344,17 @@ export const updatePayrollRun = mutation({
         const empRow = await ctx.db.get(empId);
         if (empRow) {
           const employee = decryptEmployeeFromDb(empRow as any);
-          const defaultAllow = getPerCutoffAmount(
-            employee.compensation.allowance || 0,
+          const defaultAllow = getExpectedCutoffAllowanceForEmployee(
+            employee,
             payFrequencyForAllowance,
           );
           const actualAllow = p.nonTaxableAllowance ?? 0;
+          const monthlyAllowance = round2(employee.compensation.allowance || 0);
+          const maxReasonableAllowance = Math.max(defaultAllow, monthlyAllowance);
+          if (actualAllow > maxReasonableAllowance) {
+            allowanceOverridesByEmp.delete(String(empId));
+            continue;
+          }
           if (
             Math.abs(round2(actualAllow) - round2(defaultAllow)) > 0.001
           ) {

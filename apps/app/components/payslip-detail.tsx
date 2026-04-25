@@ -193,6 +193,10 @@ export function PayslipDetail({
       ? "monthly"
       : "bimonthly";
   const payDivisor = orgPayFrequency === "monthly" ? 1 : 2;
+  const expectedCutoffAllowance =
+    salaryType === "monthly"
+      ? (employee?.compensation?.allowance ?? 0) / payDivisor
+      : employee?.compensation?.allowance ?? 0;
 
   if (salaryType === "monthly" && cutoffStart && cutoffEnd) {
     // Base pay per cutoff: full monthly or semi-monthly depending on org settings
@@ -410,12 +414,27 @@ export function PayslipDetail({
   );
 
   // Non-taxable items (allowances, transportation)
+  const storedNonTaxableAllowance = payslip.nonTaxableAllowance || 0;
+  const hasInvalidStoredAllowance =
+    salaryType === "monthly" &&
+    !isMidCutoffHire &&
+    storedNonTaxableAllowance >
+      Math.max(expectedCutoffAllowance, employee?.compensation?.allowance ?? 0);
   const rawNonTaxableAllowance =
     isMidCutoffHire && salaryType === "monthly"
       ? 0
-      : payslip.nonTaxableAllowance || 0;
+      : hasInvalidStoredAllowance
+        ? expectedCutoffAllowance
+        : storedNonTaxableAllowance;
   const transportation = 0; // Can be added later
-  const nonTaxableAllowance = rawNonTaxableAllowance;
+  const excessAttendanceOverTaxable = Math.max(
+    0,
+    attendanceDeductionTotal - storedGrossPay,
+  );
+  const nonTaxableAllowance = Math.max(
+    0,
+    rawNonTaxableAllowance - excessAttendanceOverTaxable,
+  );
 
   // Total earnings
   const totalEarnings =
