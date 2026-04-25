@@ -19,20 +19,42 @@ import {
   Clock,
   ArrowRight,
   Bell,
-  Receipt,
-  Calculator,
+  CheckCircle2,
+  Users,
+  PlaneTakeoff,
+  Sparkles,
 } from "lucide-react";
 import { useOrganization } from "@/hooks/organization-context";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { getOrganizationPath } from "@/utils/organization-routing";
-import { format } from "date-fns";
+import {
+  eachDayOfInterval,
+  endOfDay,
+  format,
+  startOfDay,
+  subDays,
+} from "date-fns";
 import Link from "next/link";
 import {
   DashboardOverviewHeader,
   DashboardMetricCard,
   type DateRangeOption,
 } from "@/components/dashboard";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 /** Dashboard view for accounting role: payroll, expense management, announcements */
 function AccountingDashboard({
@@ -227,6 +249,93 @@ function AccountingDashboard({
   );
 }
 
+const chartPalette = {
+  blue: "#4254ff",
+  cyan: "#18b5d6",
+  mint: "#3ecf8e",
+  gold: "#f4b740",
+  slate: "#5f6c8d",
+  surface: "#ffffff",
+  border: "#e7ebf3",
+  muted: "#6b7285",
+  grid: "#eef2f8",
+};
+
+function StripeKpiCard({
+  title,
+  value,
+  meta,
+  accent,
+}: {
+  title: string;
+  value: React.ReactNode;
+  meta: React.ReactNode;
+  accent: React.ReactNode;
+}) {
+  return (
+    <Card className="border-[#e7ebf3] bg-white shadow-[0_18px_50px_rgba(15,23,42,0.05)]">
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#6b7285]">
+              {title}
+            </p>
+            <div className="text-3xl font-semibold tracking-tight text-[#101828]">
+              {value}
+            </div>
+            <p className="text-sm text-[#667085]">{meta}</p>
+          </div>
+          <div className="rounded-2xl border border-[#edf1f7] bg-[#f8fafc] p-3 text-[#4254ff]">
+            {accent}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DashboardPanel({
+  eyebrow,
+  title,
+  description,
+  action,
+  children,
+  className = "",
+}: {
+  eyebrow: string;
+  title: string;
+  description?: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <Card
+      className={`border-[#e7ebf3] bg-white shadow-[0_20px_60px_rgba(15,23,42,0.06)] ${className}`}
+    >
+      <CardHeader className="space-y-3 border-b border-[#eef2f8] pb-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#7b8298]">
+              {eyebrow}
+            </p>
+            <CardTitle className="mt-2 text-xl font-semibold text-[#101828]">
+              {title}
+            </CardTitle>
+            {description ? (
+              <CardDescription className="mt-1 text-sm text-[#667085]">
+                {description}
+              </CardDescription>
+            ) : null}
+          </div>
+          {action}
+        </div>
+      </CardHeader>
+      <CardContent className="p-5">{children}</CardContent>
+    </Card>
+  );
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const { effectiveOrganizationId, currentOrganization } = useOrganization();
@@ -382,6 +491,124 @@ export default function DashboardPage() {
   }, [evaluations, employees]);
 
   const [dateRange, setDateRange] = useState<DateRangeOption>("7");
+  const rangeDays = Number(dateRange);
+
+  const now = useMemo(() => new Date(), []);
+  const rangeStart = useMemo(
+    () => startOfDay(subDays(now, rangeDays - 1)).getTime(),
+    [now, rangeDays],
+  );
+  const previousRangeStart = useMemo(
+    () => startOfDay(subDays(now, rangeDays * 2 - 1)).getTime(),
+    [now, rangeDays],
+  );
+  const previousRangeEnd = useMemo(
+    () => endOfDay(subDays(now, rangeDays)).getTime(),
+    [now, rangeDays],
+  );
+
+  const inRange = (value: number | undefined, start: number, end: number) =>
+    typeof value === "number" && value >= start && value <= end;
+
+  const totalEmployees = employees?.length ?? 0;
+  const recentHireCount = (employees ?? []).filter((employee: any) =>
+    inRange(employee?.employment?.hireDate, rangeStart, Date.now()),
+  ).length;
+  const previousHireCount = (employees ?? []).filter((employee: any) =>
+    inRange(
+      employee?.employment?.hireDate,
+      previousRangeStart,
+      previousRangeEnd,
+    ),
+  ).length;
+  const payrollInRange = (payrollRuns ?? []).filter((run: any) =>
+    inRange(run?.createdAt, rangeStart, Date.now()),
+  );
+  const previousPayrollInRange = (payrollRuns ?? []).filter((run: any) =>
+    inRange(run?.createdAt, previousRangeStart, previousRangeEnd),
+  );
+  const pendingLeaveCount = recentLeaveRequests.length;
+
+  const activitySeries = useMemo(() => {
+    const dayBuckets = eachDayOfInterval({
+      start: startOfDay(subDays(now, rangeDays - 1)),
+      end: startOfDay(now),
+    });
+
+    return dayBuckets.map((bucketDate) => {
+      const bucketStart = startOfDay(bucketDate).getTime();
+      const bucketEnd = endOfDay(bucketDate).getTime();
+      const hires = (employees ?? []).filter((employee: any) =>
+        inRange(employee?.employment?.hireDate, bucketStart, bucketEnd),
+      ).length;
+      const payroll = (payrollRuns ?? []).filter((run: any) =>
+        inRange(run?.createdAt, bucketStart, bucketEnd),
+      ).length;
+      const leave = recentLeaveRequests.filter((request: any) =>
+        inRange(
+          request?.createdAt ?? request?.startDate,
+          bucketStart,
+          bucketEnd,
+        ),
+      ).length;
+
+      return {
+        label: format(bucketDate, rangeDays <= 30 ? "MMM d" : "MMM d"),
+        hires,
+        payroll,
+        leave,
+      };
+    });
+  }, [employees, now, payrollRuns, rangeDays, recentLeaveRequests]);
+
+  const leaveTypeData = useMemo(() => {
+    const counts = new Map<string, number>();
+    recentLeaveRequests.forEach((request: any) => {
+      const key = request?.leaveType || "Other";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5);
+  }, [recentLeaveRequests]);
+
+  const payrollStatusData = useMemo(() => {
+    const source = payrollInRange.length > 0 ? payrollInRange : payrollRuns ?? [];
+    const buckets = ["draft", "processing", "finalized", "paid", "archived"];
+    return buckets
+      .map((status) => ({
+        status,
+        value: source.filter((run: any) => run.status === status).length,
+      }))
+      .filter((item) => item.value > 0);
+  }, [payrollInRange, payrollRuns]);
+
+  const operationsShareData = useMemo(
+    () => [
+      {
+        name: "Team",
+        value: totalEmployees,
+        color: chartPalette.blue,
+      },
+      {
+        name: "Pending leave",
+        value: pendingLeaveCount,
+        color: chartPalette.cyan,
+      },
+      {
+        name: "Payroll runs",
+        value: payrollInRange.length,
+        color: chartPalette.mint,
+      },
+      {
+        name: "Announcements",
+        value: recentAnnouncements.length,
+        color: chartPalette.gold,
+      },
+    ].filter((item) => item.value > 0),
+    [pendingLeaveCount, payrollInRange.length, recentAnnouncements.length, totalEmployees],
+  );
 
   if (!effectiveOrganizationId) return null;
 
@@ -434,372 +661,482 @@ export default function DashboardPage() {
 
   return (
     <MainLayout>
-      <div className="p-4 sm:p-6 lg:p-8">
-        <DashboardOverviewHeader
-          title="Your overview"
-          dateRange={dateRange}
-          onDateRangeChange={setDateRange}
-          compareLabel="Previous period"
-          actions={
-            <>
-              <Link
-                href={getOrganizationPath(effectiveOrganizationId, "/employees")}
-              >
-                <Button
-                  size="sm"
-                  className="bg-brand-purple hover:bg-brand-purple-hover text-white"
-                >
-                  + Add
-                </Button>
-              </Link>
-              <Button
-                size="sm"
-                variant="outline"
-                className="border-[rgb(230,230,230)]"
-              >
-                Edit
-              </Button>
-            </>
-          }
-        />
-
-        {upcomingEvaluations.length > 0 && (
-          <div className="mt-4 flex flex-wrap items-center gap-2 sm:gap-3 rounded-xl border border-[rgb(230,230,230)] bg-[rgb(250,250,250)] px-4 py-3 shadow-sm">
-            <div className="flex items-center gap-2 shrink-0">
-              <Calendar className="h-4 w-4 text-[rgb(120,120,120)] shrink-0" />
-              <span className="font-semibold text-sm text-[rgb(64,64,64)]">
-                Upcoming evaluation
-              </span>
-            </div>
-            <p className="text-sm text-[rgb(64,64,64)] min-w-0 flex-1">
-              {upcomingEvaluations.length === 1
-                ? `${upcomingEvaluations[0].employeeName} – ${format(
-                    new Date(upcomingEvaluations[0].date),
-                    "MMM d, yyyy",
-                  )} (${upcomingEvaluations[0].label})`
-                : upcomingEvaluations.length <= 3
-                  ? upcomingEvaluations
-                      .map(
-                        (u) =>
-                          `${u.employeeName} (${format(
-                            new Date(u.date),
-                            "MMM d",
-                          )})`,
-                      )
-                      .join(", ")
-                  : `${upcomingEvaluations.length} evaluations due this month: ${upcomingEvaluations
-                      .slice(0, 2)
-                      .map(
-                        (u) =>
-                          `${u.employeeName} (${format(
-                            new Date(u.date),
-                            "MMM d",
-                          )})`,
-                      )
-                      .join(", ")} and ${upcomingEvaluations.length - 2} more`}
-            </p>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                className="text-sm font-medium text-[#695eff] hover:text-[#5547e8]"
-                onClick={() => {
-                  const first = upcomingEvaluations[0];
-                  if (!first) {
-                    router.push(
-                      getOrganizationPath(
-                        effectiveOrganizationId,
-                        "/evaluations",
-                      ),
-                    );
-                    return;
-                  }
-                  const base = getOrganizationPath(
-                    effectiveOrganizationId,
-                    "/evaluations",
-                  );
-                  const url = `${base}?employeeId=${encodeURIComponent(
-                    first.employeeId,
-                  )}&label=${encodeURIComponent(
-                    first.label,
-                  )}&evaluationDate=${first.date}`;
-                  router.push(url);
-                }}
-              >
-                View
-              </button>
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(66,84,255,0.08),_transparent_32%),linear-gradient(180deg,_#f6f8fc_0%,_#eef3f9_100%)] p-4 sm:p-6 lg:p-8">
+        <div className="mx-auto max-w-7xl space-y-6">
+          <div className="overflow-hidden rounded-[32px] border border-[#dde4f0] bg-[linear-gradient(135deg,_rgba(255,255,255,0.98)_0%,_rgba(244,247,252,0.96)_52%,_rgba(234,241,255,0.92)_100%)] p-6 shadow-[0_30px_90px_rgba(15,23,42,0.08)] sm:p-8">
+            <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+              <div className="max-w-3xl">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[#6f78a8]">
+                  Workforce dashboard
+                </p>
+                <h1 className="mt-4 text-3xl font-semibold tracking-tight text-[#101828] sm:text-5xl">
+                  A cleaner pulse on people, payroll, and work queues.
+                </h1>
+                <p className="mt-4 max-w-2xl text-sm leading-6 text-[#667085] sm:text-base">
+                  We’re focusing this surface on the signals that actually matter here:
+                  headcount movement, leave pressure, payroll rhythm, and the items that
+                  need attention this period.
+                </p>
+              </div>
+              <DashboardOverviewHeader
+                className="w-full xl:w-auto"
+                title=""
+                dateRange={dateRange}
+                onDateRangeChange={setDateRange}
+                compareLabel="Previous period"
+                actions={
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      asChild
+                      size="sm"
+                      className="rounded-full bg-[#101828] px-4 text-white hover:bg-[#1d2939]"
+                    >
+                      <Link
+                        href={getOrganizationPath(
+                          effectiveOrganizationId,
+                          "/employees",
+                        )}
+                      >
+                        Add employee
+                      </Link>
+                    </Button>
+                    <Button
+                      asChild
+                      size="sm"
+                      variant="outline"
+                      className="rounded-full border-[#d7ddeb] bg-white/80 text-[#344054]"
+                    >
+                      <Link
+                        href={getOrganizationPath(
+                          effectiveOrganizationId,
+                          "/payroll",
+                        )}
+                      >
+                        Open payroll
+                      </Link>
+                    </Button>
+                  </div>
+                }
+              />
             </div>
           </div>
-        )}
 
-        <div className="mt-6 grid gap-4 sm:gap-6 md:grid-cols-2">
-          <DashboardMetricCard
-            title="Pending Leave Requests"
-            value={leaveRequests?.length ?? 0}
-            secondary="0 previous period"
-            asLink={getOrganizationPath(effectiveOrganizationId, "/leave")}
-            exploreHref={getOrganizationPath(effectiveOrganizationId, "/leave")}
-            moreDetailsHref={getOrganizationPath(
-              effectiveOrganizationId,
-              "/leave",
-            )}
-          />
-        </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StripeKpiCard
+              title="Headcount"
+              value={totalEmployees.toLocaleString()}
+              meta={`${recentHireCount} joined in the last ${rangeDays} days`}
+              accent={<Users className="h-5 w-5" />}
+            />
+            <StripeKpiCard
+              title="New hires"
+              value={recentHireCount.toLocaleString()}
+              meta={`${Math.max(recentHireCount - previousHireCount, 0)} more than previous period`}
+              accent={<UserPlus className="h-5 w-5" />}
+            />
+            <StripeKpiCard
+              title="Pending leave"
+              value={pendingLeaveCount.toLocaleString()}
+              meta="Open requests still waiting on action"
+              accent={<PlaneTakeoff className="h-5 w-5" />}
+            />
+            <StripeKpiCard
+              title="Payroll flow"
+              value={payrollInRange.length.toLocaleString()}
+              meta={`${previousPayrollInRange.length} runs in the previous period`}
+              accent={<DollarSign className="h-5 w-5" />}
+            />
+          </div>
 
-        <div className="mt-6 grid gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {/* Recent Announcements */}
-          <Card className="border-[rgb(230,230,230)]">
-            <CardHeader className="flex flex-row items-center justify-between p-4 sm:p-6">
-              <div>
-                <CardTitle className="text-base font-semibold sm:text-lg">
-                  Recent Announcements
-                </CardTitle>
-                <CardDescription className="text-xs sm:text-sm">
-                  Latest updates
-                </CardDescription>
+          <div className="grid gap-6 xl:grid-cols-12">
+            <DashboardPanel
+              eyebrow="Activity"
+              title="People and operations trend"
+              description="Daily movement across hires, payroll runs, and pending leave demand."
+              className="xl:col-span-8"
+            >
+              <div className="h-[320px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={activitySeries}>
+                    <defs>
+                      <linearGradient id="hiresFill" x1="0" x2="0" y1="0" y2="1">
+                        <stop offset="0%" stopColor={chartPalette.blue} stopOpacity={0.22} />
+                        <stop offset="100%" stopColor={chartPalette.blue} stopOpacity={0.03} />
+                      </linearGradient>
+                      <linearGradient id="payrollFill" x1="0" x2="0" y1="0" y2="1">
+                        <stop offset="0%" stopColor={chartPalette.mint} stopOpacity={0.2} />
+                        <stop offset="100%" stopColor={chartPalette.mint} stopOpacity={0.03} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid stroke={chartPalette.grid} vertical={false} />
+                    <XAxis
+                      dataKey="label"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: chartPalette.muted, fontSize: 12 }}
+                    />
+                    <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: chartPalette.muted, fontSize: 12 }}
+                      allowDecimals={false}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        borderRadius: 16,
+                        border: `1px solid ${chartPalette.border}`,
+                        boxShadow: "0 18px 40px rgba(15,23,42,0.08)",
+                      }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="hires"
+                      stroke={chartPalette.blue}
+                      strokeWidth={2.5}
+                      fill="url(#hiresFill)"
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="payroll"
+                      stroke={chartPalette.mint}
+                      strokeWidth={2.5}
+                      fill="url(#payrollFill)"
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="leave"
+                      stroke={chartPalette.cyan}
+                      strokeWidth={2.2}
+                      fillOpacity={0}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
-              <Bell className="h-4 w-4 sm:h-5 sm:w-5 text-[rgb(133,133,133)]" />
-            </CardHeader>
-            <CardContent className="p-4 sm:p-6 pt-0">
-              {recentAnnouncements && recentAnnouncements.length > 0 ? (
+            </DashboardPanel>
+
+            <DashboardPanel
+              eyebrow="Composition"
+              title="Operations mix"
+              description="A compact read on where the current workload is concentrated."
+              className="xl:col-span-4"
+            >
+              <div className="grid gap-5">
+                <div className="h-[220px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={operationsShareData}
+                        dataKey="value"
+                        innerRadius={54}
+                        outerRadius={82}
+                        paddingAngle={3}
+                        strokeWidth={0}
+                      >
+                        {operationsShareData.map((entry) => (
+                          <Cell key={entry.name} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={{
+                          borderRadius: 16,
+                          border: `1px solid ${chartPalette.border}`,
+                          boxShadow: "0 18px 40px rgba(15,23,42,0.08)",
+                        }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
                 <div className="space-y-3">
-                  {recentAnnouncements.map((announcement: any) => (
-                    <Link
-                      key={announcement._id}
-                      href={getOrganizationPath(
-                        effectiveOrganizationId,
-                        "/announcements",
-                      )}
-                      className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
+                  {operationsShareData.map((item) => (
+                    <div
+                      key={item.name}
+                      className="flex items-center justify-between rounded-2xl border border-[#eef2f8] bg-[#fbfcfe] px-4 py-3"
                     >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-[rgb(64,64,64)]">
-                          {announcement.title}
-                        </p>
-                        <p className="mt-1 text-xs text-[rgb(133,133,133)]">
-                          {format(
-                            new Date(announcement.publishedDate),
-                            "MMM d, yyyy",
-                          )}
-                        </p>
+                      <div className="flex items-center gap-3">
+                        <span
+                          className="h-2.5 w-2.5 rounded-full"
+                          style={{ backgroundColor: item.color }}
+                        />
+                        <span className="text-sm font-medium text-[#344054]">
+                          {item.name}
+                        </span>
                       </div>
-                    </Link>
+                      <span className="text-sm font-semibold text-[#101828]">
+                        {item.value}
+                      </span>
+                    </div>
                   ))}
+                </div>
+              </div>
+            </DashboardPanel>
+
+            <DashboardPanel
+              eyebrow="Leave"
+              title="Pending leave by type"
+              description="Where your current approval queue is clustering."
+              className="xl:col-span-4"
+            >
+              <div className="h-[240px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={leaveTypeData}>
+                    <CartesianGrid stroke={chartPalette.grid} vertical={false} />
+                    <XAxis
+                      dataKey="name"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: chartPalette.muted, fontSize: 12 }}
+                    />
+                    <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      allowDecimals={false}
+                      tick={{ fill: chartPalette.muted, fontSize: 12 }}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        borderRadius: 16,
+                        border: `1px solid ${chartPalette.border}`,
+                      }}
+                    />
+                    <Bar dataKey="value" fill={chartPalette.cyan} radius={[10, 10, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </DashboardPanel>
+
+            <DashboardPanel
+              eyebrow="Payroll"
+              title="Run status spread"
+              description="How runs are currently distributed across the payroll pipeline."
+              className="xl:col-span-4"
+            >
+              <div className="h-[240px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={payrollStatusData}>
+                    <CartesianGrid stroke={chartPalette.grid} vertical={false} />
+                    <XAxis
+                      dataKey="status"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: chartPalette.muted, fontSize: 12 }}
+                    />
+                    <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      allowDecimals={false}
+                      tick={{ fill: chartPalette.muted, fontSize: 12 }}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        borderRadius: 16,
+                        border: `1px solid ${chartPalette.border}`,
+                      }}
+                    />
+                    <Bar dataKey="value" fill={chartPalette.blue} radius={[10, 10, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </DashboardPanel>
+
+            <DashboardPanel
+              eyebrow="Calendar"
+              title="Upcoming evaluations"
+              description="The next check-ins that need attention this month."
+              className="xl:col-span-4"
+              action={
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="sm"
+                  className="rounded-full text-[#4254ff] hover:bg-[#eef1ff]"
+                >
                   <Link
                     href={getOrganizationPath(
                       effectiveOrganizationId,
-                      "/announcements",
+                      "/evaluations",
                     )}
-                    className="mt-2 flex items-center gap-1 text-sm font-medium text-brand-purple hover:text-brand-purple-hover"
                   >
-                    View all <ArrowRight className="h-3 w-3" />
+                    View all
                   </Link>
-                </div>
-              ) : (
-                <div className="py-4 text-center text-sm text-[rgb(133,133,133)]">
-                  No announcements yet
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Pending Leave Requests */}
-          <Card className="border-[rgb(230,230,230)]">
-            <CardHeader className="flex flex-row items-center justify-between p-4 sm:p-6">
-              <div>
-                <CardTitle className="text-base font-semibold sm:text-lg">
-                  Pending Leave Requests
-                </CardTitle>
-                <CardDescription className="text-xs sm:text-sm">
-                  Requires your attention
-                </CardDescription>
+                </Button>
+              }
+            >
+              <div className="space-y-3">
+                {upcomingEvaluations.length > 0 ? (
+                  upcomingEvaluations.slice(0, 4).map((item) => (
+                    <button
+                      key={`${item.employeeId}-${item.label}-${item.date}`}
+                      type="button"
+                      onClick={() => {
+                        const base = getOrganizationPath(
+                          effectiveOrganizationId,
+                          "/evaluations",
+                        );
+                        const url = `${base}?employeeId=${encodeURIComponent(
+                          item.employeeId,
+                        )}&label=${encodeURIComponent(
+                          item.label,
+                        )}&evaluationDate=${item.date}`;
+                        router.push(url);
+                      }}
+                      className="flex w-full items-center justify-between rounded-2xl border border-[#edf1f7] bg-[#fbfcfe] px-4 py-3 text-left transition-colors hover:bg-white"
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-[#101828]">
+                          {item.employeeName}
+                        </p>
+                        <p className="mt-1 text-xs text-[#667085]">
+                          {item.label}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-[#344054]">
+                          {format(new Date(item.date), "MMM d")}
+                        </p>
+                        <p className="mt-1 text-xs text-[#98a2b3]">
+                          {format(new Date(item.date), "yyyy")}
+                        </p>
+                      </div>
+                    </button>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-[#dbe3f1] bg-[#fbfcfe] px-4 py-8 text-center text-sm text-[#667085]">
+                    No evaluations due this month.
+                  </div>
+                )}
               </div>
-              <Clock className="h-4 w-4 sm:h-5 sm:w-5 text-orange-500" />
-            </CardHeader>
-            <CardContent className="p-4 sm:p-6 pt-0">
-              {recentLeaveRequests && recentLeaveRequests.length > 0 ? (
-                <div className="space-y-3">
-                  {recentLeaveRequests.map((request: any) => {
+            </DashboardPanel>
+          </div>
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <DashboardPanel
+              eyebrow="Queue"
+              title="Pending leave requests"
+              description="The specific requests sitting in your approval queue."
+              action={
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="sm"
+                  className="rounded-full text-[#4254ff] hover:bg-[#eef1ff]"
+                >
+                  <Link href={getOrganizationPath(effectiveOrganizationId, "/leave")}>
+                    Open leave
+                  </Link>
+                </Button>
+              }
+            >
+              <div className="space-y-3">
+                {recentLeaveRequests.length > 0 ? (
+                  recentLeaveRequests.map((request: any) => {
                     const employee = employees?.find(
                       (emp: any) => emp._id === request.employeeId,
                     );
                     return (
                       <Link
                         key={request._id}
-                        href={getOrganizationPath(
-                          effectiveOrganizationId,
-                          "/leave",
-                        )}
-                        className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
+                        href={getOrganizationPath(effectiveOrganizationId, "/leave")}
+                        className="flex items-start justify-between rounded-2xl border border-[#edf1f7] bg-[#fbfcfe] px-4 py-3 transition-colors hover:bg-white"
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-[rgb(64,64,64)]">
-                              {employee?.personalInfo?.firstName}{" "}
-                              {employee?.personalInfo?.lastName}
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-[#101828]">
+                            {employee?.personalInfo?.firstName}{" "}
+                            {employee?.personalInfo?.lastName}
+                          </p>
+                          <p className="mt-1 text-xs text-[#667085]">
+                            {request.leaveType} ·{" "}
+                            {format(new Date(request.startDate), "MMM d")} -{" "}
+                            {format(new Date(request.endDate), "MMM d")}
+                          </p>
+                        </div>
+                        <Badge className="rounded-full bg-[#fff3e8] px-2.5 py-1 text-[#b54708] hover:bg-[#fff3e8]">
+                          Pending
+                        </Badge>
+                      </Link>
+                    );
+                  })
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-[#dbe3f1] bg-[#fbfcfe] px-4 py-8 text-center text-sm text-[#667085]">
+                    No pending leave requests right now.
+                  </div>
+                )}
+              </div>
+            </DashboardPanel>
+
+            <DashboardPanel
+              eyebrow="Updates"
+              title="Payroll and company updates"
+              description="Recent payroll runs and announcements in one place."
+            >
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-[#101828]">
+                    <CheckCircle2 className="h-4 w-4 text-[#3ecf8e]" />
+                    Recent payroll runs
+                  </div>
+                  {recentPayrollRuns.length > 0 ? (
+                    recentPayrollRuns.map((run: any) => (
+                      <Link
+                        key={run._id}
+                        href={getOrganizationPath(effectiveOrganizationId, "/payroll")}
+                        className="block rounded-2xl border border-[#edf1f7] bg-[#fbfcfe] px-4 py-3 transition-colors hover:bg-white"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium text-[#101828]">
+                              {format(new Date(run.cutoffStart), "MMM d")} -{" "}
+                              {format(new Date(run.cutoffEnd), "MMM d, yyyy")}
                             </p>
-                            <p className="mt-1 text-xs text-[rgb(133,133,133)]">
-                              {request.leaveType} •{" "}
-                              {format(new Date(request.startDate), "MMM d")} -{" "}
-                              {format(new Date(request.endDate), "MMM d")}
+                            <p className="mt-1 text-xs text-[#667085]">
+                              Created {format(new Date(run.createdAt), "MMM d, yyyy")}
                             </p>
                           </div>
-                          <Badge className="shrink-0 bg-orange-100 text-orange-800 hover:bg-orange-100 text-xs">
-                            Pending
+                          <Badge variant="outline" className="rounded-full border-[#d9e0ee] bg-white text-[#475467]">
+                            {run.status}
                           </Badge>
                         </div>
                       </Link>
-                    );
-                  })}
-                  <Link
-                    href={getOrganizationPath(effectiveOrganizationId, "/leave")}
-                    className="mt-2 flex items-center gap-1 text-sm font-medium text-brand-purple hover:text-brand-purple-hover"
-                  >
-                    View all <ArrowRight className="h-3 w-3" />
-                  </Link>
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-[#dbe3f1] bg-[#fbfcfe] px-4 py-8 text-center text-sm text-[#667085]">
+                      No payroll runs yet.
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="py-4 text-center text-sm text-[rgb(133,133,133)]">
-                  No pending leave requests
-                </div>
-              )}
-            </CardContent>
-          </Card>
 
-          {/* Recent Payroll Runs */}
-          <Card className="border-[rgb(230,230,230)]">
-            <CardHeader className="flex flex-row items-center justify-between p-4 sm:p-6">
-              <div>
-                <CardTitle className="text-base font-semibold sm:text-lg">
-                  Recent Payroll Runs
-                </CardTitle>
-                <CardDescription className="text-xs sm:text-sm">
-                  Latest processed
-                </CardDescription>
-              </div>
-              <DollarSign className="h-5 w-5 text-green-500" />
-            </CardHeader>
-            <CardContent className="p-4 sm:p-6 pt-0">
-              {recentPayrollRuns && recentPayrollRuns.length > 0 ? (
                 <div className="space-y-3">
-                  {recentPayrollRuns.map((run: any) => (
-                    <Link
-                      key={run._id}
-                      href={getOrganizationPath(
-                        effectiveOrganizationId,
-                        "/payroll",
-                      )}
-                      className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-[rgb(64,64,64)]">
-                            {format(new Date(run.cutoffStart), "MMM d")} -{" "}
-                            {format(new Date(run.cutoffEnd), "MMM d, yyyy")}
-                          </p>
-                          <p className="mt-1 text-xs text-[rgb(133,133,133)]">
-                            {format(new Date(run.createdAt), "MMM d, yyyy")}
-                          </p>
-                        </div>
-                        <Badge
-                          className={
-                            run.status === "completed"
-                              ? "bg-green-100 text-green-800 hover:bg-green-100"
-                              : run.status === "processing"
-                                ? "bg-blue-100 text-blue-800 hover:bg-blue-100"
-                                : "bg-gray-100 text-gray-800 hover:bg-gray-100"
-                          }
-                          variant="outline"
-                        >
-                          {run.status}
-                        </Badge>
-                      </div>
-                    </Link>
-                  ))}
-                  <Link
-                    href={getOrganizationPath(
-                      effectiveOrganizationId,
-                      "/payroll",
-                    )}
-                    className="mt-2 flex items-center gap-1 text-sm font-medium text-brand-purple hover:text-brand-purple-hover"
-                  >
-                    View all <ArrowRight className="h-3 w-3" />
-                  </Link>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-[#101828]">
+                    <Sparkles className="h-4 w-4 text-[#4254ff]" />
+                    Recent announcements
+                  </div>
+                  {recentAnnouncements.length > 0 ? (
+                    recentAnnouncements.slice(0, 4).map((announcement: any) => (
+                      <Link
+                        key={announcement._id}
+                        href={getOrganizationPath(
+                          effectiveOrganizationId,
+                          "/announcements",
+                        )}
+                        className="block rounded-2xl border border-[#edf1f7] bg-[#fbfcfe] px-4 py-3 transition-colors hover:bg-white"
+                      >
+                        <p className="truncate text-sm font-medium text-[#101828]">
+                          {announcement.title}
+                        </p>
+                        <p className="mt-1 text-xs text-[#667085]">
+                          {format(new Date(announcement.publishedDate), "MMM d, yyyy")}
+                        </p>
+                      </Link>
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-[#dbe3f1] bg-[#fbfcfe] px-4 py-8 text-center text-sm text-[#667085]">
+                      No announcements published yet.
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="py-4 text-center text-sm text-[rgb(133,133,133)]">
-                  No payroll runs yet
-                </div>
-              )}
-            </CardContent>
-          </Card>
+              </div>
+            </DashboardPanel>
+          </div>
         </div>
-
-        {/* Quick Actions */}
-        <Card className="mt-6 border-[rgb(230,230,230)]">
-          <CardHeader className="p-4 sm:p-6">
-            <CardTitle className="text-base font-semibold sm:text-lg">
-              Quick Actions
-            </CardTitle>
-            <CardDescription className="text-xs sm:text-sm">
-              Common tasks and shortcuts
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="p-4 sm:p-6 pt-0">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <Link
-                href={getOrganizationPath(effectiveOrganizationId, "/employees")}
-              >
-                <Button
-                  variant="outline"
-                  className="h-auto w-full justify-start border-[rgb(230,230,230)] py-4 hover:bg-[rgb(250,250,250)]"
-                >
-                  <UserPlus className="mr-3 h-5 w-5 text-blue-600" />
-                  <div className="text-left">
-                    <div className="font-medium">Add Employee</div>
-                    <div className="text-xs text-[rgb(133,133,133)]">
-                      Add a new team member
-                    </div>
-                  </div>
-                </Button>
-              </Link>
-              <Link
-                href={getOrganizationPath(effectiveOrganizationId, "/payroll")}
-              >
-                <Button
-                  variant="outline"
-                  className="h-auto w-full justify-start border-[rgb(230,230,230)] py-4 hover:bg-[rgb(250,250,250)]"
-                >
-                  <DollarSign className="mr-3 h-5 w-5 text-green-600" />
-                  <div className="text-left">
-                    <div className="font-medium">Process Payroll</div>
-                    <div className="text-xs text-[rgb(133,133,133)]">
-                      Create a new payroll run
-                    </div>
-                  </div>
-                </Button>
-              </Link>
-              <Link
-                href={getOrganizationPath(
-                  effectiveOrganizationId,
-                  "/announcements",
-                )}
-              >
-                <Button
-                  variant="outline"
-                  className="h-auto w-full justify-start border-[rgb(230,230,230)] py-4 hover:bg-[rgb(250,250,250)]"
-                >
-                  <Bell className="mr-3 h-5 w-5 text-brand-purple" />
-                  <div className="text-left">
-                    <div className="font-medium">Create Announcement</div>
-                    <div className="text-xs text-[rgb(133,133,133)]">
-                      Share updates with team
-                    </div>
-                  </div>
-                </Button>
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </MainLayout>
   );

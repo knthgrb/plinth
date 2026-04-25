@@ -38,9 +38,13 @@ export function DashboardOverviewHeader({
   return (
     <div className={className}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-semibold tracking-tight text-[rgb(64,64,64)] sm:text-2xl">
-          {title}
-        </h1>
+        {title ? (
+          <h1 className="text-xl font-semibold tracking-tight text-[#101828] sm:text-2xl">
+            {title}
+          </h1>
+        ) : (
+          <div />
+        )}
         <div className="flex flex-wrap items-center gap-2">
           {onDateRangeChange && (
             <>
@@ -48,7 +52,7 @@ export function DashboardOverviewHeader({
                 value={dateRange}
                 onValueChange={(v) => onDateRangeChange(v as DateRangeOption)}
               >
-                <SelectTrigger className="h-9 w-auto min-w-[120px] border-[rgb(230,230,230)] bg-white text-sm font-medium text-[rgb(64,64,64)]">
+                <SelectTrigger className="h-10 min-w-[138px] rounded-full border-[#d7ddeb] bg-white/90 px-4 text-sm font-medium text-[#344054] shadow-sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -60,7 +64,7 @@ export function DashboardOverviewHeader({
                 </SelectContent>
               </Select>
               <Select defaultValue="previous">
-                <SelectTrigger className="h-9 w-auto min-w-[160px] border-[rgb(230,230,230)] bg-white text-sm font-medium text-[rgb(64,64,64)]">
+                <SelectTrigger className="h-10 min-w-[176px] rounded-full border-[#d7ddeb] bg-white/90 px-4 text-sm font-medium text-[#344054] shadow-sm">
                   <SelectValue>Compare {compareLabel}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
