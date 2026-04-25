@@ -273,7 +273,7 @@ function StripeKpiCard({
   accent: React.ReactNode;
 }) {
   return (
-    <Card className="border-[#e7ebf3] bg-white shadow-[0_18px_50px_rgba(15,23,42,0.05)]">
+    <Card className="border-[#dfe3ea] bg-[#f7f8fb] shadow-none">
       <CardContent className="p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-2">
@@ -285,7 +285,7 @@ function StripeKpiCard({
             </div>
             <p className="text-sm text-[#667085]">{meta}</p>
           </div>
-          <div className="rounded-2xl border border-[#edf1f7] bg-[#f8fafc] p-3 text-[#4254ff]">
+          <div className="rounded-2xl border border-[#e3e7ef] bg-[#f1f4f8] p-3 text-[#4254ff]">
             {accent}
           </div>
         </div>
@@ -311,9 +311,9 @@ function DashboardPanel({
 }) {
   return (
     <Card
-      className={`border-[#e7ebf3] bg-white shadow-[0_20px_60px_rgba(15,23,42,0.06)] ${className}`}
+      className={`border-[#dfe3ea] bg-[#f7f8fb] shadow-none ${className}`}
     >
-      <CardHeader className="space-y-3 border-b border-[#eef2f8] pb-4">
+      <CardHeader className="space-y-3 border-b border-[#e6eaf1] pb-4">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#7b8298]">
@@ -661,67 +661,15 @@ export default function DashboardPage() {
 
   return (
     <MainLayout>
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(66,84,255,0.08),_transparent_32%),linear-gradient(180deg,_#f6f8fc_0%,_#eef3f9_100%)] p-4 sm:p-6 lg:p-8">
-        <div className="mx-auto max-w-7xl space-y-6">
-          <div className="overflow-hidden rounded-[32px] border border-[#dde4f0] bg-[linear-gradient(135deg,_rgba(255,255,255,0.98)_0%,_rgba(244,247,252,0.96)_52%,_rgba(234,241,255,0.92)_100%)] p-6 shadow-[0_30px_90px_rgba(15,23,42,0.08)] sm:p-8">
-            <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-              <div className="max-w-3xl">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[#6f78a8]">
-                  Workforce dashboard
-                </p>
-                <h1 className="mt-4 text-3xl font-semibold tracking-tight text-[#101828] sm:text-5xl">
-                  A cleaner pulse on people, payroll, and work queues.
-                </h1>
-                <p className="mt-4 max-w-2xl text-sm leading-6 text-[#667085] sm:text-base">
-                  We’re focusing this surface on the signals that actually matter here:
-                  headcount movement, leave pressure, payroll rhythm, and the items that
-                  need attention this period.
-                </p>
-              </div>
-              <DashboardOverviewHeader
-                className="w-full xl:w-auto"
-                title=""
-                dateRange={dateRange}
-                onDateRangeChange={setDateRange}
-                compareLabel="Previous period"
-                actions={
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      asChild
-                      size="sm"
-                      className="rounded-full bg-[#101828] px-4 text-white hover:bg-[#1d2939]"
-                    >
-                      <Link
-                        href={getOrganizationPath(
-                          effectiveOrganizationId,
-                          "/employees",
-                        )}
-                      >
-                        Add employee
-                      </Link>
-                    </Button>
-                    <Button
-                      asChild
-                      size="sm"
-                      variant="outline"
-                      className="rounded-full border-[#d7ddeb] bg-white/80 text-[#344054]"
-                    >
-                      <Link
-                        href={getOrganizationPath(
-                          effectiveOrganizationId,
-                          "/payroll",
-                        )}
-                      >
-                        Open payroll
-                      </Link>
-                    </Button>
-                  </div>
-                }
-              />
-            </div>
+      <div className="min-h-screen bg-white p-4 sm:p-6 lg:p-8">
+        <div className="mx-auto max-w-7xl space-y-4">
+          <div className="border-b border-[#e6eaf1] pb-4">
+            <h1 className="text-3xl font-semibold tracking-tight text-[#101828]">
+              Your overview
+            </h1>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <StripeKpiCard
               title="Headcount"
               value={totalEmployees.toLocaleString()}
@@ -748,7 +696,7 @@ export default function DashboardPage() {
             />
           </div>
 
-          <div className="grid gap-6 xl:grid-cols-12">
+          <div className="grid gap-3 xl:grid-cols-12">
             <DashboardPanel
               eyebrow="Activity"
               title="People and operations trend"
@@ -850,7 +798,7 @@ export default function DashboardPage() {
                   {operationsShareData.map((item) => (
                     <div
                       key={item.name}
-                      className="flex items-center justify-between rounded-2xl border border-[#eef2f8] bg-[#fbfcfe] px-4 py-3"
+                      className="flex items-center justify-between rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3"
                     >
                       <div className="flex items-center gap-3">
                         <span
@@ -979,7 +927,7 @@ export default function DashboardPage() {
                         )}&evaluationDate=${item.date}`;
                         router.push(url);
                       }}
-                      className="flex w-full items-center justify-between rounded-2xl border border-[#edf1f7] bg-[#fbfcfe] px-4 py-3 text-left transition-colors hover:bg-white"
+                      className="flex w-full items-center justify-between rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3 text-left transition-colors hover:bg-[#f7f8fb]"
                     >
                       <div>
                         <p className="text-sm font-medium text-[#101828]">
@@ -1000,7 +948,7 @@ export default function DashboardPage() {
                     </button>
                   ))
                 ) : (
-                  <div className="rounded-2xl border border-dashed border-[#dbe3f1] bg-[#fbfcfe] px-4 py-8 text-center text-sm text-[#667085]">
+                  <div className="rounded-2xl border border-dashed border-[#d8dee7] bg-[#f3f4f6] px-4 py-8 text-center text-sm text-[#667085]">
                     No evaluations due this month.
                   </div>
                 )}
@@ -1008,7 +956,7 @@ export default function DashboardPage() {
             </DashboardPanel>
           </div>
 
-          <div className="grid gap-6 xl:grid-cols-2">
+          <div className="grid gap-3 xl:grid-cols-2">
             <DashboardPanel
               eyebrow="Queue"
               title="Pending leave requests"
@@ -1036,7 +984,7 @@ export default function DashboardPage() {
                       <Link
                         key={request._id}
                         href={getOrganizationPath(effectiveOrganizationId, "/leave")}
-                        className="flex items-start justify-between rounded-2xl border border-[#edf1f7] bg-[#fbfcfe] px-4 py-3 transition-colors hover:bg-white"
+                        className="flex items-start justify-between rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3 transition-colors hover:bg-[#f7f8fb]"
                       >
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-[#101828]">
@@ -1056,7 +1004,7 @@ export default function DashboardPage() {
                     );
                   })
                 ) : (
-                  <div className="rounded-2xl border border-dashed border-[#dbe3f1] bg-[#fbfcfe] px-4 py-8 text-center text-sm text-[#667085]">
+                  <div className="rounded-2xl border border-dashed border-[#d8dee7] bg-[#f3f4f6] px-4 py-8 text-center text-sm text-[#667085]">
                     No pending leave requests right now.
                   </div>
                 )}
@@ -1079,7 +1027,7 @@ export default function DashboardPage() {
                       <Link
                         key={run._id}
                         href={getOrganizationPath(effectiveOrganizationId, "/payroll")}
-                        className="block rounded-2xl border border-[#edf1f7] bg-[#fbfcfe] px-4 py-3 transition-colors hover:bg-white"
+                        className="block rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3 transition-colors hover:bg-[#f7f8fb]"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div>
@@ -1098,7 +1046,7 @@ export default function DashboardPage() {
                       </Link>
                     ))
                   ) : (
-                    <div className="rounded-2xl border border-dashed border-[#dbe3f1] bg-[#fbfcfe] px-4 py-8 text-center text-sm text-[#667085]">
+                    <div className="rounded-2xl border border-dashed border-[#d8dee7] bg-[#f3f4f6] px-4 py-8 text-center text-sm text-[#667085]">
                       No payroll runs yet.
                     </div>
                   )}
@@ -1117,7 +1065,7 @@ export default function DashboardPage() {
                           effectiveOrganizationId,
                           "/announcements",
                         )}
-                        className="block rounded-2xl border border-[#edf1f7] bg-[#fbfcfe] px-4 py-3 transition-colors hover:bg-white"
+                        className="block rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3 transition-colors hover:bg-[#f7f8fb]"
                       >
                         <p className="truncate text-sm font-medium text-[#101828]">
                           {announcement.title}
@@ -1128,7 +1076,7 @@ export default function DashboardPage() {
                       </Link>
                     ))
                   ) : (
-                    <div className="rounded-2xl border border-dashed border-[#dbe3f1] bg-[#fbfcfe] px-4 py-8 text-center text-sm text-[#667085]">
+                    <div className="rounded-2xl border border-dashed border-[#d8dee7] bg-[#f3f4f6] px-4 py-8 text-center text-sm text-[#667085]">
                       No announcements published yet.
                     </div>
                   )}
