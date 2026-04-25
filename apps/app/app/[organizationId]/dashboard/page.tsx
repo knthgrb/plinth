@@ -72,9 +72,7 @@ function AccountingDashboard({
 }) {
   const costItems = useQuery(
     (api as any).accounting.getCostItems,
-    organizationId
-      ? { organizationId: organizationId as any }
-      : "skip",
+    organizationId ? { organizationId: organizationId as any } : "skip",
   );
   const items = costItems ?? [];
   const totalPending = items
@@ -100,10 +98,7 @@ function AccountingDashboard({
           secondary="View and manage payroll"
           exploreHref={getOrganizationPath(organizationId, "/payroll")}
           exploreLabel="Explore"
-          moreDetailsHref={getOrganizationPath(
-            organizationId,
-            "/payroll",
-          )}
+          moreDetailsHref={getOrganizationPath(organizationId, "/payroll")}
           moreDetailsLabel="More details"
         />
         <DashboardMetricCard
@@ -114,15 +109,9 @@ function AccountingDashboard({
               ? `₱${totalPending.toLocaleString()} pending`
               : "Manage expenses"
           }
-          exploreHref={getOrganizationPath(
-            organizationId,
-            "/accounting",
-          )}
+          exploreHref={getOrganizationPath(organizationId, "/accounting")}
           exploreLabel="Explore"
-          moreDetailsHref={getOrganizationPath(
-            organizationId,
-            "/accounting",
-          )}
+          moreDetailsHref={getOrganizationPath(organizationId, "/accounting")}
           moreDetailsLabel="More details"
         />
       </div>
@@ -146,10 +135,7 @@ function AccountingDashboard({
                 {recentPayrollRuns.map((run: any) => (
                   <Link
                     key={run._id}
-                    href={getOrganizationPath(
-                      organizationId,
-                      "/payroll",
-                    )}
+                    href={getOrganizationPath(organizationId, "/payroll")}
                     className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -210,10 +196,7 @@ function AccountingDashboard({
                 {recentAnnouncements.slice(0, 3).map((announcement: any) => (
                   <Link
                     key={announcement._id}
-                    href={getOrganizationPath(
-                      organizationId,
-                      "/announcements",
-                    )}
+                    href={getOrganizationPath(organizationId, "/announcements")}
                     className="block rounded-lg border border-[rgb(230,230,230)] p-3 transition-colors hover:bg-[rgb(250,250,250)]"
                   >
                     <p className="truncate text-sm font-medium text-[rgb(64,64,64)]">
@@ -228,10 +211,7 @@ function AccountingDashboard({
                   </Link>
                 ))}
                 <Link
-                  href={getOrganizationPath(
-                    organizationId,
-                    "/announcements",
-                  )}
+                  href={getOrganizationPath(organizationId, "/announcements")}
                   className="mt-2 flex items-center gap-1 text-sm font-medium text-brand-purple hover:text-brand-purple-hover"
                 >
                   View all <ArrowRight className="h-3 w-3" />
@@ -310,9 +290,7 @@ function DashboardPanel({
   className?: string;
 }) {
   return (
-    <Card
-      className={`border-[#dfe3ea] bg-[#f7f8fb] shadow-none ${className}`}
-    >
+    <Card className={`border-[#dfe3ea] bg-white shadow-none ${className}`}>
       <CardHeader className="space-y-3 border-b border-[#e6eaf1] pb-4">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -574,7 +552,8 @@ export default function DashboardPage() {
   }, [recentLeaveRequests]);
 
   const payrollStatusData = useMemo(() => {
-    const source = payrollInRange.length > 0 ? payrollInRange : payrollRuns ?? [];
+    const source =
+      payrollInRange.length > 0 ? payrollInRange : (payrollRuns ?? []);
     const buckets = ["draft", "processing", "finalized", "paid", "archived"];
     return buckets
       .map((status) => ({
@@ -585,29 +564,35 @@ export default function DashboardPage() {
   }, [payrollInRange, payrollRuns]);
 
   const operationsShareData = useMemo(
-    () => [
-      {
-        name: "Team",
-        value: totalEmployees,
-        color: chartPalette.blue,
-      },
-      {
-        name: "Pending leave",
-        value: pendingLeaveCount,
-        color: chartPalette.cyan,
-      },
-      {
-        name: "Payroll runs",
-        value: payrollInRange.length,
-        color: chartPalette.mint,
-      },
-      {
-        name: "Announcements",
-        value: recentAnnouncements.length,
-        color: chartPalette.gold,
-      },
-    ].filter((item) => item.value > 0),
-    [pendingLeaveCount, payrollInRange.length, recentAnnouncements.length, totalEmployees],
+    () =>
+      [
+        {
+          name: "Team",
+          value: totalEmployees,
+          color: chartPalette.blue,
+        },
+        {
+          name: "Pending leave",
+          value: pendingLeaveCount,
+          color: chartPalette.cyan,
+        },
+        {
+          name: "Payroll runs",
+          value: payrollInRange.length,
+          color: chartPalette.mint,
+        },
+        {
+          name: "Announcements",
+          value: recentAnnouncements.length,
+          color: chartPalette.gold,
+        },
+      ].filter((item) => item.value > 0),
+    [
+      pendingLeaveCount,
+      payrollInRange.length,
+      recentAnnouncements.length,
+      totalEmployees,
+    ],
   );
 
   if (!effectiveOrganizationId) return null;
@@ -627,7 +612,9 @@ export default function DashboardPage() {
     return (
       <MainLayout>
         <div className="flex min-h-[50vh] items-center justify-center p-8">
-          <p className="text-sm text-[rgb(133,133,133)]">Unable to load your account.</p>
+          <p className="text-sm text-[rgb(133,133,133)]">
+            Unable to load your account.
+          </p>
         </div>
       </MainLayout>
     );
@@ -669,121 +656,98 @@ export default function DashboardPage() {
             </h1>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <StripeKpiCard
-              title="Headcount"
-              value={totalEmployees.toLocaleString()}
-              meta={`${recentHireCount} joined in the last ${rangeDays} days`}
-              accent={<Users className="h-5 w-5" />}
-            />
-            <StripeKpiCard
-              title="New hires"
-              value={recentHireCount.toLocaleString()}
-              meta={`${Math.max(recentHireCount - previousHireCount, 0)} more than previous period`}
-              accent={<UserPlus className="h-5 w-5" />}
-            />
-            <StripeKpiCard
-              title="Pending leave"
-              value={pendingLeaveCount.toLocaleString()}
-              meta="Open requests still waiting on action"
-              accent={<PlaneTakeoff className="h-5 w-5" />}
-            />
-            <StripeKpiCard
-              title="Payroll flow"
-              value={payrollInRange.length.toLocaleString()}
-              meta={`${previousPayrollInRange.length} runs in the previous period`}
-              accent={<DollarSign className="h-5 w-5" />}
-            />
-          </div>
+          <div className="bg-[#f7f8fb] rounded-lg p-2">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <StripeKpiCard
+                title="Headcount"
+                value={totalEmployees.toLocaleString()}
+                meta={`${recentHireCount} joined in the last ${rangeDays} days`}
+                accent={<Users className="h-5 w-5" />}
+              />
+              <StripeKpiCard
+                title="New hires"
+                value={recentHireCount.toLocaleString()}
+                meta={`${Math.max(recentHireCount - previousHireCount, 0)} more than previous period`}
+                accent={<UserPlus className="h-5 w-5" />}
+              />
+              <StripeKpiCard
+                title="Pending leave"
+                value={pendingLeaveCount.toLocaleString()}
+                meta="Open requests still waiting on action"
+                accent={<PlaneTakeoff className="h-5 w-5" />}
+              />
+              <StripeKpiCard
+                title="Payroll flow"
+                value={payrollInRange.length.toLocaleString()}
+                meta={`${previousPayrollInRange.length} runs in the previous period`}
+                accent={<DollarSign className="h-5 w-5" />}
+              />
+            </div>
 
-          <div className="grid gap-3 xl:grid-cols-12">
-            <DashboardPanel
-              eyebrow="Activity"
-              title="People and operations trend"
-              description="Daily movement across hires, payroll runs, and pending leave demand."
-              className="xl:col-span-8"
-            >
-              <div className="h-[320px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={activitySeries}>
-                    <defs>
-                      <linearGradient id="hiresFill" x1="0" x2="0" y1="0" y2="1">
-                        <stop offset="0%" stopColor={chartPalette.blue} stopOpacity={0.22} />
-                        <stop offset="100%" stopColor={chartPalette.blue} stopOpacity={0.03} />
-                      </linearGradient>
-                      <linearGradient id="payrollFill" x1="0" x2="0" y1="0" y2="1">
-                        <stop offset="0%" stopColor={chartPalette.mint} stopOpacity={0.2} />
-                        <stop offset="100%" stopColor={chartPalette.mint} stopOpacity={0.03} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid stroke={chartPalette.grid} vertical={false} />
-                    <XAxis
-                      dataKey="label"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: chartPalette.muted, fontSize: 12 }}
-                    />
-                    <YAxis
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: chartPalette.muted, fontSize: 12 }}
-                      allowDecimals={false}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        borderRadius: 16,
-                        border: `1px solid ${chartPalette.border}`,
-                        boxShadow: "0 18px 40px rgba(15,23,42,0.08)",
-                      }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="hires"
-                      stroke={chartPalette.blue}
-                      strokeWidth={2.5}
-                      fill="url(#hiresFill)"
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="payroll"
-                      stroke={chartPalette.mint}
-                      strokeWidth={2.5}
-                      fill="url(#payrollFill)"
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="leave"
-                      stroke={chartPalette.cyan}
-                      strokeWidth={2.2}
-                      fillOpacity={0}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </DashboardPanel>
-
-            <DashboardPanel
-              eyebrow="Composition"
-              title="Operations mix"
-              description="A compact read on where the current workload is concentrated."
-              className="xl:col-span-4"
-            >
-              <div className="grid gap-5">
-                <div className="h-[220px]">
+            <div className="grid gap-3 xl:grid-cols-12">
+              <DashboardPanel
+                eyebrow="Activity"
+                title="People and operations trend"
+                description="Daily movement across hires, payroll runs, and pending leave demand."
+                className="xl:col-span-8"
+              >
+                <div className="h-[320px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={operationsShareData}
-                        dataKey="value"
-                        innerRadius={54}
-                        outerRadius={82}
-                        paddingAngle={3}
-                        strokeWidth={0}
-                      >
-                        {operationsShareData.map((entry) => (
-                          <Cell key={entry.name} fill={entry.color} />
-                        ))}
-                      </Pie>
+                    <AreaChart data={activitySeries}>
+                      <defs>
+                        <linearGradient
+                          id="hiresFill"
+                          x1="0"
+                          x2="0"
+                          y1="0"
+                          y2="1"
+                        >
+                          <stop
+                            offset="0%"
+                            stopColor={chartPalette.blue}
+                            stopOpacity={0.22}
+                          />
+                          <stop
+                            offset="100%"
+                            stopColor={chartPalette.blue}
+                            stopOpacity={0.03}
+                          />
+                        </linearGradient>
+                        <linearGradient
+                          id="payrollFill"
+                          x1="0"
+                          x2="0"
+                          y1="0"
+                          y2="1"
+                        >
+                          <stop
+                            offset="0%"
+                            stopColor={chartPalette.mint}
+                            stopOpacity={0.2}
+                          />
+                          <stop
+                            offset="100%"
+                            stopColor={chartPalette.mint}
+                            stopOpacity={0.03}
+                          />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid
+                        stroke={chartPalette.grid}
+                        vertical={false}
+                      />
+                      <XAxis
+                        dataKey="label"
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: chartPalette.muted, fontSize: 12 }}
+                      />
+                      <YAxis
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: chartPalette.muted, fontSize: 12 }}
+                        allowDecimals={false}
+                      />
                       <Tooltip
                         contentStyle={{
                           borderRadius: 16,
@@ -791,298 +755,388 @@ export default function DashboardPage() {
                           boxShadow: "0 18px 40px rgba(15,23,42,0.08)",
                         }}
                       />
-                    </PieChart>
+                      <Area
+                        type="monotone"
+                        dataKey="hires"
+                        stroke={chartPalette.blue}
+                        strokeWidth={2.5}
+                        fill="url(#hiresFill)"
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="payroll"
+                        stroke={chartPalette.mint}
+                        strokeWidth={2.5}
+                        fill="url(#payrollFill)"
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="leave"
+                        stroke={chartPalette.cyan}
+                        strokeWidth={2.2}
+                        fillOpacity={0}
+                      />
+                    </AreaChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="space-y-3">
-                  {operationsShareData.map((item) => (
-                    <div
-                      key={item.name}
-                      className="flex items-center justify-between rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span
-                          className="h-2.5 w-2.5 rounded-full"
-                          style={{ backgroundColor: item.color }}
+              </DashboardPanel>
+
+              <DashboardPanel
+                eyebrow="Composition"
+                title="Operations mix"
+                description="A compact read on where the current workload is concentrated."
+                className="xl:col-span-4"
+              >
+                <div className="grid gap-5">
+                  <div className="h-[220px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={operationsShareData}
+                          dataKey="value"
+                          innerRadius={54}
+                          outerRadius={82}
+                          paddingAngle={3}
+                          strokeWidth={0}
+                        >
+                          {operationsShareData.map((entry) => (
+                            <Cell key={entry.name} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          contentStyle={{
+                            borderRadius: 16,
+                            border: `1px solid ${chartPalette.border}`,
+                            boxShadow: "0 18px 40px rgba(15,23,42,0.08)",
+                          }}
                         />
-                        <span className="text-sm font-medium text-[#344054]">
-                          {item.name}
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="space-y-3">
+                    {operationsShareData.map((item) => (
+                      <div
+                        key={item.name}
+                        className="flex items-center justify-between rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span
+                            className="h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: item.color }}
+                          />
+                          <span className="text-sm font-medium text-[#344054]">
+                            {item.name}
+                          </span>
+                        </div>
+                        <span className="text-sm font-semibold text-[#101828]">
+                          {item.value}
                         </span>
                       </div>
-                      <span className="text-sm font-semibold text-[#101828]">
-                        {item.value}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </DashboardPanel>
-
-            <DashboardPanel
-              eyebrow="Leave"
-              title="Pending leave by type"
-              description="Where your current approval queue is clustering."
-              className="xl:col-span-4"
-            >
-              <div className="h-[240px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={leaveTypeData}>
-                    <CartesianGrid stroke={chartPalette.grid} vertical={false} />
-                    <XAxis
-                      dataKey="name"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: chartPalette.muted, fontSize: 12 }}
-                    />
-                    <YAxis
-                      axisLine={false}
-                      tickLine={false}
-                      allowDecimals={false}
-                      tick={{ fill: chartPalette.muted, fontSize: 12 }}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        borderRadius: 16,
-                        border: `1px solid ${chartPalette.border}`,
-                      }}
-                    />
-                    <Bar dataKey="value" fill={chartPalette.cyan} radius={[10, 10, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </DashboardPanel>
-
-            <DashboardPanel
-              eyebrow="Payroll"
-              title="Run status spread"
-              description="How runs are currently distributed across the payroll pipeline."
-              className="xl:col-span-4"
-            >
-              <div className="h-[240px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={payrollStatusData}>
-                    <CartesianGrid stroke={chartPalette.grid} vertical={false} />
-                    <XAxis
-                      dataKey="status"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: chartPalette.muted, fontSize: 12 }}
-                    />
-                    <YAxis
-                      axisLine={false}
-                      tickLine={false}
-                      allowDecimals={false}
-                      tick={{ fill: chartPalette.muted, fontSize: 12 }}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        borderRadius: 16,
-                        border: `1px solid ${chartPalette.border}`,
-                      }}
-                    />
-                    <Bar dataKey="value" fill={chartPalette.blue} radius={[10, 10, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </DashboardPanel>
-
-            <DashboardPanel
-              eyebrow="Calendar"
-              title="Upcoming evaluations"
-              description="The next check-ins that need attention this month."
-              className="xl:col-span-4"
-              action={
-                <Button
-                  asChild
-                  variant="ghost"
-                  size="sm"
-                  className="rounded-full text-[#4254ff] hover:bg-[#eef1ff]"
-                >
-                  <Link
-                    href={getOrganizationPath(
-                      effectiveOrganizationId,
-                      "/evaluations",
-                    )}
-                  >
-                    View all
-                  </Link>
-                </Button>
-              }
-            >
-              <div className="space-y-3">
-                {upcomingEvaluations.length > 0 ? (
-                  upcomingEvaluations.slice(0, 4).map((item) => (
-                    <button
-                      key={`${item.employeeId}-${item.label}-${item.date}`}
-                      type="button"
-                      onClick={() => {
-                        const base = getOrganizationPath(
-                          effectiveOrganizationId,
-                          "/evaluations",
-                        );
-                        const url = `${base}?employeeId=${encodeURIComponent(
-                          item.employeeId,
-                        )}&label=${encodeURIComponent(
-                          item.label,
-                        )}&evaluationDate=${item.date}`;
-                        router.push(url);
-                      }}
-                      className="flex w-full items-center justify-between rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3 text-left transition-colors hover:bg-[#f7f8fb]"
-                    >
-                      <div>
-                        <p className="text-sm font-medium text-[#101828]">
-                          {item.employeeName}
-                        </p>
-                        <p className="mt-1 text-xs text-[#667085]">
-                          {item.label}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-semibold text-[#344054]">
-                          {format(new Date(item.date), "MMM d")}
-                        </p>
-                        <p className="mt-1 text-xs text-[#98a2b3]">
-                          {format(new Date(item.date), "yyyy")}
-                        </p>
-                      </div>
-                    </button>
-                  ))
-                ) : (
-                  <div className="rounded-2xl border border-dashed border-[#d8dee7] bg-[#f3f4f6] px-4 py-8 text-center text-sm text-[#667085]">
-                    No evaluations due this month.
+                    ))}
                   </div>
-                )}
-              </div>
-            </DashboardPanel>
-          </div>
+                </div>
+              </DashboardPanel>
 
-          <div className="grid gap-3 xl:grid-cols-2">
-            <DashboardPanel
-              eyebrow="Queue"
-              title="Pending leave requests"
-              description="The specific requests sitting in your approval queue."
-              action={
-                <Button
-                  asChild
-                  variant="ghost"
-                  size="sm"
-                  className="rounded-full text-[#4254ff] hover:bg-[#eef1ff]"
-                >
-                  <Link href={getOrganizationPath(effectiveOrganizationId, "/leave")}>
-                    Open leave
-                  </Link>
-                </Button>
-              }
-            >
-              <div className="space-y-3">
-                {recentLeaveRequests.length > 0 ? (
-                  recentLeaveRequests.map((request: any) => {
-                    const employee = employees?.find(
-                      (emp: any) => emp._id === request.employeeId,
-                    );
-                    return (
-                      <Link
-                        key={request._id}
-                        href={getOrganizationPath(effectiveOrganizationId, "/leave")}
-                        className="flex items-start justify-between rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3 transition-colors hover:bg-[#f7f8fb]"
+              <DashboardPanel
+                eyebrow="Leave"
+                title="Pending leave by type"
+                description="Where your current approval queue is clustering."
+                className="xl:col-span-4"
+              >
+                <div className="h-[240px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={leaveTypeData}>
+                      <CartesianGrid
+                        stroke={chartPalette.grid}
+                        vertical={false}
+                      />
+                      <XAxis
+                        dataKey="name"
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: chartPalette.muted, fontSize: 12 }}
+                      />
+                      <YAxis
+                        axisLine={false}
+                        tickLine={false}
+                        allowDecimals={false}
+                        tick={{ fill: chartPalette.muted, fontSize: 12 }}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          borderRadius: 16,
+                          border: `1px solid ${chartPalette.border}`,
+                        }}
+                      />
+                      <Bar
+                        dataKey="value"
+                        fill={chartPalette.cyan}
+                        radius={[10, 10, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </DashboardPanel>
+
+              <DashboardPanel
+                eyebrow="Payroll"
+                title="Run status spread"
+                description="How runs are currently distributed across the payroll pipeline."
+                className="xl:col-span-4"
+              >
+                <div className="h-[240px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={payrollStatusData}>
+                      <CartesianGrid
+                        stroke={chartPalette.grid}
+                        vertical={false}
+                      />
+                      <XAxis
+                        dataKey="status"
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: chartPalette.muted, fontSize: 12 }}
+                      />
+                      <YAxis
+                        axisLine={false}
+                        tickLine={false}
+                        allowDecimals={false}
+                        tick={{ fill: chartPalette.muted, fontSize: 12 }}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          borderRadius: 16,
+                          border: `1px solid ${chartPalette.border}`,
+                        }}
+                      />
+                      <Bar
+                        dataKey="value"
+                        fill={chartPalette.blue}
+                        radius={[10, 10, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </DashboardPanel>
+
+              <DashboardPanel
+                eyebrow="Calendar"
+                title="Upcoming evaluations"
+                description="The next check-ins that need attention this month."
+                className="xl:col-span-4"
+                action={
+                  <Button
+                    asChild
+                    variant="ghost"
+                    size="sm"
+                    className="rounded-full text-[#4254ff] hover:bg-[#eef1ff]"
+                  >
+                    <Link
+                      href={getOrganizationPath(
+                        effectiveOrganizationId,
+                        "/evaluations",
+                      )}
+                    >
+                      View all
+                    </Link>
+                  </Button>
+                }
+              >
+                <div className="space-y-3">
+                  {upcomingEvaluations.length > 0 ? (
+                    upcomingEvaluations.slice(0, 4).map((item) => (
+                      <button
+                        key={`${item.employeeId}-${item.label}-${item.date}`}
+                        type="button"
+                        onClick={() => {
+                          const base = getOrganizationPath(
+                            effectiveOrganizationId,
+                            "/evaluations",
+                          );
+                          const url = `${base}?employeeId=${encodeURIComponent(
+                            item.employeeId,
+                          )}&label=${encodeURIComponent(
+                            item.label,
+                          )}&evaluationDate=${item.date}`;
+                          router.push(url);
+                        }}
+                        className="flex w-full items-center justify-between rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3 text-left transition-colors hover:bg-[#f7f8fb]"
                       >
-                        <div className="min-w-0">
+                        <div>
                           <p className="text-sm font-medium text-[#101828]">
-                            {employee?.personalInfo?.firstName}{" "}
-                            {employee?.personalInfo?.lastName}
+                            {item.employeeName}
                           </p>
                           <p className="mt-1 text-xs text-[#667085]">
-                            {request.leaveType} ·{" "}
-                            {format(new Date(request.startDate), "MMM d")} -{" "}
-                            {format(new Date(request.endDate), "MMM d")}
+                            {item.label}
                           </p>
                         </div>
-                        <Badge className="rounded-full bg-[#fff3e8] px-2.5 py-1 text-[#b54708] hover:bg-[#fff3e8]">
-                          Pending
-                        </Badge>
-                      </Link>
-                    );
-                  })
-                ) : (
-                  <div className="rounded-2xl border border-dashed border-[#d8dee7] bg-[#f3f4f6] px-4 py-8 text-center text-sm text-[#667085]">
-                    No pending leave requests right now.
-                  </div>
-                )}
-              </div>
-            </DashboardPanel>
+                        <div className="text-right">
+                          <p className="text-sm font-semibold text-[#344054]">
+                            {format(new Date(item.date), "MMM d")}
+                          </p>
+                          <p className="mt-1 text-xs text-[#98a2b3]">
+                            {format(new Date(item.date), "yyyy")}
+                          </p>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-[#d8dee7] bg-[#f3f4f6] px-4 py-8 text-center text-sm text-[#667085]">
+                      No evaluations due this month.
+                    </div>
+                  )}
+                </div>
+              </DashboardPanel>
+            </div>
 
-            <DashboardPanel
-              eyebrow="Updates"
-              title="Payroll and company updates"
-              description="Recent payroll runs and announcements in one place."
-            >
-              <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-3 xl:grid-cols-2">
+              <DashboardPanel
+                eyebrow="Queue"
+                title="Pending leave requests"
+                description="The specific requests sitting in your approval queue."
+                action={
+                  <Button
+                    asChild
+                    variant="ghost"
+                    size="sm"
+                    className="rounded-full text-[#4254ff] hover:bg-[#eef1ff]"
+                  >
+                    <Link
+                      href={getOrganizationPath(
+                        effectiveOrganizationId,
+                        "/leave",
+                      )}
+                    >
+                      Open leave
+                    </Link>
+                  </Button>
+                }
+              >
                 <div className="space-y-3">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-[#101828]">
-                    <CheckCircle2 className="h-4 w-4 text-[#3ecf8e]" />
-                    Recent payroll runs
-                  </div>
-                  {recentPayrollRuns.length > 0 ? (
-                    recentPayrollRuns.map((run: any) => (
-                      <Link
-                        key={run._id}
-                        href={getOrganizationPath(effectiveOrganizationId, "/payroll")}
-                        className="block rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3 transition-colors hover:bg-[#f7f8fb]"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
+                  {recentLeaveRequests.length > 0 ? (
+                    recentLeaveRequests.map((request: any) => {
+                      const employee = employees?.find(
+                        (emp: any) => emp._id === request.employeeId,
+                      );
+                      return (
+                        <Link
+                          key={request._id}
+                          href={getOrganizationPath(
+                            effectiveOrganizationId,
+                            "/leave",
+                          )}
+                          className="flex items-start justify-between rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3 transition-colors hover:bg-[#f7f8fb]"
+                        >
+                          <div className="min-w-0">
                             <p className="text-sm font-medium text-[#101828]">
-                              {format(new Date(run.cutoffStart), "MMM d")} -{" "}
-                              {format(new Date(run.cutoffEnd), "MMM d, yyyy")}
+                              {employee?.personalInfo?.firstName}{" "}
+                              {employee?.personalInfo?.lastName}
                             </p>
                             <p className="mt-1 text-xs text-[#667085]">
-                              Created {format(new Date(run.createdAt), "MMM d, yyyy")}
+                              {request.leaveType} ·{" "}
+                              {format(new Date(request.startDate), "MMM d")} -{" "}
+                              {format(new Date(request.endDate), "MMM d")}
                             </p>
                           </div>
-                          <Badge variant="outline" className="rounded-full border-[#d9e0ee] bg-white text-[#475467]">
-                            {run.status}
+                          <Badge className="rounded-full bg-[#fff3e8] px-2.5 py-1 text-[#b54708] hover:bg-[#fff3e8]">
+                            Pending
                           </Badge>
-                        </div>
-                      </Link>
-                    ))
+                        </Link>
+                      );
+                    })
                   ) : (
                     <div className="rounded-2xl border border-dashed border-[#d8dee7] bg-[#f3f4f6] px-4 py-8 text-center text-sm text-[#667085]">
-                      No payroll runs yet.
+                      No pending leave requests right now.
                     </div>
                   )}
                 </div>
+              </DashboardPanel>
 
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-[#101828]">
-                    <Sparkles className="h-4 w-4 text-[#4254ff]" />
-                    Recent announcements
-                  </div>
-                  {recentAnnouncements.length > 0 ? (
-                    recentAnnouncements.slice(0, 4).map((announcement: any) => (
-                      <Link
-                        key={announcement._id}
-                        href={getOrganizationPath(
-                          effectiveOrganizationId,
-                          "/announcements",
-                        )}
-                        className="block rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3 transition-colors hover:bg-[#f7f8fb]"
-                      >
-                        <p className="truncate text-sm font-medium text-[#101828]">
-                          {announcement.title}
-                        </p>
-                        <p className="mt-1 text-xs text-[#667085]">
-                          {format(new Date(announcement.publishedDate), "MMM d, yyyy")}
-                        </p>
-                      </Link>
-                    ))
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-[#d8dee7] bg-[#f3f4f6] px-4 py-8 text-center text-sm text-[#667085]">
-                      No announcements published yet.
+              <DashboardPanel
+                eyebrow="Updates"
+                title="Payroll and company updates"
+                description="Recent payroll runs and announcements in one place."
+              >
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-[#101828]">
+                      <CheckCircle2 className="h-4 w-4 text-[#3ecf8e]" />
+                      Recent payroll runs
                     </div>
-                  )}
+                    {recentPayrollRuns.length > 0 ? (
+                      recentPayrollRuns.map((run: any) => (
+                        <Link
+                          key={run._id}
+                          href={getOrganizationPath(
+                            effectiveOrganizationId,
+                            "/payroll",
+                          )}
+                          className="block rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3 transition-colors hover:bg-[#f7f8fb]"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-medium text-[#101828]">
+                                {format(new Date(run.cutoffStart), "MMM d")} -{" "}
+                                {format(new Date(run.cutoffEnd), "MMM d, yyyy")}
+                              </p>
+                              <p className="mt-1 text-xs text-[#667085]">
+                                Created{" "}
+                                {format(new Date(run.createdAt), "MMM d, yyyy")}
+                              </p>
+                            </div>
+                            <Badge
+                              variant="outline"
+                              className="rounded-full border-[#d9e0ee] bg-white text-[#475467]"
+                            >
+                              {run.status}
+                            </Badge>
+                          </div>
+                        </Link>
+                      ))
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-[#d8dee7] bg-[#f3f4f6] px-4 py-8 text-center text-sm text-[#667085]">
+                        No payroll runs yet.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-[#101828]">
+                      <Sparkles className="h-4 w-4 text-[#4254ff]" />
+                      Recent announcements
+                    </div>
+                    {recentAnnouncements.length > 0 ? (
+                      recentAnnouncements
+                        .slice(0, 4)
+                        .map((announcement: any) => (
+                          <Link
+                            key={announcement._id}
+                            href={getOrganizationPath(
+                              effectiveOrganizationId,
+                              "/announcements",
+                            )}
+                            className="block rounded-2xl border border-[#e3e7ed] bg-[#f3f4f6] px-4 py-3 transition-colors hover:bg-[#f7f8fb]"
+                          >
+                            <p className="truncate text-sm font-medium text-[#101828]">
+                              {announcement.title}
+                            </p>
+                            <p className="mt-1 text-xs text-[#667085]">
+                              {format(
+                                new Date(announcement.publishedDate),
+                                "MMM d, yyyy",
+                              )}
+                            </p>
+                          </Link>
+                        ))
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-[#d8dee7] bg-[#f3f4f6] px-4 py-8 text-center text-sm text-[#667085]">
+                        No announcements published yet.
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </DashboardPanel>
+              </DashboardPanel>
+            </div>
           </div>
         </div>
       </div>
