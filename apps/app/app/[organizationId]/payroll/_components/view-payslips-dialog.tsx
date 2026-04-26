@@ -63,7 +63,7 @@ export function ViewPayslipsDialog({
                 No payslips found for this payroll run
               </div>
             ) : (
-              payslips.map((payslip: any, index: number) => {
+              payslips.map((payslip: any) => {
                 const detail = payslipDetailsById[payslip._id];
                 const isExpanded = expandedPayslipId === payslip._id;
                 const isLoadingDetail = loadingPayslipDetailsById[payslip._id];
@@ -83,9 +83,6 @@ export function ViewPayslipsDialog({
 
                 return (
                   <div key={payslip._id} data-payslip-id={payslip._id}>
-                    {index > 0 && (
-                      <div className="my-6 border-t-2 border-purple-500"></div>
-                    )}
                     <Card>
                       <CardContent className="p-4 space-y-4">
                         <div className="flex items-start justify-between gap-4">

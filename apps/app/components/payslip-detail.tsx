@@ -297,6 +297,15 @@ export function PayslipDetail({
     noWorkNoPayDays > 0
       ? "No work on a holiday"
       : "Absent";
+  const absenceLabel =
+    calculatedAbsences > 0
+      ? `(${calculatedAbsences} ${calculatedAbsences === 1 ? "day" : "days"})`
+      : "";
+  const lateMinutes = Math.round(lateHours * 60);
+  const lateLabel =
+    lateHours > 0
+      ? `(${lateMinutes} ${lateMinutes === 1 ? "min" : "mins"})`
+      : "";
   const holidayPayAmount = payslip.holidayPay ?? 0;
   const hasLegalHolidayOvertime = (payslip.overtimeLegalHoliday ?? 0) > 0;
   const hasSpecialHolidayOvertime = (payslip.overtimeSpecialHoliday ?? 0) > 0;
@@ -809,9 +818,7 @@ export function PayslipDetail({
                     {absentDeduction > 0 && (
                       <div className="flex justify-between">
                         <span>
-                          {lessPrimaryLabel}{" "}
-                          {calculatedAbsences > 0 &&
-                            `(${calculatedAbsences} days)`}
+                          {lessPrimaryLabel} {absenceLabel}
                         </span>
                         <span>
                           ₱
@@ -829,7 +836,7 @@ export function PayslipDetail({
                           {lateHours > 0 && (
                             <span className="text-muted-foreground font-normal">
                               {" "}
-                              ({Math.round(lateHours * 60)} min)
+                              {lateLabel}
                             </span>
                           )}
                         </span>
