@@ -39,6 +39,7 @@ import {
   FileSpreadsheet,
   Download,
   Loader2,
+  Trash2,
 } from "lucide-react";
 import { format } from "date-fns";
 import { PayrollRunsTable } from "./_components/payroll-runs-table";
@@ -375,7 +376,9 @@ export default function PayrollPageClient() {
     "idle" | "draft" | "finalized"
   >("idle");
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [payrollRunToDelete, setPayrollRunToDelete] = useState<any>(null);
+  const [payrollRunsToDelete, setPayrollRunsToDelete] = useState<any[]>([]);
+  const [isDeletingPayrollRun, setIsDeletingPayrollRun] = useState(false);
+  const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<
     "regular" | "13th_month" | "leave_conversion"
   >("regular");
@@ -508,6 +511,12 @@ export default function PayrollPageClient() {
       setPayrollRunsPage(1);
     }
   }, [payrollRunsPage, totalPayrollRunPages]);
+
+  useEffect(() => {
+    setSelectedRunIds((prev) =>
+      prev.filter((id) => payrollRuns.some((run) => String(run._id) === id)),
+    );
+  }, [payrollRuns]);
 
   const handleViewSummary = async (payrollRun: any) => {
     setSelectedPayrollRun(payrollRun);
@@ -729,21 +738,48 @@ export default function PayrollPageClient() {
   };
 
   const handleDeletePayrollRun = (payrollRun: any) => {
-    setPayrollRunToDelete(payrollRun);
+    setPayrollRunsToDelete([payrollRun]);
+    setIsDeleteDialogOpen(true);
+  };
+
+  const handleBulkDeletePayrollRuns = () => {
+    const selectedRuns = payrollRuns.filter((run) =>
+      selectedRunIds.includes(String(run._id)),
+    );
+    if (selectedRuns.length === 0) {
+      toast({
+        title: "No runs selected",
+        description: "Select at least one payroll run to delete.",
+      });
+      return;
+    }
+    setPayrollRunsToDelete(selectedRuns);
     setIsDeleteDialogOpen(true);
   };
 
   const confirmDeletePayrollRun = async () => {
-    if (!payrollRunToDelete) return;
+    if (payrollRunsToDelete.length === 0 || isDeletingPayrollRun) return;
 
+    setIsDeletingPayrollRun(true);
     try {
-      await deletePayrollRun(payrollRunToDelete._id);
+      for (const run of payrollRunsToDelete) {
+        await deletePayrollRun(run._id);
+      }
       await loadPayrollRuns();
       setIsDeleteDialogOpen(false);
-      setPayrollRunToDelete(null);
+      setPayrollRunsToDelete([]);
+      setSelectedRunIds((prev) =>
+        prev.filter(
+          (id) =>
+            !payrollRunsToDelete.some((run) => String(run._id) === String(id)),
+        ),
+      );
       toast({
         title: "Deleted",
-        description: "Payroll run deleted successfully.",
+        description:
+          payrollRunsToDelete.length > 1
+            ? `${payrollRunsToDelete.length} payroll runs deleted successfully.`
+            : "Payroll run deleted successfully.",
       });
     } catch (error: any) {
       toast({
@@ -751,6 +787,8 @@ export default function PayrollPageClient() {
         description: error.message || "Failed to delete payroll run",
         variant: "destructive",
       });
+    } finally {
+      setIsDeletingPayrollRun(false);
     }
   };
 
@@ -2195,17 +2233,52 @@ export default function PayrollPageClient() {
             <Card>
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-4 space-y-0">
                 <CardTitle>Payroll Runs</CardTitle>
-                <MonthPicker
-                  value={filterMonth}
-                  onChange={setFilterMonth}
-                  className="min-w-[220px]"
-                  triggerClassName="w-full sm:w-[220px]"
-                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleBulkDeletePayrollRuns}
+                    disabled={selectedRunIds.length === 0 || isDeletingPayrollRun}
+                  >
+                    {isDeletingPayrollRun ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="mr-2 h-4 w-4" />
+                    )}
+                    Delete Selected
+                  </Button>
+                  <MonthPicker
+                    value={filterMonth}
+                    onChange={setFilterMonth}
+                    className="min-w-[220px]"
+                    triggerClassName="w-full sm:w-[220px]"
+                  />
+                </div>
               </CardHeader>
               <CardContent>
                 <PayrollRunsTable
                   payrollRuns={paginatedPayrollRuns || []}
                   isLoading={!payrollRunsInitialReady}
+                  selectedRunIds={selectedRunIds}
+                  onToggleRunSelection={(runId, checked) => {
+                    setSelectedRunIds((prev) =>
+                      checked
+                        ? Array.from(new Set([...prev, runId]))
+                        : prev.filter((id) => id !== runId),
+                    );
+                  }}
+                  onToggleSelectAllVisible={(runIds, checked) => {
+                    setSelectedRunIds((prev) => {
+                      if (!checked) return prev.filter((id) => !runIds.includes(id));
+                      return Array.from(new Set([...prev, ...runIds]));
+                    });
+                  }}
+                  isDeletingRunId={
+                    isDeletingPayrollRun && payrollRunsToDelete.length === 1
+                      ? String(payrollRunsToDelete[0]._id)
+                      : null
+                  }
+                  disableSelection={isDeletingPayrollRun}
                   onViewSummary={handleViewSummary}
                   onViewPayslips={handleViewPayslips}
                   onEdit={handleEditPayrollRun}
@@ -2474,40 +2547,79 @@ export default function PayrollPageClient() {
         )}
 
         {/* Delete Confirmation Dialog */}
-        <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-          <DialogContent>
+        <Dialog
+          open={isDeleteDialogOpen}
+          onOpenChange={(open) => {
+            if (isDeletingPayrollRun) return;
+            setIsDeleteDialogOpen(open);
+            if (!open) setPayrollRunsToDelete([]);
+          }}
+        >
+          <DialogContent
+            onPointerDownOutside={(e) => isDeletingPayrollRun && e.preventDefault()}
+            onEscapeKeyDown={(e) => isDeletingPayrollRun && e.preventDefault()}
+          >
             <DialogHeader>
-              <DialogTitle>Delete Run</DialogTitle>
+              <DialogTitle>
+                {payrollRunsToDelete.length > 1
+                  ? `Delete ${payrollRunsToDelete.length} Runs`
+                  : "Delete Run"}
+              </DialogTitle>
               <DialogDescription>
-                Are you sure you want to delete this payroll run? This action
-                will permanently remove the payroll run, associated payslips,
-                and cost records. This action cannot be undone.
+                Are you sure you want to delete{" "}
+                {payrollRunsToDelete.length > 1
+                  ? "these payroll runs"
+                  : "this payroll run"}
+                ? This action will permanently remove the payroll run,
+                associated payslips, and cost records. This action cannot be
+                undone.
               </DialogDescription>
             </DialogHeader>
-            {payrollRunToDelete && (
+            {payrollRunsToDelete.length > 0 && (
               <div className="py-4">
                 <p className="text-sm text-gray-600">
-                  <span className="font-medium">Period:</span>{" "}
-                  {payrollRunToDelete.period}
+                  <span className="font-medium">Selected:</span>{" "}
+                  {payrollRunsToDelete.length} run
+                  {payrollRunsToDelete.length === 1 ? "" : "s"}
                 </p>
-                <p className="text-sm text-gray-600">
-                  <span className="font-medium">Status:</span>{" "}
-                  {payrollRunToDelete.status}
-                </p>
+                {payrollRunsToDelete.length === 1 && (
+                  <>
+                    <p className="text-sm text-gray-600">
+                      <span className="font-medium">Period:</span>{" "}
+                      {payrollRunsToDelete[0].period}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      <span className="font-medium">Status:</span>{" "}
+                      {payrollRunsToDelete[0].status}
+                    </p>
+                  </>
+                )}
               </div>
             )}
             <DialogFooter>
               <Button
                 variant="outline"
+                disabled={isDeletingPayrollRun}
                 onClick={() => {
                   setIsDeleteDialogOpen(false);
-                  setPayrollRunToDelete(null);
+                  setPayrollRunsToDelete([]);
                 }}
               >
                 Cancel
               </Button>
-              <Button variant="destructive" onClick={confirmDeletePayrollRun}>
-                Delete
+              <Button
+                variant="destructive"
+                onClick={confirmDeletePayrollRun}
+                disabled={isDeletingPayrollRun}
+              >
+                {isDeletingPayrollRun ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  "Delete"
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>

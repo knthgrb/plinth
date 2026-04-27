@@ -11,6 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,6 +35,11 @@ import { getStatusBadgeClass, getStatusBadgeStyle } from "@/utils/colors";
 interface PayrollRunsTableProps {
   payrollRuns: any[];
   isLoading?: boolean;
+  selectedRunIds?: string[];
+  onToggleRunSelection?: (runId: string, checked: boolean) => void;
+  onToggleSelectAllVisible?: (runIds: string[], checked: boolean) => void;
+  isDeletingRunId?: string | null;
+  disableSelection?: boolean;
   onViewSummary: (run: any) => void;
   onViewPayslips: (run: any) => void;
   onEdit: (run: any) => void;
@@ -47,6 +53,11 @@ interface PayrollRunsTableProps {
 export function PayrollRunsTable({
   payrollRuns,
   isLoading = false,
+  selectedRunIds = [],
+  onToggleRunSelection,
+  onToggleSelectAllVisible,
+  isDeletingRunId = null,
+  disableSelection = false,
   onViewSummary,
   onViewPayslips,
   onEdit,
@@ -55,10 +66,30 @@ export function PayrollRunsTable({
   onStatusChange,
   onDelete,
 }: PayrollRunsTableProps) {
+  const visibleRunIds = payrollRuns.map((run) => String(run._id));
+  const selectedVisibleCount = visibleRunIds.filter((id) =>
+    selectedRunIds.includes(id),
+  ).length;
+  const allVisibleSelected =
+    visibleRunIds.length > 0 && selectedVisibleCount === visibleRunIds.length;
+
   return (
     <Table>
       <TableHeader>
         <TableRow>
+          <TableHead className="w-10">
+            <Checkbox
+              checked={allVisibleSelected}
+              disabled={
+                disableSelection || visibleRunIds.length === 0 || !onToggleSelectAllVisible
+              }
+              onCheckedChange={(checked) => {
+                if (!onToggleSelectAllVisible) return;
+                onToggleSelectAllVisible(visibleRunIds, checked === true);
+              }}
+              aria-label="Select all visible payroll runs"
+            />
+          </TableHead>
           <TableHead>Period</TableHead>
           <TableHead>Status</TableHead>
           <TableHead>Processed Date</TableHead>
@@ -69,6 +100,9 @@ export function PayrollRunsTable({
         {isLoading ? (
           Array.from({ length: 6 }).map((_, i) => (
             <TableRow key={`sk-${i}`}>
+              <TableCell>
+                <div className="h-4 w-4 rounded bg-gray-200 animate-pulse" />
+              </TableCell>
               <TableCell>
                 <div className="h-4 w-40 max-w-full rounded bg-gray-200 animate-pulse" />
               </TableCell>
@@ -85,7 +119,7 @@ export function PayrollRunsTable({
           ))
         ) : payrollRuns?.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={4} className="text-center text-gray-500">
+            <TableCell colSpan={5} className="text-center text-gray-500">
               No payroll runs found
             </TableCell>
           </TableRow>
@@ -104,6 +138,16 @@ export function PayrollRunsTable({
 
             return (
               <TableRow key={run._id}>
+                <TableCell>
+                  <Checkbox
+                    checked={selectedRunIds.includes(String(run._id))}
+                    disabled={disableSelection}
+                    onCheckedChange={(checked) =>
+                      onToggleRunSelection?.(String(run._id), checked === true)
+                    }
+                    aria-label={`Select payroll run ${periodDisplay}`}
+                  />
+                </TableCell>
                 <TableCell>{periodDisplay}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">
@@ -209,14 +253,19 @@ export function PayrollRunsTable({
                         )}
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
+                          disabled={disableSelection || isDeletingRunId === run._id}
                           onClick={(e) => {
                             e.stopPropagation();
                             onDelete(run);
                           }}
                           className="text-red-600"
                         >
-                          <Trash2 className="h-4 w-4 mr-2" />
-                          Delete Run
+                          {isDeletingRunId === run._id ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4 mr-2" />
+                          )}
+                          {isDeletingRunId === run._id ? "Deleting..." : "Delete Run"}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>

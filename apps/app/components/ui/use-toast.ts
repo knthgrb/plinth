@@ -6,6 +6,7 @@ import type { ToastActionElement, ToastProps } from "@/components/ui/toast";
 
 const TOAST_LIMIT = 1;
 const TOAST_REMOVE_DELAY = 5000;
+const TOAST_AUTO_DISMISS_DELAY = 4000;
 
 type ToasterToast = ToastProps & {
   id: string;
@@ -54,6 +55,7 @@ interface State {
 }
 
 const toastTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+const toastAutoDismissTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
 const addToRemoveQueue = (toastId: string) => {
   if (toastTimeouts.has(toastId)) {
@@ -91,9 +93,19 @@ export const reducer = (state: State, action: Action): State => {
       const { toastId } = action;
 
       if (toastId) {
+        const autoDismissTimeout = toastAutoDismissTimeouts.get(toastId);
+        if (autoDismissTimeout) {
+          clearTimeout(autoDismissTimeout);
+          toastAutoDismissTimeouts.delete(toastId);
+        }
         addToRemoveQueue(toastId);
       } else {
         state.toasts.forEach((toast) => {
+          const autoDismissTimeout = toastAutoDismissTimeouts.get(toast.id);
+          if (autoDismissTimeout) {
+            clearTimeout(autoDismissTimeout);
+            toastAutoDismissTimeouts.delete(toast.id);
+          }
           addToRemoveQueue(toast.id);
         });
       }
@@ -112,10 +124,17 @@ export const reducer = (state: State, action: Action): State => {
     }
     case "REMOVE_TOAST":
       if (action.toastId === undefined) {
+        toastAutoDismissTimeouts.forEach((timeout) => clearTimeout(timeout));
+        toastAutoDismissTimeouts.clear();
         return {
           ...state,
           toasts: [],
         };
+      }
+      const autoDismissTimeout = toastAutoDismissTimeouts.get(action.toastId);
+      if (autoDismissTimeout) {
+        clearTimeout(autoDismissTimeout);
+        toastAutoDismissTimeouts.delete(action.toastId);
       }
       return {
         ...state,
@@ -158,6 +177,18 @@ function toast({ ...props }: Toast) {
       },
     },
   });
+
+  const autoDismissAfter =
+    typeof props.duration === "number" ? props.duration : TOAST_AUTO_DISMISS_DELAY;
+  if (Number.isFinite(autoDismissAfter) && autoDismissAfter > 0) {
+    const timeout = setTimeout(() => {
+      toastAutoDismissTimeouts.delete(id);
+      dismiss();
+    }, autoDismissAfter);
+    const existingTimeout = toastAutoDismissTimeouts.get(id);
+    if (existingTimeout) clearTimeout(existingTimeout);
+    toastAutoDismissTimeouts.set(id, timeout);
+  }
 
   return {
     id: id,
