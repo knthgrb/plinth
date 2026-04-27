@@ -199,6 +199,11 @@ type EmployeeIncentive = {
   incentives: Deduction[];
 };
 
+type PreviewPayslipEdits = {
+  deductions: Deduction[];
+  incentives: Deduction[];
+};
+
 type GovernmentDeductionSettings = {
   employeeId: string;
   sss: { enabled: boolean; frequency: "full" | "half" };
@@ -1478,6 +1483,30 @@ export default function PayrollPageClient() {
     setSubmitStatus(status);
     setIsProcessing(true);
     try {
+      const previewEditsByEmployeeId = previewData.reduce<
+        Record<string, PreviewPayslipEdits>
+      >((acc, row) => {
+        const employeeId = row?.employee?._id;
+        if (!employeeId) return acc;
+        acc[employeeId] = {
+          deductions: Array.isArray(row.deductions)
+            ? row.deductions.map((deduction: Deduction) => ({
+                name: deduction.name,
+                amount: deduction.amount,
+                type: deduction.type || "custom",
+              }))
+            : [],
+          incentives: Array.isArray(row.incentives)
+            ? row.incentives.map((incentive: Deduction) => ({
+                name: incentive.name,
+                amount: incentive.amount,
+                type: incentive.type || "incentive",
+              }))
+            : [],
+        };
+        return acc;
+      }, {});
+
       // Use preview data (including "Edit deductions" overrides) when available so saved amounts match what user saw
       let manualDeductions: {
         employeeId: string;
@@ -1533,6 +1562,27 @@ export default function PayrollPageClient() {
           manualDeductions.length > 0 ? manualDeductions : undefined,
         incentives: incentives.length > 0 ? incentives : undefined,
       });
+
+      // Ensure Step 5 edits are persisted to generated payslips before user saves as
+      // draft/finalize, so the review state and stored state always match.
+      if (payrollRunId && Object.keys(previewEditsByEmployeeId).length > 0) {
+        const createdPayslips = await getPayslipsByPayrollRun(payrollRunId);
+        await Promise.all(
+          (createdPayslips || []).map(async (payslip: any) => {
+            const employeeId = String(
+              payslip.employeeId ?? payslip.employee?._id ?? "",
+            );
+            const edits = previewEditsByEmployeeId[employeeId];
+            if (!edits) return;
+            await updatePayslip({
+              payslipId: payslip._id,
+              deductions: edits.deductions,
+              incentives:
+                edits.incentives.length > 0 ? edits.incentives : undefined,
+            });
+          }),
+        );
+      }
 
       // Finalize: show recipient dialog (emails only for employees with Plinth accounts)
       if (status === "finalized" && payrollRunId) {

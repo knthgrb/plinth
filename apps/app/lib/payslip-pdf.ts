@@ -2,6 +2,10 @@ import "server-only";
 
 import PDFDocument from "pdfkit";
 import { getPayslipPdfOpenPassword } from "@/lib/payslip-pdf-password";
+import {
+  formatManilaNumericDate,
+  formatManilaShortDate,
+} from "@/lib/manila-date";
 
 function num(x: unknown): number {
   if (typeof x === "number" && !Number.isNaN(x)) return x;
@@ -109,7 +113,7 @@ export function renderPayslipPdfBuffer(args: {
     `plinth-owner-${process.env.CONVEX_DEPLOYMENT ?? "dev"}`;
 
   const p = args.payslip;
-  const period = String(p.period ?? "");
+  const period = `${formatManilaNumericDate(args.cutoffStart)} to ${formatManilaNumericDate(args.cutoffEnd)}`;
   const deductions = asDeductionArray(p.deductions);
   const incentives = asIncentiveArray(p.incentives);
   const gross = num(p.grossPay);
@@ -130,16 +134,8 @@ export function renderPayslipPdfBuffer(args: {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    const start = new Date(args.cutoffStart).toLocaleDateString("en-PH", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-    const end = new Date(args.cutoffEnd).toLocaleDateString("en-PH", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+    const start = formatManilaShortDate(args.cutoffStart);
+    const end = formatManilaShortDate(args.cutoffEnd);
 
     const pageWidth =
       doc.page.width - doc.page.margins.left - doc.page.margins.right;

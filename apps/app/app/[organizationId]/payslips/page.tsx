@@ -50,6 +50,10 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { getOrCreateConversation } from "@/actions/chat";
 import { useToast } from "@/components/ui/use-toast";
+import {
+  formatManilaShortDate,
+  formatManilaShortMonthDay,
+} from "@/lib/manila-date";
 
 export default function PayslipsPage() {
   const { toast } = useToast();
@@ -181,6 +185,11 @@ export default function PayslipsPage() {
     });
     return Array.from(cutoffs).sort().reverse();
   }, [payslips]);
+
+  const selectedPayslipPeriodTitle =
+    selectedPayslip?.cutoffStart != null && selectedPayslip?.cutoffEnd != null
+      ? `${formatManilaShortMonthDay(selectedPayslip.cutoffStart)} to ${formatManilaShortDate(selectedPayslip.cutoffEnd)}`
+      : selectedPayslip?.period;
 
   const handleViewPayslip = async (payslip: any) => {
     setSelectedPayslip(payslip);
@@ -592,7 +601,7 @@ export default function PayslipsPage() {
         <Dialog open={isViewOpen} onOpenChange={setIsViewOpen}>
           <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Payslip - {selectedPayslip?.period}</DialogTitle>
+              <DialogTitle>Payslip - {selectedPayslipPeriodTitle}</DialogTitle>
             </DialogHeader>
             {isLoadingDetails ? (
               <div className="py-8 text-center">Loading payslip...</div>

@@ -30,6 +30,7 @@ import {
   holidayMatchesDate as holidayMatchesDateLib,
   type PayrollBaseResult,
 } from "@/lib/payroll-calculations";
+import { formatManilaNumericDate } from "@/lib/manila-date";
 
 function buildDraftPayrollConfig(args: {
   employeeIds: any[];
@@ -2067,9 +2068,7 @@ export const createPayrollRun = mutation({
       getOrganizationPayFrequency(organization);
 
     const now = Date.now();
-    const startDate = new Date(args.cutoffStart);
-    const endDate = new Date(args.cutoffEnd);
-    const period = `${startDate.toLocaleDateString()} to ${endDate.toLocaleDateString()}`;
+    const period = `${formatManilaNumericDate(args.cutoffStart)} to ${formatManilaNumericDate(args.cutoffEnd)}`;
 
     const deductionsEnabled = args.deductionsEnabled ?? true;
     const payrollRunId = await ctx.db.insert("payrollRuns", {

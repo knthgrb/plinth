@@ -13,6 +13,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChevronDown, ChevronUp, Pencil } from "lucide-react";
 import { format } from "date-fns";
 import { PayslipDetail } from "@/components/payslip-detail";
+import {
+  formatManilaShortDate,
+  formatManilaShortMonthDay,
+} from "@/lib/manila-date";
 
 interface ViewPayslipsDialogProps {
   open: boolean;
@@ -45,11 +49,16 @@ export function ViewPayslipsDialog({
   onTogglePayslip,
   onEditPayslip,
 }: ViewPayslipsDialogProps) {
+  const periodTitle =
+    selectedPayrollRun?.cutoffStart != null && selectedPayrollRun?.cutoffEnd != null
+      ? `${formatManilaShortMonthDay(selectedPayrollRun.cutoffStart)} to ${formatManilaShortDate(selectedPayrollRun.cutoffEnd)}`
+      : selectedPayrollRun?.period;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Payslips - {selectedPayrollRun?.period}</DialogTitle>
+          <DialogTitle>Payslips - {periodTitle}</DialogTitle>
           <DialogDescription>
             View payslips for this payroll run
           </DialogDescription>

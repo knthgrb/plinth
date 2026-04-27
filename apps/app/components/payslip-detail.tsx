@@ -4,6 +4,13 @@ import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { format } from "date-fns";
+import {
+  formatManilaLongDate,
+  formatManilaNumericDate,
+  formatManilaShortMonthDay,
+  formatManilaShortDate,
+  getManilaDateParts,
+} from "@/lib/manila-date";
 
 interface PayslipDetailProps {
   payslip: any;
@@ -21,7 +28,10 @@ export function PayslipDetail({
   cutoffEnd,
 }: PayslipDetailProps) {
   // Format period for display
-  const periodDisplay = payslip.period || "N/A";
+  const periodDisplay =
+    cutoffStart != null && cutoffEnd != null
+      ? `${formatManilaNumericDate(cutoffStart)} to ${formatManilaNumericDate(cutoffEnd)}`
+      : payslip.period || "N/A";
 
   // Format dates
   const dateHired = employee?.employment?.hireDate
@@ -34,7 +44,7 @@ export function PayslipDetail({
 
   const cutoffDate =
     cutoffStart && cutoffEnd
-      ? `${format(new Date(cutoffStart), "MMM d")} - ${format(new Date(cutoffEnd), "MMM d, yyyy")}`
+      ? `${formatManilaShortMonthDay(cutoffStart)} - ${formatManilaShortDate(cutoffEnd)}`
       : periodDisplay;
 
   // Calculate paydate based on organization settings and cutoff period
@@ -46,10 +56,10 @@ export function PayslipDetail({
         : format(new Date(), "MMMM dd, yyyy");
     }
 
-    const cutoffEndDate = new Date(cutoffEnd);
-    const cutoffMonth = cutoffEndDate.getMonth();
-    const cutoffYear = cutoffEndDate.getFullYear();
-    const cutoffDay = cutoffEndDate.getDate();
+    const cutoffEndParts = getManilaDateParts(cutoffEnd);
+    const cutoffMonth = cutoffEndParts.monthIndex;
+    const cutoffYear = cutoffEndParts.year;
+    const cutoffDay = cutoffEndParts.day;
 
     // Get organization paydates (default to 15 and 30)
     const firstPayDate = organization?.firstPayDate ?? 15;
@@ -70,8 +80,8 @@ export function PayslipDetail({
     const lastDayOfMonth = new Date(cutoffYear, cutoffMonth + 1, 0).getDate();
     const actualPayDay = Math.min(payDay, lastDayOfMonth);
 
-    const payDateObj = new Date(cutoffYear, cutoffMonth, actualPayDay);
-    return format(payDateObj, "MMMM dd, yyyy");
+    const payDateMs = Date.UTC(cutoffYear, cutoffMonth, actualPayDay);
+    return formatManilaLongDate(payDateMs);
   };
 
   const payDate = calculatePayDate();
@@ -314,7 +324,7 @@ export function PayslipDetail({
   // Use same Manila day boundaries as backend (payroll-calculations.ts).
   const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
   const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-  const getManilaDateParts = (ts: number) => {
+  const getManilaDatePartsFromTs = (ts: number) => {
     const d = new Date(ts + MANILA_OFFSET_MS);
     return {
       y: d.getUTCFullYear(),
@@ -323,7 +333,7 @@ export function PayslipDetail({
     };
   };
   const toLocalDayTimestamp = (ts: number) => {
-    const { y, m, d } = getManilaDateParts(ts);
+    const { y, m, d } = getManilaDatePartsFromTs(ts);
     return Date.UTC(y, m, d);
   };
   const holidayMatchesDate = (
@@ -336,8 +346,8 @@ export function PayslipDetail({
     dateTs: number,
   ) => {
     const effectiveTs = holiday.offsetDate ?? holiday.date;
-    const targetParts = getManilaDateParts(dateTs);
-    const holidayParts = getManilaDateParts(
+    const targetParts = getManilaDatePartsFromTs(dateTs);
+    const holidayParts = getManilaDatePartsFromTs(
       typeof effectiveTs === "number"
         ? effectiveTs
         : new Date(effectiveTs).getTime(),
