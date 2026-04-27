@@ -4645,6 +4645,122 @@ export const updatePayslip = mutation({
     nonTaxableAllowance: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    type PayslipLine = {
+      name: string;
+      amount: number;
+      type: string;
+    };
+    type EditChange = {
+      field: string;
+      oldValue?: unknown;
+      newValue?: unknown;
+      details?: string[];
+    };
+    const normalizeLine = (line: PayslipLine): PayslipLine => ({
+      name: (line.name || "").trim(),
+      amount: round2(Number(line.amount || 0)),
+      type: (line.type || "custom").trim(),
+    });
+    const normalizeLines = (lines: PayslipLine[] | undefined): PayslipLine[] =>
+      (lines ?? []).map(normalizeLine);
+    const lineIdentity = (line: PayslipLine): string =>
+      `${line.name.toLowerCase()}|${line.type.toLowerCase()}`;
+    const lineExactKey = (line: PayslipLine): string =>
+      `${lineIdentity(line)}|${line.amount.toFixed(2)}`;
+    const sortedLines = (lines: PayslipLine[]): PayslipLine[] =>
+      [...lines].sort((a, b) => {
+        const aKey = lineExactKey(a);
+        const bKey = lineExactKey(b);
+        return aKey.localeCompare(bKey);
+      });
+    const areSameLines = (left: PayslipLine[], right: PayslipLine[]): boolean => {
+      if (left.length !== right.length) return false;
+      const l = sortedLines(left);
+      const r = sortedLines(right);
+      return l.every((line, idx) => lineExactKey(line) === lineExactKey(r[idx]));
+    };
+    const subtractLineMultiset = (
+      source: PayslipLine[],
+      minus: PayslipLine[],
+    ): PayslipLine[] => {
+      const counts = new Map<string, number>();
+      for (const row of minus) {
+        const key = lineExactKey(row);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      const remainder: PayslipLine[] = [];
+      for (const row of source) {
+        const key = lineExactKey(row);
+        const current = counts.get(key) ?? 0;
+        if (current > 0) {
+          counts.set(key, current - 1);
+          continue;
+        }
+        remainder.push(row);
+      }
+      return remainder;
+    };
+    const buildLineDiffChange = (
+      field: "deductions" | "incentives",
+      oldRaw: PayslipLine[] | undefined,
+      nextRaw: PayslipLine[] | undefined,
+    ): EditChange | null => {
+      const oldLines = normalizeLines(oldRaw);
+      const newLines = normalizeLines(nextRaw);
+      if (areSameLines(oldLines, newLines)) return null;
+
+      const details: string[] = [];
+      const oldByIdentity = new Map<string, PayslipLine[]>();
+      const newByIdentity = new Map<string, PayslipLine[]>();
+      for (const line of oldLines) {
+        const key = lineIdentity(line);
+        oldByIdentity.set(key, [...(oldByIdentity.get(key) ?? []), line]);
+      }
+      for (const line of newLines) {
+        const key = lineIdentity(line);
+        newByIdentity.set(key, [...(newByIdentity.get(key) ?? []), line]);
+      }
+
+      const identityKeys = new Set<string>([
+        ...oldByIdentity.keys(),
+        ...newByIdentity.keys(),
+      ]);
+      for (const key of identityKeys) {
+        const previous = oldByIdentity.get(key) ?? [];
+        const current = newByIdentity.get(key) ?? [];
+        if (
+          previous.length === 1 &&
+          current.length === 1 &&
+          previous[0].amount !== current[0].amount
+        ) {
+          details.push(
+            `Changed ${previous[0].name} (${previous[0].type}): ${previous[0].amount.toFixed(2)} -> ${current[0].amount.toFixed(2)}`,
+          );
+        }
+      }
+
+      const added = subtractLineMultiset(newLines, oldLines);
+      const removed = subtractLineMultiset(oldLines, newLines);
+
+      for (const row of added) {
+        details.push(
+          `Added ${row.name} (${row.type}): ${row.amount.toFixed(2)}`,
+        );
+      }
+      for (const row of removed) {
+        details.push(
+          `Removed ${row.name} (${row.type}): ${row.amount.toFixed(2)}`,
+        );
+      }
+
+      return {
+        field,
+        oldValue: sortedLines(oldLines),
+        newValue: sortedLines(newLines),
+        details,
+      };
+    };
+
     const rawPayslip = await ctx.db.get(args.payslipId);
     if (!rawPayslip) throw new Error("Payslip not found");
     const payslip = decryptPayslipRowFromDb(rawPayslip)!;
@@ -4661,12 +4777,12 @@ export const updatePayslip = mutation({
     const userEmail = authUser?.email || userRecord.email || "Unknown";
 
     // Calculate new totals
-    const newDeductions = args.deductions || payslip.deductions;
-    const newIncentives = args.incentives || payslip.incentives || [];
+    const newDeductions = normalizeLines(args.deductions || payslip.deductions);
+    const newIncentives = normalizeLines(args.incentives || payslip.incentives || []);
     const newNonTaxableAllowance =
       args.nonTaxableAllowance !== undefined
-        ? args.nonTaxableAllowance
-        : payslip.nonTaxableAllowance || 0;
+        ? round2(args.nonTaxableAllowance)
+        : round2(payslip.nonTaxableAllowance || 0);
 
     const originalIncentives = payslip.incentives || [];
     const recalculatedTotals = recalculatePersistedPayslipTotals({
@@ -4710,49 +4826,30 @@ export const updatePayslip = mutation({
     }
 
     // Track changes for edit history (lightweight summaries — line-by-line diffs were O(n²) and slow)
-    const changes: Array<{
-      field: string;
-      oldValue?: any;
-      newValue?: any;
-      details?: string[];
-    }> = [];
-
-    // Compare deductions
-    const oldDeductions = payslip.deductions || [];
-    const oldDeductionsStr = JSON.stringify(oldDeductions);
-    const newDeductionsStr = JSON.stringify(newDeductions);
-    if (oldDeductionsStr !== newDeductionsStr) {
-      changes.push({
-        field: "deductions",
-        oldValue: oldDeductions,
-        newValue: newDeductions,
-        details: [
-          `Updated ${oldDeductions.length} line(s) → ${newDeductions.length} line(s)`,
-        ],
-      });
-    }
-
-    // Compare incentives
-    const oldIncentives = payslip.incentives || [];
-    const oldIncentivesStr = JSON.stringify(oldIncentives);
-    const newIncentivesStr = JSON.stringify(newIncentives);
-    if (oldIncentivesStr !== newIncentivesStr) {
-      changes.push({
-        field: "incentives",
-        oldValue: oldIncentives,
-        newValue: newIncentives,
-        details: [
-          `Updated ${oldIncentives.length} line(s) → ${newIncentives.length} line(s)`,
-        ],
-      });
-    }
+    const changes: EditChange[] = [];
+    const deductionChange = buildLineDiffChange(
+      "deductions",
+      payslip.deductions,
+      newDeductions,
+    );
+    if (deductionChange) changes.push(deductionChange);
+    const incentiveChange = buildLineDiffChange(
+      "incentives",
+      payslip.incentives || [],
+      newIncentives,
+    );
+    if (incentiveChange) changes.push(incentiveChange);
 
     // Compare non-taxable allowance
-    if ((payslip.nonTaxableAllowance || 0) !== newNonTaxableAllowance) {
+    const previousNonTaxableAllowance = round2(payslip.nonTaxableAllowance || 0);
+    if (previousNonTaxableAllowance !== newNonTaxableAllowance) {
       changes.push({
         field: "nonTaxableAllowance",
-        oldValue: payslip.nonTaxableAllowance || 0,
+        oldValue: previousNonTaxableAllowance,
         newValue: newNonTaxableAllowance,
+        details: [
+          `Changed non-taxable allowance: ${previousNonTaxableAllowance.toFixed(2)} -> ${newNonTaxableAllowance.toFixed(2)}`,
+        ],
       });
     }
 

@@ -16,8 +16,11 @@ function num(x: unknown): number {
   return 0;
 }
 
-function formatPeso(n: number): string {
-  return `₱${n.toLocaleString("en-PH", {
+type AmountSign = "plus" | "minus" | "none";
+
+function formatPeso(n: number, sign: AmountSign = "none"): string {
+  const prefix = sign === "plus" ? "+" : sign === "minus" ? "-" : "";
+  return `${prefix}PHP ${n.toLocaleString("en-PH", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
@@ -244,21 +247,27 @@ export function renderPayslipPdfBuffer(args: {
     }
     const adj = num(p.adjustments);
     if (adj !== 0) earningRows.push({ label: "Adjustments", amount: adj });
-    if (earningRows.length === 0) drawLabelValue("No earnings rows", formatPeso(0));
-    for (const row of earningRows) drawLabelValue(row.label, formatPeso(row.amount));
+    if (earningRows.length === 0)
+      drawLabelValue("No earnings rows", formatPeso(0, "none"));
+    for (const row of earningRows) {
+      drawLabelValue(row.label, formatPeso(row.amount, "plus"));
+    }
     drawRule(doc.y);
     doc.moveDown(0.2);
-    drawLabelValue("Gross pay", formatPeso(gross), true);
+    drawLabelValue("Gross pay", formatPeso(gross, "none"), true);
     doc.moveDown(0.3);
 
     drawSectionTitle("Deductions");
     const deductionRows = deductions.filter((d) => d.amount > 0);
-    if (deductionRows.length === 0) drawLabelValue("No deductions", formatPeso(0));
-    for (const d of deductionRows) drawLabelValue(d.name, formatPeso(d.amount));
+    if (deductionRows.length === 0)
+      drawLabelValue("No deductions", formatPeso(0, "none"));
+    for (const d of deductionRows) {
+      drawLabelValue(d.name, formatPeso(d.amount, "minus"));
+    }
     const deductionTotal = deductionRows.reduce((sum, d) => sum + d.amount, 0);
     drawRule(doc.y);
     doc.moveDown(0.2);
-    drawLabelValue("Total deductions", formatPeso(deductionTotal), true);
+    drawLabelValue("Total deductions", formatPeso(deductionTotal, "minus"), true);
 
     doc.moveDown(0.75);
     drawRule(doc.y);
@@ -272,7 +281,7 @@ export function renderPayslipPdfBuffer(args: {
       .font("Helvetica-Bold")
       .fontSize(14)
       .fillColor("#111827")
-      .text(formatPeso(net), tableColSplit, doc.y - 1, {
+      .text(formatPeso(net, "none"), tableColSplit, doc.y - 1, {
         width: right - tableColSplit,
         align: "right",
       });
