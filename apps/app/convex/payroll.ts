@@ -2873,6 +2873,54 @@ export const deletePayrollRun = mutation({
   },
 });
 
+// Delete multiple payroll runs in one mutation (faster than many round-trips)
+export const deletePayrollRuns = mutation({
+  args: {
+    payrollRunIds: v.array(v.id("payrollRuns")),
+  },
+  handler: async (ctx, args) => {
+    const uniqueRunIds = Array.from(new Set(args.payrollRunIds.map(String)));
+    if (uniqueRunIds.length === 0) {
+      return { success: true, deletedCount: 0 };
+    }
+
+    const firstRun = (await ctx.db.get(uniqueRunIds[0] as any)) as any;
+    if (!firstRun) throw new Error("Payroll run not found");
+
+    const userRecord = await checkAuth(ctx, firstRun.organizationId);
+    const allowedRoles = ["owner", "admin", "hr", "accounting"];
+    if (!allowedRoles.includes(userRecord.role)) {
+      throw new Error("Not authorized to delete payroll runs");
+    }
+
+    let deletedCount = 0;
+    for (const payrollRunId of uniqueRunIds) {
+      const payrollRun = (await ctx.db.get(payrollRunId as any)) as any;
+      if (!payrollRun) continue;
+      if (payrollRun.organizationId !== firstRun.organizationId) continue;
+
+      // Delete associated accounting cost items
+      await deleteExpenseItemsFromPayroll(ctx, payrollRun);
+
+      // Delete payslips
+      const payslips = await (ctx.db.query("payslips") as any)
+        .withIndex("by_payroll_run", (q: any) =>
+          q.eq("payrollRunId", payrollRun._id),
+        )
+        .collect();
+      for (const payslip of payslips) {
+        await ctx.db.delete(payslip._id);
+      }
+
+      // Delete payroll run
+      await ctx.db.delete(payrollRun._id);
+      deletedCount += 1;
+    }
+
+    return { success: true, deletedCount };
+  },
+});
+
 // Temporary fixer: convert legacy "processing" payroll runs to "draft"
 export const normalizeProcessingPayrollRuns = mutation({
   args: {

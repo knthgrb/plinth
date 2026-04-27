@@ -175,6 +175,7 @@ import {
   updatePayrollRunStatus,
   updatePayrollRun,
   deletePayrollRun,
+  deletePayrollRuns,
   getPayslipMessages,
   getPayrollRunSummary,
   computePayrollPreviewBatch,
@@ -762,8 +763,11 @@ export default function PayrollPageClient() {
 
     setIsDeletingPayrollRun(true);
     try {
-      for (const run of payrollRunsToDelete) {
-        await deletePayrollRun(run._id);
+      const runIdsToDelete = payrollRunsToDelete.map((run) => String(run._id));
+      if (runIdsToDelete.length === 1) {
+        await deletePayrollRun(runIdsToDelete[0]);
+      } else {
+        await deletePayrollRuns(runIdsToDelete);
       }
       await loadPayrollRuns();
       setIsDeleteDialogOpen(false);
@@ -2234,19 +2238,21 @@ export default function PayrollPageClient() {
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-4 space-y-0">
                 <CardTitle>Payroll Runs</CardTitle>
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={handleBulkDeletePayrollRuns}
-                    disabled={selectedRunIds.length === 0 || isDeletingPayrollRun}
-                  >
-                    {isDeletingPayrollRun ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="mr-2 h-4 w-4" />
-                    )}
-                    Delete Selected
-                  </Button>
+                  {selectedRunIds.length > 0 && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={handleBulkDeletePayrollRuns}
+                      disabled={isDeletingPayrollRun}
+                    >
+                      {isDeletingPayrollRun ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="mr-2 h-4 w-4" />
+                      )}
+                      Delete Selected
+                    </Button>
+                  )}
                   <MonthPicker
                     value={filterMonth}
                     onChange={setFilterMonth}

@@ -438,6 +438,16 @@ export class PayrollService {
     );
   }
 
+  static async deletePayrollRuns(payrollRunIds: string[]) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.mutation as any)(
+      (api as any).payroll.deletePayrollRuns,
+      {
+        payrollRunIds: payrollRunIds as Id<"payrollRuns">[],
+      }
+    );
+  }
+
   static async updatePayrollRun(data: {
     payrollRunId: string;
     cutoffStart?: number;

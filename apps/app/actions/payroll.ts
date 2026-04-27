@@ -163,6 +163,10 @@ export async function deletePayrollRun(payrollRunId: string) {
   return PayrollService.deletePayrollRun(payrollRunId);
 }
 
+export async function deletePayrollRuns(payrollRunIds: string[]) {
+  return PayrollService.deletePayrollRuns(payrollRunIds);
+}
+
 export async function updatePayrollRun(data: {
   payrollRunId: string;
   cutoffStart?: number;
