@@ -241,6 +241,79 @@ export const setPayslipPinHash = mutation({
   },
 });
 
+// Get current custom payslip PDF password status (actual value for self/admin contexts)
+export const getPayslipPdfPassword = query({
+  args: { employeeId: v.id("employees") },
+  handler: async (ctx, args) => {
+    const employee = await ctx.db.get(args.employeeId);
+    if (!employee) throw new Error("Employee not found");
+    const userRecord = await checkAuth(ctx, employee.organizationId);
+    const userOrg = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_user_organization", (q: any) =>
+        q
+          .eq("userId", userRecord._id)
+          .eq("organizationId", employee.organizationId),
+      )
+      .first();
+    const currentEmployeeId = userOrg?.employeeId ?? userRecord.employeeId;
+    const isHrOrAdmin =
+      userOrg?.role === "hr" ||
+      userOrg?.role === "admin" ||
+      userOrg?.role === "owner";
+    const isSameEmployee = currentEmployeeId === args.employeeId;
+    if (!isSameEmployee && !isHrOrAdmin) {
+      throw new Error("Not authorized");
+    }
+    const customPassword = String((employee as any).payslipPdfPassword ?? "").trim();
+    return {
+      hasCustomPassword: customPassword.length > 0,
+      customPassword: customPassword.length > 0 ? customPassword : null,
+    };
+  },
+});
+
+// Set or clear custom payslip PDF password. Empty string resets to default employee ID.
+export const setPayslipPdfPassword = mutation({
+  args: {
+    employeeId: v.id("employees"),
+    password: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const employee = await ctx.db.get(args.employeeId);
+    if (!employee) throw new Error("Employee not found");
+    const userRecord = await checkAuth(ctx, employee.organizationId);
+    const userOrg = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_user_organization", (q: any) =>
+        q
+          .eq("userId", userRecord._id)
+          .eq("organizationId", employee.organizationId),
+      )
+      .first();
+    const isSameEmployee =
+      userOrg?.employeeId === args.employeeId ||
+      userRecord.employeeId === args.employeeId;
+    const isHrOrAdmin =
+      userOrg?.role === "hr" ||
+      userOrg?.role === "admin" ||
+      userOrg?.role === "owner";
+    if (!isSameEmployee && !isHrOrAdmin) {
+      throw new Error("Not authorized to set payslip PDF password for this employee");
+    }
+
+    const trimmedPassword = args.password.trim();
+    if (trimmedPassword.length > 0 && trimmedPassword.length < 4) {
+      throw new Error("Password must be at least 4 characters");
+    }
+
+    await ctx.db.patch(args.employeeId, {
+      payslipPdfPassword: trimmedPassword.length > 0 ? trimmedPassword : undefined,
+      updatedAt: Date.now(),
+    });
+
+    return { success: true, usingDefault: trimmedPassword.length === 0 };
+  },
+});
+
 // Check if employee has a user account
 export const employeeHasUserAccount = query({
   args: {

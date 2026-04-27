@@ -277,6 +277,8 @@ export default defineSchema({
     customFields: v.optional(v.any()), // Flexible object for custom fields
     /** Hashed PIN for accessing payslips page (e.g. SHA-256 of pin + salt). Set by employee or HR. */
     payslipPinHash: v.optional(v.string()),
+    /** Optional custom password for emailed payslip PDFs. When absent, employee ID is used. */
+    payslipPdfPassword: v.optional(v.string()),
     /** Optional shift (Morning, UK, Night). When set, schedule + lunch come from shift; null/absent = use defaultSchedule + org default lunch. */
     shiftId: v.optional(v.union(v.id("shifts"), v.null())),
     createdAt: v.number(),

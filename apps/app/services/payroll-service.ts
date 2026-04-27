@@ -6,6 +6,10 @@ import { EmployeesService } from "./employees-service";
 import { sendEmail } from "@/lib/email";
 import { renderPayslipPdfBuffer } from "@/lib/payslip-pdf";
 import { buildPayslipEmailContent } from "@/lib/payslip-email-templates";
+import {
+  formatManilaNumericDate,
+  formatManilaShortDate,
+} from "@/lib/manila-date";
 
 export class PayrollService {
   static async createPayrollRun(data: {
@@ -255,9 +259,19 @@ export class PayrollService {
       }
     );
 
+    const formatPayslipPeriod = (payslip: any): string => {
+      const start = payslip?.periodStart;
+      const end = payslip?.periodEnd;
+      if (typeof start === "number" && typeof end === "number") {
+        return `${formatManilaNumericDate(start)} to ${formatManilaNumericDate(end)}`;
+      }
+      return String(payslip?.period ?? "payroll");
+    };
+
     // If method is chat, send via chat system
     if (method === "chat" && result.employeeId) {
       const payslip = await this.getPayslip(payslipId);
+      const payslipPeriod = formatPayslipPeriod(payslip);
       const baseUrl =
         process.env.NEXT_PUBLIC_SITE_URL ||
         process.env.SITE_URL ||
@@ -267,7 +281,7 @@ export class PayrollService {
       await ChatService.sendMessageToEmployee({
         organizationId: payslip.organizationId,
         employeeId: result.employeeId,
-        content: `Your payslip for ${payslip.period} is ready. View it here: ${payslipUrl}`,
+        content: `Your payslip for ${payslipPeriod} is ready. View it here: ${payslipUrl}`,
         messageType: "system",
       });
     }
@@ -275,6 +289,7 @@ export class PayrollService {
     // If method is email, send via email system
     if (method === "email" && result.employeeId) {
       const payslip = await this.getPayslip(payslipId);
+      const payslipPeriod = formatPayslipPeriod(payslip);
       const employee = await EmployeesService.getEmployee(result.employeeId);
 
       if (employee?.personalInfo?.email) {
@@ -287,16 +302,16 @@ export class PayrollService {
         try {
           await sendEmail({
             to: employee.personalInfo.email,
-            subject: `Your Payslip for ${payslip.period}`,
+            subject: `Your Payslip for ${payslipPeriod}`,
             html: `
               <h2>Your Payslip is Ready</h2>
               <p>Hello ${employee.personalInfo.firstName},</p>
-              <p>Your payslip for the period ${payslip.period} is now available.</p>
+              <p>Your payslip for the period ${payslipPeriod} is now available.</p>
               <p><strong>Gross Pay:</strong> ₱${payslip.grossPay?.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}</p>
               <p><strong>Net Pay:</strong> ₱${payslip.netPay?.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}</p>
               <p><a href="${payslipUrl}">View Full Payslip</a></p>
             `,
-            text: `Your payslip for ${payslip.period} is ready. Gross Pay: ₱${payslip.grossPay?.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}, Net Pay: ₱${payslip.netPay?.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}. View it at: ${payslipUrl}`,
+            text: `Your payslip for ${payslipPeriod} is ready. Gross Pay: ₱${payslip.grossPay?.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}, Net Pay: ₱${payslip.netPay?.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || "0.00"}. View it at: ${payslipUrl}`,
           });
         } catch (emailError: any) {
           console.error("Failed to send email:", emailError);
@@ -389,6 +404,10 @@ export class PayrollService {
         continue;
       }
       try {
+        const period = `${formatManilaNumericDate(recipients.cutoffStart)} to ${formatManilaNumericDate(recipients.cutoffEnd)}`;
+        const safePeriod = `${formatManilaShortDate(recipients.cutoffStart)}-${formatManilaShortDate(recipients.cutoffEnd)}`
+          .replace(/[^a-zA-Z0-9-_]+/g, "_")
+          .slice(0, 48);
         const pdf = await renderPayslipPdfBuffer({
           payslip,
           employee: payslip.employee,
@@ -396,8 +415,6 @@ export class PayrollService {
           cutoffStart: recipients.cutoffStart,
           cutoffEnd: recipients.cutoffEnd,
         });
-        const period = String(payslip.period ?? "payroll");
-        const safePeriod = period.replace(/[^a-zA-Z0-9-_]+/g, "_").slice(0, 48);
         const { subject, html, text } = buildPayslipEmailContent(
           payslip.employee.personalInfo.firstName,
           period,

@@ -89,9 +89,20 @@ export default function PayslipsPage() {
   const [pinToSet, setPinToSet] = useState("");
   const [pinConfirm, setPinConfirm] = useState("");
   const [isSettingPin, setIsSettingPin] = useState(false);
+  const [isSetPdfPasswordOpen, setIsSetPdfPasswordOpen] = useState(false);
+  const [pdfPassword, setPdfPassword] = useState("");
+  const [pdfPasswordConfirm, setPdfPasswordConfirm] = useState("");
+  const [isSettingPdfPassword, setIsSettingPdfPassword] = useState(false);
 
   const verifyPayslipPin = useAction((api as any).payslipPin.verifyPayslipPin);
   const setPayslipPin = useAction((api as any).payslipPin.setPayslipPin);
+  const setPayslipPdfPassword = useMutation(
+    (api as any).employees.setPayslipPdfPassword,
+  );
+  const payslipPdfPasswordState = useQuery(
+    (api as any).employees.getPayslipPdfPassword,
+    employeeId ? { employeeId } : "skip",
+  );
 
   const [selectedPayslip, setSelectedPayslip] = useState<any>(null);
   const [isViewOpen, setIsViewOpen] = useState(false);
@@ -328,6 +339,55 @@ export default function PayslipsPage() {
     }
   };
 
+  const handleSetPdfPassword = async () => {
+    if (!employeeId) return;
+    const trimmedPassword = pdfPassword.trim();
+    const trimmedConfirm = pdfPasswordConfirm.trim();
+
+    if (trimmedPassword.length > 0 && trimmedPassword.length < 4) {
+      toast({
+        title: "Invalid password",
+        description: "Password must be at least 4 characters.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (trimmedPassword !== trimmedConfirm) {
+      toast({
+        title: "Passwords don't match",
+        description: "Please confirm your password.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSettingPdfPassword(true);
+    try {
+      await setPayslipPdfPassword({
+        employeeId,
+        password: trimmedPassword,
+      });
+      toast({
+        title: trimmedPassword.length > 0 ? "Password updated" : "Password reset",
+        description:
+          trimmedPassword.length > 0
+            ? "Your payslip PDF password has been updated."
+            : "Your payslip PDF password is now your employee ID.",
+      });
+      setIsSetPdfPasswordOpen(false);
+      setPdfPassword("");
+      setPdfPasswordConfirm("");
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update payslip PDF password.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSettingPdfPassword(false);
+    }
+  };
+
   if (payslipAccess === undefined) {
     return (
       <MainLayout>
@@ -407,15 +467,28 @@ export default function PayslipsPage() {
           <h1 className="text-3xl font-bold text-gray-900">My Payslips</h1>
           <div className="flex items-center gap-2">
             {!requiresPin && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsSetPinOpen(true)}
-                className="text-gray-600"
-              >
-                <KeyRound className="h-4 w-4 mr-1" />
-                Set PIN
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsSetPinOpen(true)}
+                  className="text-gray-600"
+                >
+                  <KeyRound className="h-4 w-4 mr-1" />
+                  Set PIN
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsSetPdfPasswordOpen(true)}
+                  className="text-gray-600"
+                >
+                  <KeyRound className="h-4 w-4 mr-1" />
+                  {payslipPdfPasswordState?.hasCustomPassword
+                    ? "Change PDF Password"
+                    : "Set PDF Password"}
+                </Button>
+              </>
             )}
             {requiresPin && (
               <Button
@@ -742,6 +815,58 @@ export default function PayslipsPage() {
                 }
               >
                 {isSettingPin ? "Setting..." : "Set PIN"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Set payslip PDF password dialog */}
+        <Dialog open={isSetPdfPasswordOpen} onOpenChange={setIsSetPdfPasswordOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Payslip PDF password</DialogTitle>
+              <DialogDescription>
+                Set a custom password for emailed payslip PDFs. Leave it blank to
+                reset to your employee ID.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="pdf-password">New password</Label>
+                <Input
+                  id="pdf-password"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="At least 4 characters (optional)"
+                  value={pdfPassword}
+                  onChange={(e) => setPdfPassword(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="pdf-password-confirm">Confirm password</Label>
+                <Input
+                  id="pdf-password-confirm"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="Confirm password"
+                  value={pdfPasswordConfirm}
+                  onChange={(e) => setPdfPasswordConfirm(e.target.value)}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setIsSetPdfPasswordOpen(false)}
+                disabled={isSettingPdfPassword}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSetPdfPassword}
+                disabled={isSettingPdfPassword || pdfPassword.trim() !== pdfPasswordConfirm.trim()}
+              >
+                {isSettingPdfPassword ? "Saving..." : "Save"}
               </Button>
             </DialogFooter>
           </DialogContent>

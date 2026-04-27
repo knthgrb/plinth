@@ -22,6 +22,8 @@ import {
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
+import { useEmployeeView } from "@/hooks/employee-view-context";
+import type { Id } from "@/convex/_generated/dataModel";
 import { UserOrganizationsCard } from "@/components/user-organizations-card";
 import { OrganizationManagement } from "@/components/organization-management";
 import { PayrollSettingsContent } from "@/components/settings/payroll-settings-content";
@@ -82,6 +84,7 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const router = useRouter();
   const { currentOrganizationId, clearOrganization } = useOrganization();
+  const { effectiveSelfEmployeeId, isEmployeeExperienceUI } = useEmployeeView();
   const [activeSection, setActiveSection] = useState<SettingsSection>(
     propInitialSection || "account",
   );
@@ -97,6 +100,15 @@ export function SettingsModal({
     api.organizations.getCurrentUser,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
+  const employeeRecord = useQuery(
+    (api as any).employees.getEmployee,
+    currentOrganizationId && effectiveSelfEmployeeId
+      ? {
+          employeeId: effectiveSelfEmployeeId as Id<"employees">,
+        }
+      : "skip",
+  );
+  const companyEmployeeId = employeeRecord?.employment?.employeeId;
 
   const handleLogout = () => {
     onOpenChange(false);
@@ -221,6 +233,17 @@ export function SettingsModal({
                       </Badge>
                     </div>
                   </div>
+                  {isEmployeeExperienceUI && (
+                    <div className="border-t border-gray-100 pt-3 sm:pt-4 space-y-1.5">
+                      <div className="flex items-center gap-2 text-xs sm:text-sm font-medium text-gray-500">
+                        <Briefcase className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                        <span>Employee ID</span>
+                      </div>
+                      <div className="text-sm sm:text-base font-medium text-gray-900 pl-5 sm:pl-6 break-words">
+                        {companyEmployeeId || "-"}
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
               <UserOrganizationsCard />
