@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useMemo, useEffect, useRef } from "react";
+import { Suspense, useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
@@ -54,18 +54,12 @@ import {
   formatManilaShortDate,
   formatManilaShortMonthDay,
 } from "@/lib/manila-date";
-import { usePathname, useRouter } from "next/navigation";
 import { usePayslipIdFromUrl } from "@/hooks/use-payslip-id-from-url";
+import { payslipPinSessionKey } from "@/lib/payslip-session";
 
 function PayslipsPageContent() {
   const { toast } = useToast();
   const payslipIdFromUrl = usePayslipIdFromUrl();
-  const pathname = usePathname();
-  const router = useRouter();
-  /** Set only after we successfully open the payslip from ?payslipId= */
-  const openedPayslipFromUrlRef = useRef<string | null>(null);
-  /** Keep last ?payslipId= so PIN screen or layout changes do not lose the deep link */
-  const lastPayslipIdFromUrlRef = useRef<string | null>(null);
   const { currentOrganizationId } = useOrganization();
   const { employeeViewActive, canUseEmployeeView } = useEmployeeView();
 
@@ -225,72 +219,17 @@ function PayslipsPageContent() {
     }
   };
 
-  // Remember payslipId so it survives PIN step and any param strip before verify.
+  // PIN session (shared with global appeal / deep-link modal)
   useEffect(() => {
-    if (payslipIdFromUrl) lastPayslipIdFromUrlRef.current = payslipIdFromUrl;
-  }, [payslipIdFromUrl]);
-
-  // Open a specific payslip when linked from chat (e.g. payslip appeal "View Payslip").
-  useEffect(() => {
-    const id = payslipIdFromUrl ?? lastPayslipIdFromUrlRef.current;
-    if (!id || !currentOrganizationId) return;
-    if (payslipAccess === undefined) return;
-    if (!employeeId) return;
-    if (requiresPin && !pinVerified) return;
-    if (openedPayslipFromUrlRef.current === id) return;
-    if (payslips === undefined) return;
-
-    const openFromUrl = async () => {
-      const fromList = payslips.find((p: any) => String(p._id) === id);
-      if (fromList) {
-        setSelectedPayslip(fromList);
-        setIsViewOpen(true);
-        setIsLoadingDetails(true);
-        try {
-          const details = await getPayslip(fromList._id);
-          setPayslipDetails(details);
-          openedPayslipFromUrlRef.current = id;
-          lastPayslipIdFromUrlRef.current = null;
-          router.replace(pathname, { scroll: false });
-        } catch (error) {
-          console.error("Error loading payslip details:", error);
-        } finally {
-          setIsLoadingDetails(false);
-        }
-        return;
-      }
-      try {
-        const details = await getPayslip(id);
-        if (
-          details &&
-          employeeId &&
-          String(details.employeeId) === String(employeeId)
-        ) {
-          setSelectedPayslip(details);
-          setPayslipDetails(details);
-          setIsViewOpen(true);
-          setIsLoadingDetails(false);
-          openedPayslipFromUrlRef.current = id;
-          lastPayslipIdFromUrlRef.current = null;
-          router.replace(pathname, { scroll: false });
-        }
-      } catch (error) {
-        console.error("Error opening payslip from URL:", error);
-      }
-    };
-
-    void openFromUrl();
-  }, [
-    payslipIdFromUrl,
-    currentOrganizationId,
-    payslipAccess,
-    employeeId,
-    requiresPin,
-    pinVerified,
-    payslips,
-    pathname,
-    router,
-  ]);
+    if (!currentOrganizationId || typeof window === "undefined") return;
+    if (
+      sessionStorage.getItem(
+        payslipPinSessionKey(String(currentOrganizationId)),
+      ) === "1"
+    ) {
+      setPinVerified(true);
+    }
+  }, [currentOrganizationId]);
 
   const handleOpenComment = (payslip: any) => {
     setSelectedPayslip(payslip);
@@ -365,6 +304,12 @@ function PayslipsPageContent() {
         pin: pinValue.trim(),
       });
       if (result.valid) {
+        if (currentOrganizationId) {
+          sessionStorage.setItem(
+            payslipPinSessionKey(String(currentOrganizationId)),
+            "1",
+          );
+        }
         setPinVerified(true);
         setPinValue("");
       } else {
@@ -490,7 +435,7 @@ function PayslipsPageContent() {
     );
   }
 
-  if (requiresPin && !pinVerified) {
+  if (requiresPin && !pinVerified && !payslipIdFromUrl) {
     return (
       <MainLayout>
         <div className="p-8 flex items-center justify-center min-h-[400px]">

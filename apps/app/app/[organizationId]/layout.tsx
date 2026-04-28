@@ -1,7 +1,8 @@
 "use client";
 
 import { useParams, useRouter, usePathname } from "next/navigation";
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
+import { PayslipDeepLinkModal } from "@/components/payslip-deeplink-modal";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
@@ -136,6 +137,9 @@ function OrganizationLayoutInner({
   return (
     <>
       {children}
+      <Suspense fallback={null}>
+        <PayslipDeepLinkModal />
+      </Suspense>
       <OrganizationSwitchingOverlay
         isSwitching={isSwitching}
         switchingOrgName={switchingOrg?.name}

@@ -2,8 +2,6 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback, Suspense } from "react";
 import { useQuery } from "convex/react";
-import { usePathname, useRouter } from "next/navigation";
-import { usePayslipIdFromUrl } from "@/hooks/use-payslip-id-from-url";
 import dynamic from "next/dynamic";
 import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
@@ -405,15 +403,6 @@ export default function PayrollPageClient() {
     "regular" | "13th_month" | "leave_conversion"
   >("regular");
 
-  const pathname = usePathname();
-  const router = useRouter();
-  const payslipIdParam = usePayslipIdFromUrl();
-  /** Avoid double-open from chat link (Strict Mode / re-renders); cleared when URL param changes */
-  const openedPayrollFromUrlRef = useRef<string | null>(null);
-  const handleViewPayslipsRef = useRef<
-    ((run: any, highlightPayslipId?: string) => Promise<void>) | null
-  >(null);
-
   const closeFinalizeDialog = useCallback(() => {
     setFinalizeDialogOpen(false);
     setFinalizePayrollRunId(null);
@@ -518,56 +507,6 @@ export default function PayrollPageClient() {
       prev.filter((id) => payrollRuns.some((run) => String(run._id) === id)),
     );
   }, [payrollRuns]);
-
-  // Open payslip from chat (?payslipId=). Ref is set after handleViewPayslips each render; defer one tick so it is never null.
-  useEffect(() => {
-    if (!payslipIdParam || !effectiveOrganizationId) {
-      openedPayrollFromUrlRef.current = null;
-      return;
-    }
-    if (openedPayrollFromUrlRef.current === payslipIdParam) return;
-
-    let cancelled = false;
-
-    const findAndOpenPayslip = async () => {
-      try {
-        const payslip = await getPayslip(payslipIdParam);
-        if (cancelled || !payslip) return;
-        const runs = await getPayrollRuns(effectiveOrganizationId);
-        if (cancelled) return;
-        const payrollRun = runs.find(
-          (run: any) => String(run._id) === String(payslip.payrollRunId),
-        );
-        if (!payrollRun) return;
-        let open = handleViewPayslipsRef.current;
-        if (!open) {
-          await new Promise<void>((resolve) =>
-            requestAnimationFrame(() => resolve()),
-          );
-          open = handleViewPayslipsRef.current;
-        }
-        if (!open) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
-          open = handleViewPayslipsRef.current;
-        }
-        if (!open || cancelled) return;
-        await open(payrollRun, payslipIdParam);
-        if (cancelled) return;
-        openedPayrollFromUrlRef.current = payslipIdParam;
-        router.replace(pathname, { scroll: false });
-      } catch (error) {
-        console.error("Error loading payslip from URL:", error);
-      }
-    };
-
-    const id = window.setTimeout(() => {
-      void findAndOpenPayslip();
-    }, 0);
-    return () => {
-      cancelled = true;
-      clearTimeout(id);
-    };
-  }, [payslipIdParam, effectiveOrganizationId, pathname, router]);
 
   const handleViewSummary = async (payrollRun: any) => {
     setSelectedPayrollRun(payrollRun);
@@ -733,8 +672,6 @@ export default function PayrollPageClient() {
       setIsLoadingPayslips(false);
     }
   };
-
-  handleViewPayslipsRef.current = handleViewPayslips;
 
   const handleOpenPayslipDetails = async (payslipSummary: any) => {
     const payslipId = payslipSummary._id;
