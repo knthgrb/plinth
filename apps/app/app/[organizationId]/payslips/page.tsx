@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { Suspense, useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
@@ -54,11 +54,12 @@ import {
   formatManilaShortDate,
   formatManilaShortMonthDay,
 } from "@/lib/manila-date";
-import { useSearchParams, usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { usePayslipIdFromUrl } from "@/hooks/use-payslip-id-from-url";
 
-export default function PayslipsPage() {
+function PayslipsPageContent() {
   const { toast } = useToast();
-  const searchParams = useSearchParams();
+  const payslipIdFromUrl = usePayslipIdFromUrl();
   const pathname = usePathname();
   const router = useRouter();
   /** Set only after we successfully open the payslip from ?payslipId= */
@@ -224,16 +225,14 @@ export default function PayslipsPage() {
     }
   };
 
-  // Remember payslipId from the URL so it survives PIN step and any param strip before verify.
+  // Remember payslipId so it survives PIN step and any param strip before verify.
   useEffect(() => {
-    const p = searchParams.get("payslipId");
-    if (p) lastPayslipIdFromUrlRef.current = p;
-  }, [searchParams]);
+    if (payslipIdFromUrl) lastPayslipIdFromUrlRef.current = payslipIdFromUrl;
+  }, [payslipIdFromUrl]);
 
   // Open a specific payslip when linked from chat (e.g. payslip appeal "View Payslip").
   useEffect(() => {
-    const id =
-      searchParams.get("payslipId") ?? lastPayslipIdFromUrlRef.current;
+    const id = payslipIdFromUrl ?? lastPayslipIdFromUrlRef.current;
     if (!id || !currentOrganizationId) return;
     if (payslipAccess === undefined) return;
     if (!employeeId) return;
@@ -282,7 +281,7 @@ export default function PayslipsPage() {
 
     void openFromUrl();
   }, [
-    searchParams,
+    payslipIdFromUrl,
     currentOrganizationId,
     payslipAccess,
     employeeId,
@@ -950,5 +949,21 @@ export default function PayslipsPage() {
         </Dialog>
       </div>
     </MainLayout>
+  );
+}
+
+export default function PayslipsPage() {
+  return (
+    <Suspense
+      fallback={
+        <MainLayout>
+          <div className="flex min-h-[200px] items-center justify-center p-8 text-gray-500">
+            Loading…
+          </div>
+        </MainLayout>
+      }
+    >
+      <PayslipsPageContent />
+    </Suspense>
   );
 }

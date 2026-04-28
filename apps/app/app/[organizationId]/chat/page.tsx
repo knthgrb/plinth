@@ -179,7 +179,7 @@ export default function ChatPage() {
     <MainLayout>
       <ChatSessionKeysProvider organizationId={effectiveOrganizationId}>
       {/* relative so absolute sidebar is contained below the main app header */}
-      <div className="relative flex h-[calc(100vh-4rem)] min-h-0 w-full items-stretch overflow-hidden bg-gray-50 border-t border-gray-200">
+      <div className="relative flex h-full min-h-0 w-full flex-1 items-stretch overflow-hidden bg-gray-50 border-t border-gray-200">
         {/* Conversation list: full width on small screen when visible, sticks to sidebar on large (no margin) */}
         <aside
           className={`
