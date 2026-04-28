@@ -110,8 +110,12 @@ export async function getScheduleWithLunch(
 
   if (employee._id) {
     const employeeIdKey = String(employee._id);
-    let historyRows = cache?.scheduleHistoryByEmployeeId?.[employeeIdKey];
-    if (!historyRows) {
+    const cachedHistoryRows =
+      cache?.scheduleHistoryByEmployeeId?.[employeeIdKey];
+    let historyRows: any[];
+    if (cachedHistoryRows) {
+      historyRows = cachedHistoryRows;
+    } else {
       historyRows = await (ctx.db.query("employeeScheduleHistory") as any)
         .withIndex("by_employee", (q: any) => q.eq("employeeId", employee._id))
         .collect();
