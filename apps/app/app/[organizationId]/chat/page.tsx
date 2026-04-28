@@ -187,7 +187,7 @@ export default function ChatPage() {
             flex-col h-full shrink-0
             w-full lg:w-80
             absolute lg:relative inset-0 z-10 lg:z-auto
-            bg-white lg:border-r lg:border-gray-200
+            bg-white
           `}
         >
           <ConversationList
@@ -205,7 +205,9 @@ export default function ChatPage() {
           className={`
             ${showChat ? "flex" : "hidden"} lg:flex
             flex-1 flex-col min-w-0 min-h-0
-            relative bg-gray-50
+            relative min-h-0
+            bg-gray-50
+            lg:border-l lg:border-gray-300
           `}
         >
           {isSmallScreen && showChat && (

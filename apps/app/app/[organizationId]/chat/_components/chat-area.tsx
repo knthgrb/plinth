@@ -1142,51 +1142,54 @@ export function ChatArea({
             })}
           </div>
         )}
-        <form onSubmit={handleSendMessage} className="flex gap-2">
-          <div className="flex-1 flex items-center gap-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              onChange={handleFileSelect}
-              className="hidden"
-              id="file-upload"
-            />
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={isUploading}
-                >
-                  <Paperclip className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                <DropdownMenuItem
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isUploading}
-                >
-                  <FileText className="h-4 w-4 mr-2" />
-                  Upload File
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => setIsDocumentModalOpen(true)}
-                  disabled={isUploading}
-                >
-                  <FileText className="h-4 w-4 mr-2" />
-                  Select from Documents
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Input
-              value={messageContent}
-              onChange={(e) => setMessageContent(e.target.value)}
-              placeholder="Type a message..."
-              className="flex-1"
-            />
-          </div>
+        <form
+          onSubmit={handleSendMessage}
+          className="flex w-full items-stretch gap-2"
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={handleFileSelect}
+            className="hidden"
+            id="file-upload"
+          />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isUploading}
+                className="h-11 w-11 shrink-0 rounded-lg border-gray-200 p-0 hover:bg-gray-50"
+                aria-label="Attach"
+              >
+                <Paperclip className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                Upload File
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setIsDocumentModalOpen(true)}
+                disabled={isUploading}
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                Select from Documents
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Input
+            value={messageContent}
+            onChange={(e) => setMessageContent(e.target.value)}
+            placeholder="Type a message..."
+            className="h-11 min-w-0 flex-1 rounded-lg border-gray-200 py-0 text-sm shadow-sm focus-visible:ring-2 focus-visible:ring-brand-purple/30"
+            aria-label="Message"
+          />
           <Button
             type="submit"
             disabled={
@@ -1194,6 +1197,8 @@ export function ChatArea({
               isUploading ||
               !canSend
             }
+            className="h-11 w-11 shrink-0 rounded-lg p-0 bg-brand-purple text-white hover:bg-brand-purple/90 disabled:opacity-50"
+            aria-label="Send message"
           >
             <Send className="h-4 w-4" />
           </Button>
