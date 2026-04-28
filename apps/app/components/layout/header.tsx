@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   LogOut,
@@ -113,19 +113,15 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <button
-                onClick={() => {
-                  // TODO: Implement help modal or link
-                  window.open(
-                    "https://plinth-marketing.vercel.app/resources#docs",
-                    "_blank",
-                  );
-                }}
+              <a
+                href="https://plinth-marketing.vercel.app/resources#docs"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="hidden sm:flex items-center justify-center rounded-full hover:bg-[rgb(250,250,250)] w-9 h-9 shrink-0 text-sm font-normal transition-colors cursor-pointer group"
                 aria-label="Help"
               >
                 <HelpCircle className="h-4.5 w-4.5 transition-colors text-gray-900 group-hover:opacity-80" />
-              </button>
+              </a>
             </TooltipTrigger>
             <TooltipContent position="bottom">Help</TooltipContent>
           </Tooltip>

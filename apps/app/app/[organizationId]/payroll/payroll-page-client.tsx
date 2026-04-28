@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback, Suspense } from "react";
 import { useQuery } from "convex/react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, usePathname, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
@@ -405,7 +405,14 @@ export default function PayrollPageClient() {
   >("regular");
 
   const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
   const payslipIdParam = searchParams.get("payslipId");
+  /** Avoid double-open from chat link (Strict Mode / re-renders); cleared when URL param changes */
+  const openedPayrollFromUrlRef = useRef<string | null>(null);
+  const handleViewPayslipsRef = useRef<
+    ((run: any, highlightPayslipId?: string) => Promise<void>) | null
+  >(null);
 
   const closeFinalizeDialog = useCallback(() => {
     setFinalizeDialogOpen(false);
@@ -454,33 +461,6 @@ export default function PayrollPageClient() {
     }
     void loadPayrollRuns({ isInitialHydration: true });
   }, [effectiveOrganizationId]);
-
-  // Handle payslipId from URL (from chat link)
-  useEffect(() => {
-    if (payslipIdParam && effectiveOrganizationId) {
-      // Find the payroll run that contains this payslip
-      const findAndOpenPayslip = async () => {
-        try {
-          const { getPayslip: fetchPayslip } =
-            await import("@/actions/payroll");
-          const payslip = await fetchPayslip(payslipIdParam);
-          if (payslip) {
-            // Get the payroll run for this payslip
-            const runs = await getPayrollRuns(effectiveOrganizationId);
-            const payrollRun = runs.find(
-              (run: any) => run._id === payslip.payrollRunId,
-            );
-            if (payrollRun) {
-              await handleViewPayslips(payrollRun, payslipIdParam);
-            }
-          }
-        } catch (error) {
-          console.error("Error loading payslip from URL:", error);
-        }
-      };
-      findAndOpenPayslip();
-    }
-  }, [payslipIdParam, effectiveOrganizationId]);
 
   const filteredPayrollRuns = useMemo(() => {
     let runs = payrollRuns;
@@ -538,6 +518,35 @@ export default function PayrollPageClient() {
       prev.filter((id) => payrollRuns.some((run) => String(run._id) === id)),
     );
   }, [payrollRuns]);
+
+  // Open payslip from chat (?payslipId=) — uses ref so it can live with other hooks; ref set after handleViewPayslips is defined.
+  useEffect(() => {
+    if (!payslipIdParam || !effectiveOrganizationId) {
+      openedPayrollFromUrlRef.current = null;
+      return;
+    }
+    if (openedPayrollFromUrlRef.current === payslipIdParam) return;
+
+    const findAndOpenPayslip = async () => {
+      try {
+        const payslip = await getPayslip(payslipIdParam);
+        if (!payslip) return;
+        const runs = await getPayrollRuns(effectiveOrganizationId);
+        const payrollRun = runs.find(
+          (run: any) => String(run._id) === String(payslip.payrollRunId),
+        );
+        if (!payrollRun) return;
+        const open = handleViewPayslipsRef.current;
+        if (!open) return;
+        await open(payrollRun, payslipIdParam);
+        openedPayrollFromUrlRef.current = payslipIdParam;
+        router.replace(pathname, { scroll: false });
+      } catch (error) {
+        console.error("Error loading payslip from URL:", error);
+      }
+    };
+    void findAndOpenPayslip();
+  }, [payslipIdParam, effectiveOrganizationId, pathname, router]);
 
   const handleViewSummary = async (payrollRun: any) => {
     setSelectedPayrollRun(payrollRun);
@@ -641,7 +650,9 @@ export default function PayrollPageClient() {
     setSelectedPayrollRun(payrollRun);
     setIsViewPayslipsOpen(true);
     setIsLoadingPayslips(true);
-    setExpandedPayslipId(highlightPayslipId ?? null);
+    // Do not set expanded to highlight id here: handleOpenPayslipDetails toggles
+    // (same id → collapse), which would immediately collapse the appealed payslip.
+    setExpandedPayslipId(null);
     setPayslipDetailsById({});
     setPayslipConcerns({});
     try {
@@ -650,10 +661,16 @@ export default function PayrollPageClient() {
 
       if (highlightPayslipId) {
         const highlightedPayslip = payslipsData.find(
-          (payslip: { _id: string }) => payslip._id === highlightPayslipId,
+          (payslip: { _id: string }) =>
+            String(payslip._id) === String(highlightPayslipId),
         );
         if (highlightedPayslip) {
           await handleOpenPayslipDetails(highlightedPayslip);
+        } else {
+          const one = await getPayslip(highlightPayslipId);
+          if (one && String(one.payrollRunId) === String(payrollRun._id)) {
+            await handleOpenPayslipDetails({ _id: one._id });
+          }
         }
       }
 
@@ -695,6 +712,8 @@ export default function PayrollPageClient() {
       setIsLoadingPayslips(false);
     }
   };
+
+  handleViewPayslipsRef.current = handleViewPayslips;
 
   const handleOpenPayslipDetails = async (payslipSummary: any) => {
     const payslipId = payslipSummary._id;

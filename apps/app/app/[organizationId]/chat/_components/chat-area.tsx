@@ -10,7 +10,7 @@ import {
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Send,
@@ -1156,7 +1156,7 @@ export function ChatArea({
         )}
         <form
           onSubmit={handleSendMessage}
-          className="flex w-full items-stretch gap-2"
+          className="flex w-full items-end gap-2"
         >
           <input
             ref={fileInputRef}
@@ -1195,12 +1195,23 @@ export function ChatArea({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Input
+          <Textarea
             value={messageContent}
             onChange={(e) => setMessageContent(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" || e.shiftKey) return;
+              if (e.nativeEvent.isComposing) return;
+              e.preventDefault();
+              if (isUploading || !canSend) return;
+              if (!messageContent.trim() && attachments.length === 0) return;
+              void handleSendMessage(
+                e as unknown as React.FormEvent<HTMLFormElement>,
+              );
+            }}
             placeholder="Type a message..."
-            className="h-11 min-w-0 flex-1 rounded-lg border-gray-200 py-0 text-sm shadow-sm focus-visible:ring-2 focus-visible:ring-brand-purple/30"
+            rows={1}
             aria-label="Message"
+            className="min-h-11 max-h-40 min-w-0 flex-1 resize-none rounded-lg border-gray-200 py-2.5 text-sm leading-snug shadow-sm focus-visible:ring-2 focus-visible:ring-brand-purple/30"
           />
           <Button
             type="submit"

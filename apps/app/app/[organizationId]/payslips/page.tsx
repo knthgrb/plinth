@@ -61,7 +61,10 @@ export default function PayslipsPage() {
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const router = useRouter();
+  /** Set only after we successfully open the payslip from ?payslipId= */
   const openedPayslipFromUrlRef = useRef<string | null>(null);
+  /** Keep last ?payslipId= so PIN screen or layout changes do not lose the deep link */
+  const lastPayslipIdFromUrlRef = useRef<string | null>(null);
   const { currentOrganizationId } = useOrganization();
   const { employeeViewActive, canUseEmployeeView } = useEmployeeView();
 
@@ -221,9 +224,16 @@ export default function PayslipsPage() {
     }
   };
 
+  // Remember payslipId from the URL so it survives PIN step and any param strip before verify.
+  useEffect(() => {
+    const p = searchParams.get("payslipId");
+    if (p) lastPayslipIdFromUrlRef.current = p;
+  }, [searchParams]);
+
   // Open a specific payslip when linked from chat (e.g. payslip appeal "View Payslip").
   useEffect(() => {
-    const id = searchParams.get("payslipId");
+    const id =
+      searchParams.get("payslipId") ?? lastPayslipIdFromUrlRef.current;
     if (!id || !currentOrganizationId) return;
     if (payslipAccess === undefined) return;
     if (!employeeId) return;
@@ -234,19 +244,20 @@ export default function PayslipsPage() {
     const openFromUrl = async () => {
       const fromList = payslips.find((p: any) => String(p._id) === id);
       if (fromList) {
-        openedPayslipFromUrlRef.current = id;
         setSelectedPayslip(fromList);
         setIsViewOpen(true);
         setIsLoadingDetails(true);
         try {
           const details = await getPayslip(fromList._id);
           setPayslipDetails(details);
+          openedPayslipFromUrlRef.current = id;
+          lastPayslipIdFromUrlRef.current = null;
+          router.replace(pathname, { scroll: false });
         } catch (error) {
           console.error("Error loading payslip details:", error);
         } finally {
           setIsLoadingDetails(false);
         }
-        router.replace(pathname);
         return;
       }
       try {
@@ -256,12 +267,13 @@ export default function PayslipsPage() {
           employeeId &&
           String(details.employeeId) === String(employeeId)
         ) {
-          openedPayslipFromUrlRef.current = id;
           setSelectedPayslip(details);
           setPayslipDetails(details);
           setIsViewOpen(true);
           setIsLoadingDetails(false);
-          router.replace(pathname);
+          openedPayslipFromUrlRef.current = id;
+          lastPayslipIdFromUrlRef.current = null;
+          router.replace(pathname, { scroll: false });
         }
       } catch (error) {
         console.error("Error opening payslip from URL:", error);

@@ -179,12 +179,12 @@ export default function ChatPage() {
     <MainLayout>
       <ChatSessionKeysProvider organizationId={effectiveOrganizationId}>
       {/* relative so absolute sidebar is contained below the main app header */}
-      <div className="relative flex h-[calc(100vh-4rem)] min-h-0 overflow-hidden w-full bg-gray-50 border-t border-gray-200">
+      <div className="relative flex h-[calc(100vh-4rem)] min-h-0 w-full items-stretch overflow-hidden bg-gray-50 border-t border-gray-200">
         {/* Conversation list: full width on small screen when visible, sticks to sidebar on large (no margin) */}
         <aside
           className={`
             ${showList ? "flex" : "hidden"} lg:flex
-            flex-col h-full shrink-0
+            flex-col h-full min-h-0 shrink-0
             w-full lg:w-80
             absolute lg:relative inset-0 z-10 lg:z-auto
             bg-white
@@ -200,14 +200,20 @@ export default function ChatPage() {
           />
         </aside>
 
+        {/* Full-height column divider (dedicated strut so the line meets the bottom; border-l on main could clip short) */}
+        <div
+          className="hidden lg:block w-px shrink-0 self-stretch bg-gray-300"
+          aria-hidden
+        />
+
         {/* Chat area: replaces list view on small screen when a conversation is selected */}
         <main
           className={`
             ${showChat ? "flex" : "hidden"} lg:flex
             flex-1 flex-col min-w-0 min-h-0
             relative min-h-0
+            h-full
             bg-gray-50
-            lg:border-l lg:border-gray-300
           `}
         >
           {isSmallScreen && showChat && (
