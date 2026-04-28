@@ -182,6 +182,7 @@ import {
 } from "@/actions/payroll";
 import { useOrganization } from "@/hooks/organization-context";
 import { useToast } from "@/components/ui/use-toast";
+import { userFacingPayslipLoadError } from "@/lib/payslip-load-errors";
 import { PayslipDetail } from "@/components/payslip-detail";
 
 type Deduction = {
@@ -661,11 +662,11 @@ export default function PayrollPageClient() {
           }
         }, 500);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Error loading payslips:", error);
       toast({
-        title: "Error",
-        description: "Failed to load payslips",
+        title: "Could not load payslips",
+        description: userFacingPayslipLoadError(error),
         variant: "destructive",
       });
     } finally {
@@ -703,11 +704,11 @@ export default function PayrollPageClient() {
           [payslipId]: messages || [],
         }));
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Error loading payslip details:", error);
       toast({
-        title: "Error",
-        description: "Failed to load payslip details",
+        title: "Could not open payslip",
+        description: userFacingPayslipLoadError(error),
         variant: "destructive",
       });
     } finally {

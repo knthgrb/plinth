@@ -56,6 +56,7 @@ import {
 } from "@/lib/manila-date";
 import { usePayslipIdFromUrl } from "@/hooks/use-payslip-id-from-url";
 import { payslipPinSessionKey } from "@/lib/payslip-session";
+import { userFacingPayslipLoadError } from "@/lib/payslip-load-errors";
 
 function PayslipsPageContent() {
   const { toast } = useToast();
@@ -212,8 +213,15 @@ function PayslipsPageContent() {
     try {
       const details = await getPayslip(payslip._id);
       setPayslipDetails(details);
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Error loading payslip details:", error);
+      toast({
+        title: "Could not open payslip",
+        description: userFacingPayslipLoadError(error),
+        variant: "destructive",
+      });
+      setIsViewOpen(false);
+      setSelectedPayslip(null);
     } finally {
       setIsLoadingDetails(false);
     }

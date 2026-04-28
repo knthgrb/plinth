@@ -20,6 +20,11 @@ import { Label } from "@/components/ui/label";
 import { Lock, Loader2 } from "lucide-react";
 import { PayslipDetail } from "@/components/payslip-detail";
 import { payslipPinSessionKey } from "@/lib/payslip-session";
+import {
+  PAYSLIP_NOT_FOUND,
+  PAYSLIP_PIN_VERIFY_GENERIC,
+  userFacingPayslipLoadError,
+} from "@/lib/payslip-load-errors";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -153,7 +158,7 @@ export function PayslipDeepLinkModal() {
       try {
         const d = await getPayslip(payslipId);
         if (cancelled || !d) {
-          if (!cancelled) setLoadError("Payslip not found");
+          if (!cancelled) setLoadError(PAYSLIP_NOT_FOUND);
           return;
         }
         if (treatAsEmployee && employeeId) {
@@ -164,12 +169,13 @@ export function PayslipDeepLinkModal() {
         }
         setDetails(d);
         setPhase("view");
-      } catch (e: any) {
+      } catch (error: unknown) {
         if (!cancelled) {
-          setLoadError(e?.message || "Failed to load payslip");
+          const copy = userFacingPayslipLoadError(error);
+          setLoadError(copy);
           toast({
             title: "Could not open payslip",
-            description: e?.message || "Try again or open from Payslips.",
+            description: copy,
             variant: "destructive",
           });
         }
@@ -215,8 +221,8 @@ export function PayslipDeepLinkModal() {
       } else {
         setPinError("Incorrect PIN. Please try again.");
       }
-    } catch (e: any) {
-      setPinError(e?.message || "Verification failed");
+    } catch {
+      setPinError(PAYSLIP_PIN_VERIFY_GENERIC);
     } finally {
       setIsVerifyingPin(false);
     }
