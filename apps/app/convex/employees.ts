@@ -19,6 +19,21 @@ function assertHireDateIsNotFuture(hireDate: number) {
   }
 }
 
+const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+function toManilaDayStartUtcMs(ts: number): number {
+  const d = new Date(ts + MANILA_OFFSET_MS);
+  return Date.UTC(
+    d.getUTCFullYear(),
+    d.getUTCMonth(),
+    d.getUTCDate(),
+    0,
+    0,
+    0,
+    0,
+  );
+}
+
 // Helper to check authorization with organization context
 async function checkAuth(
   ctx: any,
@@ -538,6 +553,7 @@ export const createEmployee = mutation({
         ),
       ),
     }),
+    shiftId: v.optional(v.union(v.id("shifts"), v.null())),
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
@@ -561,6 +577,7 @@ export const createEmployee = mutation({
       employment: args.employment,
       compensation: encryptCompensationForDb(args.compensation) as any,
       schedule: args.schedule,
+      shiftId: args.shiftId ?? null,
       requirements: defaultRequirements,
       deductions: [],
       incentives: [],
@@ -575,6 +592,16 @@ export const createEmployee = mutation({
         ...args.employment,
         employeeId: companyEmployeeId,
       },
+    });
+
+    await ctx.db.insert("employeeScheduleHistory", {
+      organizationId: args.organizationId,
+      employeeId: insertedId,
+      effectiveFrom: toManilaDayStartUtcMs(args.employment.hireDate),
+      schedule: args.schedule,
+      shiftId: args.shiftId ?? null,
+      createdAt: now,
+      updatedAt: now,
     });
 
     return insertedId;
@@ -763,6 +790,45 @@ export const updateEmployee = mutation({
     }
 
     await ctx.db.patch(args.employeeId, updates);
+
+    const normalizedCurrentShiftId = (employee as any).shiftId ?? null;
+    const normalizedNextShiftId =
+      args.shiftId !== undefined ? args.shiftId ?? null : normalizedCurrentShiftId;
+    const nextSchedule = args.schedule ?? (employee as any).schedule;
+    const scheduleChanged =
+      args.schedule !== undefined &&
+      JSON.stringify(args.schedule) !== JSON.stringify((employee as any).schedule);
+    const shiftChanged =
+      args.shiftId !== undefined && normalizedNextShiftId !== normalizedCurrentShiftId;
+
+    if ((scheduleChanged || shiftChanged) && nextSchedule) {
+      const now = Date.now();
+      const effectiveFrom = toManilaDayStartUtcMs(now);
+      const existingTodayHistory = await (ctx.db
+        .query("employeeScheduleHistory") as any)
+        .withIndex("by_employee_effective_from", (q: any) =>
+          q.eq("employeeId", args.employeeId).eq("effectiveFrom", effectiveFrom),
+        )
+        .first();
+
+      if (existingTodayHistory) {
+        await ctx.db.patch(existingTodayHistory._id, {
+          schedule: nextSchedule,
+          shiftId: normalizedNextShiftId,
+          updatedAt: now,
+        });
+      } else {
+        await ctx.db.insert("employeeScheduleHistory", {
+          organizationId: employee.organizationId,
+          employeeId: args.employeeId,
+          effectiveFrom,
+          schedule: nextSchedule,
+          shiftId: normalizedNextShiftId,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
 
     // When employment status changes, sync linked user account: non-active = account can't be used
     if (args.employment?.status) {

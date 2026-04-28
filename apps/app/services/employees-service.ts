@@ -64,6 +64,7 @@ export class EmployeesService {
         reason: string;
       }>;
     };
+    shiftId?: Id<"shifts"> | null;
   }) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(

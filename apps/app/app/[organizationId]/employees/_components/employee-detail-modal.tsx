@@ -35,6 +35,21 @@ function safeDate(value: unknown): Date | null {
   const d = new Date(value as string | number);
   return Number.isNaN(d.getTime()) ? null : d;
 }
+
+/** Manila start-of-day UTC timestamp; used as cutoff so past attendance is not rewritten on schedule edits. */
+function getManilaTodayStartUtcMs(): number {
+  const offsetMs = 8 * 60 * 60 * 1000;
+  const shifted = new Date(Date.now() + offsetMs);
+  return Date.UTC(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth(),
+    shifted.getUTCDate(),
+    0,
+    0,
+    0,
+    0,
+  );
+}
 import { updateEmployee } from "@/actions/employees";
 import { Id } from "@/convex/_generated/dataModel";
 import { useOrganization } from "@/hooks/organization-context";
@@ -652,6 +667,8 @@ export function EmployeeDetailModal({
         await recalculateEmployeeAttendance({
           organizationId: currentOrganizationId,
           employeeId,
+          // Only re-evaluate from today onward; keep historical attendance tied to previous schedule.
+          startDate: getManilaTodayStartUtcMs(),
         });
       }
       onModeChange?.("view");

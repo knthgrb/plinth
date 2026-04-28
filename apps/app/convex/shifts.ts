@@ -61,7 +61,23 @@ export type ScheduleLunchContext = {
   orgShifts: any[];
   defaultLunchStart: string;
   defaultLunchEnd: string;
+  scheduleHistoryByEmployeeId?: Record<string, any[]>;
 };
+
+function resolveEffectiveScheduleHistory(
+  date: number,
+  historyRows: any[] | undefined,
+): { schedule: any; shiftId: any } | null {
+  if (!historyRows || historyRows.length === 0) return null;
+  let best: any | null = null;
+  for (const row of historyRows) {
+    if (typeof row.effectiveFrom !== "number") continue;
+    if (row.effectiveFrom > date) continue;
+    if (!best || row.effectiveFrom > best.effectiveFrom) best = row;
+  }
+  if (!best?.schedule) return null;
+  return { schedule: best.schedule, shiftId: best.shiftId ?? null };
+}
 
 /** Get schedule + lunch for an employee on a date.
  * When the employee has both a shift and a per-day schedule (defaultSchedule/scheduleOverrides),
@@ -74,7 +90,7 @@ export type ScheduleLunchContext = {
  */
 export async function getScheduleWithLunch(
   ctx: any,
-  employee: { shiftId?: any; schedule?: any },
+  employee: { _id?: any; shiftId?: any; schedule?: any },
   date: number,
   organizationId: any,
   cache?: ScheduleLunchContext,
@@ -89,9 +105,33 @@ export async function getScheduleWithLunch(
     end: cache?.defaultLunchEnd ?? "13:00",
   });
 
+  let effectiveSchedule = employee.schedule ?? null;
+  let effectiveShiftId = employee.shiftId ?? null;
+
+  if (employee._id) {
+    const employeeIdKey = String(employee._id);
+    let historyRows = cache?.scheduleHistoryByEmployeeId?.[employeeIdKey];
+    if (!historyRows) {
+      historyRows = await (ctx.db.query("employeeScheduleHistory") as any)
+        .withIndex("by_employee", (q: any) => q.eq("employeeId", employee._id))
+        .collect();
+      if (cache) {
+        if (!cache.scheduleHistoryByEmployeeId) {
+          cache.scheduleHistoryByEmployeeId = {};
+        }
+        cache.scheduleHistoryByEmployeeId[employeeIdKey] = historyRows;
+      }
+    }
+    const effectiveFromHistory = resolveEffectiveScheduleHistory(date, historyRows);
+    if (effectiveFromHistory) {
+      effectiveSchedule = effectiveFromHistory.schedule;
+      effectiveShiftId = effectiveFromHistory.shiftId;
+    }
+  }
+
   const fromPerDay =
-    employee.schedule != null
-      ? getScheduledTimesForDate(date, employee.schedule)
+    effectiveSchedule != null
+      ? getScheduledTimesForDate(date, effectiveSchedule)
       : null;
 
   if (fromPerDay?.scheduleIn && fromPerDay?.scheduleOut) {
@@ -110,8 +150,8 @@ export async function getScheduleWithLunch(
     if (matchingShift) {
       lunchStart = matchingShift.lunchStart;
       lunchEnd = matchingShift.lunchEnd;
-    } else if (employee.shiftId) {
-      const fallbackShift = await ctx.db.get(employee.shiftId);
+    } else if (effectiveShiftId) {
+      const fallbackShift = await ctx.db.get(effectiveShiftId);
       if (fallbackShift && fallbackShift.organizationId === organizationId) {
         lunchStart = fallbackShift.lunchStart;
         lunchEnd = fallbackShift.lunchEnd;
@@ -147,8 +187,8 @@ export async function getScheduleWithLunch(
         lunchEnd = att?.defaultLunchEnd ?? "13:00";
       }
     }
-  } else if (employee.shiftId) {
-    const shift = await ctx.db.get(employee.shiftId);
+  } else if (effectiveShiftId) {
+    const shift = await ctx.db.get(effectiveShiftId);
     if (!shift || shift.organizationId !== organizationId)
       return null;
     scheduleIn = shift.scheduleIn;

@@ -1129,13 +1129,9 @@ export const recalculateEmployeeAttendance = mutation({
       return { updated: 0 };
     }
 
-    // Determine effective date range if not provided
-    const minDate =
-      args.startDate ??
-      records.reduce(
-        (min: number, r: any) => (r.date < min ? r.date : min),
-        records[0].date,
-      );
+    // Determine effective date range if not provided.
+    // Default to today's Manila day so schedule edits don't rewrite historical attendance.
+    const minDate = args.startDate ?? getManilaTodayDateUtcMs();
     const maxDate =
       args.endDate ??
       records.reduce(

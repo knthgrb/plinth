@@ -69,6 +69,7 @@ export async function createEmployee(data: {
       reason: string;
     }>;
   };
+  shiftId?: Id<"shifts"> | null;
 }) {
   return EmployeesService.createEmployee(data);
 }

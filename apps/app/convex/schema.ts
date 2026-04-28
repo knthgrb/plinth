@@ -290,6 +290,69 @@ export default defineSchema({
     .index("by_status", ["employment.status"])
     .index("by_department", ["employment.department"]),
 
+  // Employee schedule history (effective-dated snapshots).
+  // Used so attendance/payroll resolve the schedule that was active on a specific date.
+  employeeScheduleHistory: defineTable({
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    effectiveFrom: v.number(), // Manila day start UTC ms
+    schedule: v.object({
+      defaultSchedule: v.object({
+        monday: v.object({
+          in: v.string(),
+          out: v.string(),
+          isWorkday: v.boolean(),
+        }),
+        tuesday: v.object({
+          in: v.string(),
+          out: v.string(),
+          isWorkday: v.boolean(),
+        }),
+        wednesday: v.object({
+          in: v.string(),
+          out: v.string(),
+          isWorkday: v.boolean(),
+        }),
+        thursday: v.object({
+          in: v.string(),
+          out: v.string(),
+          isWorkday: v.boolean(),
+        }),
+        friday: v.object({
+          in: v.string(),
+          out: v.string(),
+          isWorkday: v.boolean(),
+        }),
+        saturday: v.object({
+          in: v.string(),
+          out: v.string(),
+          isWorkday: v.boolean(),
+        }),
+        sunday: v.object({
+          in: v.string(),
+          out: v.string(),
+          isWorkday: v.boolean(),
+        }),
+      }),
+      scheduleOverrides: v.optional(
+        v.array(
+          v.object({
+            date: v.number(),
+            in: v.string(),
+            out: v.string(),
+            reason: v.string(),
+          }),
+        ),
+      ),
+    }),
+    shiftId: v.optional(v.union(v.id("shifts"), v.null())),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_employee", ["employeeId"])
+    .index("by_employee_effective_from", ["employeeId", "effectiveFrom"]),
+
   // Attendance table
   attendance: defineTable({
     organizationId: v.id("organizations"),
