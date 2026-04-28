@@ -40,6 +40,7 @@ export class PayrollService {
         name: string;
         amount: number;
         type: string;
+        taxable?: boolean;
       }>;
     }>;
   }) {
@@ -116,6 +117,7 @@ export class PayrollService {
         name: string;
         amount: number;
         type: string;
+        taxable?: boolean;
       }>;
     }>;
   }) {
@@ -336,6 +338,7 @@ export class PayrollService {
       name: string;
       amount: number;
       type: string;
+      taxable?: boolean;
     }>;
     nonTaxableAllowance?: number;
   }) {

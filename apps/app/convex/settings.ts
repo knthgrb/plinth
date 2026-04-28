@@ -190,6 +190,7 @@ export const updatePayrollSettings = mutation({
       ),
       holidayNoWorkNoPay: v.optional(v.boolean()),
       absentBeforeHolidayNoHolidayPay: v.optional(v.boolean()),
+      trainNinetyThousandCapOnAdditions: v.optional(v.boolean()),
     }),
   },
   handler: async (ctx, args) => {

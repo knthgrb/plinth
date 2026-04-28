@@ -91,6 +91,7 @@ export function PayrollSettingsContent() {
     taxDeductOnPay: "first" as "first" | "second",
     holidayNoWorkNoPay: false,
     absentBeforeHolidayNoHolidayPay: true,
+    trainNinetyThousandCapOnAdditions: false,
   });
   const [isSaving, setIsSaving] = useState(false);
 
@@ -128,6 +129,8 @@ export function PayrollSettingsContent() {
         holidayNoWorkNoPay: ps.holidayNoWorkNoPay ?? false,
         absentBeforeHolidayNoHolidayPay:
           ps.absentBeforeHolidayNoHolidayPay ?? true,
+        trainNinetyThousandCapOnAdditions:
+          ps.trainNinetyThousandCapOnAdditions ?? false,
       });
     } else {
       setFormData((prev) => ({
@@ -163,6 +166,8 @@ export function PayrollSettingsContent() {
           holidayNoWorkNoPay: formData.holidayNoWorkNoPay,
           absentBeforeHolidayNoHolidayPay:
             formData.absentBeforeHolidayNoHolidayPay,
+          trainNinetyThousandCapOnAdditions:
+            formData.trainNinetyThousandCapOnAdditions,
         },
       });
 
@@ -470,6 +475,35 @@ export function PayrollSettingsContent() {
                 </Select>
               </div>
             )}
+          </div>
+        </div>
+
+        <div className="space-y-3 rounded-lg border p-4">
+          <div className="flex items-start gap-3">
+            <Checkbox
+              id="trainNinetyThousandCapOnAdditions"
+              checked={formData.trainNinetyThousandCapOnAdditions}
+              onCheckedChange={(checked) =>
+                setFormData({
+                  ...formData,
+                  trainNinetyThousandCapOnAdditions: checked === true,
+                })
+              }
+            />
+            <div className="space-y-1">
+              <Label
+                htmlFor="trainNinetyThousandCapOnAdditions"
+                className="cursor-pointer font-medium leading-tight"
+              >
+                Apply TRAIN Law ₱90,000 cap to non-taxable additions
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                When enabled, additions marked as non-taxable are applied
+                against the annual ₱90,000 limit; any excess in a period is
+                treated as taxable (and shown as a separate line). Totals use
+                prior finalized payslips in the same calendar year.
+              </p>
+            </div>
           </div>
         </div>
 

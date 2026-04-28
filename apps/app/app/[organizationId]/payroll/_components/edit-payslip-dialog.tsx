@@ -10,16 +10,24 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, X } from "lucide-react";
 
 type Deduction = { name: string; amount: number; type: string };
+
+type IncentiveEdit = {
+  name: string;
+  amount: number;
+  type: string;
+  taxable: boolean;
+};
 
 interface EditPayslipDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editingPayslip: any;
   editDeductions: Deduction[];
-  editIncentives: Deduction[];
+  editIncentives: IncentiveEdit[];
   isSavingPayslip: boolean;
   onAddDeduction: () => void;
   onRemoveDeduction: (index: number) => void;
@@ -32,8 +40,8 @@ interface EditPayslipDialogProps {
   onRemoveIncentive: (index: number) => void;
   onUpdateIncentive: (
     index: number,
-    field: "name" | "amount" | "type",
-    value: string | number
+    field: "name" | "amount" | "type" | "taxable",
+    value: string | number | boolean
   ) => void;
   onSave: () => void;
 }
@@ -153,56 +161,74 @@ export function EditPayslipDialog({
                 Override the amount (value) only
               </span>
             </div>
-            {editIncentives.map((inc, idx) => (
-              <div key={idx} className="flex gap-2 items-end">
-                <div className="flex-1">
-                  <Label className="text-xs">Name</Label>
-                  {isEditableName(inc, "addition") ? (
-                    <Input
-                      value={inc.name ?? ""}
-                      onChange={(e) =>
-                        onUpdateIncentive(idx, "name", e.target.value)
-                      }
-                      placeholder="Incentive name"
-                      className="h-9"
-                    />
-                  ) : (
-                    <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
-                      {inc.name}
-                    </div>
-                  )}
-                </div>
-                <div className="w-28">
-                  <Label className="text-xs">Amount</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={inc.amount ?? ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === "" || val === "-") {
-                        onUpdateIncentive(idx, "amount", 0);
-                      } else {
-                        const numVal = parseFloat(val);
-                        if (!isNaN(numVal) && numVal >= 0) {
-                          onUpdateIncentive(idx, "amount", numVal);
+            {editIncentives.map((inc, idx) => {
+              const isTaxable = inc.taxable !== false;
+              return (
+                <div key={idx} className="flex flex-wrap gap-2 items-end">
+                  <div className="min-w-[120px] flex-1">
+                    <Label className="text-xs">Name</Label>
+                    {isEditableName(inc, "addition") ? (
+                      <Input
+                        value={inc.name ?? ""}
+                        onChange={(e) =>
+                          onUpdateIncentive(idx, "name", e.target.value)
                         }
+                        placeholder="Incentive name"
+                        className="h-9"
+                      />
+                    ) : (
+                      <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
+                        {inc.name}
+                      </div>
+                    )}
+                  </div>
+                  <div className="w-28">
+                    <Label className="text-xs">Amount</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={inc.amount ?? ""}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === "" || val === "-") {
+                          onUpdateIncentive(idx, "amount", 0);
+                        } else {
+                          const numVal = parseFloat(val);
+                          if (!isNaN(numVal) && numVal >= 0) {
+                            onUpdateIncentive(idx, "amount", numVal);
+                          }
+                        }
+                      }}
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 pb-1">
+                    <Checkbox
+                      id={`edit-inc-taxable-${idx}`}
+                      checked={isTaxable}
+                      onCheckedChange={(checked) =>
+                        onUpdateIncentive(idx, "taxable", checked === true)
                       }
-                    }}
-                    placeholder="0.00"
-                  />
+                    />
+                    <Label
+                      htmlFor={`edit-inc-taxable-${idx}`}
+                      className="text-xs font-normal cursor-pointer"
+                    >
+                      Taxable
+                    </Label>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => onRemoveIncentive(idx)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onRemoveIncentive(idx)}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            ))}
+              );
+            })}
             <Button type="button" variant="outline" size="sm" onClick={onAddIncentive}>
               <Plus className="h-4 w-4 mr-2" />
               Add addition

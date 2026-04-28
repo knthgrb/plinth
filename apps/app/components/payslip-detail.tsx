@@ -88,8 +88,16 @@ export function PayslipDetail({
 
   // Calculate earnings breakdown
   const incentives = payslip.incentives || [];
-  const totalIncentives = incentives.reduce(
-    (sum: number, inc: any) => sum + inc.amount,
+  const taxableIncentiveLines = incentives.filter(
+    (inc: { amount?: number; taxable?: boolean }) =>
+      (inc.amount ?? 0) > 0 && inc.taxable !== false,
+  );
+  const nonTaxableIncentiveLines = incentives.filter(
+    (inc: { amount?: number; taxable?: boolean }) =>
+      (inc.amount ?? 0) > 0 && inc.taxable === false,
+  );
+  const nonTaxableIncentivesTotal = nonTaxableIncentiveLines.reduce(
+    (sum: number, inc: any) => sum + (inc.amount ?? 0),
     0,
   );
 
@@ -467,7 +475,10 @@ export function PayslipDetail({
 
   // Total earnings
   const totalEarnings =
-    taxableGrossEarnings + nonTaxableAllowance + transportation;
+    taxableGrossEarnings +
+    nonTaxableAllowance +
+    transportation +
+    nonTaxableIncentivesTotal;
 
   // Only show sections when they have at least one line with value > 0
   const hasOtherEarnings =
@@ -493,7 +504,8 @@ export function PayslipDetail({
   const hasAddNonTaxable =
     nonTaxableAllowance > 0 ||
     transportation > 0 ||
-    (incentives?.filter((inc: any) => inc.amount > 0).length ?? 0) > 0;
+    nonTaxableIncentiveLines.length > 0;
+  const hasTaxableAdditions = taxableIncentiveLines.length > 0;
 
   // Separate deductions by type
   const governmentDeductions =
@@ -804,6 +816,30 @@ export function PayslipDetail({
                 </div>
               )}
 
+              {hasTaxableAdditions && (
+                <div className="mt-4">
+                  <p className="font-semibold mb-2">Taxable additions</p>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Only run-entered lines marked taxable (e.g. back pay you marked
+                    taxable). Basic pay and &quot;Other earnings&quot; are above.
+                  </p>
+                  <div className="space-y-1 text-sm">
+                    {taxableIncentiveLines.map((inc: any, i: number) => (
+                      <div key={i} className="flex justify-between">
+                        <span>{inc.name}</span>
+                        <span>
+                          ₱
+                          {inc.amount.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {hasLess && (
                 <div className="mt-4">
                   <p className="font-semibold mb-2">Less</p>
@@ -893,7 +929,7 @@ export function PayslipDetail({
 
               {hasAddNonTaxable && (
                 <div className="mt-4">
-                  <p className="font-semibold mb-2">Add</p>
+                  <p className="font-semibold mb-2">Add (non-taxable)</p>
                   <div className="space-y-1 text-sm">
                     {nonTaxableAllowance > 0 && (
                       <div className="flex justify-between">
@@ -919,24 +955,18 @@ export function PayslipDetail({
                         </span>
                       </div>
                     )}
-                    {incentives.length > 0 && (
-                      <>
-                        {incentives
-                          .filter((inc: any) => inc.amount > 0)
-                          .map((inc: any, i: number) => (
-                            <div key={i} className="flex justify-between">
-                              <span>{inc.name}</span>
-                              <span>
-                                ₱
-                                {inc.amount.toLocaleString("en-US", {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2,
-                                })}
-                              </span>
-                            </div>
-                          ))}
-                      </>
-                    )}
+                    {nonTaxableIncentiveLines.map((inc: any, i: number) => (
+                      <div key={i} className="flex justify-between">
+                        <span>{inc.name}</span>
+                        <span>
+                          ₱
+                          {inc.amount.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

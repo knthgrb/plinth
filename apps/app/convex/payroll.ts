@@ -1238,6 +1238,32 @@ function getHoursWorkedFromAttendance(att: {
   return 8 * dayMultiplier + (att.overtime ?? 0);
 }
 
+type PayrollLine = {
+  name: string;
+  amount: number;
+  type: string;
+  /** When false, paid out but excluded from taxable gross (withholding base). */
+  taxable?: boolean;
+};
+
+function sumTaxableIncentiveAmounts(lines: PayrollLine[]): number {
+  return round2(
+    lines.reduce((sum, line) => {
+      if (line.taxable === false) return sum;
+      return sum + (line.amount || 0);
+    }, 0),
+  );
+}
+
+function sumNonTaxableIncentiveAmounts(lines: PayrollLine[]): number {
+  return round2(
+    lines.reduce((sum, line) => {
+      if (line.taxable === false) return sum + (line.amount || 0);
+      return sum;
+    }, 0),
+  );
+}
+
 function recalculatePersistedPayslipTotals(args: {
   grossPay: number;
   previousIncentives?: PayrollLine[];
@@ -1245,12 +1271,15 @@ function recalculatePersistedPayslipTotals(args: {
   nextDeductions: PayrollLine[];
   nextNonTaxableAllowance: number;
 }) {
-  const previousIncentivesTotal = sumLineAmounts(args.previousIncentives ?? []);
-  const nextIncentivesTotal = sumLineAmounts(args.nextIncentives ?? []);
-  const preservedTaxableBase = round2(args.grossPay - previousIncentivesTotal);
-  const nextGrossPay = round2(preservedTaxableBase + nextIncentivesTotal);
+  const prevTax = sumTaxableIncentiveAmounts(args.previousIncentives ?? []);
+  const nextTax = sumTaxableIncentiveAmounts(args.nextIncentives ?? []);
+  const nextNonTax = sumNonTaxableIncentiveAmounts(args.nextIncentives ?? []);
+  const preservedTaxableBase = round2(args.grossPay - prevTax);
+  const nextGrossPay = round2(preservedTaxableBase + nextTax);
   const totalDeductions = round2(sumLineAmounts(args.nextDeductions));
-  const totalEarnings = round2(nextGrossPay + args.nextNonTaxableAllowance);
+  const totalEarnings = round2(
+    nextGrossPay + args.nextNonTaxableAllowance + nextNonTax,
+  );
   const nextNetPay = round2(Math.max(0, totalEarnings - totalDeductions));
 
   return {
@@ -1303,12 +1332,6 @@ function shouldTreatZeroAllowanceAsExplicitOverride(args: {
 
   return hireDay >= cutoffStartDay && hireDay <= cutoffEndDay;
 }
-
-type PayrollLine = {
-  name: string;
-  amount: number;
-  type: string;
-};
 
 type EmployeeGovSettings = {
   employeeId: any;
@@ -1405,6 +1428,129 @@ function sumLineAmounts(lines: PayrollLine[]): number {
   return lines.reduce((sum, line) => sum + (line.amount || 0), 0);
 }
 
+/** TRAIN Law: annual cap for non-taxable other benefits (with 13th month in full rule). */
+const TRAIN_ANNUAL_NON_TAXABLE_BENEFIT_CAP_PHP = 90_000;
+
+async function getTrainNinetyThousandCapOnAdditions(
+  ctx: any,
+  organizationId: any,
+): Promise<boolean> {
+  const settings = await (ctx.db.query("settings") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", organizationId),
+    )
+    .first();
+  return settings?.payrollSettings?.trainNinetyThousandCapOnAdditions === true;
+}
+
+async function getYtdNonTaxableIncentiveTotalForTrainCap(
+  ctx: any,
+  args: {
+    employeeId: any;
+    calendarYear: number;
+    beforePeriodStart: number;
+    excludePayrollRunId?: any;
+  },
+): Promise<number> {
+  const startOfYear = new Date(args.calendarYear, 0, 1).getTime();
+  const endOfYear = new Date(
+    args.calendarYear,
+    11,
+    31,
+    23,
+    59,
+    59,
+    999,
+  ).getTime();
+  const rows = await (ctx.db.query("payslips") as any)
+    .withIndex("by_employee", (q: any) => q.eq("employeeId", args.employeeId))
+    .collect();
+  let sum = 0;
+  for (const p of rows) {
+    if (
+      args.excludePayrollRunId &&
+      p.payrollRunId === args.excludePayrollRunId
+    ) {
+      continue;
+    }
+    const end = p.periodEnd;
+    if (end == null) continue;
+    if (end < startOfYear || end > endOfYear) continue;
+    if (end >= args.beforePeriodStart) continue;
+    const run = await ctx.db.get(p.payrollRunId);
+    if (!run || (run.status !== "finalized" && run.status !== "paid")) {
+      continue;
+    }
+    const raw = p.incentives;
+    if (!raw || typeof raw === "string") continue;
+    for (const inc of raw) {
+      if (inc.taxable === false) {
+        sum += Number(inc.amount) || 0;
+      }
+    }
+  }
+  return round2(sum);
+}
+
+function applyTrainNinetyThousandCapToIncentiveLines(
+  lines: PayrollLine[],
+  ytdNonTaxableUsed: number,
+): PayrollLine[] {
+  let room = Math.max(
+    0,
+    TRAIN_ANNUAL_NON_TAXABLE_BENEFIT_CAP_PHP - ytdNonTaxableUsed,
+  );
+  const out: PayrollLine[] = [];
+  for (const line of lines) {
+    const amt = round2(line.amount || 0);
+    if (amt <= 0) continue;
+    if (line.taxable !== false) {
+      out.push({ ...line, amount: amt, taxable: true });
+      continue;
+    }
+    const exempt = Math.min(amt, room);
+    const taxableExcess = round2(amt - exempt);
+    room = round2(room - exempt);
+    if (exempt > 0) {
+      out.push({
+        ...line,
+        amount: exempt,
+        taxable: false,
+      });
+    }
+    if (taxableExcess > 0) {
+      out.push({
+        ...line,
+        name: `${line.name} (taxable — TRAIN excess over ₱90,000)`,
+        amount: taxableExcess,
+        taxable: true,
+      });
+    }
+  }
+  return out;
+}
+
+function finalizeIncentiveLinesForPayroll(
+  lines: PayrollLine[],
+  trainCapEnabled: boolean,
+  ytdNonTaxableUsed: number,
+): PayrollLine[] {
+  if (trainCapEnabled) {
+    return applyTrainNinetyThousandCapToIncentiveLines(
+      lines,
+      ytdNonTaxableUsed,
+    );
+  }
+  return lines
+    .map((line) => {
+      const amt = round2(line.amount || 0);
+      if (amt <= 0) return null;
+      const taxable = line.taxable !== false;
+      return { ...line, amount: amt, taxable } as PayrollLine;
+    })
+    .filter((x: PayrollLine | null): x is PayrollLine => x != null);
+}
+
 function getEmployeeIncentiveLines(
   employee: any,
   payFrequency: PayFrequency,
@@ -1415,6 +1561,7 @@ function getEmployeeIncentiveLines(
       name: line.name,
       amount: round2(line.amount || 0),
       type: line.type || "incentive",
+      taxable: line.taxable,
     }));
   }
 
@@ -1434,6 +1581,7 @@ function getEmployeeIncentiveLines(
         name: incentive.name,
         amount: round2(amount),
         type: incentive.type || "incentive",
+        taxable: true,
       });
     }
   }
@@ -1621,12 +1769,32 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
 
   deductions.push(...attendanceDeductions);
 
-  const incentives = getEmployeeIncentiveLines(
+  const orgId = employee.organizationId;
+  const trainCapEnabled = await getTrainNinetyThousandCapOnAdditions(
+    ctx,
+    orgId,
+  );
+  const calendarYear = new Date(args.cutoffEnd).getFullYear();
+  const ytdTrain = trainCapEnabled
+    ? await getYtdNonTaxableIncentiveTotalForTrainCap(ctx, {
+        employeeId: args.employeeId,
+        calendarYear,
+        beforePeriodStart: args.cutoffStart,
+        excludePayrollRunId: args.excludePayrollRunId,
+      })
+    : 0;
+  const rawIncentiveLines = getEmployeeIncentiveLines(
     employee,
     args.payFrequency,
     args.incentiveEntry?.incentives,
   );
-  const totalIncentives = sumLineAmounts(incentives);
+  const incentives = finalizeIncentiveLinesForPayroll(
+    rawIncentiveLines,
+    trainCapEnabled,
+    ytdTrain,
+  );
+  const totalTaxableIncentives = sumTaxableIncentiveAmounts(incentives);
+  const totalNonTaxableIncentives = sumNonTaxableIncentiveAmounts(incentives);
 
   const isDailyizedFirstCutoff = payrollBase.dailyizedFirstCutoff === true;
   let nonTaxableAllowance =
@@ -1645,7 +1813,7 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
     payrollBase.basicPay +
       payrollBase.holidayPay +
       payrollBase.nightDiffPay +
-      totalIncentives,
+      totalTaxableIncentives,
   );
 
   const qualifiesForFirstCutoffTax =
@@ -1701,7 +1869,9 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
   const nonAttendanceDeductionsTotal = round2(
     totalDeductions - attendanceDeductionsTotal,
   );
-  const totalEarnings = round2(grossPay + nonTaxableAllowance);
+  const totalEarnings = round2(
+    grossPay + nonTaxableAllowance + totalNonTaxableIncentives,
+  );
   const earnedAfterAttendance = round2(totalEarnings - attendanceDeductionsTotal);
 
   let netPay = round2(earnedAfterAttendance - nonAttendanceDeductionsTotal);
@@ -1895,6 +2065,7 @@ export const computePayrollPreviewBatch = query({
               name: v.string(),
               amount: v.number(),
               type: v.string(),
+              taxable: v.optional(v.boolean()),
             }),
           ),
         }),
@@ -2037,6 +2208,7 @@ export const createPayrollRun = mutation({
               name: v.string(),
               amount: v.number(),
               type: v.string(),
+              taxable: v.optional(v.boolean()),
             }),
           ),
         }),
@@ -2327,6 +2499,7 @@ export const updatePayrollRun = mutation({
               name: v.string(),
               amount: v.number(),
               type: v.string(),
+              taxable: v.optional(v.boolean()),
             }),
           ),
         }),
@@ -4699,6 +4872,7 @@ export const updatePayslip = mutation({
           name: v.string(),
           amount: v.number(),
           type: v.string(),
+          taxable: v.optional(v.boolean()),
         }),
       ),
     ),
@@ -4709,6 +4883,7 @@ export const updatePayslip = mutation({
       name: string;
       amount: number;
       type: string;
+      taxable?: boolean;
     };
     type EditChange = {
       field: string;
@@ -4721,10 +4896,16 @@ export const updatePayslip = mutation({
       amount: round2(Number(line.amount || 0)),
       type: (line.type || "custom").trim(),
     });
+    const normalizeIncentiveLine = (line: PayslipLine): PayslipLine => ({
+      ...normalizeLine(line),
+      taxable: line.taxable === false ? false : true,
+    });
     const normalizeLines = (lines: PayslipLine[] | undefined): PayslipLine[] =>
       (lines ?? []).map(normalizeLine);
+    const normalizeIncentiveLines = (lines: PayslipLine[] | undefined): PayslipLine[] =>
+      (lines ?? []).map(normalizeIncentiveLine);
     const lineIdentity = (line: PayslipLine): string =>
-      `${line.name.toLowerCase()}|${line.type.toLowerCase()}`;
+      `${line.name.toLowerCase()}|${line.type.toLowerCase()}|${line.taxable === false ? "nt" : "tx"}`;
     const lineExactKey = (line: PayslipLine): string =>
       `${lineIdentity(line)}|${line.amount.toFixed(2)}`;
     const sortedLines = (lines: PayslipLine[]): PayslipLine[] =>
@@ -4765,8 +4946,10 @@ export const updatePayslip = mutation({
       oldRaw: PayslipLine[] | undefined,
       nextRaw: PayslipLine[] | undefined,
     ): EditChange | null => {
-      const oldLines = normalizeLines(oldRaw);
-      const newLines = normalizeLines(nextRaw);
+      const norm =
+        field === "incentives" ? normalizeIncentiveLines : normalizeLines;
+      const oldLines = norm(oldRaw);
+      const newLines = norm(nextRaw);
       if (areSameLines(oldLines, newLines)) return null;
 
       const details: string[] = [];
@@ -4838,7 +5021,9 @@ export const updatePayslip = mutation({
 
     // Calculate new totals
     const newDeductions = normalizeLines(args.deductions || payslip.deductions);
-    const newIncentives = normalizeLines(args.incentives || payslip.incentives || []);
+    const newIncentives = normalizeIncentiveLines(
+      args.incentives || payslip.incentives || [],
+    );
     const newNonTaxableAllowance =
       args.nonTaxableAllowance !== undefined
         ? round2(args.nonTaxableAllowance)
@@ -4937,10 +5122,14 @@ export const updatePayslip = mutation({
         })),
         incentives:
           newIncentives.length > 0
-            ? newIncentives.map((i: { name: string; amount: number; type: string }) => ({
-                ...i,
-                amount: round2(i.amount),
-              }))
+            ? newIncentives.map(
+                (i: { name: string; amount: number; type: string; taxable?: boolean }) => ({
+                  name: i.name,
+                  type: i.type,
+                  amount: round2(i.amount),
+                  taxable: i.taxable === false ? false : true,
+                }),
+              )
             : undefined,
         nonTaxableAllowance:
           newNonTaxableAllowance > 0

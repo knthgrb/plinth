@@ -191,6 +191,14 @@ type Deduction = {
   type: string;
 };
 
+type PayrollIncentiveLine = {
+  name: string;
+  amount: number;
+  type: string;
+  /** When true, included in taxable gross; when false, paid as non-taxable (see org TRAIN cap). */
+  taxable: boolean;
+};
+
 type EmployeeDeduction = {
   employeeId: string;
   deductions: Deduction[];
@@ -198,12 +206,12 @@ type EmployeeDeduction = {
 
 type EmployeeIncentive = {
   employeeId: string;
-  incentives: Deduction[];
+  incentives: PayrollIncentiveLine[];
 };
 
 type PreviewPayslipEdits = {
   deductions: Deduction[];
-  incentives: Deduction[];
+  incentives: PayrollIncentiveLine[];
 };
 
 type GovernmentDeductionSettings = {
@@ -213,6 +221,16 @@ type GovernmentDeductionSettings = {
   philhealth: { enabled: boolean; frequency: "full" | "half" };
   tax: { enabled: boolean; frequency: "full" | "half" };
 };
+
+function normalizeIncentiveLineForUi(raw: unknown): PayrollIncentiveLine {
+  const inc = raw as Record<string, unknown>;
+  return {
+    name: typeof inc?.name === "string" ? inc.name : "",
+    amount: typeof inc?.amount === "number" ? inc.amount : 0,
+    type: typeof inc?.type === "string" ? inc.type : "incentive",
+    taxable: inc?.taxable === false ? false : true,
+  };
+}
 
 // Helper to get day name from timestamp
 function getDayName(date: number): string {
@@ -323,7 +341,9 @@ export default function PayrollPageClient() {
   const [isEditPayslipOpen, setIsEditPayslipOpen] = useState(false);
   const [editingPayslip, setEditingPayslip] = useState<any>(null);
   const [editDeductions, setEditDeductions] = useState<Deduction[]>([]);
-  const [editIncentives, setEditIncentives] = useState<Deduction[]>([]);
+  const [editIncentives, setEditIncentives] = useState<PayrollIncentiveLine[]>(
+    [],
+  );
   const [isSavingPayslip, setIsSavingPayslip] = useState(false);
   const [regeneratingPayrollRunId, setRegeneratingPayrollRunId] = useState<
     string | null
@@ -862,7 +882,9 @@ export default function PayrollPageClient() {
   const handleEditPayslip = (payslip: any) => {
     setEditingPayslip(payslip);
     setEditDeductions([...payslip.deductions]);
-    setEditIncentives([...(payslip.incentives || [])]);
+    setEditIncentives(
+      (payslip.incentives || []).map(normalizeIncentiveLineForUi),
+    );
     setIsEditPayslipOpen(true);
   };
 
@@ -958,12 +980,14 @@ export default function PayrollPageClient() {
       _id: `${mode}:${preview.employee?._id}`,
       employee: preview.employee,
       deductions: initialDeductions,
-      incentives: [...(preview.incentives || [])],
+      incentives: (preview.incentives || []).map(normalizeIncentiveLineForUi),
       __mode: mode,
       __employeeId: preview.employee?._id,
     });
     setEditDeductions(initialDeductions);
-    setEditIncentives([...(preview.incentives || [])]);
+    setEditIncentives(
+      (preview.incentives || []).map(normalizeIncentiveLineForUi),
+    );
     setIsEditPayslipOpen(true);
   };
 
@@ -1175,7 +1199,7 @@ export default function PayrollPageClient() {
   const addEditIncentive = () => {
     setEditIncentives([
       ...editIncentives,
-      { name: "", amount: 0, type: "incentive" },
+      { name: "", amount: 0, type: "incentive", taxable: false },
     ]);
   };
 
@@ -1185,8 +1209,8 @@ export default function PayrollPageClient() {
 
   const updateEditIncentive = (
     index: number,
-    field: "name" | "amount" | "type",
-    value: string | number,
+    field: "name" | "amount" | "type" | "taxable",
+    value: string | number | boolean,
   ) => {
     const updated = [...editIncentives];
     updated[index] = { ...updated[index], [field]: value };
@@ -1342,7 +1366,7 @@ export default function PayrollPageClient() {
           ...ei,
           incentives: [
             ...ei.incentives,
-            { name: "", amount: 0, type: "incentive" },
+            { name: "", amount: 0, type: "incentive", taxable: false },
           ],
         };
       }
@@ -1367,8 +1391,8 @@ export default function PayrollPageClient() {
   const updateIncentive = (
     employeeId: string,
     index: number,
-    field: "name" | "amount" | "type",
-    value: string | number,
+    field: "name" | "amount" | "type" | "taxable",
+    value: string | number | boolean,
   ) => {
     const updated = employeeIncentives.map((ei) => {
       if (ei.employeeId === employeeId) {
@@ -1539,10 +1563,14 @@ export default function PayrollPageClient() {
               }))
             : [],
           incentives: Array.isArray(row.incentives)
-            ? row.incentives.map((incentive: Deduction) => ({
+            ? row.incentives.map((incentive: any) => ({
                 name: incentive.name,
                 amount: incentive.amount,
                 type: incentive.type || "incentive",
+                taxable:
+                  typeof incentive?.taxable === "boolean"
+                    ? incentive.taxable
+                    : true,
               }))
             : [],
         };
@@ -1824,7 +1852,12 @@ export default function PayrollPageClient() {
           const saved = draftConfig.incentives?.find(
             (ei: EmployeeIncentive) => ei.employeeId === employeeId,
           );
-          return { employeeId, incentives: saved?.incentives ?? [] };
+          return {
+            employeeId,
+            incentives: (saved?.incentives ?? []).map(
+              normalizeIncentiveLineForUi,
+            ),
+          };
         },
       );
       setEditEmployeeIncentives(normalizedIncentives);

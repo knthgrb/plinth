@@ -452,7 +452,7 @@ export function EditPayrollRunDialog({
                       ...ei,
                       incentives: [
                         ...ei.incentives,
-                        { name: "", amount: 0, type: "incentive" },
+                        { name: "", amount: 0, type: "incentive", taxable: false },
                       ],
                     };
                   }
@@ -461,7 +461,9 @@ export function EditPayrollRunDialog({
                 if (!updated.find((ei) => ei.employeeId === employeeId)) {
                   updated.push({
                     employeeId,
-                    incentives: [{ name: "", amount: 0, type: "incentive" }],
+                    incentives: [
+                      { name: "", amount: 0, type: "incentive", taxable: false },
+                    ],
                   });
                 }
                 setEditEmployeeIncentives(updated);
@@ -481,8 +483,8 @@ export function EditPayrollRunDialog({
               onUpdateIncentive={(
                 employeeId: string,
                 index: number,
-                field: "name" | "amount" | "type",
-                value: string | number,
+                field: "name" | "amount" | "type" | "taxable",
+                value: string | number | boolean,
               ) => {
                 const updated = editEmployeeIncentives.map((ei) => {
                   if (ei.employeeId === employeeId) {

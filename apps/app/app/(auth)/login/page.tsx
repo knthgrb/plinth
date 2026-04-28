@@ -64,9 +64,10 @@ export default function LoginPage() {
       } else {
         // Ensure session is readable, then full navigation so cookies + middleware see auth
         // (client router.push alone can race Convex / role cookie on first load).
-        await authClient.getSession();
-        // Drop stale pp.role from a previous account (same org → wrong role in middleware).
-        await clearRoleCacheCookie();
+        await Promise.all([
+          authClient.getSession(),
+          clearRoleCacheCookie(),
+        ]);
         const redirectParam = searchParams.get("redirect");
         window.location.assign(redirectParam || "/");
       }

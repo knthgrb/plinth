@@ -425,6 +425,8 @@ export default defineSchema({
                     name: v.string(),
                     amount: v.number(),
                     type: v.string(),
+                    /** When false, amount is not included in taxable gross (withholding base). */
+                    taxable: v.optional(v.boolean()),
                   }),
                 ),
               }),
@@ -546,6 +548,8 @@ export default defineSchema({
             name: v.string(),
             amount: v.union(v.number(), v.string()),
             type: v.string(),
+            /** When false, amount is paid out but excluded from taxable gross. */
+            taxable: v.optional(v.boolean()),
           }),
         ),
       ),
@@ -953,6 +957,11 @@ export default defineSchema({
         // If true, employee gets no holiday additional pay when absent the day before the holiday.
         // Default true.
         absentBeforeHolidayNoHolidayPay: v.optional(v.boolean()),
+        /**
+         * When true, additions marked non-taxable are applied against the TRAIN Law annual
+         * ₱90,000 non-taxable benefits cap; the excess is shown as taxable.
+         */
+        trainNinetyThousandCapOnAdditions: v.optional(v.boolean()),
       }),
     ),
     // Leave type configurations
