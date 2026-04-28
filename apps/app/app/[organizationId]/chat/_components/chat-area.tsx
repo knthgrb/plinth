@@ -52,6 +52,7 @@ import {
 import { MessageSkeleton, MessageListSkeleton } from "./skeletons";
 import { useToast } from "@/components/ui/use-toast";
 import { useOrganization } from "@/hooks/organization-context";
+import { getOrganizationPath } from "@/utils/organization-routing";
 import {
   Dialog,
   DialogContent,
@@ -124,7 +125,11 @@ export function ChatArea({
 }: ChatAreaProps) {
   const router = useRouter();
   const { toast } = useToast();
-  const { currentOrganizationId } = useOrganization();
+  const {
+    currentOrganizationId,
+    currentOrganization,
+    effectiveOrganizationId,
+  } = useOrganization();
   const sessionKeys = useChatSessionKeys();
   const messagesListRef = useRef<HTMLDivElement>(null);
   const messagesTopRef = useRef<HTMLDivElement>(null);
@@ -1025,17 +1030,24 @@ export function ChatArea({
                   {message.payslipId && (
                     <div className="mt-2">
                       <Button
-                        variant={isOwnMessage ? "secondary" : "outline"}
+                        type="button"
+                        variant="outline"
                         size="sm"
-                        className={`text-xs ${
+                        className={
                           isOwnMessage
-                            ? "bg-purple-500 hover:bg-purple-400 border-purple-400"
-                            : ""
-                        }`}
+                            ? "text-xs bg-white text-gray-900 border-white/60 shadow-sm hover:bg-gray-50"
+                            : "text-xs"
+                        }
                         onClick={() => {
-                          router.push(
-                            `/payroll?payslipId=${message.payslipId}`,
-                          );
+                          const orgId =
+                            effectiveOrganizationId ?? currentOrganizationId;
+                          if (!orgId) return;
+                          // Employees are blocked from /payroll by route guard (→ /forbidden). Send them to My Payslips.
+                          const isEmployee = currentOrganization?.role === "employee";
+                          const subpath = isEmployee
+                            ? `payslips?payslipId=${message.payslipId}`
+                            : `payroll?payslipId=${message.payslipId}`;
+                          router.push(getOrganizationPath(orgId, subpath));
                         }}
                       >
                         <Receipt className="h-3 w-3 mr-1" />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
@@ -54,10 +54,15 @@ import {
   formatManilaShortDate,
   formatManilaShortMonthDay,
 } from "@/lib/manila-date";
+import { useSearchParams, usePathname, useRouter } from "next/navigation";
 
 export default function PayslipsPage() {
   const { toast } = useToast();
-  const { currentOrganizationId, currentOrganization } = useOrganization();
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+  const openedPayslipFromUrlRef = useRef<string | null>(null);
+  const { currentOrganizationId } = useOrganization();
   const { employeeViewActive, canUseEmployeeView } = useEmployeeView();
 
   const payslipAccess = useQuery(
@@ -215,6 +220,66 @@ export default function PayslipsPage() {
       setIsLoadingDetails(false);
     }
   };
+
+  // Open a specific payslip when linked from chat (e.g. payslip appeal "View Payslip").
+  useEffect(() => {
+    const id = searchParams.get("payslipId");
+    if (!id || !currentOrganizationId) return;
+    if (payslipAccess === undefined) return;
+    if (!employeeId) return;
+    if (requiresPin && !pinVerified) return;
+    if (openedPayslipFromUrlRef.current === id) return;
+    if (payslips === undefined) return;
+
+    const openFromUrl = async () => {
+      const fromList = payslips.find((p: any) => String(p._id) === id);
+      if (fromList) {
+        openedPayslipFromUrlRef.current = id;
+        setSelectedPayslip(fromList);
+        setIsViewOpen(true);
+        setIsLoadingDetails(true);
+        try {
+          const details = await getPayslip(fromList._id);
+          setPayslipDetails(details);
+        } catch (error) {
+          console.error("Error loading payslip details:", error);
+        } finally {
+          setIsLoadingDetails(false);
+        }
+        router.replace(pathname);
+        return;
+      }
+      try {
+        const details = await getPayslip(id);
+        if (
+          details &&
+          employeeId &&
+          String(details.employeeId) === String(employeeId)
+        ) {
+          openedPayslipFromUrlRef.current = id;
+          setSelectedPayslip(details);
+          setPayslipDetails(details);
+          setIsViewOpen(true);
+          setIsLoadingDetails(false);
+          router.replace(pathname);
+        }
+      } catch (error) {
+        console.error("Error opening payslip from URL:", error);
+      }
+    };
+
+    void openFromUrl();
+  }, [
+    searchParams,
+    currentOrganizationId,
+    payslipAccess,
+    employeeId,
+    requiresPin,
+    pinVerified,
+    payslips,
+    pathname,
+    router,
+  ]);
 
   const handleOpenComment = (payslip: any) => {
     setSelectedPayslip(payslip);
