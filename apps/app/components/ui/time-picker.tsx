@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Popover,
   PopoverContent,
@@ -66,6 +66,7 @@ export function TimePicker({
   compact = false,
 }: TimePickerProps) {
   const [open, setOpen] = useState(false);
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
   const inputId = label?.toLowerCase().replace(/\s+/g, "-") || "time-input";
   
   const time12 = useMemo(() => formatTo12Hour(value || ""), [value]);
@@ -93,6 +94,50 @@ export function TimePicker({
   const minutes = Array.from({ length: 60 }, (_, i) => i);
 
   const displayValue = value ? formatTimeDisplay(value) : "";
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia(
+      "(pointer: coarse), (hover: none), (max-width: 1024px)",
+    );
+    const update = () => setIsTouchDevice(mediaQuery.matches);
+    update();
+
+    mediaQuery.addEventListener("change", update);
+    return () => {
+      mediaQuery.removeEventListener("change", update);
+    };
+  }, []);
+
+  if (isTouchDevice) {
+    return (
+      <div className={cn(!compact && "space-y-2", className)}>
+        {showLabel && label && (
+          <Label htmlFor={inputId}>
+            {label}
+            {required && " *"}
+          </Label>
+        )}
+        <div className="relative">
+          <Clock className={cn("absolute left-3 top-1/2 -translate-y-1/2 text-gray-500", compact ? "h-3.5 w-3.5" : "h-4 w-4")} />
+          <input
+            id={inputId}
+            type="time"
+            value={value || ""}
+            onChange={(event) => onValueChange(event.target.value)}
+            disabled={disabled}
+            className={cn(
+              "w-full rounded-md border border-input bg-background pl-9 pr-3 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+              compact ? "h-8 text-xs" : "h-9 text-sm",
+            )}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={cn(!compact && "space-y-2", className)}>
