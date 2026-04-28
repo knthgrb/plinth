@@ -131,28 +131,15 @@ export function TimePicker({
             {/* Hours */}
             <div className="flex flex-col">
               <div className="text-xs text-gray-500 mb-1 text-center">Hour</div>
-              <div 
-                className="h-32 w-14 overflow-y-auto overflow-x-hidden border rounded-lg hide-scrollbar"
-                onWheel={(e) => {
-                  e.stopPropagation();
-                  const target = e.currentTarget;
-                  target.scrollTop += e.deltaY;
-                  e.preventDefault();
-                }}
+              <div
+                className="h-32 md:h-40 w-14 overflow-y-auto overflow-x-hidden border rounded-lg hide-scrollbar overscroll-contain touch-pan-y"
+                style={{ WebkitOverflowScrolling: "touch" }}
               >
                 {hours.map((hour) => (
                   <button
                     key={hour}
                     type="button"
                     onClick={() => handleTimeChange(hour, localMinute, localPeriod)}
-                    onWheel={(e) => {
-                      e.stopPropagation();
-                      const container = e.currentTarget.parentElement;
-                      if (container) {
-                        container.scrollTop += e.deltaY;
-                        e.preventDefault();
-                      }
-                    }}
                     className={cn(
                       "w-full px-2 py-1.5 text-sm transition-colors hover:bg-gray-100 rounded-md",
                       localHour === hour &&
@@ -168,28 +155,15 @@ export function TimePicker({
             {/* Minutes */}
             <div className="flex flex-col">
               <div className="text-xs text-gray-500 mb-1 text-center">Min</div>
-              <div 
-                className="h-32 w-14 overflow-y-auto overflow-x-hidden border rounded-lg hide-scrollbar"
-                onWheel={(e) => {
-                  e.stopPropagation();
-                  const target = e.currentTarget;
-                  target.scrollTop += e.deltaY;
-                  e.preventDefault();
-                }}
+              <div
+                className="h-32 md:h-40 w-14 overflow-y-auto overflow-x-hidden border rounded-lg hide-scrollbar overscroll-contain touch-pan-y"
+                style={{ WebkitOverflowScrolling: "touch" }}
               >
                 {minutes.map((minute) => (
                   <button
                     key={minute}
                     type="button"
                     onClick={() => handleTimeChange(localHour, minute, localPeriod)}
-                    onWheel={(e) => {
-                      e.stopPropagation();
-                      const container = e.currentTarget.parentElement;
-                      if (container) {
-                        container.scrollTop += e.deltaY;
-                        e.preventDefault();
-                      }
-                    }}
                     className={cn(
                       "w-full px-2 py-1.5 text-sm transition-colors hover:bg-gray-100 rounded-md",
                       localMinute === minute &&
