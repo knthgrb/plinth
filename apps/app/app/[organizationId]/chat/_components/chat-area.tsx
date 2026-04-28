@@ -638,14 +638,18 @@ export function ChatArea({
 
   if (!conversationId && !pendingParticipant) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-white">
-        <div className="text-center">
-          <div className="text-lg font-medium text-gray-900 mb-2">
-            Select a conversation
+      <div className="flex flex-1 flex-col min-h-0 bg-white">
+        {/* Spacer aligned with ConversationList header (same row height as Chat / thread header) */}
+        <div className="h-16 shrink-0 border-b border-gray-200 bg-white" aria-hidden />
+        <div className="flex flex-1 min-h-0 items-center justify-center px-6">
+          <div className="text-center max-w-md">
+            <div className="text-lg font-medium text-gray-900 mb-2">
+              Select a conversation
+            </div>
+            <p className="text-sm text-gray-500">
+              Choose a conversation from the list to start messaging
+            </p>
           </div>
-          <p className="text-sm text-gray-500">
-            Choose a conversation from the list to start messaging
-          </p>
         </div>
       </div>
     );
@@ -656,11 +660,11 @@ export function ChatArea({
 
   return (
     <div className="flex-1 flex flex-col bg-white min-w-0 min-h-0">
-      {/* Chat Header — same height as Conversations header for alignment */}
-      <div className="flex items-center min-h-[4.5rem] h-[4.5rem] px-4 bg-white border-b border-gray-200 shrink-0">
-        <div className="flex items-center justify-between w-full min-w-0">
+      {/* Chat header — h-16 matches ConversationList "Chat" row */}
+      <div className="flex h-16 shrink-0 items-center px-4 bg-white border-b border-gray-200">
+        <div className="flex items-center justify-between gap-2 w-full min-w-0">
           <div className="flex items-center gap-3 min-w-0">
-            <Avatar>
+            <Avatar className="h-9 w-9">
               <AvatarFallback>
                 {displayConversation?.type === "group" ? (
                   <Users className="h-5 w-5" />
@@ -671,14 +675,14 @@ export function ChatArea({
                 )}
               </AvatarFallback>
             </Avatar>
-            <div className="min-w-0">
-              <div className="font-medium text-gray-900 truncate">
+            <div className="min-w-0 py-0.5">
+              <div className="text-sm font-semibold text-gray-900 truncate leading-tight">
                 {headerTitle}
               </div>
               {displayConversation?.type !== "group" &&
                 displayConversation?.type !== "channel" &&
                 headerSubtitle && (
-                  <div className="text-sm text-gray-500 truncate">
+                  <div className="text-xs text-gray-500 truncate leading-tight mt-0.5">
                     {headerSubtitle}
                   </div>
                 )}

@@ -1,12 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   LogOut,
   ChevronDown,
-  Search,
   Settings,
   HelpCircle,
   Menu,
@@ -32,7 +30,6 @@ import {
 } from "@/components/ui/tooltip";
 import { SettingsModal } from "@/components/settings-modal";
 import { useSettingsModal } from "@/hooks/settings-modal-context";
-import { Input } from "@/components/ui/input";
 
 type HeaderProps = {
   onMobileMenuOpen?: () => void;
@@ -43,7 +40,9 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
   const { effectiveOrganizationId, clearOrganization } = useOrganization();
   const user = useQuery(
     (api as any).organizations.getCurrentUser,
-    effectiveOrganizationId ? { organizationId: effectiveOrganizationId } : "skip",
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
   );
   const {
     isOpen: settingsModalOpen,
@@ -53,11 +52,8 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
   } = useSettingsModal();
 
   const [userPopoverOpen, setUserPopoverOpen] = useState(false);
-  const {
-    canUseEmployeeView,
-    employeeViewActive,
-    setEmployeeViewActive,
-  } = useEmployeeView();
+  const { canUseEmployeeView, employeeViewActive, setEmployeeViewActive } =
+    useEmployeeView();
 
   const handleLogout = () => {
     clearOrganization();
@@ -101,16 +97,6 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
           >
             <Menu className="h-4 w-4 transition-colors text-gray-900 group-hover:opacity-80" />
           </button>
-          {/* Global search - visible on desktop; left side of header */}
-          <div className="hidden lg:flex flex-1 max-w-md min-w-0 relative">
-            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-900 pointer-events-none" />
-            <Input
-              type="search"
-              placeholder="Search"
-              className="h-9 w-full pl-9 bg-[rgb(245,246,248)]"
-              aria-label="Search"
-            />
-          </div>
         </div>
         <div className="flex items-center gap-1.5 h-10">
           <Tooltip>
@@ -130,7 +116,10 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
               <button
                 onClick={() => {
                   // TODO: Implement help modal or link
-                  window.open("https://help.purplepay.com", "_blank");
+                  window.open(
+                    "https://plinth-marketing.vercel.app/resources#docs",
+                    "_blank",
+                  );
                 }}
                 className="hidden sm:flex items-center justify-center rounded-full hover:bg-[rgb(250,250,250)] w-9 h-9 shrink-0 text-sm font-normal transition-colors cursor-pointer group"
                 aria-label="Help"
@@ -216,9 +205,7 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
                                   "/accounting",
                                 ),
                               );
-                            } else if (
-                              ["admin", "owner", "hr"].includes(r)
-                            ) {
+                            } else if (["admin", "owner", "hr"].includes(r)) {
                               router.push(
                                 getOrganizationPath(
                                   effectiveOrganizationId,

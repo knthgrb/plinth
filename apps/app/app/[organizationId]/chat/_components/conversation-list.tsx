@@ -319,9 +319,11 @@ export function ConversationList({
 
   return (
     <div className="w-full lg:w-80 bg-white flex flex-col h-full shrink-0 min-w-0 font-sans">
-      <div className="flex items-center min-h-16 py-4 px-4 border-b border-[rgb(230,230,230)] shrink-0">
+      <div className="flex h-16 shrink-0 items-center px-4 bg-white border-b border-gray-200">
         <div className="flex items-center justify-between gap-2 w-full min-w-0">
-          <h1 className="text-2xl font-bold text-gray-900 truncate">Chat</h1>
+          <h1 className="text-lg font-semibold text-gray-900 truncate leading-none">
+            Chat
+          </h1>
           <div className="flex items-center gap-1 shrink-0">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
