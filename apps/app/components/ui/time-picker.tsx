@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type WheelEvent } from "react";
 import {
   Popover,
   PopoverContent,
@@ -93,6 +93,14 @@ export function TimePicker({
   const hours = Array.from({ length: 12 }, (_, i) => i + 1);
   const minutes = Array.from({ length: 60 }, (_, i) => i);
 
+  const handleDesktopWheelScroll = (event: WheelEvent<HTMLDivElement>) => {
+    if (isTouchDevice) return;
+    event.stopPropagation();
+    const target = event.currentTarget;
+    target.scrollTop += event.deltaY;
+    event.preventDefault();
+  };
+
   const displayValue = value ? formatTimeDisplay(value) : "";
 
   useEffect(() => {
@@ -100,9 +108,7 @@ export function TimePicker({
       return;
     }
 
-    const mediaQuery = window.matchMedia(
-      "(pointer: coarse), (hover: none), (max-width: 1024px)",
-    );
+    const mediaQuery = window.matchMedia("(pointer: coarse), (hover: none)");
     const update = () => setIsTouchDevice(mediaQuery.matches);
     update();
 
@@ -179,6 +185,7 @@ export function TimePicker({
               <div
                 className="h-32 md:h-40 w-14 overflow-y-auto overflow-x-hidden border rounded-lg hide-scrollbar overscroll-contain touch-pan-y"
                 style={{ WebkitOverflowScrolling: "touch" }}
+                onWheel={handleDesktopWheelScroll}
               >
                 {hours.map((hour) => (
                   <button
@@ -203,6 +210,7 @@ export function TimePicker({
               <div
                 className="h-32 md:h-40 w-14 overflow-y-auto overflow-x-hidden border rounded-lg hide-scrollbar overscroll-contain touch-pan-y"
                 style={{ WebkitOverflowScrolling: "touch" }}
+                onWheel={handleDesktopWheelScroll}
               >
                 {minutes.map((minute) => (
                   <button
