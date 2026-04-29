@@ -10,6 +10,7 @@ import type { GovernmentDeductionSettings, TaxSettings } from "./payroll-step-3-
 import {
   getExpectedDefaultGovLineNames,
   getRestorableDefaultGovLineNames,
+  filterRestorableGovLineNamesForWithholdingReality,
 } from "./payroll-wizard-gov-helpers";
 
 interface Deduction {
@@ -71,6 +72,12 @@ interface PayrollStep4DeductionsIncentivesProps {
   ) => void | Promise<void>;
   /** e.g. `${employeeId}:SSS` while a restore is in progress */
   restoringDefaultKey?: string | null;
+  /**
+   * Latest server preview rows (e.g. `previewData` / `editPreviewData`). Used so
+   * “Restore Withholding Tax” only appears if the server actually put WHT on that
+   * preview (taxable pay); not for sub-threshold employees when Step 3 has tax on.
+   */
+  payrollPreviewRows?: any[] | null;
 }
 
 export function PayrollStep4DeductionsIncentives({
@@ -95,6 +102,7 @@ export function PayrollStep4DeductionsIncentives({
   cutoffStartMs,
   onRestoreDefaultGovLine,
   restoringDefaultKey = null,
+  payrollPreviewRows,
 }: PayrollStep4DeductionsIncentivesProps) {
   return (
     <div className="grid gap-4 py-4">
@@ -153,13 +161,24 @@ export function PayrollStep4DeductionsIncentives({
                       cutoffStartMs,
                     )
                   : [];
-              const restorableDefaults =
+              const restorableRaw =
                 onRestoreDefaultGovLine && expectedDefaultGov.length > 0
                   ? getRestorableDefaultGovLineNames(
                       expectedDefaultGov,
                       empDeductions.deductions,
                     )
                   : [];
+              const previewRow = Array.isArray(payrollPreviewRows)
+                ? payrollPreviewRows.find(
+                    (p: { employee?: { _id?: string } }) =>
+                      p?.employee?._id != null &&
+                      String(p.employee._id) === String(employeeId),
+                  )
+                : undefined;
+              const restorableDefaults = filterRestorableGovLineNamesForWithholdingReality(
+                restorableRaw,
+                { previewRow },
+              );
 
               return (
                 <Card key={employeeId}>
@@ -171,7 +190,7 @@ export function PayrollStep4DeductionsIncentives({
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {empDeductions.deductions.map((deduction, idx) => (
-                      <div key={idx} className="flex gap-2 items-end">
+                      <div key={idx} className="flex flex-wrap gap-2 items-end sm:items-center">
                         <div className="flex-1">
                           <Label>Deduction Name</Label>
                           <Input
@@ -214,7 +233,7 @@ export function PayrollStep4DeductionsIncentives({
                             placeholder="0.00"
                           />
                         </div>
-                        <div className="w-32">
+                        <div className="w-full min-w-0 sm:w-40 md:w-44">
                           <Label>Type</Label>
                           <Input
                             value={deduction.type}
@@ -227,6 +246,8 @@ export function PayrollStep4DeductionsIncentives({
                               )
                             }
                             placeholder="loan/advance"
+                            className="font-mono text-sm"
+                            title={deduction.type}
                           />
                         </div>
                         <Button
@@ -326,7 +347,7 @@ export function PayrollStep4DeductionsIncentives({
                           key={idx}
                           className="flex flex-col gap-2 border-b border-border/60 pb-3 last:border-0 last:pb-0"
                         >
-                          <div className="flex flex-wrap gap-2 items-end">
+                          <div className="flex flex-wrap gap-2 items-end sm:items-center">
                             <div className="min-w-[140px] flex-1">
                               <Label>Addition Name</Label>
                               <Input
@@ -376,7 +397,7 @@ export function PayrollStep4DeductionsIncentives({
                                 placeholder="0.00"
                               />
                             </div>
-                            <div className="flex items-center gap-2 pb-2">
+                            <div className="flex h-9 items-center gap-2 sm:shrink-0">
                               <Checkbox
                                 id={`taxable-${employeeId}-${idx}`}
                                 checked={isTaxable}
@@ -391,7 +412,7 @@ export function PayrollStep4DeductionsIncentives({
                               />
                               <Label
                                 htmlFor={`taxable-${employeeId}-${idx}`}
-                                className="text-sm font-normal cursor-pointer whitespace-nowrap"
+                                className="text-sm font-normal cursor-pointer whitespace-nowrap leading-none"
                               >
                                 Taxable
                               </Label>

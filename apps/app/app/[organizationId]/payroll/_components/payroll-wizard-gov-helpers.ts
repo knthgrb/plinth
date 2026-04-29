@@ -64,6 +64,33 @@ export function getRestorableDefaultGovLineNames(
   return expected.filter((name) => !present.has(name));
 }
 
+/**
+ * True if the last server preview for this employee actually included a Withholding Tax line.
+ * When false, the employee is below the applicable threshold (or tax was stripped by rules)—
+ * do not offer "Restore Withholding Tax" in Step 4.
+ */
+export function serverPreviewHadWithholdingTaxLine(
+  previewRow: { deductions?: { name?: string }[] } | null | undefined,
+): boolean {
+  return (previewRow?.deductions ?? []).some(
+    (d) => (d.name || "").trim() === "Withholding Tax",
+  );
+}
+
+/**
+ * After {@link getRestorableDefaultGovLineNames}, drop "Withholding Tax" unless the
+ * server preview for that employee would have output WHT.
+ */
+export function filterRestorableGovLineNamesForWithholdingReality(
+  restorable: readonly DefaultGovDeductionLineName[],
+  options: { previewRow?: { deductions?: { name?: string }[] } | null },
+): DefaultGovDeductionLineName[] {
+  return restorable.filter((name) => {
+    if (name !== "Withholding Tax") return true;
+    return serverPreviewHadWithholdingTaxLine(options.previewRow);
+  });
+}
+
 export function isDefaultGovDeductionName(name: string): boolean {
   return isDefaultGovName(name);
 }

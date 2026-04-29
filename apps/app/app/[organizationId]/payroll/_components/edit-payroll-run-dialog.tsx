@@ -529,6 +529,7 @@ export function EditPayrollRunDialog({
               cutoffStartMs={step4CutoffStartMs}
               onRestoreDefaultGovLine={onRestoreDefaultGovLine}
               restoringDefaultKey={restoringDefaultKey}
+              payrollPreviewRows={editPreviewData}
             />
           </Suspense>
         )}

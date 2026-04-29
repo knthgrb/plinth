@@ -2420,6 +2420,7 @@ export default function PayrollPageClient() {
                         void restoreDefaultGovLine("create", employeeId, name)
                       }
                       restoringDefaultKey={restoringDefaultKey}
+                      payrollPreviewRows={previewData}
                     />
                   </Suspense>
                 )}

@@ -188,21 +188,21 @@ export function EditPayslipDialog({
             </div>
             {editDeductions.length > 0 && (
               <div
-                className="hidden sm:grid sm:grid-cols-[1fr_7.5rem_5.5rem_2.25rem] gap-2 px-1 text-xs font-medium text-muted-foreground"
+                className="hidden sm:grid sm:grid-cols-[minmax(0,1fr)_7.5rem_9.5rem_2.5rem] gap-2 px-1 text-xs font-medium text-muted-foreground items-center"
                 role="row"
                 aria-hidden
               >
                 <div>Name</div>
                 <div>Amount</div>
-                <div>Type</div>
-                <div className="w-8" />
+                <div className="min-w-0">Type</div>
+                <div className="w-8 shrink-0" />
               </div>
             )}
             <div className="space-y-2">
               {editDeductions.map((deduction, idx) => (
                 <div
                   key={idx}
-                  className="grid grid-cols-1 sm:grid-cols-[1fr_7.5rem_5.5rem_2.25rem] gap-2 sm:items-center rounded-md border p-2 sm:p-0 sm:border-0 sm:px-1 sm:py-0"
+                  className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_7.5rem_9.5rem_2.5rem] gap-2 sm:items-center rounded-md border p-2 sm:p-0 sm:border-0 sm:px-1 sm:py-0"
                 >
                   <div className="min-w-0 sm:pr-0">
                     <span className="text-xs text-muted-foreground sm:hidden block mb-1">
@@ -251,15 +251,20 @@ export function EditPayslipDialog({
                       placeholder="0.00"
                     />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <span className="text-xs text-muted-foreground sm:hidden block mb-1">
                       Type
                     </span>
-                    <div className="flex h-9 w-full items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
-                      {deduction.type || "—"}
+                    <div
+                      className="flex h-9 w-full min-w-0 items-center rounded-md border border-input bg-muted px-2.5 sm:px-3 text-sm text-muted-foreground"
+                      title={deduction.type || undefined}
+                    >
+                      <span className="min-w-0 flex-1 truncate text-xs sm:text-sm">
+                        {deduction.type || "—"}
+                      </span>
                     </div>
                   </div>
-                  <div className="flex justify-end sm:justify-center">
+                  <div className="flex justify-end sm:justify-center sm:shrink-0">
                     <Button
                       type="button"
                       variant="ghost"
@@ -293,14 +298,14 @@ export function EditPayslipDialog({
             </div>
             {editIncentives.length > 0 && (
               <div
-                className="hidden sm:grid sm:grid-cols-[1fr_7.5rem_auto_2.25rem] gap-2 px-1 text-xs font-medium text-muted-foreground"
+                className="hidden sm:grid sm:grid-cols-[minmax(0,1fr)_7.5rem_5.5rem_2.5rem] gap-2 px-1 text-xs font-medium text-muted-foreground items-center"
                 role="row"
                 aria-hidden
               >
                 <div>Name</div>
                 <div>Amount</div>
                 <div>Taxable</div>
-                <div className="w-8" />
+                <div className="w-8 shrink-0" />
               </div>
             )}
             <div className="space-y-2">
@@ -309,7 +314,7 @@ export function EditPayslipDialog({
                 return (
                   <div
                     key={idx}
-                    className="grid grid-cols-1 sm:grid-cols-[1fr_7.5rem_auto_2.25rem] gap-2 sm:items-end rounded-md border p-2 sm:p-0 sm:border-0 sm:px-1"
+                    className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_7.5rem_5.5rem_2.5rem] gap-2 sm:items-center rounded-md border p-2 sm:p-0 sm:border-0 sm:px-1"
                   >
                     <div className="min-w-0">
                       <span className="text-xs text-muted-foreground sm:hidden block mb-1">
@@ -354,24 +359,23 @@ export function EditPayslipDialog({
                         placeholder="0.00"
                       />
                     </div>
-                    <div className="flex items-end gap-2 flex-wrap sm:pb-1.5 sm:pl-0">
-                      <div className="flex items-center gap-2 h-9">
-                        <Checkbox
-                          id={`edit-inc-taxable-${idx}`}
-                          checked={isTaxable}
-                          onCheckedChange={(checked) =>
-                            onUpdateIncentive(idx, "taxable", checked === true)
-                          }
-                        />
-                        <Label
-                          htmlFor={`edit-inc-taxable-${idx}`}
-                          className="text-sm font-normal cursor-pointer"
-                        >
-                          Taxable
-                        </Label>
-                      </div>
+                    <div className="flex h-9 items-center gap-2 sm:justify-start sm:self-center">
+                      <Checkbox
+                        id={`edit-inc-taxable-${idx}`}
+                        className="shrink-0"
+                        checked={isTaxable}
+                        onCheckedChange={(checked) =>
+                          onUpdateIncentive(idx, "taxable", checked === true)
+                        }
+                      />
+                      <Label
+                        htmlFor={`edit-inc-taxable-${idx}`}
+                        className="text-sm font-normal cursor-pointer leading-none"
+                      >
+                        Taxable
+                      </Label>
                     </div>
-                    <div className="flex justify-end sm:justify-center -mt-1 sm:mt-0 sm:mb-0.5">
+                    <div className="flex h-9 items-center justify-end sm:justify-center sm:shrink-0">
                       <Button
                         type="button"
                         variant="ghost"
