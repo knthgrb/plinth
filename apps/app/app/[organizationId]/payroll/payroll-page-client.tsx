@@ -1185,7 +1185,8 @@ export default function PayrollPageClient() {
       await updatePayslip({
         payslipId: editingPayslip._id,
         deductions: editDeductions,
-        incentives: editIncentives.length > 0 ? editIncentives : undefined,
+        // Always pass arrays (including []); `undefined` would make the server keep old lines
+        incentives: editIncentives,
         variableEarnings: {
           ...editEarnings,
         },
@@ -1935,8 +1936,7 @@ export default function PayrollPageClient() {
             await updatePayslip({
               payslipId: payslip._id,
               deductions: edits.deductions,
-              incentives:
-                edits.incentives.length > 0 ? edits.incentives : undefined,
+              incentives: edits.incentives,
             });
           }),
         );

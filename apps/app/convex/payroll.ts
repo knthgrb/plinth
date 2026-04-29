@@ -5058,10 +5058,17 @@ export const updatePayslip = mutation({
     const authUser = await authComponent.getAuthUser(ctx);
     const userEmail = authUser?.email || userRecord.email || "Unknown";
 
-    // Calculate new totals
-    const newDeductions = normalizeLines(args.deductions || payslip.deductions);
+    // Calculate new totals. Use `!== undefined` so an explicit `[]` clears all lines
+    // (otherwise `incentives: undefined` from older clients would keep prior rows).
+    const newDeductions = normalizeLines(
+      args.deductions !== undefined
+        ? args.deductions
+        : (payslip.deductions as PayslipLine[] | undefined) || [],
+    );
     const newIncentives = normalizeIncentiveLines(
-      args.incentives || payslip.incentives || [],
+      args.incentives !== undefined
+        ? args.incentives
+        : (payslip.incentives as PayslipLine[] | undefined) || [],
     );
     const newNonTaxableAllowance =
       args.nonTaxableAllowance !== undefined
