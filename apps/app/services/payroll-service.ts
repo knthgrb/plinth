@@ -341,6 +341,18 @@ export class PayrollService {
       taxable?: boolean;
     }>;
     nonTaxableAllowance?: number;
+    variableEarnings?: {
+      holidayPay: number;
+      nightDiffPay: number;
+      restDayPay: number;
+      overtimeRegular: number;
+      overtimeRestDay: number;
+      overtimeRestDayExcess: number;
+      overtimeSpecialHoliday: number;
+      overtimeSpecialHolidayExcess: number;
+      overtimeLegalHoliday: number;
+      overtimeLegalHolidayExcess: number;
+    };
   }) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)((api as any).payroll.updatePayslip, {
@@ -348,6 +360,7 @@ export class PayrollService {
       deductions: data.deductions,
       incentives: data.incentives,
       nonTaxableAllowance: data.nonTaxableAllowance,
+      variableEarnings: data.variableEarnings,
     });
   }
 

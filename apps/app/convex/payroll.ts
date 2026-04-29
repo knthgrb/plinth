@@ -31,6 +31,12 @@ import {
   type PayrollBaseResult,
 } from "@/lib/payroll-calculations";
 import { formatManilaNumericDate } from "@/lib/manila-date";
+import {
+  getVariableEarningsFromPayslip,
+  recomputeGrossAndBasicFromVariableEarnings,
+  recomputeNetFromEarningsAndLines,
+  type VariableEarnings,
+} from "./payrollVariableEarningsMath";
 
 function buildDraftPayrollConfig(args: {
   employeeIds: any[];
@@ -4896,6 +4902,20 @@ export const updatePayslip = mutation({
       ),
     ),
     nonTaxableAllowance: v.optional(v.number()),
+    variableEarnings: v.optional(
+      v.object({
+        holidayPay: v.number(),
+        nightDiffPay: v.number(),
+        restDayPay: v.number(),
+        overtimeRegular: v.number(),
+        overtimeRestDay: v.number(),
+        overtimeRestDayExcess: v.number(),
+        overtimeSpecialHoliday: v.number(),
+        overtimeSpecialHolidayExcess: v.number(),
+        overtimeLegalHoliday: v.number(),
+        overtimeLegalHolidayExcess: v.number(),
+      }),
+    ),
   },
   handler: async (ctx, args) => {
     type PayslipLine = {
@@ -5049,13 +5069,76 @@ export const updatePayslip = mutation({
         : round2(payslip.nonTaxableAllowance || 0);
 
     const originalIncentives = payslip.incentives || [];
-    const recalculatedTotals = recalculatePersistedPayslipTotals({
-      grossPay: payslip.grossPay ?? 0,
-      previousIncentives: originalIncentives,
-      nextIncentives: newIncentives,
-      nextDeductions: newDeductions,
-      nextNonTaxableAllowance: newNonTaxableAllowance,
-    });
+    const t0 = sumTaxableIncentiveAmounts(originalIncentives);
+    const t1 = sumTaxableIncentiveAmounts(newIncentives);
+
+    let recalculatedGross: number;
+    let recalculatedNet: number;
+    const variableEarningsPatch: Record<string, unknown> = {};
+    if (args.variableEarnings) {
+      const atOpen = getVariableEarningsFromPayslip(
+        payslip as unknown as Record<string, unknown>,
+      );
+      const ve = args.variableEarnings;
+      const nextE: VariableEarnings = {
+        holidayPay: round2(ve.holidayPay),
+        nightDiffPay: round2(ve.nightDiffPay),
+        restDayPay: round2(ve.restDayPay),
+        overtimeRegular: round2(ve.overtimeRegular),
+        overtimeRestDay: round2(ve.overtimeRestDay),
+        overtimeRestDayExcess: round2(ve.overtimeRestDayExcess),
+        overtimeSpecialHoliday: round2(ve.overtimeSpecialHoliday),
+        overtimeSpecialHolidayExcess: round2(ve.overtimeSpecialHolidayExcess),
+        overtimeLegalHoliday: round2(ve.overtimeLegalHoliday),
+        overtimeLegalHolidayExcess: round2(ve.overtimeLegalHolidayExcess),
+      };
+      const gbb = recomputeGrossAndBasicFromVariableEarnings(
+        {
+          grossPay: Number(payslip.grossPay ?? 0),
+          basicPay: Number(payslip.basicPay ?? 0),
+        },
+        atOpen,
+        nextE,
+        t0,
+        t1,
+      );
+      const netB = recomputeNetFromEarningsAndLines(
+        gbb.grossPay,
+        newNonTaxableAllowance,
+        newIncentives,
+        newDeductions,
+      );
+      recalculatedGross = gbb.grossPay;
+      recalculatedNet = netB.netPay;
+      Object.assign(variableEarningsPatch, {
+        basicPay: round2(gbb.basicPay),
+        holidayPay: round2(nextE.holidayPay),
+        nightDiffPay: round2(nextE.nightDiffPay),
+        restDayPay: round2(nextE.restDayPay),
+        overtimeRegular: round2(nextE.overtimeRegular),
+        overtimeRestDay: round2(nextE.overtimeRestDay),
+        overtimeRestDayExcess: round2(nextE.overtimeRestDayExcess),
+        overtimeSpecialHoliday: round2(nextE.overtimeSpecialHoliday),
+        overtimeSpecialHolidayExcess: round2(
+          nextE.overtimeSpecialHolidayExcess,
+        ),
+        overtimeLegalHoliday: round2(nextE.overtimeLegalHoliday),
+        overtimeLegalHolidayExcess: round2(
+          nextE.overtimeLegalHolidayExcess,
+        ),
+      } as Record<string, unknown>);
+    } else {
+      const recalculatedTotals = recalculatePersistedPayslipTotals({
+        grossPay: payslip.grossPay ?? 0,
+        previousIncentives: originalIncentives,
+        nextIncentives: newIncentives,
+        nextDeductions: newDeductions,
+        nextNonTaxableAllowance: newNonTaxableAllowance,
+      });
+      recalculatedGross = recalculatedTotals.grossPay;
+      recalculatedNet = recalculatedTotals.netPay;
+    }
+
     const editedEmployeeSSSAmount = getDeductionAmountByNames(newDeductions, [
       "sss",
     ]);
@@ -5117,6 +5200,35 @@ export const updatePayslip = mutation({
       });
     }
 
+    if (args.variableEarnings) {
+      const atOpen = getVariableEarningsFromPayslip(
+        payslip as unknown as Record<string, unknown>,
+      );
+      const ve = args.variableEarnings;
+      const nextE: VariableEarnings = {
+        holidayPay: round2(ve.holidayPay),
+        nightDiffPay: round2(ve.nightDiffPay),
+        restDayPay: round2(ve.restDayPay),
+        overtimeRegular: round2(ve.overtimeRegular),
+        overtimeRestDay: round2(ve.overtimeRestDay),
+        overtimeRestDayExcess: round2(ve.overtimeRestDayExcess),
+        overtimeSpecialHoliday: round2(ve.overtimeSpecialHoliday),
+        overtimeSpecialHolidayExcess: round2(ve.overtimeSpecialHolidayExcess),
+        overtimeLegalHoliday: round2(ve.overtimeLegalHoliday),
+        overtimeLegalHolidayExcess: round2(ve.overtimeLegalHolidayExcess),
+      };
+      const atOpenKey = JSON.stringify(atOpen);
+      const nextKey = JSON.stringify(nextE);
+      if (atOpenKey !== nextKey) {
+        changes.push({
+          field: "variableEarnings",
+          oldValue: atOpen,
+          newValue: nextE,
+          details: ["Updated holiday, night diff, rest day, or overtime line amounts."],
+        });
+      }
+    }
+
     // Only add to edit history if there are actual changes
     const existingEditHistory = payslip.editHistory || [];
     const updatedEditHistory =
@@ -5154,8 +5266,11 @@ export const updatePayslip = mutation({
           newNonTaxableAllowance > 0
             ? round2(newNonTaxableAllowance)
             : undefined,
-        grossPay: recalculatedTotals.grossPay,
-        netPay: recalculatedTotals.netPay,
+        grossPay: recalculatedGross,
+        netPay: recalculatedNet,
+        ...(Object.keys(variableEarningsPatch).length > 0
+          ? variableEarningsPatch
+          : {}),
         employerContributions:
           Object.keys(updatedEmployerContributions).length > 0
             ? updatedEmployerContributions

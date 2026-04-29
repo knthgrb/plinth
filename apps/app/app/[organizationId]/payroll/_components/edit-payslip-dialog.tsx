@@ -18,7 +18,7 @@ import {
   type PreviewEditableEarnings,
 } from "./payroll-preview-earnings-helpers";
 
-/** Order matches the payslip “Other earnings” block ( night → holiday → rest → OT). */
+/** Order matches the payslip “Other earnings” block. */
 const EARNINGS_FORM_ORDER: PreviewEditableEarningKey[] = [
   "nightDiffPay",
   "holidayPay",
@@ -41,6 +41,8 @@ type IncentiveEdit = {
   taxable: boolean;
 };
 
+type EarningsContext = "preview" | "saved";
+
 interface EditPayslipDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -53,17 +55,18 @@ interface EditPayslipDialogProps {
   onUpdateDeduction: (
     index: number,
     field: "name" | "amount" | "type",
-    value: string | number
+    value: string | number,
   ) => void;
   onAddIncentive: () => void;
   onRemoveIncentive: (index: number) => void;
   onUpdateIncentive: (
     index: number,
     field: "name" | "amount" | "type" | "taxable",
-    value: string | number | boolean
+    value: string | number | boolean,
   ) => void;
-  /** Step 5 preview only: holiday, night diff, rest day, OT (excludes basic pay and non‑taxable allowance). */
-  isPreviewEarnings?: boolean;
+  showVariableEarnings?: boolean;
+  /** Pay step preview vs. saved payslip: tweaks helper copy. */
+  earningsContext?: EarningsContext;
   editEarnings?: PreviewEditableEarnings;
   onUpdateEarning?: (key: PreviewEditableEarningKey, value: number) => void;
   onSave: () => void;
@@ -82,14 +85,18 @@ export function EditPayslipDialog({
   onAddIncentive,
   onRemoveIncentive,
   onUpdateIncentive,
-  isPreviewEarnings = false,
+  showVariableEarnings = false,
+  earningsContext = "saved",
   editEarnings,
   onUpdateEarning,
   onSave,
 }: EditPayslipDialogProps) {
   if (!editingPayslip) return null;
 
-  const isEditableName = (entry: Deduction, section: "deduction" | "addition") => {
+  const isEditableName = (
+    entry: Deduction,
+    section: "deduction" | "addition",
+  ) => {
     const t = (entry.type || "").toLowerCase();
     if (section === "addition") return true;
     return t === "custom" || t === "incentive";
@@ -103,227 +110,313 @@ export function EditPayslipDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Edit payslip – {employeeName}</DialogTitle>
-        </DialogHeader>
+      <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
+        <div className="shrink-0 border-b px-6 py-4">
+          <DialogHeader>
+            <DialogTitle>Edit payslip – {employeeName}</DialogTitle>
+            <p className="text-sm text-muted-foreground text-left font-normal pt-1">
+              Basic pay and non‑taxable allowance are not edited here. Attendance
+              (late, absent, undertime) is under{" "}
+              <span className="font-medium">Deductions</span>.
+            </p>
+          </DialogHeader>
+        </div>
 
-        <div className="space-y-6 py-2">
-          {isPreviewEarnings && editEarnings && onUpdateEarning && (
+        <div className="overflow-y-auto flex-1 px-6 py-4 space-y-8 min-h-0">
+          {showVariableEarnings && editEarnings && onUpdateEarning && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label className="text-base">Earnings (variable)</Label>
-                <span className="text-xs text-gray-500 text-right max-w-[220px]">
-                  Basic pay and non‑taxable allowance are not edited here. “Less”
-                  (late, absent, undertime) stay under Deductions.
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <Label className="text-base font-semibold">Earnings (variable)</Label>
+                <span className="text-xs text-muted-foreground text-right max-w-sm">
+                  {earningsContext === "preview" ? (
+                    <>
+                      If you change taxable gross, regenerate preview or re-check
+                      withholding tax on finalize.
+                    </>
+                  ) : (
+                    <>
+                      Large changes may affect withholding tax; review government
+                      lines after saving.
+                    </>
+                  )}
                 </span>
               </div>
-              <p className="text-xs text-muted-foreground">
-                If you change taxable gross, regenerate preview or re-check
-                withholding tax on finalize.
-              </p>
-              <div className="space-y-2">
+              <div
+                className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 rounded-lg border bg-muted/20 p-4"
+                role="group"
+                aria-label="Variable earnings amounts"
+              >
                 {EARNINGS_FORM_ORDER.map((key) => (
-                  <div key={key} className="flex gap-2 items-end max-w-md">
-                    <div className="flex-1 min-w-0">
-                      <Label className="text-xs">
-                        {PREVIEW_EARNING_LABELS[key]}
-                      </Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={editEarnings[key] ?? ""}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (val === "" || val === "-") {
-                            onUpdateEarning(key, 0);
-                            return;
-                          }
-                          const num = parseFloat(val);
-                          if (!isNaN(num) && num >= 0) {
-                            onUpdateEarning(key, num);
-                          }
-                        }}
-                        className="h-9"
-                      />
-                    </div>
+                  <div key={key} className="space-y-1.5 min-w-0">
+                    <Label
+                      className="text-xs font-medium text-foreground"
+                      htmlFor={`earn-${key}`}
+                    >
+                      {PREVIEW_EARNING_LABELS[key]}
+                    </Label>
+                    <Input
+                      id={`earn-${key}`}
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={editEarnings[key] ?? ""}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === "" || val === "-") {
+                          onUpdateEarning(key, 0);
+                          return;
+                        }
+                        const num = parseFloat(val);
+                        if (!isNaN(num) && num >= 0) {
+                          onUpdateEarning(key, num);
+                        }
+                      }}
+                      className="h-9 font-mono text-sm"
+                    />
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Deductions – only amount is editable/overridable */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <Label className="text-base">Deductions</Label>
-              <span className="text-xs text-gray-500">
+              <Label className="text-base font-semibold">Deductions</Label>
+              <span className="text-xs text-muted-foreground">
                 Override the amount (value) only
               </span>
             </div>
-            {editDeductions.map((deduction, idx) => (
-              <div key={idx} className="flex gap-2 items-end">
-                <div className="flex-1">
-                  <Label className="text-xs">Name</Label>
-                  {isEditableName(deduction, "deduction") ? (
-                    <Input
-                      value={deduction.name ?? ""}
-                      onChange={(e) =>
-                        onUpdateDeduction(idx, "name", e.target.value)
-                      }
-                      placeholder="Deduction name"
-                      className="h-9"
-                    />
-                  ) : (
-                    <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
-                      {deduction.name}
-                    </div>
-                  )}
-                </div>
-                <div className="w-28">
-                  <Label className="text-xs">Amount</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={deduction.amount ?? ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === "" || val === "-") {
-                        onUpdateDeduction(idx, "amount", 0);
-                      } else {
-                        const numVal = parseFloat(val);
-                        if (!isNaN(numVal) && numVal >= 0) {
-                          onUpdateDeduction(idx, "amount", numVal);
-                        }
-                      }
-                    }}
-                    placeholder="0.00"
-                  />
-                </div>
-                <div className="w-24">
-                  <Label className="text-xs">Type</Label>
-                  <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
-                    {deduction.type || "—"}
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onRemoveDeduction(idx)}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
+            {editDeductions.length > 0 && (
+              <div
+                className="hidden sm:grid sm:grid-cols-[1fr_7.5rem_5.5rem_2.25rem] gap-2 px-1 text-xs font-medium text-muted-foreground"
+                role="row"
+                aria-hidden
+              >
+                <div>Name</div>
+                <div>Amount</div>
+                <div>Type</div>
+                <div className="w-8" />
               </div>
-            ))}
-            <Button type="button" variant="outline" size="sm" onClick={onAddDeduction}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add deduction
-            </Button>
-          </div>
-
-          {/* Additions – name and amount are editable */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-base">Additions</Label>
-              <span className="text-xs text-gray-500">
-                Override the amount (value) only
-              </span>
-            </div>
-            {editIncentives.map((inc, idx) => {
-              const isTaxable = inc.taxable !== false;
-              return (
-                <div key={idx} className="flex flex-wrap gap-2 items-end">
-                  <div className="min-w-[120px] flex-1">
-                    <Label className="text-xs">Name</Label>
-                    {isEditableName(inc, "addition") ? (
+            )}
+            <div className="space-y-2">
+              {editDeductions.map((deduction, idx) => (
+                <div
+                  key={idx}
+                  className="grid grid-cols-1 sm:grid-cols-[1fr_7.5rem_5.5rem_2.25rem] gap-2 sm:items-center rounded-md border p-2 sm:p-0 sm:border-0 sm:px-1 sm:py-0"
+                >
+                  <div className="min-w-0 sm:pr-0">
+                    <span className="text-xs text-muted-foreground sm:hidden block mb-1">
+                      Name
+                    </span>
+                    {isEditableName(deduction, "deduction") ? (
                       <Input
-                        value={inc.name ?? ""}
+                        value={deduction.name ?? ""}
                         onChange={(e) =>
-                          onUpdateIncentive(idx, "name", e.target.value)
+                          onUpdateDeduction(idx, "name", e.target.value)
                         }
-                        placeholder="Incentive name"
+                        placeholder="Deduction name"
                         className="h-9"
+                        aria-label={`Deduction ${idx + 1} name`}
                       />
                     ) : (
-                      <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
-                        {inc.name}
+                      <div
+                        className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-2 text-sm text-muted-foreground"
+                        title={deduction.name}
+                      >
+                        {deduction.name}
                       </div>
                     )}
                   </div>
-                  <div className="w-28">
-                    <Label className="text-xs">Amount</Label>
+                  <div>
+                    <span className="text-xs text-muted-foreground sm:hidden block mb-1">
+                      Amount
+                    </span>
                     <Input
                       type="number"
                       min={0}
                       step="0.01"
-                      value={inc.amount ?? ""}
+                      className="h-9 font-mono text-sm"
+                      value={deduction.amount ?? ""}
                       onChange={(e) => {
                         const val = e.target.value;
                         if (val === "" || val === "-") {
-                          onUpdateIncentive(idx, "amount", 0);
+                          onUpdateDeduction(idx, "amount", 0);
                         } else {
                           const numVal = parseFloat(val);
                           if (!isNaN(numVal) && numVal >= 0) {
-                            onUpdateIncentive(idx, "amount", numVal);
+                            onUpdateDeduction(idx, "amount", numVal);
                           }
                         }
                       }}
                       placeholder="0.00"
                     />
                   </div>
-                  <div className="flex items-center gap-2 pb-1">
-                    <Checkbox
-                      id={`edit-inc-taxable-${idx}`}
-                      checked={isTaxable}
-                      onCheckedChange={(checked) =>
-                        onUpdateIncentive(idx, "taxable", checked === true)
-                      }
-                    />
-                    <Label
-                      htmlFor={`edit-inc-taxable-${idx}`}
-                      className="text-xs font-normal cursor-pointer"
-                    >
-                      Taxable
-                    </Label>
+                  <div>
+                    <span className="text-xs text-muted-foreground sm:hidden block mb-1">
+                      Type
+                    </span>
+                    <div className="flex h-9 w-full items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+                      {deduction.type || "—"}
+                    </div>
                   </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => onRemoveIncentive(idx)}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                  <div className="flex justify-end sm:justify-center">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onRemoveDeduction(idx)}
+                      aria-label={`Remove deduction ${idx + 1}`}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
-              );
-            })}
-            <Button type="button" variant="outline" size="sm" onClick={onAddIncentive}>
+              ))}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onAddDeduction}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add deduction
+            </Button>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-base font-semibold">Additions</Label>
+              <span className="text-xs text-muted-foreground">
+                Incentives / back pay; toggle taxable
+              </span>
+            </div>
+            {editIncentives.length > 0 && (
+              <div
+                className="hidden sm:grid sm:grid-cols-[1fr_7.5rem_auto_2.25rem] gap-2 px-1 text-xs font-medium text-muted-foreground"
+                role="row"
+                aria-hidden
+              >
+                <div>Name</div>
+                <div>Amount</div>
+                <div>Taxable</div>
+                <div className="w-8" />
+              </div>
+            )}
+            <div className="space-y-2">
+              {editIncentives.map((inc, idx) => {
+                const isTaxable = inc.taxable !== false;
+                return (
+                  <div
+                    key={idx}
+                    className="grid grid-cols-1 sm:grid-cols-[1fr_7.5rem_auto_2.25rem] gap-2 sm:items-end rounded-md border p-2 sm:p-0 sm:border-0 sm:px-1"
+                  >
+                    <div className="min-w-0">
+                      <span className="text-xs text-muted-foreground sm:hidden block mb-1">
+                        Name
+                      </span>
+                      {isEditableName(inc, "addition") ? (
+                        <Input
+                          value={inc.name ?? ""}
+                          onChange={(e) =>
+                            onUpdateIncentive(idx, "name", e.target.value)
+                          }
+                          placeholder="Incentive name"
+                          className="h-9"
+                        />
+                      ) : (
+                        <div className="flex h-9 w-full rounded-md border border-input bg-muted px-3 py-1 text-sm text-muted-foreground">
+                          {inc.name}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground sm:hidden block mb-1">
+                        Amount
+                      </span>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        className="h-9 font-mono text-sm"
+                        value={inc.amount ?? ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === "" || val === "-") {
+                            onUpdateIncentive(idx, "amount", 0);
+                          } else {
+                            const numVal = parseFloat(val);
+                            if (!isNaN(numVal) && numVal >= 0) {
+                              onUpdateIncentive(idx, "amount", numVal);
+                            }
+                          }
+                        }}
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div className="flex items-end gap-2 flex-wrap sm:pb-1.5 sm:pl-0">
+                      <div className="flex items-center gap-2 h-9">
+                        <Checkbox
+                          id={`edit-inc-taxable-${idx}`}
+                          checked={isTaxable}
+                          onCheckedChange={(checked) =>
+                            onUpdateIncentive(idx, "taxable", checked === true)
+                          }
+                        />
+                        <Label
+                          htmlFor={`edit-inc-taxable-${idx}`}
+                          className="text-sm font-normal cursor-pointer"
+                        >
+                          Taxable
+                        </Label>
+                      </div>
+                    </div>
+                    <div className="flex justify-end sm:justify-center -mt-1 sm:mt-0 sm:mb-0.5">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onRemoveIncentive(idx)}
+                        aria-label={`Remove addition ${idx + 1}`}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onAddIncentive}
+            >
               <Plus className="h-4 w-4 mr-2" />
               Add addition
             </Button>
           </div>
         </div>
 
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={isSavingPayslip}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            onClick={onSave}
-            disabled={isSavingPayslip}
-          >
-            {isSavingPayslip ? "Saving..." : "Save changes"}
-          </Button>
-        </DialogFooter>
+        <div className="shrink-0 border-t px-6 py-4">
+          <DialogFooter className="sm:gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={isSavingPayslip}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={onSave}
+              disabled={isSavingPayslip}
+            >
+              {isSavingPayslip ? "Saving…" : "Save changes"}
+            </Button>
+          </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );

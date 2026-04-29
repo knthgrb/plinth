@@ -920,12 +920,21 @@ export default function PayrollPageClient() {
   };
 
   const handleEditPayslip = (payslip: any) => {
-    setEditingPayslip(payslip);
-    setEditDeductions([...payslip.deductions]);
+    const earningsAtOpen: PreviewEditableEarnings = {
+      ...getPreviewEarningsFromSource(payslip),
+    };
+    setEditEarnings(earningsAtOpen);
+    setEditingPayslip({
+      ...payslip,
+      __earningsAtOpen: { ...earningsAtOpen },
+      __openTaxableIncentiveTotal: sumTaxableIncentiveAmounts(
+        (payslip.incentives || []) as { amount: number; taxable?: boolean }[],
+      ),
+    });
+    setEditDeductions([...(payslip.deductions || [])]);
     setEditIncentives(
       (payslip.incentives || []).map(normalizeIncentiveLineForUi),
     );
-    setEditEarnings(zeroPreviewEarnings());
     setIsEditPayslipOpen(true);
   };
 
@@ -1177,6 +1186,9 @@ export default function PayrollPageClient() {
         payslipId: editingPayslip._id,
         deductions: editDeductions,
         incentives: editIncentives.length > 0 ? editIncentives : undefined,
+        variableEarnings: {
+          ...editEarnings,
+        },
       });
 
       if (selectedPayrollRun && isViewPayslipsOpen) {
@@ -1190,11 +1202,7 @@ export default function PayrollPageClient() {
             p._id === editingPayslip._id
               ? {
                   ...p,
-                  grossPay: updated.grossPay ?? p.grossPay,
-                  basicPay: updated.basicPay ?? p.basicPay,
-                  nonTaxableAllowance:
-                    updated.nonTaxableAllowance ?? p.nonTaxableAllowance,
-                  netPay: updated.netPay ?? p.netPay,
+                  ...updated,
                   employee: updated.employee ?? p.employee,
                   concernSummary: updated.concernSummary ?? p.concernSummary,
                 }
@@ -2751,7 +2759,8 @@ export default function PayrollPageClient() {
               onAddIncentive={addEditIncentive}
               onRemoveIncentive={removeEditIncentive}
               onUpdateIncentive={updateEditIncentive}
-              isPreviewEarnings={!!editingPayslip?.__mode}
+              showVariableEarnings
+              earningsContext={editingPayslip?.__mode ? "preview" : "saved"}
               editEarnings={editEarnings}
               onUpdateEarning={updateEditEarning}
               onSave={handleSavePayslip}

@@ -144,6 +144,19 @@ export async function updatePayslip(data: {
     type: string;
   }>;
   nonTaxableAllowance?: number;
+  /** When set, recomputes gross / basic / net with holiday, night diff, rest day, and OT. */
+  variableEarnings?: {
+    holidayPay: number;
+    nightDiffPay: number;
+    restDayPay: number;
+    overtimeRegular: number;
+    overtimeRestDay: number;
+    overtimeRestDayExcess: number;
+    overtimeSpecialHoliday: number;
+    overtimeSpecialHolidayExcess: number;
+    overtimeLegalHoliday: number;
+    overtimeLegalHolidayExcess: number;
+  };
 }) {
   return PayrollService.updatePayslip(data);
 }
