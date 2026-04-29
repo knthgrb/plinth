@@ -23,7 +23,7 @@ export class MemosService {
     if (!token) throw new Error("Not authenticated");
 
     const convex = await getAuthedConvexClient();
-    return await (convex.action as any)(
+    return await (convex.mutation as any)(
       (api as any).memos.createMemo,
       {
         ...data,
@@ -58,7 +58,7 @@ export class MemosService {
     if (!token) throw new Error("Not authenticated");
 
     const convex = await getAuthedConvexClient();
-    return await (convex.action as any)(
+    return await (convex.mutation as any)(
       (api as any).memos.updateMemo,
       {
         memoId: memoId as Id<"memos">,
@@ -77,7 +77,7 @@ export class MemosService {
     if (!token) throw new Error("Not authenticated");
 
     const convex = await getAuthedConvexClient();
-    return await (convex.action as any)(
+    return await (convex.mutation as any)(
       (api as any).memos.deleteMemo,
       {
         memoId: memoId as Id<"memos">,
@@ -91,7 +91,7 @@ export class MemosService {
     if (!token) throw new Error("Not authenticated");
 
     const convex = await getAuthedConvexClient();
-    return await (convex.action as any)(
+    return await (convex.mutation as any)(
       (api as any).memos.publishMemo,
       {
         memoId: memoId as Id<"memos">,
@@ -105,7 +105,7 @@ export class MemosService {
     if (!token) throw new Error("Not authenticated");
 
     const convex = await getAuthedConvexClient();
-    return await (convex.action as any)(
+    return await (convex.mutation as any)(
       (api as any).memos.acknowledgeMemo,
       {
         memoId: memoId as Id<"memos">,
