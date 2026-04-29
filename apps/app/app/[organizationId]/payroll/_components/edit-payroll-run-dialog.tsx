@@ -18,7 +18,6 @@ import { PayrollStep4DeductionsIncentives } from "./payroll-step-4-deductions-in
 import { PayrollStep5Preview } from "./payroll-step-5-preview";
 
 import type { GovernmentDeductionSettings } from "./payroll-step-3-government-deductions";
-import type { DefaultGovDeductionLineName } from "./payroll-wizard-gov-helpers";
 
 interface EmployeeDeduction {
   employeeId: string;
@@ -87,7 +86,7 @@ interface EditPayrollRunDialogProps {
   step4CutoffStartMs?: number;
   onRestoreDefaultGovLine?: (
     employeeId: string,
-    name: DefaultGovDeductionLineName,
+    name: string,
   ) => void | Promise<void>;
   restoringDefaultKey?: string | null;
 }

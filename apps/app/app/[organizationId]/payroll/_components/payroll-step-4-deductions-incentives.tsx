@@ -10,6 +10,7 @@ import type { GovernmentDeductionSettings, TaxSettings } from "./payroll-step-3-
 import {
   getExpectedDefaultGovLineNames,
   getRestorableDefaultGovLineNames,
+  getRestorableAttendanceLineNames,
   filterRestorableGovLineNamesForWithholdingReality,
 } from "./payroll-wizard-gov-helpers";
 
@@ -66,9 +67,10 @@ interface PayrollStep4DeductionsIncentivesProps {
   taxSettings?: TaxSettings;
   /** Cutoff start in ms (local), same as Step 3, for org tax-deduction schedule. */
   cutoffStartMs?: number;
+  /** Government + system attendance lines (e.g. Late); amounts come from preview. */
   onRestoreDefaultGovLine?: (
     employeeId: string,
-    name: import("./payroll-wizard-gov-helpers").DefaultGovDeductionLineName,
+    name: string,
   ) => void | Promise<void>;
   /** e.g. `${employeeId}:SSS` while a restore is in progress */
   restoringDefaultKey?: string | null;
@@ -138,10 +140,11 @@ export function PayrollStep4DeductionsIncentives({
           <p className="text-sm text-gray-500">
             Step 3 controls which SSS, PhilHealth, Pag-IBIG, and Withholding
             Tax lines are available; opening Step 4 after Step 3 matches that.
-            You can remove or edit lines here for one-off overrides. If you
-            removed a default that is still turned on in Step 3, use
-            &quot;Restore&quot; next to that person. To turn a default off, go
-            back to Step 3.
+            Attendance deductions (e.g. Late) come from the same preview. You
+            can remove or edit lines here for one-off overrides. If you removed a
+            system line that still applies for this run, use &quot;Restore&quot;
+            for that employee. Custom rows you added here have no Restore. To
+            turn off a government default, go back to Step 3.
           </p>
           <div className="space-y-6 max-h-96 overflow-y-auto">
             {selectedEmployees.map((employeeId: string) => {
@@ -161,13 +164,6 @@ export function PayrollStep4DeductionsIncentives({
                       cutoffStartMs,
                     )
                   : [];
-              const restorableRaw =
-                onRestoreDefaultGovLine && expectedDefaultGov.length > 0
-                  ? getRestorableDefaultGovLineNames(
-                      expectedDefaultGov,
-                      empDeductions.deductions,
-                    )
-                  : [];
               const previewRow = Array.isArray(payrollPreviewRows)
                 ? payrollPreviewRows.find(
                     (p: { employee?: { _id?: string } }) =>
@@ -175,10 +171,28 @@ export function PayrollStep4DeductionsIncentives({
                       String(p.employee._id) === String(employeeId),
                   )
                 : undefined;
-              const restorableDefaults = filterRestorableGovLineNamesForWithholdingReality(
-                restorableRaw,
-                { previewRow },
-              );
+              const restorableGovRaw =
+                onRestoreDefaultGovLine && expectedDefaultGov.length > 0
+                  ? getRestorableDefaultGovLineNames(
+                      expectedDefaultGov,
+                      empDeductions.deductions,
+                    )
+                  : [];
+              const restorableGovFiltered =
+                filterRestorableGovLineNamesForWithholdingReality(
+                  restorableGovRaw,
+                  { previewRow },
+                );
+              const restorableAttendance = onRestoreDefaultGovLine
+                ? getRestorableAttendanceLineNames(
+                    previewRow?.deductions,
+                    empDeductions.deductions,
+                  )
+                : [];
+              const restorableDefaults = [
+                ...restorableGovFiltered,
+                ...restorableAttendance,
+              ];
 
               return (
                 <Card key={employeeId}>
@@ -263,8 +277,10 @@ export function PayrollStep4DeductionsIncentives({
                     {restorableDefaults.length > 0 && onRestoreDefaultGovLine && (
                       <div className="flex flex-col gap-2 pt-1 rounded-md border border-dashed border-border/80 bg-muted/30 px-3 py-2">
                         <p className="text-xs text-muted-foreground">
-                          These were removed in Step 4 but are still enabled in
-                          Step 3—restore the calculated amount from preview:
+                          These system lines (government, withholding tax, or
+                          attendance such as Late) were removed in Step 4 but
+                          still apply for this run—restore the amount from
+                          preview:
                         </p>
                         <div className="flex flex-wrap gap-2">
                           {restorableDefaults.map((name) => {

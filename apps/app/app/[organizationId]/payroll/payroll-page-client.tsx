@@ -191,7 +191,7 @@ import { useOrganization } from "@/hooks/organization-context";
 import { useToast } from "@/components/ui/use-toast";
 import { userFacingPayslipLoadError } from "@/lib/payslip-load-errors";
 import { PayslipDetail } from "@/components/payslip-detail";
-import type { DefaultGovDeductionLineName } from "./_components/payroll-wizard-gov-helpers";
+import { isAttendanceDeductionLineName } from "./_components/payroll-wizard-gov-helpers";
 import {
   getPreviewEarningsFromSource,
   recomputeGrossAndBasicFromEarnings,
@@ -299,20 +299,6 @@ function dateStringToLocalMs(dateStr: string): number {
   return new Date(y, m - 1, d).getTime();
 }
 
-/** Kept for Step 4 re-preview: loans/advances only; government + attendance come from the server. */
-function isAttendanceDeductionNameForSync(name: string): boolean {
-  const n = (name || "").trim().toLowerCase();
-  return (
-    n === "late" ||
-    n === "regular day late" ||
-    n === "regular holiday late" ||
-    n === "special holiday late" ||
-    n === "undertime" ||
-    /^absent(?:\b|\s|\()/.test(n) ||
-    /^no[\s-]*work(?:\b|\s|\()/.test(n)
-  );
-}
-
 function isGovernmentDeductionNameForSync(name: string): boolean {
   const n = (name || "").trim().toLowerCase();
   return (
@@ -331,7 +317,7 @@ function filterCustomManualDeductionsForSync(
     (d) =>
       (d.type || "").toLowerCase() !== "attendance" &&
       (d.type || "").toLowerCase() !== "government" &&
-      !isAttendanceDeductionNameForSync(d.name) &&
+      !isAttendanceDeductionLineName(d.name) &&
       !isGovernmentDeductionNameForSync(d.name),
   );
 }
@@ -388,6 +374,11 @@ export default function PayrollPageClient() {
     EmployeeIncentive[]
   >([]);
   const [previewData, setPreviewData] = useState<any[]>([]);
+  /** Full preview from Step 3→4 reconcile; used on Step 4 before Step 5 so Restore sees WHT + attendance lines. */
+  const [step4RestoreReferencePreview, setStep4RestoreReferencePreview] =
+    useState<any[]>([]);
+  const [editStep4RestoreReferencePreview, setEditStep4RestoreReferencePreview] =
+    useState<any[]>([]);
   /** Per-employee overrides for deduction amounts (e.g. SSS, PhilHealth) in pay preview */
   const [previewDeductionOverrides, setPreviewDeductionOverrides] = useState<
     Record<string, Record<string, number>>
@@ -1832,10 +1823,17 @@ export default function PayrollPageClient() {
             })),
           };
         });
+        const normalizedRef = (preview || []).map((row: any) => ({
+          ...row,
+          employee: row.employee,
+          deductions: Array.isArray(row.deductions) ? row.deductions : [],
+        }));
         if (isCreate) {
           setEmployeeDeductions(next);
+          setStep4RestoreReferencePreview(normalizedRef);
         } else {
           setEditEmployeeDeductions(next);
+          setEditStep4RestoreReferencePreview(normalizedRef);
         }
       } catch (error) {
         console.error("reconcileStep4WithGovPreview:", error);
@@ -1869,11 +1867,7 @@ export default function PayrollPageClient() {
   );
 
   const restoreDefaultGovLine = useCallback(
-    async (
-      target: "create" | "edit",
-      employeeId: string,
-      name: DefaultGovDeductionLineName,
-    ) => {
+    async (target: "create" | "edit", employeeId: string, name: string) => {
       if (!effectiveOrganizationId) return;
       const isCreate = target === "create";
       const start = isCreate ? cutoffStart : editCutoffStart;
@@ -2200,6 +2194,7 @@ export default function PayrollPageClient() {
     setEmployeeDeductions([]);
     setEmployeeIncentives([]);
     setPreviewData([]);
+    setStep4RestoreReferencePreview([]);
     setPreviewDeductionOverrides({});
   };
 
@@ -2586,12 +2581,14 @@ export default function PayrollPageClient() {
                       }
                       onRestoreDefaultGovLine={(
                         employeeId: string,
-                        name: DefaultGovDeductionLineName,
-                      ) =>
-                        void restoreDefaultGovLine("create", employeeId, name)
-                      }
+                        name: string,
+                      ) => void restoreDefaultGovLine("create", employeeId, name)}
                       restoringDefaultKey={restoringDefaultKey}
-                      payrollPreviewRows={previewData}
+                      payrollPreviewRows={
+                        previewData.length > 0
+                          ? previewData
+                          : step4RestoreReferencePreview
+                      }
                     />
                   </Suspense>
                 )}
@@ -3006,6 +3003,7 @@ export default function PayrollPageClient() {
                   setEditEmployeeDeductions([]);
                   setEditEmployeeIncentives([]);
                   setEditPreviewData([]);
+                  setEditStep4RestoreReferencePreview([]);
                   setEditPreviewDeductionOverrides({});
                   setEditSubmitStatus("idle");
                 }
@@ -3020,7 +3018,11 @@ export default function PayrollPageClient() {
               editGovernmentDeductionSettings={editGovernmentDeductionSettings}
               editEmployeeDeductions={editEmployeeDeductions}
               editEmployeeIncentives={editEmployeeIncentives}
-              editPreviewData={editPreviewData}
+              editPreviewData={
+                editPreviewData.length > 0
+                  ? editPreviewData
+                  : editStep4RestoreReferencePreview
+              }
               editPreviewDeductionOverrides={editPreviewDeductionOverrides}
               setEditPreviewDeductionOverrides={
                 setEditPreviewDeductionOverrides
@@ -3090,10 +3092,7 @@ export default function PayrollPageClient() {
                   ? dateStringToLocalMs(editCutoffStart)
                   : undefined
               }
-              onRestoreDefaultGovLine={(
-                employeeId: string,
-                name: DefaultGovDeductionLineName,
-              ) =>
+              onRestoreDefaultGovLine={(employeeId: string, name: string) =>
                 void restoreDefaultGovLine("edit", employeeId, name)
               }
               restoringDefaultKey={restoringDefaultKey}

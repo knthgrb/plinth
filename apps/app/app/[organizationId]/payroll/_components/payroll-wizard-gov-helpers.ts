@@ -94,3 +94,47 @@ export function filterRestorableGovLineNamesForWithholdingReality(
 export function isDefaultGovDeductionName(name: string): boolean {
   return isDefaultGovName(name);
 }
+
+/** Matches server-built attendance deduction names (payroll convex). */
+export function isAttendanceDeductionLineName(name: string): boolean {
+  const n = (name || "").trim().toLowerCase();
+  return (
+    n === "late" ||
+    n === "regular day late" ||
+    n === "regular holiday late" ||
+    n === "special holiday late" ||
+    n === "undertime" ||
+    /^absent(?:\b|\s|\()/.test(n) ||
+    /^no[\s-]*work(?:\b|\s|\()/.test(n)
+  );
+}
+
+export function isSystemGeneratedAttendanceRow(d: {
+  name?: string;
+  type?: string;
+}): boolean {
+  const typ = (d.type || "").trim().toLowerCase();
+  if (typ === "attendance") return true;
+  return isAttendanceDeductionLineName(d.name || "");
+}
+
+/**
+ * Attendance lines present on the baseline preview but removed in Step 4 — restorable
+ * like government defaults (not custom loan rows added in Step 4).
+ */
+export function getRestorableAttendanceLineNames(
+  baselineDeductions: { name?: string; type?: string }[] | undefined,
+  currentDeductions: { name: string }[],
+): string[] {
+  if (!baselineDeductions?.length) return [];
+  const present = new Set(
+    currentDeductions.map((d) => (d.name || "").trim()),
+  );
+  const names = new Set<string>();
+  for (const d of baselineDeductions) {
+    if (!isSystemGeneratedAttendanceRow(d)) continue;
+    const n = (d.name || "").trim();
+    if (n && !present.has(n)) names.add(n);
+  }
+  return [...names];
+}
