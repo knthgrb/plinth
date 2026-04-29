@@ -42,7 +42,7 @@ interface EditAttendanceDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   record: any | null;
-  employee?: any | null; // When provided, scheduled times are pre-filled from employee's schedule for this date
+  employee?: any | null; // Used to backfill schedule when the row has no stored times
   onSuccess?: () => void;
 }
 
@@ -143,16 +143,30 @@ export function EditAttendanceDialog({
     });
   }, [record?.date, employee, holidays]);
 
-  // Re-sync from record whenever the dialog opens or record changes. Use employee's schedule for that date when available so wrong stored schedule (e.g. 9–6) is corrected.
+  // Re-sync when the dialog opens. Prefer schedule **stored on the attendance row** (shift
+  // snapshot for that day). Only fall back to the employee's current default/override for
+  // that calendar date if the row has no schedule—so changing an employee's shift later
+  // does not rewrite every historical record's displayed times.
   useEffect(() => {
     if (record && isOpen) {
-      const fromEmployee = employee && record.date && getScheduledTimesForDate(employee, record.date);
-      if (fromEmployee) {
-        setEditScheduleIn(fromEmployee.scheduleIn);
-        setEditScheduleOut(fromEmployee.scheduleOut);
+      const inStored = (record.scheduleIn ?? "").toString().trim();
+      const outStored = (record.scheduleOut ?? "").toString().trim();
+      const hasStoredSchedule = inStored !== "" && outStored !== "";
+      if (hasStoredSchedule) {
+        setEditScheduleIn(inStored);
+        setEditScheduleOut(outStored);
       } else {
-        setEditScheduleIn(record.scheduleIn || "");
-        setEditScheduleOut(record.scheduleOut || "");
+        const fromEmployee =
+          employee && record.date
+            ? getScheduledTimesForDate(employee, record.date)
+            : null;
+        if (fromEmployee) {
+          setEditScheduleIn(fromEmployee.scheduleIn);
+          setEditScheduleOut(fromEmployee.scheduleOut);
+        } else {
+          setEditScheduleIn(record.scheduleIn || "");
+          setEditScheduleOut(record.scheduleOut || "");
+        }
       }
       setEditTimeIn(record.actualIn || "");
       setEditTimeOut(record.actualOut || "");
@@ -305,8 +319,10 @@ export function EditAttendanceDialog({
                 {format(new Date(record.date), "MMM dd, yyyy")} – {format(new Date(record.date), "EEEE")}
               </span>
             )}
-            Update attendance record details. Late and undertime are based on this
-            employee's scheduled time in/out; you can override them manually.
+            Scheduled times are the shift for this day (saved on this attendance
+            record). Edit them if that day used a different shift than your current
+            default. Late and undertime follow these times; you can override them
+            manually below.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleUpdate}>

@@ -36,7 +36,8 @@ interface PayrollStep3GovernmentDeductionsProps {
   cutoffStart?: number;
 }
 
-function isTaxEnabledForRun(
+/** Used by Step 4 to know if withholding tax applies for this pay (org schedule). */
+export function isTaxEnabledForRun(
   taxSettings: TaxSettings,
   cutoffStart?: number
 ): boolean {

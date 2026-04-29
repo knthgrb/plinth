@@ -1,0 +1,69 @@
+import type {
+  GovernmentDeductionSettings,
+  TaxSettings,
+} from "./payroll-step-3-government-deductions";
+import { isTaxEnabledForRun } from "./payroll-step-3-government-deductions";
+
+/** Canonical names used in preview / payslips (must match payroll convex). */
+export const DEFAULT_GOV_DEDUCTION_LINE_NAMES = [
+  "SSS",
+  "PhilHealth",
+  "Pag-IBIG",
+  "Withholding Tax",
+] as const;
+
+export type DefaultGovDeductionLineName =
+  (typeof DEFAULT_GOV_DEDUCTION_LINE_NAMES)[number];
+
+function isDefaultGovName(name: string): name is DefaultGovDeductionLineName {
+  return (DEFAULT_GOV_DEDUCTION_LINE_NAMES as readonly string[]).includes(
+    (name || "").trim(),
+  );
+}
+
+/**
+ * Government lines that Step 3 says should apply for this employee on this run.
+ * Step 4 should start from the preview with these; items not listed were turned off
+ * in Step 3 and should not get a "restore" in Step 4.
+ */
+export function getExpectedDefaultGovLineNames(
+  governmentDeductionSettings: GovernmentDeductionSettings[] | undefined,
+  employeeId: string,
+  deductionsEnabled: boolean,
+  taxSettings: TaxSettings,
+  /** Cutoff start in ms (local day), same as Step 3. */
+  cutoffStartMs: number | undefined,
+): DefaultGovDeductionLineName[] {
+  const gs = governmentDeductionSettings?.find(
+    (g) => g.employeeId === employeeId,
+  );
+  if (!gs) return [];
+  const out: DefaultGovDeductionLineName[] = [];
+  if (deductionsEnabled) {
+    if (gs.sss.enabled) out.push("SSS");
+    if (gs.philhealth.enabled) out.push("PhilHealth");
+    if (gs.pagibig.enabled) out.push("Pag-IBIG");
+  }
+  if (gs.tax.enabled && isTaxEnabledForRun(taxSettings, cutoffStartMs)) {
+    out.push("Withholding Tax");
+  }
+  return out;
+}
+
+/**
+ * Default gov lines that Step 3 still expects but are missing from the current list
+ * (user removed them in Step 4) — only these are restorable in Step 4.
+ */
+export function getRestorableDefaultGovLineNames(
+  expected: readonly DefaultGovDeductionLineName[],
+  deductions: { name: string }[],
+): DefaultGovDeductionLineName[] {
+  const present = new Set(
+    deductions.map((d) => (d.name || "").trim()),
+  );
+  return expected.filter((name) => !present.has(name));
+}
+
+export function isDefaultGovDeductionName(name: string): boolean {
+  return isDefaultGovName(name);
+}

@@ -88,6 +88,7 @@ export function PayrollStep5Preview({
             // Create a mock payslip object for preview with actual attendance data
             const mockPayslip = {
               period,
+              basicPay: preview.basicPay,
               grossPay: preview.grossPay,
               deductions: [
                 ...existingDeductions,

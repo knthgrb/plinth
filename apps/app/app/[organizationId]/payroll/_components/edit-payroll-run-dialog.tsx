@@ -18,6 +18,7 @@ import { PayrollStep4DeductionsIncentives } from "./payroll-step-4-deductions-in
 import { PayrollStep5Preview } from "./payroll-step-5-preview";
 
 import type { GovernmentDeductionSettings } from "./payroll-step-3-government-deductions";
+import type { DefaultGovDeductionLineName } from "./payroll-wizard-gov-helpers";
 
 interface EmployeeDeduction {
   employeeId: string;
@@ -79,6 +80,16 @@ interface EditPayrollRunDialogProps {
     taxDeductOnPay: "first" | "second";
   };
   onEditPreviewPayslip?: (preview: any) => void;
+  /** Rebuild Step 4 deduction lines from Step 3 settings + server preview (keeps custom/loan lines). */
+  onReconcileStep4FromGovSettings?: () => Promise<void>;
+  isReconcilingStep4FromGov?: boolean;
+  /** For Step 4: org tax schedule (withholding) + restore of default lines */
+  step4CutoffStartMs?: number;
+  onRestoreDefaultGovLine?: (
+    employeeId: string,
+    name: DefaultGovDeductionLineName,
+  ) => void | Promise<void>;
+  restoringDefaultKey?: string | null;
 }
 
 export function EditPayrollRunDialog({
@@ -118,7 +129,15 @@ export function EditPayrollRunDialog({
     taxDeductOnPay: "first" as const,
   },
   onEditPreviewPayslip,
+  onReconcileStep4FromGovSettings,
+  isReconcilingStep4FromGov = false,
+  step4CutoffStartMs,
+  onRestoreDefaultGovLine,
+  restoringDefaultKey = null,
 }: EditPayrollRunDialogProps) {
+  const syncStep4WithStep3 = onReconcileStep4FromGovSettings
+    ? () => onReconcileStep4FromGovSettings()
+    : undefined;
   const handleSelectAll = () => {
     if (editSelectedEmployees.length === employees?.length) {
       onSelectEmployeesChange([]);
@@ -177,6 +196,9 @@ export function EditPayrollRunDialog({
       }
       setEditPayrollStep(3);
     } else if (editPayrollStep === 3) {
+      if (onReconcileStep4FromGovSettings) {
+        await onReconcileStep4FromGovSettings();
+      }
       setEditPayrollStep(4);
     } else if (editPayrollStep === 4) {
       await onComputeEditPreview?.();
@@ -499,6 +521,14 @@ export function EditPayrollRunDialog({
                 });
                 setEditEmployeeIncentives(updated);
               }}
+              onSyncWithStep3={syncStep4WithStep3}
+              isSyncingWithStep3={isReconcilingStep4FromGov}
+              governmentDeductionSettings={editGovernmentDeductionSettings}
+              deductionsEnabled={editDeductionsEnabled}
+              taxSettings={taxSettings}
+              cutoffStartMs={step4CutoffStartMs}
+              onRestoreDefaultGovLine={onRestoreDefaultGovLine}
+              restoringDefaultKey={restoringDefaultKey}
             />
           </Suspense>
         )}
@@ -525,9 +555,18 @@ export function EditPayrollRunDialog({
                 <Button
                   type="button"
                   onClick={handleNext}
-                  disabled={isSavingPayrollRun || isComputingEditPreview}
+                  disabled={
+                    isSavingPayrollRun ||
+                    isComputingEditPreview ||
+                    (editPayrollStep === 3 && isReconcilingStep4FromGov)
+                  }
                 >
-                  {editPayrollStep === 4 && isComputingEditPreview ? (
+                  {editPayrollStep === 3 && isReconcilingStep4FromGov ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Syncing…
+                    </>
+                  ) : editPayrollStep === 4 && isComputingEditPreview ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       Generating Payslips

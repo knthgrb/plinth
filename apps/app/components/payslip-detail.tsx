@@ -521,14 +521,6 @@ export function PayslipDetail({
     (d: any) => d.amount > 0,
   );
 
-  // Calculate totals (full total includes gov + loans + attendance; used for net pay)
-  const computedTotalDeductions =
-    payslip.deductions?.reduce((sum: number, d: any) => sum + d.amount, 0) || 0;
-  const totalDeductions =
-    typeof payslip.totalDeductions === "number"
-      ? (payslip.totalDeductions as number)
-      : computedTotalDeductions;
-
   // Right column shows only gov + loans; total there must match those line items only
   const totalDeductionsRightColumn =
     (governmentDeductions.reduce(
@@ -538,10 +530,19 @@ export function PayslipDetail({
     (loanDeductionsWithAmount.reduce((s: number, d: any) => s + d.amount, 0) ||
       0);
 
-  const netPay =
-    typeof payslip.netPay === "number"
-      ? Math.max(0, payslip.netPay)
-      : Math.max(0, totalEarnings - totalDeductionsRightColumn);
+  /**
+   * Net pay must match the two "Total" rows in this view:
+   * - Left `totalEarnings` = taxable gross (after "Less" attendance) + non-taxable allowance + non-taxable incentives.
+   * - Attendance is already netted in `taxableGrossEarnings`, not in the right column, so we subtract
+   *   only government + loans here (same as earnedAfterAttendance − non-attendance in buildCanonical).
+   * Do not use `payslip.netPay` alone: it can get out of sync with stored incentives (e.g. fuel subsidy) while
+   * the line items and left total are correct.
+   */
+  const netPay = Math.max(
+    0,
+    Math.round((totalEarnings - totalDeductionsRightColumn + Number.EPSILON) * 100) /
+      100,
+  );
 
   // Get specific deduction amounts
   const getDeductionAmount = (name: string) => {

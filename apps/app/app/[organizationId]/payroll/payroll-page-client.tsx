@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef, useCallback, Suspense } from "react";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  useCallback,
+  Suspense,
+} from "react";
 import { useQuery } from "convex/react";
 import dynamic from "next/dynamic";
 import { api } from "@/convex/_generated/api";
@@ -184,6 +191,17 @@ import { useOrganization } from "@/hooks/organization-context";
 import { useToast } from "@/components/ui/use-toast";
 import { userFacingPayslipLoadError } from "@/lib/payslip-load-errors";
 import { PayslipDetail } from "@/components/payslip-detail";
+import type { DefaultGovDeductionLineName } from "./_components/payroll-wizard-gov-helpers";
+import {
+  getPreviewEarningsFromSource,
+  recomputeGrossAndBasicFromEarnings,
+  recomputePreviewNet,
+  round2,
+  sumTaxableIncentiveAmounts,
+  type PreviewEditableEarningKey,
+  type PreviewEditableEarnings,
+  zeroPreviewEarnings,
+} from "./_components/payroll-preview-earnings-helpers";
 
 type Deduction = {
   name: string;
@@ -277,6 +295,43 @@ function dateStringToLocalMs(dateStr: string): number {
   return new Date(y, m - 1, d).getTime();
 }
 
+/** Kept for Step 4 re-preview: loans/advances only; government + attendance come from the server. */
+function isAttendanceDeductionNameForSync(name: string): boolean {
+  const n = (name || "").trim().toLowerCase();
+  return (
+    n === "late" ||
+    n === "regular day late" ||
+    n === "regular holiday late" ||
+    n === "special holiday late" ||
+    n === "undertime" ||
+    /^absent(?:\b|\s|\()/.test(n) ||
+    /^no[\s-]*work(?:\b|\s|\()/.test(n)
+  );
+}
+
+function isGovernmentDeductionNameForSync(name: string): boolean {
+  const n = (name || "").trim().toLowerCase();
+  return (
+    n === "sss" ||
+    n === "philhealth" ||
+    n === "pag-ibig" ||
+    n === "pagibig" ||
+    n === "withholding tax"
+  );
+}
+
+function filterCustomManualDeductionsForSync(
+  rows: Deduction[],
+): Deduction[] {
+  return rows.filter(
+    (d) =>
+      (d.type || "").toLowerCase() !== "attendance" &&
+      (d.type || "").toLowerCase() !== "government" &&
+      !isAttendanceDeductionNameForSync(d.name) &&
+      !isGovernmentDeductionNameForSync(d.name),
+  );
+}
+
 export default function PayrollPageClient() {
   const { toast } = useToast();
   const { effectiveOrganizationId, currentOrganization } = useOrganization();
@@ -344,6 +399,9 @@ export default function PayrollPageClient() {
   const [editIncentives, setEditIncentives] = useState<PayrollIncentiveLine[]>(
     [],
   );
+  const [editEarnings, setEditEarnings] = useState<PreviewEditableEarnings>(
+    () => zeroPreviewEarnings(),
+  );
   const [isSavingPayslip, setIsSavingPayslip] = useState(false);
   const [regeneratingPayrollRunId, setRegeneratingPayrollRunId] = useState<
     string | null
@@ -392,6 +450,10 @@ export default function PayrollPageClient() {
   const [editPreviewDeductionOverrides, setEditPreviewDeductionOverrides] =
     useState<Record<string, Record<string, number>>>({});
   const [isComputingEditPreview, setIsComputingEditPreview] = useState(false);
+  const [isReconcilingStep4Gov, setIsReconcilingStep4Gov] = useState(false);
+  const [restoringDefaultKey, setRestoringDefaultKey] = useState<string | null>(
+    null,
+  );
   const [isSavingPayrollRun, setIsSavingPayrollRun] = useState(false);
   const [editSubmitStatus, setEditSubmitStatus] = useState<
     "idle" | "draft" | "finalized"
@@ -863,6 +925,7 @@ export default function PayrollPageClient() {
     setEditIncentives(
       (payslip.incentives || []).map(normalizeIncentiveLineForUi),
     );
+    setEditEarnings(zeroPreviewEarnings());
     setIsEditPayslipOpen(true);
   };
 
@@ -954,6 +1017,10 @@ export default function PayrollPageClient() {
       ...attendanceDeductions,
     ]);
 
+    const earningsAtOpen: PreviewEditableEarnings = {
+      ...getPreviewEarningsFromSource(preview),
+    };
+    setEditEarnings(earningsAtOpen);
     setEditingPayslip({
       _id: `${mode}:${preview.employee?._id}`,
       employee: preview.employee,
@@ -961,6 +1028,10 @@ export default function PayrollPageClient() {
       incentives: (preview.incentives || []).map(normalizeIncentiveLineForUi),
       __mode: mode,
       __employeeId: preview.employee?._id,
+      __earningsAtOpen: { ...earningsAtOpen },
+      __openTaxableIncentiveTotal: sumTaxableIncentiveAmounts(
+        (preview.incentives || []) as { amount: number; taxable?: boolean }[],
+      ),
     });
     setEditDeductions(initialDeductions);
     setEditIncentives(
@@ -979,14 +1050,44 @@ export default function PayrollPageClient() {
         editingPayslip.__mode === "edit_preview"
       ) {
         const employeeId = editingPayslip.__employeeId as string;
-        const totalIncentives = editIncentives.reduce(
-          (sum, incentive) => sum + (incentive.amount || 0),
-          0,
-        );
-        const totalDeductions = editDeductions.reduce(
-          (sum, deduction) => sum + (deduction.amount || 0),
-          0,
-        );
+        const atOpen = (editingPayslip.__earningsAtOpen ??
+          zeroPreviewEarnings()) as PreviewEditableEarnings;
+        const t0 = (editingPayslip.__openTaxableIncentiveTotal ?? 0) as number;
+        const t1 = sumTaxableIncentiveAmounts(editIncentives);
+        const applyPreviewPayslipPatch = (p: any) => {
+          if (p.employee?._id !== employeeId) return p;
+          const { grossPay, basicPay } = recomputeGrossAndBasicFromEarnings(
+            p,
+            atOpen,
+            editEarnings,
+            t0,
+            t1,
+          );
+          const { totalEarnings, netPay, totalDeductions, taxableGrossEarnings } =
+            recomputePreviewNet(
+              grossPay,
+              p.nonTaxableAllowance || 0,
+              editIncentives,
+              editDeductions,
+            );
+          const totalIncentives = round2(
+            editIncentives.reduce((s, i) => s + (i.amount || 0), 0),
+          );
+          return {
+            ...p,
+            ...editEarnings,
+            basicPay,
+            grossPay,
+            totalEarnings,
+            taxableGrossEarnings,
+            netPay,
+            totalDeductions,
+            totalIncentives,
+            incentiveTotal: totalIncentives,
+            incentives: editIncentives,
+            deductions: editDeductions,
+          };
+        };
         const isAttendanceName = (name: string): boolean => {
           const n = (name || "").trim().toLowerCase();
           return (
@@ -1018,23 +1119,7 @@ export default function PayrollPageClient() {
         );
 
         if (editingPayslip.__mode === "create_preview") {
-          setPreviewData((prev) =>
-            prev.map((p) => {
-              if (p.employee?._id !== employeeId) return p;
-              const availableEarnings = (p.grossPay || 0) + (p.nonTaxableAllowance || 0);
-              return {
-                ...p,
-                deductions: editDeductions,
-                incentives: editIncentives,
-                totalIncentives,
-                totalDeductions: Math.min(totalDeductions, Math.max(0, availableEarnings)),
-                netPay: Math.max(
-                  0,
-                  availableEarnings - Math.min(totalDeductions, Math.max(0, availableEarnings)),
-                ),
-              };
-            }),
-          );
+          setPreviewData((prev) => prev.map(applyPreviewPayslipPatch));
           setEmployeeDeductions((prev) => {
             const next = prev.map((row) =>
               row.employeeId === employeeId
@@ -1056,23 +1141,7 @@ export default function PayrollPageClient() {
               : [...next, { employeeId, incentives: editIncentives }];
           });
         } else {
-          setEditPreviewData((prev) =>
-            prev.map((p) => {
-              if (p.employee?._id !== employeeId) return p;
-              const availableEarnings = (p.grossPay || 0) + (p.nonTaxableAllowance || 0);
-              return {
-                ...p,
-                deductions: editDeductions,
-                incentives: editIncentives,
-                totalIncentives,
-                totalDeductions: Math.min(totalDeductions, Math.max(0, availableEarnings)),
-                netPay: Math.max(
-                  0,
-                  availableEarnings - Math.min(totalDeductions, Math.max(0, availableEarnings)),
-                ),
-              };
-            }),
-          );
+          setEditPreviewData((prev) => prev.map(applyPreviewPayslipPatch));
           setEditEmployeeDeductions((prev) => {
             const next = prev.map((row) =>
               row.employeeId === employeeId
@@ -1193,6 +1262,10 @@ export default function PayrollPageClient() {
     const updated = [...editIncentives];
     updated[index] = { ...updated[index], [field]: value };
     setEditIncentives(updated);
+  };
+
+  const updateEditEarning = (key: PreviewEditableEarningKey, value: number) => {
+    setEditEarnings((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleEmployeeSelect = (employeeId: string, checked: boolean) => {
@@ -1520,6 +1593,235 @@ export default function PayrollPageClient() {
       setIsComputingEditPreview(false);
     }
   };
+
+  const reconcileStep4WithGovPreview = useCallback(
+    async (target: "create" | "edit") => {
+      if (!effectiveOrganizationId) return;
+      const isCreate = target === "create";
+      const start = isCreate ? cutoffStart : editCutoffStart;
+      const end = isCreate ? cutoffEnd : editCutoffEnd;
+      const emps = isCreate ? selectedEmployees : editSelectedEmployees;
+      if (!start || !end || emps.length === 0) {
+        return;
+      }
+      setIsReconcilingStep4Gov(true);
+      try {
+        const customByEmp = isCreate
+          ? employeeDeductions
+          : editEmployeeDeductions;
+        const inc = isCreate ? employeeIncentives : editEmployeeIncentives;
+        const dedEnabled = isCreate
+          ? deductionsEnabled
+          : editDeductionsEnabled;
+        const gov = isCreate
+          ? governmentDeductionSettings
+          : editGovernmentDeductionSettings;
+        const manualForBatch = emps
+          .map((employeeId) => ({
+            employeeId,
+            deductions: filterCustomManualDeductionsForSync(
+              customByEmp.find((e) => e.employeeId === employeeId)
+                ?.deductions ?? [],
+            ),
+          }))
+          .filter((m) => m.deductions.length > 0);
+        const incentForBatch = inc.filter((e) => e.incentives.length > 0);
+        const preview = await computePayrollPreviewBatch({
+          organizationId: effectiveOrganizationId,
+          cutoffStart: dateStringToLocalMs(start),
+          cutoffEnd: dateStringToLocalMs(end),
+          employeeIds: emps,
+          deductionsEnabled: dedEnabled,
+          governmentDeductionSettings: gov,
+          manualDeductions: manualForBatch.length > 0 ? manualForBatch : undefined,
+          incentives: incentForBatch.length > 0 ? incentForBatch : undefined,
+        });
+        const next: EmployeeDeduction[] = emps.map((employeeId) => {
+          const row = (preview as any[]).find(
+            (p) => String(p?.employee?._id) === String(employeeId),
+          );
+          if (!row?.deductions) {
+            return { employeeId, deductions: [] as Deduction[] };
+          }
+          return {
+            employeeId,
+            deductions: (row.deductions as Deduction[]).map((d) => ({
+              name: d.name,
+              amount: d.amount,
+              type: d.type || "custom",
+            })),
+          };
+        });
+        if (isCreate) {
+          setEmployeeDeductions(next);
+        } else {
+          setEditEmployeeDeductions(next);
+        }
+      } catch (error) {
+        console.error("reconcileStep4WithGovPreview:", error);
+        toast({
+          title: "Could not sync with Step 3",
+          description: "Failed to recalculate deduction lines. Try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsReconcilingStep4Gov(false);
+      }
+    },
+    [
+      effectiveOrganizationId,
+      cutoffStart,
+      cutoffEnd,
+      editCutoffStart,
+      editCutoffEnd,
+      selectedEmployees,
+      editSelectedEmployees,
+      employeeDeductions,
+      editEmployeeDeductions,
+      employeeIncentives,
+      editEmployeeIncentives,
+      deductionsEnabled,
+      editDeductionsEnabled,
+      governmentDeductionSettings,
+      editGovernmentDeductionSettings,
+      toast,
+    ],
+  );
+
+  const restoreDefaultGovLine = useCallback(
+    async (
+      target: "create" | "edit",
+      employeeId: string,
+      name: DefaultGovDeductionLineName,
+    ) => {
+      if (!effectiveOrganizationId) return;
+      const isCreate = target === "create";
+      const start = isCreate ? cutoffStart : editCutoffStart;
+      const end = isCreate ? cutoffEnd : editCutoffEnd;
+      if (!start || !end) {
+        return;
+      }
+      setRestoringDefaultKey(`${employeeId}:${name}`);
+      try {
+        const customByEmp = isCreate
+          ? employeeDeductions
+          : editEmployeeDeductions;
+        const inc = isCreate ? employeeIncentives : editEmployeeIncentives;
+        const dedEnabled = isCreate
+          ? deductionsEnabled
+          : editDeductionsEnabled;
+        const gov = isCreate
+          ? governmentDeductionSettings
+          : editGovernmentDeductionSettings;
+        const customRows = filterCustomManualDeductionsForSync(
+          customByEmp.find((e) => e.employeeId === employeeId)?.deductions ?? [],
+        );
+        const manualForBatch =
+          customRows.length > 0
+            ? [{ employeeId, deductions: customRows }]
+            : undefined;
+        const emIncent = inc.find(
+          (e) => e.employeeId === employeeId && e.incentives.length > 0,
+        );
+        const preview = await computePayrollPreviewBatch({
+          organizationId: effectiveOrganizationId,
+          cutoffStart: dateStringToLocalMs(start),
+          cutoffEnd: dateStringToLocalMs(end),
+          employeeIds: [employeeId],
+          deductionsEnabled: dedEnabled,
+          governmentDeductionSettings: gov,
+          manualDeductions: manualForBatch,
+          incentives: emIncent ? [emIncent] : undefined,
+        });
+        const row = (preview as any[])?.[0];
+        if (!row?.deductions?.length) {
+          toast({
+            title: "Could not restore",
+            description: "No preview for this employee. Try re-syncing from Step 3.",
+            variant: "destructive",
+          });
+          return;
+        }
+        const line = (row.deductions as Deduction[]).find(
+          (d) => (d.name || "").trim() === name,
+        );
+        if (!line) {
+          toast({
+            title: "Could not restore",
+            description: `${name} is not part of this pay (check Step 3 and org tax schedule).`,
+            variant: "destructive",
+          });
+          return;
+        }
+        const merge = (prev: EmployeeDeduction[]): EmployeeDeduction[] => {
+          const next: EmployeeDeduction[] = prev.some(
+            (e) => e.employeeId === employeeId,
+          )
+            ? prev.map((ed) => {
+                if (ed.employeeId !== employeeId) return ed;
+                const without = ed.deductions.filter(
+                  (d) => (d.name || "").trim() !== name,
+                );
+                return {
+                  ...ed,
+                  deductions: [
+                    ...without,
+                    {
+                      name: line.name,
+                      amount: line.amount,
+                      type: line.type || "government",
+                    },
+                  ],
+                };
+              })
+            : [
+                ...prev,
+                {
+                  employeeId,
+                  deductions: [
+                    {
+                      name: line.name,
+                      amount: line.amount,
+                      type: line.type || "government",
+                    },
+                  ],
+                },
+              ];
+          return next;
+        };
+        if (isCreate) {
+          setEmployeeDeductions(merge);
+        } else {
+          setEditEmployeeDeductions(merge);
+        }
+      } catch (e) {
+        console.error("restoreDefaultGovLine:", e);
+        toast({
+          title: "Error",
+          description: "Failed to restore the deduction line.",
+          variant: "destructive",
+        });
+      } finally {
+        setRestoringDefaultKey(null);
+      }
+    },
+    [
+      effectiveOrganizationId,
+      cutoffStart,
+      cutoffEnd,
+      editCutoffStart,
+      editCutoffEnd,
+      employeeDeductions,
+      editEmployeeDeductions,
+      employeeIncentives,
+      editEmployeeIncentives,
+      deductionsEnabled,
+      editDeductionsEnabled,
+      governmentDeductionSettings,
+      editGovernmentDeductionSettings,
+      toast,
+    ],
+  );
 
   const handleSubmit = async (status: "draft" | "finalized" = "draft") => {
     if (!effectiveOrganizationId) return;
@@ -2085,6 +2387,31 @@ export default function PayrollPageClient() {
                       onAddIncentive={addIncentive}
                       onRemoveIncentive={removeIncentive}
                       onUpdateIncentive={updateIncentive}
+                      onSyncWithStep3={() =>
+                        reconcileStep4WithGovPreview("create")
+                      }
+                      isSyncingWithStep3={isReconcilingStep4Gov}
+                      governmentDeductionSettings={governmentDeductionSettings}
+                      deductionsEnabled={deductionsEnabled}
+                      taxSettings={{
+                        taxDeductionFrequency:
+                          settings?.payrollSettings?.taxDeductionFrequency ??
+                          "twice_per_month",
+                        taxDeductOnPay:
+                          settings?.payrollSettings?.taxDeductOnPay ?? "first",
+                      }}
+                      cutoffStartMs={
+                        cutoffStart
+                          ? dateStringToLocalMs(cutoffStart)
+                          : undefined
+                      }
+                      onRestoreDefaultGovLine={(
+                        employeeId: string,
+                        name: DefaultGovDeductionLineName,
+                      ) =>
+                        void restoreDefaultGovLine("create", employeeId, name)
+                      }
+                      restoringDefaultKey={restoringDefaultKey}
                     />
                   </Suspense>
                 )}
@@ -2157,14 +2484,25 @@ export default function PayrollPageClient() {
                               }
                               setCurrentStep(3);
                             } else if (currentStep === 3) {
-                              setCurrentStep(4);
+                              void (async () => {
+                                await reconcileStep4WithGovPreview("create");
+                                setCurrentStep(4);
+                              })();
                             } else if (currentStep === 4) {
                               computePreview();
                             }
                           }}
-                          disabled={isProcessing}
+                          disabled={
+                            isProcessing ||
+                            (currentStep === 3 && isReconcilingStep4Gov)
+                          }
                         >
-                          {currentStep === 4 && isProcessing ? (
+                          {currentStep === 3 && isReconcilingStep4Gov ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Syncing…
+                            </>
+                          ) : currentStep === 4 && isProcessing ? (
                             <>
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                               Generating Payslips
@@ -2413,6 +2751,9 @@ export default function PayrollPageClient() {
               onAddIncentive={addEditIncentive}
               onRemoveIncentive={removeEditIncentive}
               onUpdateIncentive={updateEditIncentive}
+              isPreviewEarnings={!!editingPayslip?.__mode}
+              editEarnings={editEarnings}
+              onUpdateEarning={updateEditEarning}
               onSave={handleSavePayslip}
             />
           </Suspense>
@@ -2559,6 +2900,22 @@ export default function PayrollPageClient() {
               onEditPreviewPayslip={(preview: any) =>
                 handleEditPreviewPayslip(preview, "edit_preview")
               }
+              onReconcileStep4FromGovSettings={() =>
+                reconcileStep4WithGovPreview("edit")
+              }
+              isReconcilingStep4FromGov={isReconcilingStep4Gov}
+              step4CutoffStartMs={
+                editCutoffStart
+                  ? dateStringToLocalMs(editCutoffStart)
+                  : undefined
+              }
+              onRestoreDefaultGovLine={(
+                employeeId: string,
+                name: DefaultGovDeductionLineName,
+              ) =>
+                void restoreDefaultGovLine("edit", employeeId, name)
+              }
+              restoringDefaultKey={restoringDefaultKey}
             />
           </Suspense>
         )}

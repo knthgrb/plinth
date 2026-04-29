@@ -12,6 +12,25 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, X } from "lucide-react";
+import {
+  PREVIEW_EARNING_LABELS,
+  type PreviewEditableEarningKey,
+  type PreviewEditableEarnings,
+} from "./payroll-preview-earnings-helpers";
+
+/** Order matches the payslip “Other earnings” block ( night → holiday → rest → OT). */
+const EARNINGS_FORM_ORDER: PreviewEditableEarningKey[] = [
+  "nightDiffPay",
+  "holidayPay",
+  "restDayPay",
+  "overtimeRegular",
+  "overtimeRestDay",
+  "overtimeRestDayExcess",
+  "overtimeSpecialHoliday",
+  "overtimeSpecialHolidayExcess",
+  "overtimeLegalHoliday",
+  "overtimeLegalHolidayExcess",
+];
 
 type Deduction = { name: string; amount: number; type: string };
 
@@ -43,6 +62,10 @@ interface EditPayslipDialogProps {
     field: "name" | "amount" | "type" | "taxable",
     value: string | number | boolean
   ) => void;
+  /** Step 5 preview only: holiday, night diff, rest day, OT (excludes basic pay and non‑taxable allowance). */
+  isPreviewEarnings?: boolean;
+  editEarnings?: PreviewEditableEarnings;
+  onUpdateEarning?: (key: PreviewEditableEarningKey, value: number) => void;
   onSave: () => void;
 }
 
@@ -59,6 +82,9 @@ export function EditPayslipDialog({
   onAddIncentive,
   onRemoveIncentive,
   onUpdateIncentive,
+  isPreviewEarnings = false,
+  editEarnings,
+  onUpdateEarning,
   onSave,
 }: EditPayslipDialogProps) {
   if (!editingPayslip) return null;
@@ -83,6 +109,51 @@ export function EditPayslipDialog({
         </DialogHeader>
 
         <div className="space-y-6 py-2">
+          {isPreviewEarnings && editEarnings && onUpdateEarning && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-base">Earnings (variable)</Label>
+                <span className="text-xs text-gray-500 text-right max-w-[220px]">
+                  Basic pay and non‑taxable allowance are not edited here. “Less”
+                  (late, absent, undertime) stay under Deductions.
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                If you change taxable gross, regenerate preview or re-check
+                withholding tax on finalize.
+              </p>
+              <div className="space-y-2">
+                {EARNINGS_FORM_ORDER.map((key) => (
+                  <div key={key} className="flex gap-2 items-end max-w-md">
+                    <div className="flex-1 min-w-0">
+                      <Label className="text-xs">
+                        {PREVIEW_EARNING_LABELS[key]}
+                      </Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={editEarnings[key] ?? ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === "" || val === "-") {
+                            onUpdateEarning(key, 0);
+                            return;
+                          }
+                          const num = parseFloat(val);
+                          if (!isNaN(num) && num >= 0) {
+                            onUpdateEarning(key, num);
+                          }
+                        }}
+                        className="h-9"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Deductions – only amount is editable/overridable */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">

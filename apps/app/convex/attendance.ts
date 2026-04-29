@@ -552,20 +552,19 @@ export const updateAttendance = mutation({
         )
       : null;
 
-    const resolvedScheduleIn =
-      scheduleWithLunch?.scheduleIn ?? args.scheduleIn ?? attendance.scheduleIn;
-    const resolvedScheduleOut =
-      scheduleWithLunch?.scheduleOut ??
-      args.scheduleOut ??
-      attendance.scheduleOut;
-    const lunchStart = scheduleWithLunch?.lunchStart ?? attendance.lunchStart;
-    const lunchEnd = scheduleWithLunch?.lunchEnd ?? attendance.lunchEnd;
-    const lunchMinutes = scheduleWithLunch?.lunchMinutes ?? 0;
+    // Effective schedule for late/undertime: explicit args (form), then snapshot on
+    // the row, then current employee schedule for that date. Do not prefer live schedule
+    // over the stored row (historical shift per day).
+    const effectiveScheduleIn =
+      args.scheduleIn !== undefined
+        ? args.scheduleIn
+        : attendance.scheduleIn ?? scheduleWithLunch?.scheduleIn ?? null;
+    const effectiveScheduleOut =
+      args.scheduleOut !== undefined
+        ? args.scheduleOut
+        : attendance.scheduleOut ?? scheduleWithLunch?.scheduleOut ?? null;
 
     const updates: any = { updatedAt: Date.now() };
-    // Always refresh schedule from employee's per-day schedule when available, so record reflects correct day
-    if (resolvedScheduleIn != null) updates.scheduleIn = resolvedScheduleIn;
-    if (resolvedScheduleOut != null) updates.scheduleOut = resolvedScheduleOut;
     if (args.scheduleIn !== undefined) updates.scheduleIn = args.scheduleIn;
     if (args.scheduleOut !== undefined) updates.scheduleOut = args.scheduleOut;
     if (args.actualIn !== undefined) updates.actualIn = args.actualIn;
@@ -574,10 +573,30 @@ export const updateAttendance = mutation({
     if (args.isHoliday !== undefined) updates.isHoliday = args.isHoliday;
     if (args.holidayType !== undefined) updates.holidayType = args.holidayType;
     if (args.remarks !== undefined) updates.remarks = args.remarks;
-    if (scheduleWithLunch?.lunchStart != null)
-      updates.lunchStart = scheduleWithLunch.lunchStart;
-    if (scheduleWithLunch?.lunchEnd != null)
-      updates.lunchEnd = scheduleWithLunch.lunchEnd;
+
+    const scheduleInChangedFromForm =
+      args.scheduleIn !== undefined && args.scheduleIn !== attendance.scheduleIn;
+    const scheduleOutChangedFromForm =
+      args.scheduleOut !== undefined &&
+      args.scheduleOut !== attendance.scheduleOut;
+    if (scheduleInChangedFromForm || scheduleOutChangedFromForm) {
+      if (scheduleWithLunch?.lunchStart != null) {
+        updates.lunchStart = scheduleWithLunch.lunchStart;
+      }
+      if (scheduleWithLunch?.lunchEnd != null) {
+        updates.lunchEnd = scheduleWithLunch.lunchEnd;
+      }
+    }
+    // Lunch for late/undertime: when the row's shift times are edited, line up with the
+    // org template; otherwise use what is already on the record (per-day snapshot).
+    const scheduleWasEditedInForm =
+      scheduleInChangedFromForm || scheduleOutChangedFromForm;
+    const lunchStartForCalc = scheduleWasEditedInForm
+      ? (scheduleWithLunch?.lunchStart ?? attendance.lunchStart)
+      : (attendance.lunchStart ?? scheduleWithLunch?.lunchStart);
+    const lunchEndForCalc = scheduleWasEditedInForm
+      ? (scheduleWithLunch?.lunchEnd ?? attendance.lunchEnd)
+      : (attendance.lunchEnd ?? scheduleWithLunch?.lunchEnd);
 
     const currentScheduleIn = args.scheduleIn ?? attendance.scheduleIn;
     const currentScheduleOut = args.scheduleOut ?? attendance.scheduleOut;
@@ -641,12 +660,12 @@ export const updateAttendance = mutation({
       const calculatedUndertime =
         currentStatus === "present" && currentActualIn && currentActualOut
           ? calculateUndertime(
-              resolvedScheduleIn,
-              resolvedScheduleOut,
+              effectiveScheduleIn,
+              effectiveScheduleOut,
               currentActualIn,
               currentActualOut,
-              lunchStart,
-              attendance.lunchEnd,
+              lunchStartForCalc,
+              lunchEndForCalc,
             )
           : 0;
       updates.undertime =
@@ -663,7 +682,7 @@ export const updateAttendance = mutation({
     } else if (args.late === null) {
       const calculatedLate =
         currentStatus === "present" && currentActualIn
-          ? calculateLate(resolvedScheduleIn, currentActualIn, lunchStart)
+          ? calculateLate(effectiveScheduleIn, currentActualIn, lunchStartForCalc)
           : 0;
       updates.late = calculatedLate > 0 ? calculatedLate : 0;
       updates.lateManualOverride = false;
@@ -1101,9 +1120,8 @@ export const bulkCreateAttendance = mutation({
   },
 });
 
-// Recalculate attendance for an employee after schedule changes.
-// This recomputes scheduleIn/scheduleOut and late/undertime for all
-// matching attendance records so summaries stay in sync.
+// Recalculate late/undertime for an employee in a date range. Snapshotted
+// scheduleIn/scheduleOut on each row are kept; we only backfill when missing.
 export const recalculateEmployeeAttendance = mutation({
   args: {
     organizationId: v.id("organizations"),
@@ -1164,11 +1182,13 @@ export const recalculateEmployeeAttendance = mutation({
         args.organizationId,
       );
 
-      const scheduleIn = scheduleWithLunch?.scheduleIn ?? record.scheduleIn;
-      const scheduleOut = scheduleWithLunch?.scheduleOut ?? record.scheduleOut;
-      const lunchStart = scheduleWithLunch?.lunchStart ?? record.lunchStart;
-      const lunchEnd = scheduleWithLunch?.lunchEnd ?? record.lunchEnd;
-      const lunchMinutes = scheduleWithLunch?.lunchMinutes ?? 0;
+      // Prefer shift snapshot on the row; only backfill from current employee schedule
+      // when the record never had times (legacy). Never overwrite per-day stored shift
+      // with the employee's latest schedule.
+      const scheduleIn = record.scheduleIn ?? scheduleWithLunch?.scheduleIn;
+      const scheduleOut = record.scheduleOut ?? scheduleWithLunch?.scheduleOut;
+      const lunchStart = record.lunchStart ?? scheduleWithLunch?.lunchStart;
+      const lunchEnd = record.lunchEnd ?? scheduleWithLunch?.lunchEnd;
 
       if (!scheduleIn || !scheduleOut) continue;
 
@@ -1203,12 +1223,16 @@ export const recalculateEmployeeAttendance = mutation({
       }
 
       const patchPayload: Record<string, unknown> = {
-        scheduleIn,
-        scheduleOut,
         undertime: newUndertime,
         late: newLate,
         updatedAt: now,
       };
+      if (record.scheduleIn == null && scheduleIn != null) {
+        patchPayload.scheduleIn = scheduleIn;
+      }
+      if (record.scheduleOut == null && scheduleOut != null) {
+        patchPayload.scheduleOut = scheduleOut;
+      }
       const holidayEntry = getMatchingHolidayEntryForDate(record.date, holidays);
       if (
         holidayEntry &&
@@ -1217,10 +1241,12 @@ export const recalculateEmployeeAttendance = mutation({
         patchPayload.isHoliday = true;
         patchPayload.holidayType = holidayEntry.type as "regular" | "special" | "special_working";
       }
-      if (scheduleWithLunch?.lunchStart != null)
+      if (record.lunchStart == null && scheduleWithLunch?.lunchStart != null) {
         patchPayload.lunchStart = scheduleWithLunch.lunchStart;
-      if (scheduleWithLunch?.lunchEnd != null)
+      }
+      if (record.lunchEnd == null && scheduleWithLunch?.lunchEnd != null) {
         patchPayload.lunchEnd = scheduleWithLunch.lunchEnd;
+      }
       await ctx.db.patch(record._id, patchPayload as any);
       updatedCount++;
     }

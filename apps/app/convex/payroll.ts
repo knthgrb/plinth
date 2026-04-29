@@ -1661,31 +1661,42 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
   );
 
   if (hasOverrideGovernmentDeductions) {
-    const nonAttendanceOverrideLines = manualDeductionLines.filter(
+    let nonAttendanceOverrideLines = manualDeductionLines.filter(
       (line) => !isAttendanceDeductionEntry(line),
     );
+    // When Step 4 / payslip already lists government lines, that list is authoritative
+    // for *which* lines exist—do not re-inject Withholding Tax if the user removed it.
+    // Still honor Step 3 toggles by dropping disabled government rows.
+    if (args.govSettings) {
+      if (args.deductionsEnabled !== false) {
+        if (!args.govSettings.sss.enabled) {
+          nonAttendanceOverrideLines = nonAttendanceOverrideLines.filter(
+            (line) => line.name !== "SSS",
+          );
+        }
+        if (!args.govSettings.philhealth.enabled) {
+          nonAttendanceOverrideLines = nonAttendanceOverrideLines.filter(
+            (line) => line.name !== "PhilHealth",
+          );
+        }
+        if (!args.govSettings.pagibig.enabled) {
+          nonAttendanceOverrideLines = nonAttendanceOverrideLines.filter(
+            (line) => line.name !== "Pag-IBIG",
+          );
+        }
+      }
+      if (!args.govSettings.tax.enabled) {
+        nonAttendanceOverrideLines = nonAttendanceOverrideLines.filter(
+          (line) => line.name !== "Withholding Tax",
+        );
+      }
+    }
     deductions =
       args.deductionsEnabled === false
         ? nonAttendanceOverrideLines.filter(
             (line) => !GOV_DEDUCTIONS_EXCEPT_TAX.has(line.name),
           )
         : [...nonAttendanceOverrideLines];
-
-    const hasTaxOverride = deductions.some(
-      (line) => line.name === "Withholding Tax",
-    );
-    if (!hasTaxOverride) {
-      const taxEnabled = !args.govSettings
-        ? baseGovAmounts.tax > 0
-        : args.govSettings.tax.enabled && baseGovAmounts.tax > 0;
-      if (taxEnabled) {
-        deductions.push({
-          name: "Withholding Tax",
-          amount: round2(baseGovAmounts.tax),
-          type: "government",
-        });
-      }
-    }
   } else {
     if (args.deductionsEnabled) {
       const sssAmount = applyGovSettingAmount(
@@ -2610,6 +2621,10 @@ export const updatePayrollRun = mutation({
       : [];
 
     if (existingPayslipsBeforeRegenerate.length > 0) {
+      // When the client sends explicit manualDeductions / incentives, those override
+      // (e.g. Step 4 edits). Only merge from old payslips for allowance detection.
+      const explicitManual = args.manualDeductions !== undefined;
+      const explicitIncentives = args.incentives !== undefined;
       const organizationForAllowance = await ctx.db.get(
         payrollRun.organizationId,
       );
@@ -2639,19 +2654,23 @@ export const updatePayrollRun = mutation({
         const p = decryptPayslipRowFromDb(raw);
         if (!p) continue;
         const empId = p.employeeId;
-        const preservedDeductions = (p.deductions || []).filter(
-          (d: { name?: string; type?: string }) =>
-            !isAttendanceDeductionEntry(d) &&
-            (d.name || "") !== PENDING_PREVIOUS_CUTOFF_DEDUCTION_NAME,
-        );
-        manualByEmp.set(String(empId), {
-          employeeId: empId,
-          deductions: preservedDeductions,
-        });
-        incByEmp.set(String(empId), {
-          employeeId: empId,
-          incentives: p.incentives ? [...p.incentives] : [],
-        });
+        if (!explicitManual) {
+          const preservedDeductions = (p.deductions || []).filter(
+            (d: { name?: string; type?: string }) =>
+              !isAttendanceDeductionEntry(d) &&
+              (d.name || "") !== PENDING_PREVIOUS_CUTOFF_DEDUCTION_NAME,
+          );
+          manualByEmp.set(String(empId), {
+            employeeId: empId,
+            deductions: preservedDeductions,
+          });
+        }
+        if (!explicitIncentives) {
+          incByEmp.set(String(empId), {
+            employeeId: empId,
+            incentives: p.incentives ? [...p.incentives] : [],
+          });
+        }
 
         const empRow = await ctx.db.get(empId);
         if (empRow) {
