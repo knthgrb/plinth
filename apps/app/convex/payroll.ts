@@ -5021,6 +5021,14 @@ export const updatePayslip = mutation({
     ): EditChange | null => {
       const norm =
         field === "additions" ? normalizeIncentiveLines : normalizeLines;
+      /** Stored line `type` for UI rows is often "incentive"; history should not imply bonus-only. */
+      const typeInHistory = (line: PayslipLine): string => {
+        const t = (line.type || "custom").trim() || "custom";
+        if (field === "additions" && t.toLowerCase() === "incentive") {
+          return "addition";
+        }
+        return t;
+      };
       const oldLines = norm(oldRaw);
       const newLines = norm(nextRaw);
       if (areSameLines(oldLines, newLines)) return null;
@@ -5050,7 +5058,7 @@ export const updatePayslip = mutation({
           previous[0].amount !== current[0].amount
         ) {
           details.push(
-            `Changed ${previous[0].name} (${previous[0].type}): ${previous[0].amount.toFixed(2)} -> ${current[0].amount.toFixed(2)}`,
+            `Changed ${previous[0].name} (${typeInHistory(previous[0])}): ${previous[0].amount.toFixed(2)} -> ${current[0].amount.toFixed(2)}`,
           );
         }
       }
@@ -5060,12 +5068,12 @@ export const updatePayslip = mutation({
 
       for (const row of added) {
         details.push(
-          `Added ${row.name} (${row.type}): ${row.amount.toFixed(2)}`,
+          `Added ${row.name} (${typeInHistory(row)}): ${row.amount.toFixed(2)}`,
         );
       }
       for (const row of removed) {
         details.push(
-          `Removed ${row.name} (${row.type}): ${row.amount.toFixed(2)}`,
+          `Removed ${row.name} (${typeInHistory(row)}): ${row.amount.toFixed(2)}`,
         );
       }
 

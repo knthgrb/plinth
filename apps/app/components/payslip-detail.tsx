@@ -43,6 +43,15 @@ function isLineArrayEditField(field: string): boolean {
   );
 }
 
+/** Legacy server messages used stored line type "incentive" in parentheses. */
+function sanitizeAdditionEditHistoryDetail(
+  field: string,
+  detail: string,
+): string {
+  if (field !== "incentives" && field !== "additions") return detail;
+  return detail.replace(/\(incentive\)/gi, "(addition)");
+}
+
 export function PayslipDetail({
   payslip,
   employee,
@@ -1167,7 +1176,11 @@ export function PayslipDetail({
                               {change.details.map(
                                 (detail: string, idx: number) => (
                                   <div key={idx} className="text-sm">
-                                    • {detail}
+                                    •{" "}
+                                    {sanitizeAdditionEditHistoryDetail(
+                                      change.field,
+                                      detail,
+                                    )}
                                   </div>
                                 ),
                               )}
