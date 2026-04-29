@@ -20,6 +20,29 @@ interface PayslipDetailProps {
   cutoffEnd?: number;
 }
 
+/** Line-item edits; stored `field` may be legacy `incentives` or current `additions`. */
+function formatEditHistoryFieldLabel(field: string): string {
+  switch (field) {
+    case "incentives":
+    case "additions":
+      return "Additions";
+    case "deductions":
+      return "Deductions";
+    case "nonTaxableAllowance":
+      return "Non-taxable allowance";
+    default:
+      return field.replace(/([A-Z])/g, " $1").trim();
+  }
+}
+
+function isLineArrayEditField(field: string): boolean {
+  return (
+    field === "deductions" ||
+    field === "incentives" ||
+    field === "additions"
+  );
+}
+
 export function PayslipDetail({
   payslip,
   employee,
@@ -1136,8 +1159,8 @@ export function PayslipDetail({
                           key={changeIdx}
                           className="border-l-2 border-purple-300 pl-3 space-y-1"
                         >
-                          <div className="font-medium text-purple-900 capitalize">
-                            {change.field.replace(/([A-Z])/g, " $1").trim()}:
+                          <div className="font-medium text-purple-900">
+                            {formatEditHistoryFieldLabel(change.field)}:
                           </div>
                           {change.details && change.details.length > 0 ? (
                             <div className="text-gray-700 ml-2 space-y-1">
@@ -1149,8 +1172,7 @@ export function PayslipDetail({
                                 ),
                               )}
                             </div>
-                          ) : change.field === "deductions" ||
-                            change.field === "incentives" ? (
+                          ) : isLineArrayEditField(change.field) ? (
                             <div className="text-gray-700 ml-2 space-y-1 text-sm">
                               <div>
                                 Old:{" "}

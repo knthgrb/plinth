@@ -2571,8 +2571,11 @@ export const updatePayrollRun = mutation({
       : [];
 
     if (existingPayslipsBeforeRegenerate.length > 0) {
-      // When the client sends explicit manualDeductions / incentives, those override
-      // (e.g. Step 4 edits). Only merge from old payslips for allowance detection.
+      // When the client sends `manualDeductions` / `incentives`, those arrays are
+      // authoritative (e.g. Step 4 save) and we do not copy non-attendance lines
+      // from existing payslips. When the keys are **omitted** (e.g. regenerate
+      // after dependency drift), we merge from current payslips so per-payslip
+      // edits (government amounts, custom deductions, additions) are kept.
       const explicitManual = args.manualDeductions !== undefined;
       const explicitIncentives = args.incentives !== undefined;
       const organizationForAllowance = await ctx.db.get(
@@ -5012,12 +5015,12 @@ export const updatePayslip = mutation({
       return remainder;
     };
     const buildLineDiffChange = (
-      field: "deductions" | "incentives",
+      field: "deductions" | "additions",
       oldRaw: PayslipLine[] | undefined,
       nextRaw: PayslipLine[] | undefined,
     ): EditChange | null => {
       const norm =
-        field === "incentives" ? normalizeIncentiveLines : normalizeLines;
+        field === "additions" ? normalizeIncentiveLines : normalizeLines;
       const oldLines = norm(oldRaw);
       const newLines = norm(nextRaw);
       if (areSameLines(oldLines, newLines)) return null;
@@ -5235,7 +5238,7 @@ export const updatePayslip = mutation({
     );
     if (deductionChange) changes.push(deductionChange);
     const incentiveChange = buildLineDiffChange(
-      "incentives",
+      "additions",
       payslip.incentives || [],
       newIncentives,
     );

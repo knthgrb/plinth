@@ -293,7 +293,7 @@ export function EditPayslipDialog({
             <div className="flex items-center justify-between">
               <Label className="text-base font-semibold">Additions</Label>
               <span className="text-xs text-muted-foreground">
-                Incentives / back pay; toggle taxable
+                Bonuses, back pay, payback, etc.; toggle taxable
               </span>
             </div>
             {editIncentives.length > 0 && (
@@ -326,7 +326,7 @@ export function EditPayslipDialog({
                           onChange={(e) =>
                             onUpdateIncentive(idx, "name", e.target.value)
                           }
-                          placeholder="Incentive name"
+                          placeholder="e.g. back pay, payback"
                           className="h-9"
                         />
                       ) : (

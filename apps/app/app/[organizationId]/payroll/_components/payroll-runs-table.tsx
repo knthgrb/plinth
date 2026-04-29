@@ -205,21 +205,22 @@ export function PayrollRunsTable({
                                   <Pencil className="h-4 w-4 mr-2" />
                                   Edit
                                 </DropdownMenuItem>
-                                {onRegeneratePayslips && (
-                                  <DropdownMenuItem
-                                    disabled={!!regeneratingPayrollRunId}
-                                    onClick={() => void onRegeneratePayslips(run)}
-                                  >
-                                    {regeneratingPayrollRunId === run._id ? (
-                                      <Loader2 className="h-4 w-4 mr-2 animate-spin shrink-0" />
-                                    ) : (
-                                      <FileText className="h-4 w-4 mr-2" />
-                                    )}
-                                    {regeneratingPayrollRunId === run._id
-                                      ? "Regenerating…"
-                                      : "Regenerate payslips"}
-                                  </DropdownMenuItem>
-                                )}
+                                {onRegeneratePayslips &&
+                                  run.isDraftOutdated && (
+                                    <DropdownMenuItem
+                                      disabled={!!regeneratingPayrollRunId}
+                                      onClick={() => void onRegeneratePayslips(run)}
+                                    >
+                                      {regeneratingPayrollRunId === run._id ? (
+                                        <Loader2 className="h-4 w-4 mr-2 animate-spin shrink-0" />
+                                      ) : (
+                                        <FileText className="h-4 w-4 mr-2" />
+                                      )}
+                                      {regeneratingPayrollRunId === run._id
+                                        ? "Regenerating…"
+                                        : "Regenerate payslips"}
+                                    </DropdownMenuItem>
+                                  )}
                               </>
                             )}
                             <DropdownMenuItem

@@ -892,15 +892,19 @@ export default function PayrollPageClient() {
     try {
       const draftConfig = payrollRun.draftConfig ?? {};
       const employeeIds = draftConfig.employeeIds ?? [];
+      // Re-fetch attendance-driven payslips only. Do **not** send
+      // manualDeductions / incentives / governmentDeductionSettings from
+      // draftConfig here: if we pass them, the server treats them as
+      // authoritative and skips merging non-attendance lines from current
+      // payslips (where edit-payslip overrides live). Omitting them lets
+      // updatePayrollRun re-read stored draft + merge overrides from payslips
+      // before recreating rows.
       await updatePayrollRun({
         payrollRunId: payrollRun._id,
         cutoffStart: payrollRun.cutoffStart,
         cutoffEnd: payrollRun.cutoffEnd,
         employeeIds: employeeIds.length > 0 ? employeeIds : undefined,
         deductionsEnabled: payrollRun.deductionsEnabled,
-        governmentDeductionSettings: draftConfig.governmentDeductionSettings,
-        manualDeductions: draftConfig.manualDeductions,
-        incentives: draftConfig.incentives,
       });
       await loadPayrollRuns();
       if (selectedPayrollRun?._id === payrollRun._id) {
