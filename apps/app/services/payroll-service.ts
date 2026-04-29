@@ -430,6 +430,7 @@ export class PayrollService {
           organizationName: recipients.organizationName,
           cutoffStart: recipients.cutoffStart,
           cutoffEnd: recipients.cutoffEnd,
+          paySchedule: recipients.paySchedule,
         });
         const { subject, html, text } = buildPayslipEmailContent(
           payslip.employee.personalInfo.firstName,

@@ -130,13 +130,13 @@ export function EditPayslipDialog({
                 <span className="text-xs text-muted-foreground text-right max-w-sm">
                   {earningsContext === "preview" ? (
                     <>
-                      If you change taxable gross, regenerate preview or re-check
-                      withholding tax on finalize.
+                      Withholding tax in Deductions updates as you edit (when
+                      enabled in Step 3). Regenerate preview if totals look off.
                     </>
                   ) : (
                     <>
-                      Large changes may affect withholding tax; review government
-                      lines after saving.
+                      Withholding tax in Deductions updates as you edit when it
+                      is on for this run (same rules as payroll generation).
                     </>
                   )}
                 </span>

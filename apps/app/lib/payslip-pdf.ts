@@ -3,9 +3,17 @@ import "server-only";
 import PDFDocument from "pdfkit";
 import { getPayslipPdfOpenPassword } from "@/lib/payslip-pdf-password";
 import {
+  formatManilaLongDate,
   formatManilaNumericDate,
   formatManilaShortDate,
+  formatManilaShortMonthDay,
+  getManilaDateParts,
 } from "@/lib/manila-date";
+
+const NET_PAY_PURPLE = "#6D28D9"; // violet-700, matches app-style accent
+const MUTED = "#6B7280";
+const TEXT = "#111827";
+const RULE = "#D1D5DB";
 
 function num(x: unknown): number {
   if (typeof x === "number" && !Number.isNaN(x)) return x;
@@ -16,11 +24,8 @@ function num(x: unknown): number {
   return 0;
 }
 
-type AmountSign = "plus" | "minus" | "none";
-
-function formatPeso(n: number, sign: AmountSign = "none"): string {
-  const prefix = sign === "plus" ? "+" : sign === "minus" ? "-" : "";
-  return `${prefix}PHP ${n.toLocaleString("en-PH", {
+function formatPeso(n: number): string {
+  return `₱${n.toLocaleString("en-PH", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
@@ -61,7 +66,7 @@ function asDeductionArray(
 
 function asIncentiveArray(
   d: unknown,
-): Array<{ name: string; amount: number; type?: string }> {
+): Array<{ name: string; amount: number; type?: string; taxable?: boolean }> {
   if (Array.isArray(d)) {
     return d.map((x: unknown) => {
       const row = x as Record<string, unknown>;
@@ -69,6 +74,7 @@ function asIncentiveArray(
         name: String(row.name ?? ""),
         amount: num(row.amount),
         type: row.type != null ? String(row.type) : undefined,
+        taxable: row.taxable === false ? false : true,
       };
     });
   }
@@ -81,6 +87,7 @@ function asIncentiveArray(
             return {
               name: String(row.name ?? ""),
               amount: num(row.amount),
+              taxable: row.taxable === false ? false : true,
             };
           })
         : [];
@@ -89,6 +96,68 @@ function asIncentiveArray(
     }
   }
   return [];
+}
+
+function normalizeDeductionKey(name: string): string {
+  return (name || "").trim().toLowerCase();
+}
+
+function isGovernmentDeductionName(name: string): boolean {
+  const n = normalizeDeductionKey(name);
+  return (
+    n === "sss" ||
+    n === "philhealth" ||
+    n === "pag-ibig" ||
+    n === "pagibig" ||
+    n === "withholding tax"
+  );
+}
+
+const GOV_SORT_ORDER = ["sss", "philhealth", "pag-ibig", "withholding tax"];
+
+function sortGovernmentDeductions(
+  rows: Array<{ name: string; amount: number; type: string }>,
+): typeof rows {
+  const gov = rows.filter((r) => isGovernmentDeductionName(r.name));
+  const rank = (name: string) => {
+    const k = normalizeDeductionKey(name);
+    const i = GOV_SORT_ORDER.indexOf(k);
+    return i >= 0 ? i : 99;
+  };
+  gov.sort((a, b) => rank(a.name) - rank(b.name));
+  return gov;
+}
+
+function computePayDateLong(
+  cutoffEnd: number,
+  paySchedule?: {
+    firstPayDate: number;
+    secondPayDate: number;
+    salaryPaymentFrequency: "monthly" | "bimonthly";
+  },
+): string {
+  const firstPayDate = paySchedule?.firstPayDate ?? 15;
+  const secondPayDate = paySchedule?.secondPayDate ?? 30;
+  const isMonthly = paySchedule?.salaryPaymentFrequency === "monthly";
+
+  const cutoffEndParts = getManilaDateParts(cutoffEnd);
+  const cutoffMonth = cutoffEndParts.monthIndex;
+  const cutoffYear = cutoffEndParts.year;
+  const cutoffDay = cutoffEndParts.day;
+
+  let payDay: number;
+  if (isMonthly) {
+    payDay = firstPayDate;
+  } else if (cutoffDay <= 15) {
+    payDay = firstPayDate;
+  } else {
+    payDay = secondPayDate;
+  }
+
+  const lastDayOfMonth = new Date(cutoffYear, cutoffMonth + 1, 0).getDate();
+  const actualPayDay = Math.min(payDay, lastDayOfMonth);
+  const payDateMs = Date.UTC(cutoffYear, cutoffMonth, actualPayDay);
+  return formatManilaLongDate(payDateMs);
 }
 
 export function renderPayslipPdfBuffer(args: {
@@ -104,11 +173,17 @@ export function renderPayslipPdfBuffer(args: {
       employeeId: string;
       position: string;
       department: string;
+      hireDate?: number;
     };
   };
   organizationName: string;
   cutoffStart: number;
   cutoffEnd: number;
+  paySchedule?: {
+    firstPayDate: number;
+    secondPayDate: number;
+    salaryPaymentFrequency: "monthly" | "bimonthly";
+  };
 }): Promise<Buffer> {
   const userPassword = getPayslipPdfOpenPassword(args.employee);
   const ownerPassword =
@@ -116,13 +191,42 @@ export function renderPayslipPdfBuffer(args: {
     `plinth-owner-${process.env.CONVEX_DEPLOYMENT ?? "dev"}`;
 
   const p = args.payslip;
-  const period = `${formatManilaNumericDate(args.cutoffStart)} to ${formatManilaNumericDate(args.cutoffEnd)}`;
-  const deductions = asDeductionArray(p.deductions);
+  const deductions = asDeductionArray(p.deductions).filter((d) => d.amount > 0);
   const incentives = asIncentiveArray(p.incentives);
   const gross = num(p.grossPay);
   const net = num(p.netPay);
-  const daysWorked = num(p.daysWorked);
-  const absences = num(p.absences);
+  const taxableGrossStored = num(p.taxableGrossEarnings);
+  const totalEarningsStored = num(p.totalEarnings);
+
+  const rawAllowance = num(p.nonTaxableAllowance);
+  const attendanceDeductionsTotal = deductions
+    .filter(
+      (d) =>
+        d.type === "attendance" ||
+        /^(absent|late|undertime|no-?work|no\s+work)/i.test(d.name || ""),
+    )
+    .reduce((sum, d) => sum + d.amount, 0);
+  const unabsorbedAbsence = Math.max(0, attendanceDeductionsTotal - gross);
+  const allowance = Math.max(0, rawAllowance - unabsorbedAbsence);
+
+  const taxableIncentiveLines = incentives.filter(
+    (i) => i.amount > 0 && i.taxable !== false,
+  );
+  const nonTaxableIncentiveLines = incentives.filter(
+    (i) => i.amount > 0 && i.taxable === false,
+  );
+
+  const hireDateMs = args.employee.employment.hireDate;
+  const dateHiredDisplay =
+    typeof hireDateMs === "number" && !Number.isNaN(hireDateMs)
+      ? formatManilaLongDate(hireDateMs)
+      : "N/A";
+
+  const cutoffDisplay = `${formatManilaShortMonthDay(args.cutoffStart)} - ${formatManilaShortDate(args.cutoffEnd)}`;
+  const payDateDisplay = computePayDateLong(args.cutoffEnd, args.paySchedule);
+
+  const employeeName = `${args.employee.personalInfo.firstName} ${args.employee.personalInfo.lastName}`.trim();
+  const designation = args.employee.employment.position?.trim() || "N/A";
 
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -137,152 +241,312 @@ export function renderPayslipPdfBuffer(args: {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    const start = formatManilaShortDate(args.cutoffStart);
-    const end = formatManilaShortDate(args.cutoffEnd);
-
     const pageWidth =
       doc.page.width - doc.page.margins.left - doc.page.margins.right;
     const left = doc.page.margins.left;
     const right = left + pageWidth;
-    const rowLineHeight = 15;
-    const tableColSplit = left + pageWidth * 0.67;
+    const colGap = 20;
+    const colWidth = (pageWidth - colGap) / 2;
+    const earnX = left;
+    const dedX = left + colWidth + colGap;
+    const rowH = 14;
+    const subRowH = 13;
 
-    const drawRule = (y: number) => {
+    const drawRuleFull = (y: number, width = 0.75, color = RULE) => {
       doc
         .save()
         .moveTo(left, y)
         .lineTo(right, y)
-        .lineWidth(0.6)
+        .lineWidth(width)
+        .strokeColor(color)
+        .stroke()
+        .restore();
+    };
+
+    const drawRuleThin = (x: number, y: number, w: number) => {
+      doc
+        .save()
+        .moveTo(x, y)
+        .lineTo(x + w, y)
+        .lineWidth(0.35)
         .strokeColor("#E5E7EB")
         .stroke()
         .restore();
     };
-    const drawSectionTitle = (title: string) => {
+
+    /** Label left, amount right within column width */
+    const rowAmount = (
+      x: number,
+      y: number,
+      w: number,
+      label: string,
+      amountStr: string,
+      opts?: { labelBold?: boolean; size?: number; valueBold?: boolean },
+    ): number => {
+      const fs = opts?.size ?? 9;
       doc
-        .font("Helvetica-Bold")
-        .fontSize(10)
-        .fillColor("#374151")
-        .text(title, left, doc.y);
-      doc.moveDown(0.2);
-      drawRule(doc.y);
-      doc.moveDown(0.35);
-    };
-    const drawLabelValue = (label: string, value: string, bold = false) => {
-      const y = doc.y;
+        .font(opts?.labelBold ? "Helvetica-Bold" : "Helvetica")
+        .fontSize(fs)
+        .fillColor(TEXT)
+        .text(label, x, y, { width: w * 0.58 });
       doc
-        .font("Helvetica")
-        .fontSize(9.5)
-        .fillColor("#374151")
-        .text(label, left, y, { width: tableColSplit - left - 8 });
-      doc
-        .font(bold ? "Helvetica-Bold" : "Helvetica")
-        .fontSize(9.5)
-        .fillColor("#111827")
-        .text(value, tableColSplit, y, { width: right - tableColSplit, align: "right" });
-      doc.y = y + rowLineHeight;
+        .font(opts?.valueBold ? "Helvetica-Bold" : "Helvetica")
+        .fontSize(fs)
+        .fillColor(TEXT)
+        .text(amountStr, x + w * 0.42, y, {
+          width: w * 0.58,
+          align: "right",
+        });
+      return y + rowH;
     };
 
-    doc.font("Helvetica-Bold").fontSize(18).fillColor("#111827").text("PAYSLIP", left, doc.y, {
-      width: pageWidth,
-      align: "center",
-    });
+    const periodLine = `${formatManilaNumericDate(args.cutoffStart)} to ${formatManilaNumericDate(args.cutoffEnd)}`;
+
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(16)
+      .fillColor(TEXT)
+      .text("PAYSLIP", left, doc.y, { width: pageWidth, align: "center" });
+    doc.moveDown(0.15);
     doc
       .font("Helvetica")
-      .fontSize(10)
-      .fillColor("#4B5563")
-      .text(args.organizationName, left, doc.y + 2, { width: pageWidth, align: "center" });
-    doc.moveDown(1);
+      .fontSize(9.5)
+      .fillColor(MUTED)
+      .text(periodLine, left, doc.y, { width: pageWidth, align: "center" });
+    doc.moveDown(0.75);
 
-    drawSectionTitle("Employee Information");
-    drawLabelValue(
-      "Employee",
-      `${args.employee.personalInfo.firstName} ${args.employee.personalInfo.lastName}`,
+    const infoTop = doc.y;
+    const labelFs = 8;
+    const valueFs = 9;
+    const splitMid = left + pageWidth / 2;
+
+    const leftLabels = ["Name", "Employee ID", "Designation"];
+    const leftValues = [
+      employeeName,
+      args.employee.employment.employeeId || "N/A",
+      designation,
+    ];
+    const rightLabels = ["Date Hired", "Cut off Date", "Pay Date"];
+    const rightValues = [dateHiredDisplay, cutoffDisplay, payDateDisplay];
+
+    let iy = infoTop;
+    for (let i = 0; i < 3; i++) {
+      doc
+        .font("Helvetica")
+        .fontSize(labelFs)
+        .fillColor(MUTED)
+        .text(leftLabels[i], left, iy, { width: splitMid - left - 8 });
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(valueFs)
+        .fillColor(TEXT)
+        .text(leftValues[i], left, iy + 11, {
+          width: splitMid - left - 8,
+        });
+      doc
+        .font("Helvetica")
+        .fontSize(labelFs)
+        .fillColor(MUTED)
+        .text(rightLabels[i], splitMid, iy, {
+          width: right - splitMid - 8,
+        });
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(valueFs)
+        .fillColor(TEXT)
+        .text(rightValues[i], splitMid, iy + 11, {
+          width: right - splitMid - 8,
+        });
+      iy += 34;
+    }
+
+    doc.y = iy + 6;
+    drawRuleFull(doc.y);
+    doc.moveDown(0.6);
+
+    const sectionTop = doc.y;
+
+    const govRows = sortGovernmentDeductions(deductions);
+    const otherDeductionRows = deductions.filter(
+      (d) => !isGovernmentDeductionName(d.name),
     );
-    drawLabelValue("Employee ID", args.employee.employment.employeeId || "N/A");
-    drawLabelValue("Department", args.employee.employment.department || "N/A");
-    drawLabelValue("Position", args.employee.employment.position || "N/A");
-    drawLabelValue("Pay period", period || "N/A");
-    drawLabelValue("Cutoff", `${start} - ${end}`);
-    drawLabelValue("Days worked", String(daysWorked));
-    drawLabelValue("Absences", String(absences));
-    doc.moveDown(0.3);
+    const deductionTotal = deductions.reduce((s, d) => s + d.amount, 0);
 
-    drawSectionTitle("Earnings");
-    const earningRows: Array<{ label: string; amount: number }> = [];
     const basic = num(p.basicPay);
-    if (basic > 0) earningRows.push({ label: "Basic pay", amount: basic });
-    // Absence deduction can overflow past the taxable gross and reduce the non-taxable
-    // allowance the employee actually takes home. Mirror the on-screen payslip so the
-    // PDF agrees with the screen total when absences consume everything.
-    const rawAllowance = num(p.nonTaxableAllowance);
-    const attendanceDeductionsTotal = deductions
-      .filter(
-        (d) =>
-          d.type === "attendance" ||
-          /^(absent|late|undertime|no-?work|no\s+work)/i.test(d.name || ""),
-      )
-      .reduce((sum, d) => sum + d.amount, 0);
-    const unabsorbedAbsence = Math.max(0, attendanceDeductionsTotal - gross);
-    const allowance = Math.max(0, rawAllowance - unabsorbedAbsence);
-    if (allowance > 0) {
-      earningRows.push({ label: "Non-taxable allowance", amount: allowance });
-    }
+    const taxableGrossLine =
+      taxableGrossStored > 0 ? taxableGrossStored : gross;
+
+    let ye = sectionTop;
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(10)
+      .fillColor(TEXT)
+      .text("EARNINGS", earnX, ye, { width: colWidth });
+    ye += 18;
+
+    ye = rowAmount(earnX, ye, colWidth, "Basic Pay", formatPeso(basic));
+
+    const taxableExtras: Array<{ label: string; amount: number }> = [];
     const hp = num(p.holidayPay);
-    if (hp > 0) earningRows.push({ label: "Holiday pay", amount: hp });
+    if (hp > 0) taxableExtras.push({ label: "Holiday pay", amount: hp });
     const rd = num(p.restDayPay);
-    if (rd > 0) earningRows.push({ label: "Rest day pay", amount: rd });
+    if (rd > 0) taxableExtras.push({ label: "Rest day premium", amount: rd });
     const nd = num(p.nightDiffPay);
-    if (nd > 0) earningRows.push({ label: "Night differential", amount: nd });
-    for (const [label, value] of [
-      ["Overtime (regular)", p.overtimeRegular],
-      ["Overtime (rest day)", p.overtimeRestDay],
-      ["Overtime (legal holiday)", p.overtimeLegalHoliday],
-      ["Overtime (special holiday)", p.overtimeSpecialHoliday],
+    if (nd > 0) taxableExtras.push({ label: "Night differential", amount: nd });
+    for (const [label, key] of [
+      ["Overtime — regular", p.overtimeRegular],
+      ["Overtime — rest day", p.overtimeRestDay],
+      ["Overtime — RD over 8 hrs", p.overtimeRestDayExcess],
+      ["Overtime — special holiday", p.overtimeSpecialHoliday],
+      ["Overtime — special holiday over 8 hrs", p.overtimeSpecialHolidayExcess],
+      ["Overtime — legal holiday", p.overtimeLegalHoliday],
+      ["Overtime — legal holiday over 8 hrs", p.overtimeLegalHolidayExcess],
     ] as const) {
-      const n = num(value);
-      if (n > 0) earningRows.push({ label, amount: n });
+      const n = num(key);
+      if (n > 0) taxableExtras.push({ label, amount: n });
     }
-    for (const inc of incentives) {
-      if (inc.amount > 0) earningRows.push({ label: inc.name, amount: inc.amount });
+    for (const inc of taxableIncentiveLines) {
+      if (inc.amount > 0)
+        taxableExtras.push({ label: inc.name || "Incentive", amount: inc.amount });
     }
     const adj = num(p.adjustments);
-    if (adj !== 0) earningRows.push({ label: "Adjustments", amount: adj });
-    if (earningRows.length === 0)
-      drawLabelValue("No earnings rows", formatPeso(0, "none"));
-    for (const row of earningRows) {
-      drawLabelValue(row.label, formatPeso(row.amount, "plus"));
-    }
-    drawRule(doc.y);
-    doc.moveDown(0.2);
-    drawLabelValue("Gross pay", formatPeso(gross, "none"), true);
-    doc.moveDown(0.3);
+    if (adj !== 0)
+      taxableExtras.push({
+        label: "Adjustments",
+        amount: adj,
+      });
 
-    drawSectionTitle("Deductions");
-    const deductionRows = deductions.filter((d) => d.amount > 0);
-    if (deductionRows.length === 0)
-      drawLabelValue("No deductions", formatPeso(0, "none"));
-    for (const d of deductionRows) {
-      drawLabelValue(d.name, formatPeso(d.amount, "minus"));
+    for (const row of taxableExtras) {
+      ye = rowAmount(earnX, ye, colWidth, row.label, formatPeso(row.amount));
     }
-    const deductionTotal = deductionRows.reduce((sum, d) => sum + d.amount, 0);
-    drawRule(doc.y);
-    doc.moveDown(0.2);
-    drawLabelValue("Total deductions", formatPeso(deductionTotal, "minus"), true);
 
-    doc.moveDown(0.75);
-    drawRule(doc.y);
-    doc.moveDown(0.35);
+    drawRuleThin(earnX, ye + 2, colWidth);
+    ye += 10;
+
+    ye = rowAmount(earnX, ye, colWidth, "Taxable Gross Earnings", formatPeso(taxableGrossLine), {
+      labelBold: true,
+      valueBold: true,
+    });
+
+    const hasNontaxSection =
+      allowance > 0 || nonTaxableIncentiveLines.length > 0;
+    if (hasNontaxSection) {
+      ye += 4;
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(8.5)
+        .fillColor(MUTED)
+        .text("Add (non-taxable):", earnX, ye, { width: colWidth });
+      ye += subRowH;
+
+      if (allowance > 0) {
+        ye = rowAmount(
+          earnX,
+          ye,
+          colWidth,
+          "Non-taxable Allowance",
+          formatPeso(allowance),
+          { size: 9 },
+        );
+      }
+      for (const inc of nonTaxableIncentiveLines) {
+        ye = rowAmount(
+          earnX,
+          ye,
+          colWidth,
+          inc.name || "Addition",
+          formatPeso(inc.amount),
+          { size: 9 },
+        );
+      }
+    }
+
+    drawRuleThin(earnX, ye + 2, colWidth);
+    ye += 10;
+
+    const totalEarnings =
+      totalEarningsStored > 0
+        ? totalEarningsStored
+        : gross + allowance + nonTaxableIncentiveLines.reduce((s, i) => s + i.amount, 0);
+
+    ye = rowAmount(earnX, ye, colWidth, "Total", formatPeso(totalEarnings), {
+      labelBold: true,
+      valueBold: true,
+      size: 10,
+    });
+
+    let yd = sectionTop;
     doc
       .font("Helvetica-Bold")
-      .fontSize(12)
-      .fillColor("#111827")
-      .text("NET PAY", left, doc.y, { width: tableColSplit - left - 8 });
+      .fontSize(10)
+      .fillColor(TEXT)
+      .text("DEDUCTIONS", dedX, yd, { width: colWidth });
+    yd += 18;
+
     doc
       .font("Helvetica-Bold")
-      .fontSize(14)
-      .fillColor("#111827")
-      .text(formatPeso(net, "none"), tableColSplit, doc.y - 1, {
-        width: right - tableColSplit,
+      .fontSize(8.5)
+      .fillColor(MUTED)
+      .text("Government Deductions", dedX, yd, { width: colWidth });
+    yd += subRowH;
+
+    if (govRows.length === 0) {
+      doc
+        .font("Helvetica")
+        .fontSize(9)
+        .fillColor(MUTED)
+        .text("—", dedX, yd, { width: colWidth });
+      yd += rowH;
+    } else {
+      for (const d of govRows) {
+        yd = rowAmount(dedX, yd, colWidth, d.name, formatPeso(d.amount));
+      }
+    }
+
+    if (otherDeductionRows.length > 0) {
+      yd += 4;
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(8.5)
+        .fillColor(MUTED)
+        .text("Other", dedX, yd, { width: colWidth });
+      yd += subRowH;
+      for (const d of otherDeductionRows) {
+        yd = rowAmount(dedX, yd, colWidth, d.name, formatPeso(d.amount));
+      }
+    }
+
+    drawRuleThin(dedX, yd + 2, colWidth);
+    yd += 10;
+
+    yd = rowAmount(
+      dedX,
+      yd,
+      colWidth,
+      "Total",
+      formatPeso(deductionTotal),
+      {
+        labelBold: true,
+        valueBold: true,
+        size: 10,
+      },
+    );
+
+    const footerY = Math.max(ye, yd) + 16;
+    drawRuleFull(footerY);
+    const netRowY = footerY + 14;
+
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(11)
+      .fillColor(TEXT)
+      .text("Net Pay", left, netRowY, { width: pageWidth * 0.45 });
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(16)
+      .fillColor(NET_PAY_PURPLE)
+      .text(formatPeso(net), left + pageWidth * 0.45, netRowY - 2, {
+        width: pageWidth * 0.55,
         align: "right",
       });
 

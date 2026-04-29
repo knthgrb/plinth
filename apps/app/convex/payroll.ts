@@ -37,6 +37,13 @@ import {
   recomputeNetFromEarningsAndLines,
   type VariableEarnings,
 } from "./payrollVariableEarningsMath";
+import {
+  computeAnnualTaxFromBasic,
+  getMonthlyBasicForTax,
+  getTaxDeductionAmount,
+  getWithholdingTaxCutoffForEmployee,
+  mergeWithholdingTaxDeductionLine,
+} from "@/lib/ph-withholding-tax";
 
 function buildDraftPayrollConfig(args: {
   employeeIds: any[];
@@ -606,28 +613,6 @@ type PayFrequency = "monthly" | "bimonthly";
 type DeductionFrequency = "full" | "half";
 type HolidayType = "regular" | "special" | "special_working";
 
-/**
- * TRAIN Law individual income tax table (2025 rates).
- * Taxable income = gross income - mandatory contributions (SSS, PhilHealth, Pag-IBIG).
- * First 250,000 exempt; 13th month & benefits exempt up to 90,000.
- */
-function computeAnnualTaxFromBasic(annualTaxableIncome: number): number {
-  if (annualTaxableIncome <= 250_000) return 0;
-  if (annualTaxableIncome <= 400_000) {
-    return 0.2 * (annualTaxableIncome - 250_000);
-  }
-  if (annualTaxableIncome <= 800_000) {
-    return 30_000 + 0.25 * (annualTaxableIncome - 400_000);
-  }
-  if (annualTaxableIncome <= 2_000_000) {
-    return 130_000 + 0.3 * (annualTaxableIncome - 800_000);
-  }
-  if (annualTaxableIncome <= 8_000_000) {
-    return 490_000 + 0.32 * (annualTaxableIncome - 2_000_000);
-  }
-  return 2_410_000 + 0.35 * (annualTaxableIncome - 8_000_000);
-}
-
 /** Resolve organization pay frequency with sensible default (bimonthly). */
 function getOrganizationPayFrequency(
   org: any | null | undefined,
@@ -656,28 +641,6 @@ function getGovDeductionAmount(
   if (payFrequency === "monthly") return monthlyAmount;
   const dayOfMonth = new Date(cutoffStart).getDate();
   return dayOfMonth <= 15 ? monthlyAmount : 0;
-}
-
-/** Tax deduction uses payroll settings: once_per_month = full on selected pay; twice_per_month = half on each pay. */
-function getTaxDeductionAmount(
-  monthlyTax: number,
-  cutoffStart: number,
-  payFrequency: PayFrequency,
-  taxDeductionFrequency: "once_per_month" | "twice_per_month",
-  taxDeductOnPay: "first" | "second",
-): number {
-  if (payFrequency === "monthly") return monthlyTax;
-  const dayOfMonth = new Date(cutoffStart).getDate();
-  const isFirstPay = dayOfMonth <= 15;
-
-  if (taxDeductionFrequency === "twice_per_month") {
-    return round2(monthlyTax / 2);
-  }
-  // once_per_month: full tax on selected pay only
-  if (taxDeductOnPay === "first") {
-    return isFirstPay ? monthlyTax : 0;
-  }
-  return isFirstPay ? 0 : monthlyTax;
 }
 
 // Default OT/holiday rates (used when org settings not set)
@@ -1099,25 +1062,6 @@ async function getApprovedLeaveRequestsForPayrollPeriod(
     )
     .filter((q: any) => q.lte(q.field("startDate"), cutoffEnd))
     .collect();
-}
-
-function getMonthlyBasicForTax(
-  employee: any,
-  workingDaysPerYear: number,
-): number {
-  const salaryType = employee.compensation.salaryType || "monthly";
-  const basicSalary = employee.compensation.basicSalary || 0;
-
-  if (salaryType === "monthly") {
-    return basicSalary;
-  }
-
-  const dailyRateNoAllowance = getDailyRateForEmployee(employee, 0, 0, {
-    includeAllowance: false,
-    workingDaysPerYear,
-  });
-
-  return dailyRateNoAllowance * (workingDaysPerYear / 12);
 }
 
 async function buildEmployeePayrollBase(
@@ -4659,6 +4603,12 @@ export const getPayrollFinalizePayslipRecipients = query({
       organizationName,
       cutoffStart: payrollRun.cutoffStart,
       cutoffEnd: payrollRun.cutoffEnd,
+      paySchedule: {
+        firstPayDate: (org as any)?.firstPayDate ?? 15,
+        secondPayDate: (org as any)?.secondPayDate ?? 30,
+        salaryPaymentFrequency:
+          (org as any)?.salaryPaymentFrequency ?? "bimonthly",
+      },
       withAccount,
       withoutAccount,
     };
@@ -4878,6 +4828,87 @@ export const getPayslip = query({
   },
 });
 
+/** When variable earnings change, sync Withholding Tax with engine rules if tax is on for this run. */
+async function recalcWithholdingTaxAfterVariableEarningsEdit(
+  ctx: any,
+  args: {
+    payslip: any;
+    employeeId: any;
+    organizationId: any;
+    newDeductions: { name: string; amount: number; type: string }[];
+    recalculatedGross: number;
+    atOpen: VariableEarnings;
+    nextE: VariableEarnings;
+  },
+): Promise<{ name: string; amount: number; type: string }[]> {
+  if (JSON.stringify(args.atOpen) === JSON.stringify(args.nextE)) {
+    return args.newDeductions;
+  }
+  if (!args.payslip.payrollRunId) {
+    return args.newDeductions;
+  }
+  const runRow = await ctx.db.get(args.payslip.payrollRunId);
+  if (!runRow) {
+    return args.newDeductions;
+  }
+  const run = decryptPayrollRunFromDb(runRow);
+  if (run.runType && run.runType !== "regular") {
+    return args.newDeductions;
+  }
+  const cfg = decryptDraftConfigFromDb(run.draftConfig) as
+    | { governmentDeductionSettings?: any[] }
+    | null
+    | undefined;
+  const gov = cfg?.governmentDeductionSettings?.find(
+    (g: any) => String(g.employeeId) === String(args.employeeId),
+  );
+  if (!gov?.tax?.enabled) {
+    return args.newDeductions;
+  }
+  const employeeRow = await ctx.db.get(args.employeeId);
+  if (!employeeRow) {
+    return args.newDeductions;
+  }
+  const employee = decryptEmployeeFromDb(employeeRow);
+  const org = await ctx.db.get(args.organizationId);
+  const payFrequency = getOrganizationPayFrequency(org);
+  const taxSettings = await getTaxDeductionSettings(ctx, args.organizationId);
+  const rates = await getPayrollRates(ctx, args.organizationId);
+  const workingDays =
+    rates.rates.dailyRateWorkingDaysPerYear ?? DEFAULT_DAILY_RATE_WORKING_DAYS_PER_YEAR;
+  const cutoffStart =
+    (typeof args.payslip.periodStart === "number" && args.payslip.periodStart) ||
+    run.cutoffStart;
+  const cutoffEnd =
+    (typeof args.payslip.periodEnd === "number" && args.payslip.periodEnd) ||
+    run.cutoffEnd;
+  const taxCutoff = getWithholdingTaxCutoffForEmployee(employee, {
+    workingDaysPerYear: workingDays,
+    cutoffStart,
+    payFrequency,
+    taxDeductionFrequency: taxSettings.taxDeductionFrequency,
+    taxDeductOnPay: taxSettings.taxDeductOnPay,
+  });
+  const employeeRates = getEmployeePayrollRates(employee, rates.base);
+  const payrollBase = await buildEmployeePayrollBase(ctx, {
+    employee: employeeRow,
+    cutoffStart,
+    cutoffEnd,
+    payFrequency,
+    payrollRates: employeeRates,
+  });
+  const isDailyized = payrollBase.dailyizedFirstCutoff === true;
+  return mergeWithholdingTaxDeductionLine(
+    args.newDeductions,
+    {
+      taxEnabledInRun: true,
+      taxCutoffAmount: taxCutoff,
+      isDailyizedFirstCutoff: isDailyized,
+      grossPay: args.recalculatedGross,
+    },
+  );
+}
+
 // Update payslip
 export const updatePayslip = mutation({
   args: {
@@ -5082,6 +5113,7 @@ export const updatePayslip = mutation({
     let recalculatedGross: number;
     let recalculatedNet: number;
     const variableEarningsPatch: Record<string, unknown> = {};
+    let finalDeductions: PayslipLine[] = newDeductions;
     if (args.variableEarnings) {
       const atOpen = getVariableEarningsFromPayslip(
         payslip as unknown as Record<string, unknown>,
@@ -5109,11 +5141,25 @@ export const updatePayslip = mutation({
         t0,
         t1,
       );
+      if (JSON.stringify(atOpen) !== JSON.stringify(nextE)) {
+        finalDeductions = (await recalcWithholdingTaxAfterVariableEarningsEdit(
+          ctx,
+          {
+            payslip,
+            employeeId: payslip.employeeId,
+            organizationId: payslip.organizationId,
+            newDeductions,
+            recalculatedGross: gbb.grossPay,
+            atOpen,
+            nextE,
+          },
+        )) as PayslipLine[];
+      }
       const netB = recomputeNetFromEarningsAndLines(
         gbb.grossPay,
         newNonTaxableAllowance,
         newIncentives,
-        newDeductions,
+        finalDeductions,
       );
       recalculatedGross = gbb.grossPay;
       recalculatedNet = netB.netPay;
@@ -5135,6 +5181,7 @@ export const updatePayslip = mutation({
         ),
       } as Record<string, unknown>);
     } else {
+      finalDeductions = newDeductions;
       const recalculatedTotals = recalculatePersistedPayslipTotals({
         grossPay: payslip.grossPay ?? 0,
         previousIncentives: originalIncentives,
@@ -5146,15 +5193,15 @@ export const updatePayslip = mutation({
       recalculatedNet = recalculatedTotals.netPay;
     }
 
-    const editedEmployeeSSSAmount = getDeductionAmountByNames(newDeductions, [
+    const editedEmployeeSSSAmount = getDeductionAmountByNames(finalDeductions, [
       "sss",
     ]);
     const editedEmployeePhilhealthAmount = getDeductionAmountByNames(
-      newDeductions,
+      finalDeductions,
       ["philhealth"],
     );
     const editedEmployeePagibigAmount = getDeductionAmountByNames(
-      newDeductions,
+      finalDeductions,
       ["pag-ibig", "pagibig"],
     );
     const updatedEmployerContributions: {
@@ -5184,7 +5231,7 @@ export const updatePayslip = mutation({
     const deductionChange = buildLineDiffChange(
       "deductions",
       payslip.deductions,
-      newDeductions,
+      finalDeductions,
     );
     if (deductionChange) changes.push(deductionChange);
     const incentiveChange = buildLineDiffChange(
@@ -5254,7 +5301,7 @@ export const updatePayslip = mutation({
     await ctx.db.patch(
       args.payslipId,
       encryptPayslipPartialForDb({
-        deductions: newDeductions.map((d: { name: string; amount: number; type: string }) => ({
+        deductions: finalDeductions.map((d: { name: string; amount: number; type: string }) => ({
           ...d,
           amount: round2(d.amount),
         })),

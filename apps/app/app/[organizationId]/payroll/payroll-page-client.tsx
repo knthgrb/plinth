@@ -202,6 +202,10 @@ import {
   type PreviewEditableEarnings,
   zeroPreviewEarnings,
 } from "./_components/payroll-preview-earnings-helpers";
+import {
+  getWithholdingTaxCutoffForEmployee,
+  mergeWithholdingTaxDeductionLine,
+} from "@/lib/ph-withholding-tax";
 
 type Deduction = {
   name: string;
@@ -1031,6 +1035,7 @@ export default function PayrollPageClient() {
     };
     setEditEarnings(earningsAtOpen);
     setEditingPayslip({
+      ...preview,
       _id: `${mode}:${preview.employee?._id}`,
       employee: preview.employee,
       deductions: initialDeductions,
@@ -1063,6 +1068,13 @@ export default function PayrollPageClient() {
           zeroPreviewEarnings()) as PreviewEditableEarnings;
         const t0 = (editingPayslip.__openTaxableIncentiveTotal ?? 0) as number;
         const t1 = sumTaxableIncentiveAmounts(editIncentives);
+        const govListForPreviewWht =
+          editingPayslip.__mode === "edit_preview"
+            ? editGovernmentDeductionSettings
+            : governmentDeductionSettings;
+        const govForPreviewWht = govListForPreviewWht.find(
+          (g) => g.employeeId === employeeId,
+        );
         const applyPreviewPayslipPatch = (p: any) => {
           if (p.employee?._id !== employeeId) return p;
           const { grossPay, basicPay } = recomputeGrossAndBasicFromEarnings(
@@ -1072,12 +1084,45 @@ export default function PayrollPageClient() {
             t0,
             t1,
           );
+          let deductionsForNet = editDeductions;
+          if (
+            govForPreviewWht?.tax?.enabled &&
+            JSON.stringify(atOpen) !== JSON.stringify(editEarnings) &&
+            p.employee
+          ) {
+            const payFrequency =
+              currentOrganization?.salaryPaymentFrequency === "monthly"
+                ? "monthly"
+                : "bimonthly";
+            const workingDays =
+              settings?.payrollSettings?.dailyRateWorkingDaysPerYear ?? 261;
+            const taxCutoff = getWithholdingTaxCutoffForEmployee(p.employee, {
+              workingDaysPerYear: workingDays,
+              cutoffStart: dateStringToLocalMs(cutoffStart),
+              payFrequency,
+              taxDeductionFrequency:
+                settings?.payrollSettings?.taxDeductionFrequency ??
+                "twice_per_month",
+              taxDeductOnPay:
+                settings?.payrollSettings?.taxDeductOnPay ?? "first",
+            });
+            const isDailyized = p.dailyizedFirstCutoff === true;
+            deductionsForNet = mergeWithholdingTaxDeductionLine(
+              editDeductions,
+              {
+                taxEnabledInRun: true,
+                taxCutoffAmount: taxCutoff,
+                isDailyizedFirstCutoff: isDailyized,
+                grossPay,
+              },
+            );
+          }
           const { totalEarnings, netPay, totalDeductions, taxableGrossEarnings } =
             recomputePreviewNet(
               grossPay,
               p.nonTaxableAllowance || 0,
               editIncentives,
-              editDeductions,
+              deductionsForNet,
             );
           const totalIncentives = round2(
             editIncentives.reduce((s, i) => s + (i.amount || 0), 0),
@@ -1094,7 +1139,7 @@ export default function PayrollPageClient() {
             totalIncentives,
             incentiveTotal: totalIncentives,
             incentives: editIncentives,
-            deductions: editDeductions,
+            deductions: deductionsForNet,
           };
         };
         const isAttendanceName = (name: string): boolean => {
@@ -1276,6 +1321,128 @@ export default function PayrollPageClient() {
   const updateEditEarning = (key: PreviewEditableEarningKey, value: number) => {
     setEditEarnings((prev) => ({ ...prev, [key]: value }));
   };
+
+  /** Serialize deductions for stable equality after WHT merge (order-preserving). */
+  const serializeDeductions = useCallback((rows: Deduction[]) => {
+    return JSON.stringify(
+      rows.map((x) => ({
+        name: (x.name || "").trim(),
+        amount: round2(Number(x.amount) || 0),
+        type: (x.type || "").trim(),
+      })),
+    );
+  }, []);
+
+  /**
+   * Keep the Withholding Tax line in sync while editing variable earnings (same rules as save).
+   * Does not run when only non-WHT deductions change — avoids fighting manual edits.
+   */
+  useEffect(() => {
+    if (!isEditPayslipOpen || !editingPayslip) return;
+
+    const employee = editingPayslip.employee;
+    if (!employee) return;
+
+    const atOpen = (editingPayslip.__earningsAtOpen ??
+      zeroPreviewEarnings()) as PreviewEditableEarnings;
+    const t0 = (editingPayslip.__openTaxableIncentiveTotal ?? 0) as number;
+    const t1 = sumTaxableIncentiveAmounts(editIncentives);
+
+    const grossPayBasic = recomputeGrossAndBasicFromEarnings(
+      {
+        grossPay: Number(editingPayslip.grossPay) || 0,
+        basicPay: Number(editingPayslip.basicPay) || 0,
+      },
+      atOpen,
+      editEarnings,
+      t0,
+      t1,
+    ).grossPay;
+
+    const payFrequency =
+      currentOrganization?.salaryPaymentFrequency === "monthly"
+        ? "monthly"
+        : "bimonthly";
+    const workingDays =
+      settings?.payrollSettings?.dailyRateWorkingDaysPerYear ?? 261;
+
+    const runMerge = (gov: GovernmentDeductionSettings | undefined) => {
+      if (!gov) return;
+
+      const cutoffMs =
+        typeof editingPayslip.periodStart === "number"
+          ? editingPayslip.periodStart
+          : selectedPayrollRun?.cutoffStart ??
+            (cutoffStart ? dateStringToLocalMs(cutoffStart) : null);
+      if (cutoffMs == null || Number.isNaN(cutoffMs)) return;
+
+      const taxCutoff = getWithholdingTaxCutoffForEmployee(employee, {
+        workingDaysPerYear: workingDays,
+        cutoffStart: cutoffMs,
+        payFrequency,
+        taxDeductionFrequency:
+          settings?.payrollSettings?.taxDeductionFrequency ??
+          "twice_per_month",
+        taxDeductOnPay: settings?.payrollSettings?.taxDeductOnPay ?? "first",
+      });
+      const isDailyized = editingPayslip.dailyizedFirstCutoff === true;
+
+      setEditDeductions((prev) => {
+        const next = mergeWithholdingTaxDeductionLine(prev, {
+          taxEnabledInRun: gov.tax.enabled,
+          taxCutoffAmount: taxCutoff,
+          isDailyizedFirstCutoff: isDailyized,
+          grossPay: grossPayBasic,
+        });
+        return serializeDeductions(prev) === serializeDeductions(next)
+          ? prev
+          : next;
+      });
+    };
+
+    if (
+      editingPayslip.__mode === "create_preview" ||
+      editingPayslip.__mode === "edit_preview"
+    ) {
+      const employeeId = editingPayslip.__employeeId as string;
+      const govList =
+        editingPayslip.__mode === "edit_preview"
+          ? editGovernmentDeductionSettings
+          : governmentDeductionSettings;
+      const gov = govList.find((g) => g.employeeId === employeeId);
+      runMerge(gov);
+      return;
+    }
+
+    const draft = selectedPayrollRun?.draftConfig as
+      | { governmentDeductionSettings?: GovernmentDeductionSettings[] }
+      | undefined;
+    const empId =
+      editingPayslip.employeeId ?? editingPayslip.employee?._id ?? null;
+    const govSaved =
+      empId != null
+        ? draft?.governmentDeductionSettings?.find(
+            (g) => String(g.employeeId) === String(empId),
+          )
+        : undefined;
+    runMerge(govSaved);
+  }, [
+    isEditPayslipOpen,
+    editingPayslip,
+    editEarnings,
+    editIncentives,
+    selectedPayrollRun?._id,
+    selectedPayrollRun?.draftConfig,
+    selectedPayrollRun?.cutoffStart,
+    governmentDeductionSettings,
+    editGovernmentDeductionSettings,
+    settings?.payrollSettings?.dailyRateWorkingDaysPerYear,
+    settings?.payrollSettings?.taxDeductionFrequency,
+    settings?.payrollSettings?.taxDeductOnPay,
+    currentOrganization?.salaryPaymentFrequency,
+    cutoffStart,
+    serializeDeductions,
+  ]);
 
   const handleEmployeeSelect = (employeeId: string, checked: boolean) => {
     if (checked) {
