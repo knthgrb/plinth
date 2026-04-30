@@ -573,6 +573,12 @@ export default defineSchema({
         employees: v.number(),
       }),
     ),
+    /**
+     * JSON: `{ v, dates, summary, capturedAt }` — frozen payroll run summary
+     * (attendance grid + roll-ups) from last save or finalize. Rebuilt when
+     * payslips/snapshot inputs change.
+     */
+    summarySnapshot: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

@@ -81,6 +81,10 @@ export async function getPayslip(payslipId: string) {
   return PayrollService.getPayslip(payslipId);
 }
 
+export async function downloadPayslipPdf(payslipId: string) {
+  return PayrollService.getPayslipPdfForDownload(payslipId);
+}
+
 export async function getEmployeePayslips(employeeId: string) {
   return PayrollService.getEmployeePayslips(employeeId);
 }

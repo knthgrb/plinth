@@ -169,8 +169,11 @@ export function PayrollSummaryDialog({
                   : null}
             </DialogTitle>
             <DialogDescription className="text-xs text-[rgb(115,115,115)] leading-relaxed">
-              Attendance by day (late and undertime shown per date). Daily pay is
-              the rate from compensation settings for this period.
+              The calendar grid and attendance roll-ups are rebuilt from current
+              Attendance, Leave, and Holiday records whenever this opens—they may
+              change if those records were edited since your last visit. Pay
+              figures from payslips reflect saved payslip rows for this payroll
+              run.
             </DialogDescription>
           </DialogHeader>
         </div>

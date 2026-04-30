@@ -171,6 +171,56 @@ function hasDraftDependenciesChanged(
   );
 }
 
+const PAYROLL_SUMMARY_SNAPSHOT_V = 1 as const;
+
+function tryParsePayrollSummarySnapshot(
+  raw: string | undefined,
+): { dates: number[]; summary: any[] } | null {
+  if (!raw || typeof raw !== "string") return null;
+  try {
+    const o = JSON.parse(raw) as {
+      v?: number;
+      dates?: unknown;
+      summary?: unknown;
+    };
+    if (o.v !== PAYROLL_SUMMARY_SNAPSHOT_V) return null;
+    if (!Array.isArray(o.dates) || !Array.isArray(o.summary)) return null;
+    return { dates: o.dates, summary: o.summary };
+  } catch {
+    return null;
+  }
+}
+
+async function canUsePayrollSummarySnapshot(
+  ctx: any,
+  payrollRun: any,
+): Promise<boolean> {
+  const str = (payrollRun as { summarySnapshot?: string }).summarySnapshot;
+  if (!str) return false;
+  if (!tryParsePayrollSummarySnapshot(str)) return false;
+  const st = payrollRun.status;
+  if (st === "finalized" || st === "paid" || st === "archived") {
+    return true;
+  }
+  if (st !== "draft") {
+    return false;
+  }
+  if (!payrollRun.draftDependencySnapshot) {
+    return false;
+  }
+  const employeeIds = await resolveDraftEmployeeIdsForRun(ctx, payrollRun);
+  const current = await captureDraftDependencySnapshot(ctx, {
+    organizationId: payrollRun.organizationId,
+    cutoffStart: payrollRun.cutoffStart,
+    cutoffEnd: payrollRun.cutoffEnd,
+    employeeIds,
+  });
+  return !hasDraftDependenciesChanged(
+    payrollRun.draftDependencySnapshot as DraftDependencySnapshot | undefined,
+    current,
+  );
+}
+
 function getDeductionAmountByNames(
   deductions: Array<{ name: string; amount: number }>,
   names: string[],
@@ -2430,6 +2480,8 @@ export const createPayrollRun = mutation({
       updatedAt: now,
     });
 
+    await persistPayrollRunSummarySnapshot(ctx, payrollRunId);
+
     return payrollRunId;
   },
 });
@@ -2912,6 +2964,8 @@ export const updatePayrollRun = mutation({
       });
     }
 
+    await persistPayrollRunSummarySnapshot(ctx, args.payrollRunId);
+
     return { success: true };
   },
 });
@@ -3016,6 +3070,10 @@ export const updatePayrollRunStatus = mutation({
         args.status === "finalized" ? Date.now() : payrollRun.processedAt,
       updatedAt: Date.now(),
     });
+
+    if (args.status !== "cancelled") {
+      await persistPayrollRunSummarySnapshot(ctx, args.payrollRunId);
+    }
 
     const updatedRun = await ctx.db.get(args.payrollRunId);
 
@@ -3861,10 +3919,19 @@ export const create13thMonthRun = mutation({
       );
     }
 
+    const thirteenthDraftSnapshot = await captureDraftDependencySnapshot(ctx, {
+      organizationId: args.organizationId,
+      cutoffStart: yearStart,
+      cutoffEnd: yearEnd,
+      employeeIds: args.employeeIds,
+    });
     await ctx.db.patch(payrollRunId, {
       processedAt: now,
       updatedAt: now,
+      draftDependencySnapshot: thirteenthDraftSnapshot,
     });
+
+    await persistPayrollRunSummarySnapshot(ctx, payrollRunId);
 
     return payrollRunId;
   },
@@ -4119,28 +4186,35 @@ export const createLeaveConversionRun = mutation({
       );
     }
 
+    const leaveConvDraftSnapshot = await captureDraftDependencySnapshot(ctx, {
+      organizationId: args.organizationId,
+      cutoffStart: yearStart,
+      cutoffEnd: yearEnd,
+      employeeIds: args.employeeIds,
+    });
     await ctx.db.patch(payrollRunId, {
       processedAt: now,
       updatedAt: now,
+      draftDependencySnapshot: leaveConvDraftSnapshot,
     });
+
+    await persistPayrollRunSummarySnapshot(ctx, payrollRunId);
 
     return payrollRunId;
   },
 });
 
-// Get payroll run summary (attendance data for all employees)
-export const getPayrollRunSummary = query({
-  args: {
-    payrollRunId: v.id("payrollRuns"),
-  },
-  handler: async (ctx, args) => {
-    const payrollRunRaw = await ctx.db.get(args.payrollRunId);
-    if (!payrollRunRaw) throw new Error("Payroll run not found");
-    const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
+/** Recompute full summary from current DB (attendance, leave, holidays, payslips). */
+async function computePayrollRunSummaryData(
+  ctx: any,
+  args: { payrollRunId: any },
+) {
+  const payrollRunRaw = await ctx.db.get(args.payrollRunId);
+  if (!payrollRunRaw) throw new Error("Payroll run not found");
+  const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
+  await checkAuth(ctx, payrollRun.organizationId);
 
-    const userRecord = await checkAuth(ctx, payrollRun.organizationId);
-
-    // Get all payslips for this payroll run to get employee IDs
+  // Get all payslips for this payroll run to get employee IDs
     const payslipsRaw = await (ctx.db.query("payslips") as any)
       .withIndex("by_payroll_run", (q: any) =>
         q.eq("payrollRunId", args.payrollRunId),
@@ -4496,11 +4570,54 @@ export const getPayrollRunSummary = query({
       }),
     );
 
-    return {
-      payrollRun,
-      summary,
-      dates,
-    };
+  return {
+    payrollRun,
+    summary,
+    dates,
+  };
+}
+
+async function persistPayrollRunSummarySnapshot(ctx: any, payrollRunId: any) {
+  try {
+    const data = await computePayrollRunSummaryData(ctx, { payrollRunId });
+    const payload = JSON.stringify({
+      v: PAYROLL_SUMMARY_SNAPSHOT_V,
+      dates: data.dates,
+      summary: data.summary,
+      capturedAt: Date.now(),
+    });
+    await ctx.db.patch(payrollRunId, {
+      summarySnapshot: payload,
+      updatedAt: Date.now(),
+    });
+  } catch {
+    /* best-effort; UI falls back to live recompute */
+  }
+}
+
+// Get payroll run summary (attendance data for all employees; uses snapshot when current)
+export const getPayrollRunSummary = query({
+  args: {
+    payrollRunId: v.id("payrollRuns"),
+  },
+  handler: async (ctx, args) => {
+    const payrollRunRaw = await ctx.db.get(args.payrollRunId);
+    if (!payrollRunRaw) throw new Error("Payroll run not found");
+    const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
+    await checkAuth(ctx, payrollRun.organizationId);
+    if (await canUsePayrollSummarySnapshot(ctx, payrollRun)) {
+      const parsed = tryParsePayrollSummarySnapshot(
+        (payrollRun as { summarySnapshot?: string }).summarySnapshot,
+      );
+      if (parsed) {
+        return {
+          payrollRun,
+          summary: parsed.summary,
+          dates: parsed.dates,
+        };
+      }
+    }
+    return await computePayrollRunSummaryData(ctx, args);
   },
 });
 
@@ -5452,6 +5569,10 @@ export const updatePayslip = mutation({
       (payrollRun.status === "finalized" || payrollRun.status === "paid")
     ) {
       await createExpenseItemsFromPayroll(ctx, payrollRun);
+    }
+
+    if (payslip.payrollRunId) {
+      await persistPayrollRunSummarySnapshot(ctx, payslip.payrollRunId);
     }
 
     return { success: true };

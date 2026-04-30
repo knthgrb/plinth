@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useMemo, useEffect } from "react";
+import { Suspense, useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
@@ -14,8 +14,10 @@ import {
   Filter,
   Lock,
   KeyRound,
+  Loader2,
 } from "lucide-react";
 import { format, startOfMonth, endOfMonth, parse } from "date-fns";
+import { useRouter } from "next/navigation";
 import { useOrganization } from "@/hooks/organization-context";
 import { useEmployeeView } from "@/hooks/employee-view-context";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -37,7 +39,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { PayslipDetail } from "@/components/payslip-detail";
-import { getPayslip } from "@/actions/payroll";
+import { downloadPayslipPdf, getPayslip } from "@/actions/payroll";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -55,11 +57,12 @@ import {
   formatManilaShortMonthDay,
 } from "@/lib/manila-date";
 import { usePayslipIdFromUrl } from "@/hooks/use-payslip-id-from-url";
-import { payslipPinSessionKey } from "@/lib/payslip-session";
 import { userFacingPayslipLoadError } from "@/lib/payslip-load-errors";
+import { payslipPdfPasswordDescription } from "@/lib/payslip-pdf-password";
 
 function PayslipsPageContent() {
   const { toast } = useToast();
+  const router = useRouter();
   const payslipIdFromUrl = usePayslipIdFromUrl();
   const { currentOrganizationId } = useOrganization();
   const { employeeViewActive, canUseEmployeeView } = useEmployeeView();
@@ -117,6 +120,17 @@ function PayslipsPageContent() {
   const [isSendingComment, setIsSendingComment] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [selectedCutoff, setSelectedCutoff] = useState<string>("");
+  const [downloadingPayslipId, setDownloadingPayslipId] = useState<
+    string | null
+  >(null);
+  /** Avoid re-opening the same notification deeplink on every render */
+  const openedPayslipFromUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (payslipIdFromUrl == null) {
+      openedPayslipFromUrlRef.current = null;
+    }
+  }, [payslipIdFromUrl]);
 
   // Radix Select disallows empty-string item values. We use sentinel values and map them to "" state.
   const ALL_MONTHS_VALUE = "__all_months__";
@@ -227,22 +241,112 @@ function PayslipsPageContent() {
     }
   };
 
-  // PIN session (shared with global appeal / deep-link modal)
+  /**
+   * We do not cache PIN in session storage: each visit to My Payslips and each
+   * `?payslipId=` deeplink (see `PayslipDeepLinkModal`) requires the PIN when configured.
+   */
+
+  /**
+   * Notification / chat links use `?payslipId=`. Never bypass PIN for that URL —
+   * open the detail dialog only after the lock screen (or session) allows access.
+   */
   useEffect(() => {
-    if (!currentOrganizationId || typeof window === "undefined") return;
-    if (
-      sessionStorage.getItem(
-        payslipPinSessionKey(String(currentOrganizationId)),
-      ) === "1"
-    ) {
-      setPinVerified(true);
-    }
-  }, [currentOrganizationId]);
+    if (!payslipIdFromUrl || !employeeId) return;
+    if (requiresPin && !pinVerified) return;
+    if (openedPayslipFromUrlRef.current === payslipIdFromUrl) return;
+
+    openedPayslipFromUrlRef.current = payslipIdFromUrl;
+
+    let cancelled = false;
+    void (async () => {
+      setIsLoadingDetails(true);
+      try {
+        const details = await getPayslip(payslipIdFromUrl);
+        if (cancelled || !details) return;
+        if (String(details.employeeId) !== String(employeeId)) {
+          toast({
+            title: "Could not open payslip",
+            description:
+              "This payslip is not associated with your employee record.",
+            variant: "destructive",
+          });
+          openedPayslipFromUrlRef.current = null;
+          return;
+        }
+        setSelectedPayslip(details);
+        setPayslipDetails(details);
+        setIsViewOpen(true);
+
+        if (typeof window !== "undefined") {
+          const u = new URL(window.location.href);
+          u.searchParams.delete("payslipId");
+          const q = u.search && u.search !== "?" ? u.search : "";
+          router.replace(u.pathname + q, { scroll: false });
+        }
+      } catch (error: unknown) {
+        openedPayslipFromUrlRef.current = null;
+        toast({
+          title: "Could not open payslip",
+          description: userFacingPayslipLoadError(error),
+          variant: "destructive",
+        });
+      } finally {
+        if (!cancelled) setIsLoadingDetails(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    payslipIdFromUrl,
+    employeeId,
+    requiresPin,
+    pinVerified,
+    router,
+    toast,
+  ]);
 
   const handleOpenComment = (payslip: any) => {
     setSelectedPayslip(payslip);
     setIsCommentOpen(true);
     setCommentText("");
+  };
+
+  const handleDownloadPayslipPdf = async (payslip: { _id: string }) => {
+    try {
+      setDownloadingPayslipId(String(payslip._id));
+      const { pdfBase64, fileName } = await downloadPayslipPdf(
+        String(payslip._id),
+      );
+      const binary = atob(pdfBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast({
+        title: "Payslip downloaded",
+        description: `To open the file: ${payslipPdfPasswordDescription()}`,
+      });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Download failed";
+      toast({
+        title: "Download failed",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setDownloadingPayslipId(null);
+    }
   };
 
   const handleSendComment = async () => {
@@ -312,12 +416,6 @@ function PayslipsPageContent() {
         pin: pinValue.trim(),
       });
       if (result.valid) {
-        if (currentOrganizationId) {
-          sessionStorage.setItem(
-            payslipPinSessionKey(String(currentOrganizationId)),
-            "1",
-          );
-        }
         setPinVerified(true);
         setPinValue("");
       } else {
@@ -443,7 +541,7 @@ function PayslipsPageContent() {
     );
   }
 
-  if (requiresPin && !pinVerified && !payslipIdFromUrl) {
+  if (requiresPin && !pinVerified) {
     return (
       <MainLayout>
         <div className="p-8 flex items-center justify-center min-h-[400px]">
@@ -677,16 +775,14 @@ function PayslipsPageContent() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => {
-                              // TODO: Implement PDF download
-                              toast({
-                                title: "Coming Soon",
-                                description:
-                                  "PDF download feature will be available soon.",
-                              });
-                            }}
+                            disabled={downloadingPayslipId === payslip._id}
+                            onClick={() => void handleDownloadPayslipPdf(payslip)}
                           >
-                            <Download className="h-4 w-4 mr-2" />
+                            {downloadingPayslipId === payslip._id ? (
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                              <Download className="h-4 w-4 mr-2" />
+                            )}
                             Download
                           </Button>
                         </div>

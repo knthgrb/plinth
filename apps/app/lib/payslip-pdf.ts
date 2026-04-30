@@ -10,7 +10,8 @@ import {
   getManilaDateParts,
 } from "@/lib/manila-date";
 
-const NET_PAY_PURPLE = "#6D28D9"; // violet-700, matches app-style accent
+/** Matches Plinth primary accent (#695eff) */
+const NET_PAY_PURPLE = "#695EFF";
 const MUTED = "#6B7280";
 const TEXT = "#111827";
 const RULE = "#D1D5DB";
@@ -29,6 +30,26 @@ function formatPeso(n: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+/** Positive earnings line — explicit leading + for readability */
+function formatPesoPlus(n: number): string {
+  if (n <= 0) return formatPeso(n);
+  return `+${formatPeso(n)}`;
+}
+
+const MINUS = "\u2212";
+
+function isAttendanceLikeDeduction(d: {
+  name: string;
+  type: string;
+  amount: number;
+}): boolean {
+  return (
+    d.amount > 0 &&
+    (d.type === "attendance" ||
+      /^(absent|late|undertime|no-?work|no\s+work)/i.test(d.name || ""))
+  );
 }
 
 function asDeductionArray(
@@ -300,13 +321,48 @@ export function renderPayslipPdfBuffer(args: {
       return y + rowH;
     };
 
+    /** Deduction / reduction shown in earnings column (Unicode minus + peso) */
+    const rowAmountMinus = (
+      x: number,
+      y: number,
+      w: number,
+      label: string,
+      amount: number,
+      opts?: { size?: number },
+    ): number => {
+      const fs = opts?.size ?? 9;
+      const amountStr = `${MINUS}${formatPeso(amount)}`;
+      doc
+        .font("Helvetica")
+        .fontSize(fs)
+        .fillColor(TEXT)
+        .text(label, x, y, { width: w * 0.58 });
+      doc
+        .font("Helvetica")
+        .fontSize(fs)
+        .fillColor(TEXT)
+        .text(amountStr, x + w * 0.42, y, {
+          width: w * 0.58,
+          align: "right",
+        });
+      return y + rowH;
+    };
+
     const periodLine = `${formatManilaNumericDate(args.cutoffStart)} to ${formatManilaNumericDate(args.cutoffEnd)}`;
+
+    const orgDisplay = String(args.organizationName ?? "").trim() || "—";
 
     doc
       .font("Helvetica-Bold")
       .fontSize(16)
       .fillColor(TEXT)
       .text("PAYSLIP", left, doc.y, { width: pageWidth, align: "center" });
+    doc.moveDown(0.2);
+    doc
+      .font("Helvetica")
+      .fontSize(10)
+      .fillColor(MUTED)
+      .text(orgDisplay, left, doc.y, { width: pageWidth, align: "center" });
     doc.moveDown(0.15);
     doc
       .font("Helvetica")
@@ -368,9 +424,13 @@ export function renderPayslipPdfBuffer(args: {
 
     const govRows = sortGovernmentDeductions(deductions);
     const otherDeductionRows = deductions.filter(
-      (d) => !isGovernmentDeductionName(d.name),
+      (d) =>
+        !isGovernmentDeductionName(d.name) &&
+        !isAttendanceLikeDeduction(d),
     );
     const deductionTotal = deductions.reduce((s, d) => s + d.amount, 0);
+
+    const attendanceDeductionRows = deductions.filter(isAttendanceLikeDeduction);
 
     const basic = num(p.basicPay);
     const taxableGrossLine =
@@ -384,7 +444,34 @@ export function renderPayslipPdfBuffer(args: {
       .text("EARNINGS", earnX, ye, { width: colWidth });
     ye += 18;
 
-    ye = rowAmount(earnX, ye, colWidth, "Basic Pay", formatPeso(basic));
+    ye = rowAmount(earnX, ye, colWidth, "Basic Pay", formatPesoPlus(basic));
+
+    const adj = num(p.adjustments);
+    const lessLineItems: Array<{ label: string; amount: number }> = [
+      ...attendanceDeductionRows.map((d) => ({
+        label: d.name?.trim() || "Attendance deduction",
+        amount: d.amount,
+      })),
+    ];
+    if (adj < 0) {
+      lessLineItems.push({
+        label: "Adjustments",
+        amount: Math.abs(adj),
+      });
+    }
+
+    if (lessLineItems.length > 0) {
+      ye += 4;
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(8.5)
+        .fillColor(MUTED)
+        .text("Less:", earnX, ye, { width: colWidth });
+      ye += subRowH;
+      for (const row of lessLineItems) {
+        ye = rowAmountMinus(earnX, ye, colWidth, row.label, row.amount);
+      }
+    }
 
     const taxableExtras: Array<{ label: string; amount: number }> = [];
     const hp = num(p.holidayPay);
@@ -409,15 +496,21 @@ export function renderPayslipPdfBuffer(args: {
       if (inc.amount > 0)
         taxableExtras.push({ label: inc.name || "Incentive", amount: inc.amount });
     }
-    const adj = num(p.adjustments);
-    if (adj !== 0)
+    if (adj > 0) {
       taxableExtras.push({
         label: "Adjustments",
         amount: adj,
       });
+    }
 
     for (const row of taxableExtras) {
-      ye = rowAmount(earnX, ye, colWidth, row.label, formatPeso(row.amount));
+      ye = rowAmount(
+        earnX,
+        ye,
+        colWidth,
+        row.label,
+        formatPesoPlus(row.amount),
+      );
     }
 
     drawRuleThin(earnX, ye + 2, colWidth);
@@ -445,7 +538,7 @@ export function renderPayslipPdfBuffer(args: {
           ye,
           colWidth,
           "Non-taxable Allowance",
-          formatPeso(allowance),
+          formatPesoPlus(allowance),
           { size: 9 },
         );
       }
@@ -455,7 +548,7 @@ export function renderPayslipPdfBuffer(args: {
           ye,
           colWidth,
           inc.name || "Addition",
-          formatPeso(inc.amount),
+          formatPesoPlus(inc.amount),
           { size: 9 },
         );
       }
@@ -538,14 +631,14 @@ export function renderPayslipPdfBuffer(args: {
 
     doc
       .font("Helvetica-Bold")
-      .fontSize(11)
+      .fontSize(12)
       .fillColor(TEXT)
       .text("Net Pay", left, netRowY, { width: pageWidth * 0.45 });
     doc
       .font("Helvetica-Bold")
-      .fontSize(16)
+      .fontSize(17)
       .fillColor(NET_PAY_PURPLE)
-      .text(formatPeso(net), left + pageWidth * 0.45, netRowY - 2, {
+      .text(formatPeso(net), left + pageWidth * 0.45, netRowY - 3, {
         width: pageWidth * 0.55,
         align: "right",
       });

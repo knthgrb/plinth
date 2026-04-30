@@ -183,6 +183,48 @@ export class PayrollService {
     });
   }
 
+  /** Password-protected payslip PDF (same rendering as chat/email). Caller must be authenticated. */
+  static async getPayslipPdfForDownload(payslipId: string): Promise<{
+    pdfBase64: string;
+    fileName: string;
+  }> {
+    const payslip = await this.getPayslip(payslipId);
+    if (!payslip?.payrollRunId) {
+      throw new Error("Payslip is missing payroll run data.");
+    }
+    if (!payslip.employee) {
+      throw new Error("Could not load employee data for this payslip.");
+    }
+    const convex = await getAuthedConvexClient();
+    const finalizeCtx = await (convex.query as any)(
+      (api as any).payroll.getPayrollFinalizePayslipRecipients,
+      { payrollRunId: payslip.payrollRunId as Id<"payrollRuns"> },
+    );
+    if (!finalizeCtx) {
+      throw new Error("Could not load payroll details for this payslip.");
+    }
+    const pdf = await renderPayslipPdfBuffer({
+      payslip,
+      employee: payslip.employee,
+      organizationName: finalizeCtx.organizationName,
+      cutoffStart: finalizeCtx.cutoffStart,
+      cutoffEnd: finalizeCtx.cutoffEnd,
+      paySchedule: finalizeCtx.paySchedule,
+    });
+    const safePeriod = `${formatManilaShortDate(finalizeCtx.cutoffStart)}-${formatManilaShortDate(finalizeCtx.cutoffEnd)}`
+      .replace(/[^a-zA-Z0-9-_]+/g, "_")
+      .slice(0, 48);
+    const empIdRaw =
+      String(payslip.employee?.employment?.employeeId ?? "").trim() ||
+      String(payslip.employeeId ?? "employee");
+    const empIdSafe = empIdRaw.replace(/[^a-zA-Z0-9-_]/g, "_").slice(0, 40);
+    const fileName = `payslip-${safePeriod}-${empIdSafe}.pdf`;
+    return {
+      pdfBase64: pdf.toString("base64"),
+      fileName,
+    };
+  }
+
   static async getEmployeePayslips(employeeId: string) {
     const convex = await getAuthedConvexClient();
     return await (convex.query as any)(

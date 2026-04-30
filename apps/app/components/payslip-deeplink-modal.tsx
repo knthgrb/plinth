@@ -19,7 +19,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Lock, Loader2 } from "lucide-react";
 import { PayslipDetail } from "@/components/payslip-detail";
-import { payslipPinSessionKey } from "@/lib/payslip-session";
 import {
   PAYSLIP_NOT_FOUND,
   PAYSLIP_PIN_VERIFY_GENERIC,
@@ -38,6 +37,7 @@ export function PayslipDeepLinkModal() {
   const { toast } = useToast();
   const router = useRouter();
   const pathname = usePathname();
+  const routeSegments = pathname?.split("/").filter(Boolean) ?? [];
   const {
     effectiveOrganizationId,
     currentOrganization,
@@ -134,12 +134,7 @@ export function PayslipDeepLinkModal() {
     }
 
     if (requiresPin) {
-      const k = payslipPinSessionKey(String(orgId));
-      if (typeof window !== "undefined" && sessionStorage.getItem(k) === "1") {
-        setPhase("load");
-      } else {
-        setPhase("pin");
-      }
+      setPhase("pin");
     } else {
       setPhase("load");
     }
@@ -213,9 +208,6 @@ export function PayslipDeepLinkModal() {
         pin: pinValue.trim(),
       });
       if (result.valid) {
-        if (orgId) {
-          sessionStorage.setItem(payslipPinSessionKey(String(orgId)), "1");
-        }
         setPhase("load");
         setPinValue("");
       } else {
@@ -236,6 +228,11 @@ export function PayslipDeepLinkModal() {
       setLoadError(null);
     }
   };
+
+  /** My Payslips owns `?payslipId=` (PIN gate + detail dialog). */
+  if (routeSegments[routeSegments.length - 1] === "payslips") {
+    return null;
+  }
 
   if (!payslipId || !orgId) return null;
 
