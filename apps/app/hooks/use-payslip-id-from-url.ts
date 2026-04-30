@@ -1,6 +1,6 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useMemo } from "react";
 
 export function normalizePayslipIdParam(
@@ -17,14 +17,17 @@ export function normalizePayslipIdParam(
  */
 export function usePayslipIdFromUrl(): string | null {
   const searchParams = useSearchParams();
+  const pathname = usePathname();
   return useMemo(() => {
     const fromParams = normalizePayslipIdParam(
       searchParams.get("payslipId"),
     );
     if (fromParams) return fromParams;
     if (typeof window === "undefined") return null;
-    return normalizePayslipIdParam(
-      new URLSearchParams(window.location.search).get("payslipId"),
-    );
-  }, [searchParams]);
+    // Avoid stale `?payslipId=` from window during / after client navigation: only
+    // trust the query string when it belongs to the current location pathname.
+    const w = new URL(window.location.href);
+    if (w.pathname !== pathname) return null;
+    return normalizePayslipIdParam(w.searchParams.get("payslipId"));
+  }, [searchParams, pathname]);
 }

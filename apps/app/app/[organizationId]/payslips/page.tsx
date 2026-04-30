@@ -10,6 +10,8 @@ import {
   Receipt,
   Download,
   Eye,
+  EyeOff,
+  FileText,
   MessageSquare,
   Filter,
   Lock,
@@ -59,6 +61,17 @@ import {
 import { usePayslipIdFromUrl } from "@/hooks/use-payslip-id-from-url";
 import { userFacingPayslipLoadError } from "@/lib/payslip-load-errors";
 import { payslipPdfPasswordDescription } from "@/lib/payslip-pdf-password";
+
+function formatPesoAmounts(n: number | undefined | null): string {
+  return (n ?? 0).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function maskPesoNumberPart(formatted: string): string {
+  return formatted.replace(/[0-9]/g, "*");
+}
 
 function PayslipsPageContent() {
   const { toast } = useToast();
@@ -123,6 +136,10 @@ function PayslipsPageContent() {
   const [downloadingPayslipId, setDownloadingPayslipId] = useState<
     string | null
   >(null);
+  /** When not in this set, gross/deductions/net are masked in the table */
+  const [revealedAmountRowIds, setRevealedAmountRowIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   /** Avoid re-opening the same notification deeplink on every render */
   const openedPayslipFromUrlRef = useRef<string | null>(null);
 
@@ -219,6 +236,16 @@ function PayslipsPageContent() {
     selectedPayslip?.cutoffStart != null && selectedPayslip?.cutoffEnd != null
       ? `${formatManilaShortMonthDay(selectedPayslip.cutoffStart)} to ${formatManilaShortDate(selectedPayslip.cutoffEnd)}`
       : selectedPayslip?.period;
+
+  const toggleRowAmountVisibility = (payslipId: string) => {
+    setRevealedAmountRowIds((prev) => {
+      const next = new Set(prev);
+      const k = String(payslipId);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  };
 
   const handleViewPayslip = async (payslip: any) => {
     setSelectedPayslip(payslip);
@@ -712,6 +739,9 @@ function PayslipsPageContent() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Period</TableHead>
+                    <TableHead className="w-10 px-0 text-center">
+                      <span className="sr-only">Show or hide pay amounts</span>
+                    </TableHead>
                     <TableHead>Gross Pay</TableHead>
                     <TableHead>Deductions</TableHead>
                     <TableHead>Net Pay</TableHead>
@@ -720,36 +750,54 @@ function PayslipsPageContent() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredPayslips?.map((payslip: any) => (
+                  {filteredPayslips?.map((payslip: any) => {
+                    const rowId = String(payslip._id);
+                    const showAmounts = revealedAmountRowIds.has(rowId);
+                    const grossStr = formatPesoAmounts(payslip.grossPay);
+                    const dedTotal = (payslip.deductions ?? []).reduce(
+                      (sum: number, d: { amount?: number }) =>
+                        sum + (d.amount || 0),
+                      0,
+                    );
+                    const dedStr = formatPesoAmounts(dedTotal);
+                    const netStr = formatPesoAmounts(payslip.netPay);
+                    return (
                     <TableRow key={payslip._id}>
                       <TableCell className="font-medium">
                         {payslip.period}
                       </TableCell>
-                      <TableCell>
-                        ₱
-                        {payslip.grossPay?.toLocaleString("en-US", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        }) || "0.00"}
+                      <TableCell className="w-10 px-0 text-center align-middle">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          aria-pressed={showAmounts}
+                          aria-label={
+                            showAmounts
+                              ? "Hide pay amounts for this row"
+                              : "Show pay amounts for this row"
+                          }
+                          onClick={() => toggleRowAmountVisibility(rowId)}
+                        >
+                          {showAmounts ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </Button>
                       </TableCell>
                       <TableCell>
                         ₱
-                        {payslip.deductions
-                          ?.reduce(
-                            (sum: number, d: any) => sum + (d.amount || 0),
-                            0,
-                          )
-                          ?.toLocaleString("en-US", {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          }) || "0.00"}
+                        {showAmounts
+                          ? grossStr
+                          : maskPesoNumberPart(grossStr)}
+                      </TableCell>
+                      <TableCell>
+                        ₱{showAmounts ? dedStr : maskPesoNumberPart(dedStr)}
                       </TableCell>
                       <TableCell className="font-semibold">
-                        ₱
-                        {payslip.netPay?.toLocaleString("en-US", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        }) || "0.00"}
+                        ₱{showAmounts ? netStr : maskPesoNumberPart(netStr)}
                       </TableCell>
                       <TableCell>
                         {format(new Date(payslip.createdAt), "MMM dd, yyyy")}
@@ -761,7 +809,7 @@ function PayslipsPageContent() {
                             size="sm"
                             onClick={() => handleViewPayslip(payslip)}
                           >
-                            <Eye className="h-4 w-4 mr-2" />
+                            <FileText className="h-4 w-4 mr-2" />
                             View
                           </Button>
                           <Button
@@ -788,7 +836,8 @@ function PayslipsPageContent() {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             )}
@@ -812,7 +861,25 @@ function PayslipsPageContent() {
                   cutoffStart={selectedPayslip?.cutoffStart}
                   cutoffEnd={selectedPayslip?.cutoffEnd}
                 />
-                <DialogFooter>
+                <DialogFooter className="flex flex-row flex-wrap gap-2 sm:justify-end sm:space-x-0">
+                  <Button
+                    variant="outline"
+                    disabled={
+                      !selectedPayslip?._id ||
+                      downloadingPayslipId === String(selectedPayslip._id)
+                    }
+                    onClick={() =>
+                      selectedPayslip &&
+                      void handleDownloadPayslipPdf(selectedPayslip)
+                    }
+                  >
+                    {downloadingPayslipId === String(selectedPayslip?._id) ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4 mr-2" />
+                    )}
+                    Download
+                  </Button>
                   <Button
                     variant="outline"
                     onClick={() => {

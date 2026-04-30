@@ -5,9 +5,9 @@ import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
 import { useEmployeeView } from "@/hooks/employee-view-context";
 import { usePayslipIdFromUrl } from "@/hooks/use-payslip-id-from-url";
-import { getPayslip } from "@/actions/payroll";
+import { downloadPayslipPdf, getPayslip } from "@/actions/payroll";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Lock, Loader2 } from "lucide-react";
+import { Download, Lock, Loader2 } from "lucide-react";
 import { PayslipDetail } from "@/components/payslip-detail";
 import {
   PAYSLIP_NOT_FOUND,
@@ -26,6 +26,8 @@ import {
 } from "@/lib/payslip-load-errors";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useToast } from "@/components/ui/use-toast";
+import { removeOrganizationId } from "@/utils/organization-routing";
+import { payslipPdfPasswordDescription } from "@/lib/payslip-pdf-password";
 
 const STAFF_ROLES = new Set(["owner", "admin", "hr", "accounting"]);
 
@@ -78,6 +80,9 @@ export function PayslipDeepLinkModal() {
   const [isVerifyingPin, setIsVerifyingPin] = useState(false);
   const [details, setDetails] = useState<any>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [downloadingPayslipId, setDownloadingPayslipId] = useState<
+    string | null
+  >(null);
 
   const orgId = effectiveOrganizationId;
   const employeeId = payslipAccess?.employeeId ?? null;
@@ -100,6 +105,39 @@ export function PayslipDeepLinkModal() {
     const next = u.pathname + (u.search && u.search !== "?" ? u.search : "");
     router.replace(next || pathname, { scroll: false });
     setOpen(false);
+  }, [pathname, router]);
+
+  const prevPathnameForPayslipDeeplinkRef = useRef<string | null>(null);
+
+  /**
+   * Drop `?payslipId=` when the user in-app navigates to another page (e.g. they
+   * opened a notification on payslips then used the sidebar) so the global PIN
+   * modal does not follow them. Cold loads to e.g. `/…/chat?payslipId=` still work
+   * (no previous pathname in this tab session).
+   */
+  useEffect(() => {
+    if (typeof window === "undefined" || !pathname) return;
+
+    const u = new URL(window.location.href);
+    const hasPayslipParam = Boolean(u.searchParams.get("payslipId"));
+    const pathWithoutOrg = removeOrganizationId(pathname) || "/";
+    const onPayslips =
+      pathWithoutOrg === "/payslips" || pathWithoutOrg.startsWith("/payslips/");
+
+    if (onPayslips || !hasPayslipParam) {
+      prevPathnameForPayslipDeeplinkRef.current = pathname;
+      return;
+    }
+
+    const previous = prevPathnameForPayslipDeeplinkRef.current;
+    prevPathnameForPayslipDeeplinkRef.current = pathname;
+
+    if (previous != null && previous !== pathname) {
+      u.searchParams.delete("payslipId");
+      const next =
+        u.pathname + (u.search && u.search !== "?" ? u.search : "");
+      router.replace(next, { scroll: false });
+    }
   }, [pathname, router]);
 
   // Drive open state from URL (after client knows payslipId).
@@ -194,6 +232,42 @@ export function PayslipDeepLinkModal() {
     user,
     toast,
   ]);
+
+  const handleDownloadPayslipPdf = async (payslip: { _id: string }) => {
+    try {
+      setDownloadingPayslipId(String(payslip._id));
+      const { pdfBase64, fileName } = await downloadPayslipPdf(
+        String(payslip._id),
+      );
+      const binary = atob(pdfBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast({
+        title: "Payslip downloaded",
+        description: `To open the file: ${payslipPdfPasswordDescription()}`,
+      });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Download failed";
+      toast({
+        title: "Download failed",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setDownloadingPayslipId(null);
+    }
+  };
 
   const handlePinSubmit = async () => {
     if (!employeeId || !pinValue.trim()) {
@@ -321,7 +395,22 @@ export function PayslipDeepLinkModal() {
         )}
 
         {(phase === "view" || loadError) && (
-          <div className="flex justify-end pt-2">
+          <div className="flex flex-wrap justify-end gap-2 pt-2">
+            {phase === "view" && details ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={downloadingPayslipId === String(details._id)}
+                onClick={() => void handleDownloadPayslipPdf(details)}
+              >
+                {downloadingPayslipId === String(details._id) ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4 mr-2" />
+                )}
+                Download
+              </Button>
+            ) : null}
             <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
               Close
             </Button>
