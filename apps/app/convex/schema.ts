@@ -100,7 +100,14 @@ export default defineSchema({
     payrollRunId: v.optional(v.id("payrollRuns")),
   })
     .index("by_user_org_created", ["userId", "organizationId", "createdAt"])
-    .index("by_user_org_unread", ["userId", "organizationId", "read"]),
+    .index("by_user_org_unread", ["userId", "organizationId", "read"])
+    /** Unread (read=false) with createdAt for cursor pagination, newest first */
+    .index("by_user_org_read_created", [
+      "userId",
+      "organizationId",
+      "read",
+      "createdAt",
+    ]),
 
   // Employees table (core module)
   employees: defineTable({

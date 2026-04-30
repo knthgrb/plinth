@@ -44,16 +44,65 @@ export const getUnreadNotificationCount = query({
   },
 });
 
+/** Total + unread counts for tab labels (one indexed scan of user notifications). */
+export const getNotificationTabCounts = query({
+  args: { organizationId: v.id("organizations") },
+  handler: async (ctx, { organizationId }) => {
+    const me = await checkAuth(ctx, organizationId);
+    const rows = await (ctx.db.query("notifications") as any)
+      .withIndex("by_user_org_created", (q: any) =>
+        q.eq("userId", me._id).eq("organizationId", organizationId),
+      )
+      .collect() as Array<{ read: boolean }>;
+    const unread = rows.filter((r) => !r.read).length;
+    return { total: rows.length, unread };
+  },
+});
+
 export const listNotificationsPage = query({
   args: {
     organizationId: v.id("organizations"),
     limit: v.number(),
     /** Pass the `createdAt` of the last item to load the next (older) page. */
     cursor: v.optional(v.number()),
+    /** When true, only unread — uses `by_user_org_read_created` for correct paging. */
+    unreadOnly: v.optional(v.boolean()),
   },
-  handler: async (ctx, { organizationId, limit, cursor }) => {
+  handler: async (ctx, { organizationId, limit, cursor, unreadOnly }) => {
     const me = await checkAuth(ctx, organizationId);
     const lim = Math.min(Math.max(1, limit), 50);
+
+    if (unreadOnly) {
+      const batch = await (ctx.db.query("notifications") as any)
+        .withIndex("by_user_org_read_created", (q: any) => {
+          const base = q
+            .eq("userId", me._id)
+            .eq("organizationId", organizationId)
+            .eq("read", false);
+          if (cursor !== undefined) {
+            return base.lt("createdAt", cursor);
+          }
+          return base;
+        })
+        .order("desc")
+        .take(lim + 1);
+      const hasMore = batch.length > lim;
+      const items = (hasMore ? batch.slice(0, lim) : batch) as Array<{
+        _id: Id<"notifications">;
+        type: string;
+        title: string;
+        body?: string;
+        read: boolean;
+        createdAt: number;
+        pathAfterOrg: string;
+      }>;
+      const nextCursor =
+        hasMore && items.length > 0
+          ? items[items.length - 1].createdAt
+          : null;
+      return { items, nextCursor, hasMore };
+    }
+
     const batch = await (ctx.db.query("notifications") as any)
       .withIndex("by_user_org_created", (q: any) => {
         const base = q
