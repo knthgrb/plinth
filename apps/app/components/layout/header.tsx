@@ -141,17 +141,16 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
               side="bottom"
               sideOffset={8}
             >
-              <button
-                type="button"
+              <a
+                href={HELP_DOCS_URL}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-normal text-[rgb(64,64,64)] transition-colors hover:bg-[rgb(250,250,250)]"
-                onClick={() => {
-                  setHelpPopoverOpen(false);
-                  window.open(HELP_DOCS_URL, "_blank", "noopener,noreferrer");
-                }}
+                onClick={() => setHelpPopoverOpen(false)}
               >
                 <BookOpen className="h-4 w-4 shrink-0 text-gray-700" />
                 Guide
-              </button>
+              </a>
               <a
                 href={SUPPORT_MAILTO}
                 className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-normal text-[rgb(64,64,64)] transition-colors hover:bg-[rgb(250,250,250)]"
