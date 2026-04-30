@@ -32,14 +32,6 @@ function formatPeso(n: number): string {
   })}`;
 }
 
-/** Positive earnings line — explicit leading + for readability */
-function formatPesoPlus(n: number): string {
-  if (n <= 0) return formatPeso(n);
-  return `+${formatPeso(n)}`;
-}
-
-const MINUS = "\u2212";
-
 function isAttendanceLikeDeduction(d: {
   name: string;
   type: string;
@@ -321,7 +313,7 @@ export function renderPayslipPdfBuffer(args: {
       return y + rowH;
     };
 
-    /** Deduction / reduction shown in earnings column (Unicode minus + peso) */
+    /** Deduction / reduction in earnings column (ASCII hyphen; avoids ±-like glyphs with ₱) */
     const rowAmountMinus = (
       x: number,
       y: number,
@@ -331,7 +323,7 @@ export function renderPayslipPdfBuffer(args: {
       opts?: { size?: number },
     ): number => {
       const fs = opts?.size ?? 9;
-      const amountStr = `${MINUS}${formatPeso(amount)}`;
+      const amountStr = `-${formatPeso(amount)}`;
       doc
         .font("Helvetica")
         .fontSize(fs)
@@ -444,7 +436,7 @@ export function renderPayslipPdfBuffer(args: {
       .text("EARNINGS", earnX, ye, { width: colWidth });
     ye += 18;
 
-    ye = rowAmount(earnX, ye, colWidth, "Basic Pay", formatPesoPlus(basic));
+    ye = rowAmount(earnX, ye, colWidth, "Basic Pay", formatPeso(basic));
 
     const adj = num(p.adjustments);
     const lessLineItems: Array<{ label: string; amount: number }> = [
@@ -509,7 +501,7 @@ export function renderPayslipPdfBuffer(args: {
         ye,
         colWidth,
         row.label,
-        formatPesoPlus(row.amount),
+        formatPeso(row.amount),
       );
     }
 
@@ -538,7 +530,7 @@ export function renderPayslipPdfBuffer(args: {
           ye,
           colWidth,
           "Non-taxable Allowance",
-          formatPesoPlus(allowance),
+          formatPeso(allowance),
           { size: 9 },
         );
       }
@@ -548,7 +540,7 @@ export function renderPayslipPdfBuffer(args: {
           ye,
           colWidth,
           inc.name || "Addition",
-          formatPesoPlus(inc.amount),
+          formatPeso(inc.amount),
           { size: 9 },
         );
       }
