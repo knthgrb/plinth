@@ -5,6 +5,7 @@ import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Button } from "@/components/ui/button";
 import { useOrganization } from "@/hooks/organization-context";
+import { useEmployeeView } from "@/hooks/employee-view-context";
 import { Bell, Plus, ChevronDown } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import dynamic from "next/dynamic";
@@ -21,6 +22,7 @@ const PAGE_SIZE = 10;
 
 export default function AnnouncementsPage() {
   const { effectiveOrganizationId, currentOrganization } = useOrganization();
+  const { isEmployeeExperienceUI } = useEmployeeView();
   const [createOpen, setCreateOpen] = useState(false);
   const [editingAnnouncement, setEditingAnnouncement] =
     useState<AnnouncementEditSnapshot | null>(null);
@@ -96,7 +98,10 @@ export default function AnnouncementsPage() {
   };
 
   const canCreate =
-    user?.role === "admin" || user?.role === "hr" || user?.role === "owner";
+    !isEmployeeExperienceUI &&
+    (user?.role === "admin" ||
+      user?.role === "hr" ||
+      user?.role === "owner");
   if (!effectiveOrganizationId) return null;
 
   return (

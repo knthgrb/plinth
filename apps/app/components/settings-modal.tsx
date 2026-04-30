@@ -71,6 +71,15 @@ type SettingsSection =
 
 type OrganizationRole = "owner" | "admin" | "hr" | "accounting" | "employee";
 
+const ORG_ONLY_SETTINGS_SECTIONS = new Set<SettingsSection>([
+  "organizations",
+  "payroll",
+  "leave-types",
+  "departments",
+  "holidays",
+  "attendance-shifts",
+]);
+
 interface SettingsModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -95,6 +104,16 @@ export function SettingsModal({
       setActiveSection(propInitialSection);
     }
   }, [propInitialSection, open]);
+
+  React.useEffect(() => {
+    if (
+      open &&
+      isEmployeeExperienceUI &&
+      ORG_ONLY_SETTINGS_SECTIONS.has(activeSection)
+    ) {
+      setActiveSection("account");
+    }
+  }, [open, isEmployeeExperienceUI, activeSection]);
 
   const user = useQuery(
     api.organizations.getCurrentUser,
@@ -409,12 +428,15 @@ export function SettingsModal({
               </div>
 
               {(() => {
+                if (isEmployeeExperienceUI) return null;
                 const effectiveRole: OrganizationRole | undefined =
                   user?.role === "owner"
                     ? "admin"
                     : (user?.role as OrganizationRole | undefined);
                 const visibleOrgItems = organizationSettingsItems.filter(
-                  (item) => !item.roles || !!effectiveRole && item.roles.includes(effectiveRole),
+                  (item) =>
+                    !item.roles ||
+                    (!!effectiveRole && item.roles.includes(effectiveRole)),
                 );
                 if (visibleOrgItems.length === 0) return null;
                 return (
@@ -431,12 +453,8 @@ export function SettingsModal({
                         Organization Settings
                       </div>
                       <div className="flex lg:flex-col gap-1 lg:gap-0 overflow-x-auto lg:overflow-x-visible">
-                        {organizationSettingsItems.map((item) => {
+                        {visibleOrgItems.map((item) => {
                           const Icon = item.icon;
-                          const hasAccess =
-                            !item.roles ||
-                            (!!effectiveRole && item.roles.includes(effectiveRole));
-                          if (!hasAccess) return null;
                           return (
                             <button
                               key={item.id}

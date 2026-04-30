@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CheckCheck, Loader2 } from "lucide-react";
 import { useOrganization } from "@/hooks/organization-context";
+import { useEmployeeView } from "@/hooks/employee-view-context";
 import { getOrganizationPath } from "@/utils/organization-routing";
 import type { Id } from "@/convex/_generated/dataModel";
 import {
@@ -21,6 +22,7 @@ const PAGE_SIZE = 20;
 export function NotificationsPageClient() {
   const router = useRouter();
   const { effectiveOrganizationId } = useOrganization();
+  const { isEmployeeExperienceUI } = useEmployeeView();
   const orgId = effectiveOrganizationId as Id<"organizations"> | undefined;
   const [tab, setTab] = useState<"all" | "unread">("all");
   const [cursor, setCursor] = useState<number | undefined>(undefined);
@@ -33,12 +35,22 @@ export function NotificationsPageClient() {
   const ap = api as any;
   const tabCounts = useQuery(
     ap.notifications.getNotificationTabCounts,
-    orgId ? { organizationId: orgId } : "skip",
+    orgId
+      ? {
+          organizationId: orgId,
+          forEmployeeExperience: isEmployeeExperienceUI,
+        }
+      : "skip",
   );
   const pageDataAll = useQuery(
     ap.notifications.listNotificationsPage,
     orgId && !unreadOnly
-      ? { organizationId: orgId, limit: PAGE_SIZE, cursor }
+      ? {
+          organizationId: orgId,
+          limit: PAGE_SIZE,
+          cursor,
+          forEmployeeExperience: isEmployeeExperienceUI,
+        }
       : "skip",
   );
   const pageDataUnread = useQuery(
@@ -49,6 +61,7 @@ export function NotificationsPageClient() {
           limit: PAGE_SIZE,
           cursor,
           unreadOnly: true,
+          forEmployeeExperience: isEmployeeExperienceUI,
         }
       : "skip",
   );
@@ -152,7 +165,10 @@ export function NotificationsPageClient() {
               className="shrink-0 border-[#DDDDDD] text-[rgb(64,64,64)] hover:bg-[rgb(250,250,250)] gap-1.5"
               onClick={async () => {
                 try {
-                  await markAllRead({ organizationId: orgId });
+                  await markAllRead({
+                    organizationId: orgId,
+                    forEmployeeExperience: isEmployeeExperienceUI,
+                  });
                   setItems((rows) => rows.map((r) => ({ ...r, read: true })));
                 } catch {
                   /* empty */

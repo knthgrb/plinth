@@ -1,4 +1,5 @@
 import type { Id } from "./_generated/dataModel";
+import { decryptEmployeeFromDb } from "./employeeCompensationCrypto";
 
 export async function getUserIdsForLeaveApprovers(
   ctx: { db: any },
@@ -22,6 +23,12 @@ export async function getUserIdsForLeaveApprovers(
   return out;
 }
 
+/**
+ * Login user for an employee record in this org. Must match
+ * `findPlinthAccountEmailForEmployee` in payroll.ts: staff (admin/owner/hr) often
+ * have `userOrganizations.employeeId` unset, so the index+filter on employeeId
+ * alone misses them; we fall back to work-email + org membership (same as payslip emails).
+ */
 export async function getUserIdForEmployeeInOrg(
   ctx: { db: any },
   organizationId: Id<"organizations">,
@@ -33,8 +40,36 @@ export async function getUserIdForEmployeeInOrg(
     )
     .filter((f: any) => f.eq(f.field("employeeId"), employeeId))
     .collect();
-  const u = (rows[0] as { userId?: Id<"users"> } | undefined)?.userId;
-  return u ?? null;
+  const direct = (rows[0] as { userId?: Id<"users"> } | undefined)?.userId;
+  if (direct) return direct;
+
+  const employeeRaw = await ctx.db.get(employeeId);
+  if (!employeeRaw) return null;
+  const employee = decryptEmployeeFromDb(employeeRaw as any);
+  const workEmail = String(employee.personalInfo?.email || "").trim();
+
+  const tryEmails = new Set<string>();
+  if (workEmail) {
+    tryEmails.add(workEmail);
+    tryEmails.add(workEmail.toLowerCase());
+  }
+  for (const em of tryEmails) {
+    if (!em) continue;
+    const user = await (ctx.db.query("users") as any)
+      .withIndex("by_email", (q: any) => q.eq("email", em))
+      .first();
+    if (!user || (user as { isActive?: boolean }).isActive === false) continue;
+    const uo = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_user_organization", (q: any) =>
+        q.eq("userId", user._id).eq("organizationId", organizationId),
+      )
+      .first();
+    if (!uo) continue;
+    if (uo.employeeId != null && uo.employeeId !== employeeId) continue;
+    return (user as { _id: Id<"users"> })._id;
+  }
+
+  return null;
 }
 
 export type InsertInAppNotificationArgs = {

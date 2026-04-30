@@ -3,6 +3,14 @@ import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import type { Id } from "./_generated/dataModel";
 
+/** Types shown in employee experience (self payslip / own leave outcomes). Approver inbox is staff-only. */
+const forEmployeeExperienceFilter = (q: any) =>
+  q.or(
+    q.eq(q.field("type"), "leave_approved"),
+    q.eq(q.field("type"), "leave_rejected"),
+    q.eq(q.field("type"), "payslip_ready"),
+  );
+
 async function checkAuth(ctx: any, organizationId: Id<"organizations">) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -29,31 +37,45 @@ async function checkAuth(ctx: any, organizationId: Id<"organizations">) {
 }
 
 export const getUnreadNotificationCount = query({
-  args: { organizationId: v.id("organizations") },
-  handler: async (ctx, { organizationId }) => {
+  args: {
+    organizationId: v.id("organizations"),
+    /** When true, only count notifications appropriate for employee experience UI. */
+    forEmployeeExperience: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { organizationId, forEmployeeExperience }) => {
     const me = await checkAuth(ctx, organizationId);
-    const rows = await (ctx.db.query("notifications") as any)
-      .withIndex("by_user_org_unread", (q: any) =>
-        q
+    let q = (ctx.db.query("notifications") as any).withIndex(
+      "by_user_org_unread",
+      (iq: any) =>
+        iq
           .eq("userId", me._id)
           .eq("organizationId", organizationId)
           .eq("read", false),
-      )
-      .collect();
+    );
+    if (forEmployeeExperience) {
+      q = q.filter(forEmployeeExperienceFilter);
+    }
+    const rows = await q.collect();
     return { count: rows.length };
   },
 });
 
 /** Total + unread counts for tab labels (one indexed scan of user notifications). */
 export const getNotificationTabCounts = query({
-  args: { organizationId: v.id("organizations") },
-  handler: async (ctx, { organizationId }) => {
+  args: {
+    organizationId: v.id("organizations"),
+    forEmployeeExperience: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { organizationId, forEmployeeExperience }) => {
     const me = await checkAuth(ctx, organizationId);
-    const rows = await (ctx.db.query("notifications") as any)
-      .withIndex("by_user_org_created", (q: any) =>
-        q.eq("userId", me._id).eq("organizationId", organizationId),
-      )
-      .collect() as Array<{ read: boolean }>;
+    let q = (ctx.db.query("notifications") as any).withIndex(
+      "by_user_org_created",
+      (iq: any) => iq.eq("userId", me._id).eq("organizationId", organizationId),
+    );
+    if (forEmployeeExperience) {
+      q = q.filter(forEmployeeExperienceFilter);
+    }
+    const rows = (await q.collect()) as Array<{ read: boolean }>;
     const unread = rows.filter((r) => !r.read).length;
     return { total: rows.length, unread };
   },
@@ -67,13 +89,14 @@ export const listNotificationsPage = query({
     cursor: v.optional(v.number()),
     /** When true, only unread — uses `by_user_org_read_created` for correct paging. */
     unreadOnly: v.optional(v.boolean()),
+    forEmployeeExperience: v.optional(v.boolean()),
   },
-  handler: async (ctx, { organizationId, limit, cursor, unreadOnly }) => {
+  handler: async (ctx, { organizationId, limit, cursor, unreadOnly, forEmployeeExperience }) => {
     const me = await checkAuth(ctx, organizationId);
     const lim = Math.min(Math.max(1, limit), 50);
 
     if (unreadOnly) {
-      const batch = await (ctx.db.query("notifications") as any)
+      let unreadQuery = (ctx.db.query("notifications") as any)
         .withIndex("by_user_org_read_created", (q: any) => {
           const base = q
             .eq("userId", me._id)
@@ -84,8 +107,11 @@ export const listNotificationsPage = query({
           }
           return base;
         })
-        .order("desc")
-        .take(lim + 1);
+        .order("desc");
+      if (forEmployeeExperience) {
+        unreadQuery = unreadQuery.filter(forEmployeeExperienceFilter);
+      }
+      const batch = await unreadQuery.take(lim + 1);
       const hasMore = batch.length > lim;
       const items = (hasMore ? batch.slice(0, lim) : batch) as Array<{
         _id: Id<"notifications">;
@@ -103,7 +129,7 @@ export const listNotificationsPage = query({
       return { items, nextCursor, hasMore };
     }
 
-    const batch = await (ctx.db.query("notifications") as any)
+    let allQuery = (ctx.db.query("notifications") as any)
       .withIndex("by_user_org_created", (q: any) => {
         const base = q
           .eq("userId", me._id)
@@ -113,8 +139,11 @@ export const listNotificationsPage = query({
         }
         return base;
       })
-      .order("desc")
-      .take(lim + 1);
+      .order("desc");
+    if (forEmployeeExperience) {
+      allQuery = allQuery.filter(forEmployeeExperienceFilter);
+    }
+    const batch = await allQuery.take(lim + 1);
     const hasMore = batch.length > lim;
     const items = (hasMore ? batch.slice(0, lim) : batch) as Array<{
       _id: Id<"notifications">;
@@ -149,17 +178,24 @@ export const markNotificationRead = mutation({
 });
 
 export const markAllNotificationsRead = mutation({
-  args: { organizationId: v.id("organizations") },
-  handler: async (ctx, { organizationId }) => {
+  args: {
+    organizationId: v.id("organizations"),
+    forEmployeeExperience: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { organizationId, forEmployeeExperience }) => {
     const me = await checkAuth(ctx, organizationId);
-    const rows = await (ctx.db.query("notifications") as any)
-      .withIndex("by_user_org_unread", (q: any) =>
-        q
+    let q = (ctx.db.query("notifications") as any).withIndex(
+      "by_user_org_unread",
+      (iq: any) =>
+        iq
           .eq("userId", me._id)
           .eq("organizationId", organizationId)
           .eq("read", false),
-      )
-      .collect();
+    );
+    if (forEmployeeExperience) {
+      q = q.filter(forEmployeeExperienceFilter);
+    }
+    const rows = await q.collect();
     for (const row of rows) {
       await ctx.db.patch((row as { _id: Id<"notifications"> })._id, {
         read: true,

@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/popover";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useOrganization } from "@/hooks/organization-context";
+import { useEmployeeView } from "@/hooks/employee-view-context";
 import { getOrganizationPath } from "@/utils/organization-routing";
 import type { Id } from "@/convex/_generated/dataModel";
 import {
@@ -25,6 +26,7 @@ const PAGE_SIZE = 10;
 export function NotificationBell() {
   const router = useRouter();
   const { effectiveOrganizationId } = useOrganization();
+  const { isEmployeeExperienceUI } = useEmployeeView();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"all" | "unread">("all");
   const [cursor, setCursor] = useState<number | undefined>(undefined);
@@ -38,22 +40,43 @@ export function NotificationBell() {
   const ap = api as any;
   const unread = useQuery(
     ap.notifications.getUnreadNotificationCount,
-    orgId ? { organizationId: orgId } : "skip",
+    orgId
+      ? {
+          organizationId: orgId,
+          forEmployeeExperience: isEmployeeExperienceUI,
+        }
+      : "skip",
   );
   const tabCounts = useQuery(
     ap.notifications.getNotificationTabCounts,
-    orgId && open ? { organizationId: orgId } : "skip",
+    orgId && open
+      ? {
+          organizationId: orgId,
+          forEmployeeExperience: isEmployeeExperienceUI,
+        }
+      : "skip",
   );
   const pageDataAll = useQuery(
     ap.notifications.listNotificationsPage,
     orgId && open && !unreadOnly
-      ? { organizationId: orgId, limit: PAGE_SIZE, cursor }
+      ? {
+          organizationId: orgId,
+          limit: PAGE_SIZE,
+          cursor,
+          forEmployeeExperience: isEmployeeExperienceUI,
+        }
       : "skip",
   );
   const pageDataUnread = useQuery(
     ap.notifications.listNotificationsPage,
     orgId && open && unreadOnly
-      ? { organizationId: orgId, limit: PAGE_SIZE, cursor, unreadOnly: true }
+      ? {
+          organizationId: orgId,
+          limit: PAGE_SIZE,
+          cursor,
+          unreadOnly: true,
+          forEmployeeExperience: isEmployeeExperienceUI,
+        }
       : "skip",
   );
   const pageData = unreadOnly ? pageDataUnread : pageDataAll;
@@ -156,7 +179,10 @@ export function NotificationBell() {
   const handleMarkAllRead = async () => {
     if (!orgId) return;
     try {
-      await markAllRead({ organizationId: orgId });
+      await markAllRead({
+        organizationId: orgId,
+        forEmployeeExperience: isEmployeeExperienceUI,
+      });
     } catch {
       /* empty */
     }
