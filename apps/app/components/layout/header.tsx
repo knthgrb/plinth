@@ -9,6 +9,8 @@ import {
   HelpCircle,
   Menu,
   UserCog,
+  BookOpen,
+  Mail,
 } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { useQuery } from "convex/react";
@@ -36,6 +38,9 @@ type HeaderProps = {
   onMobileMenuOpen?: () => void;
 };
 
+const HELP_DOCS_URL = "https://plinth-marketing.vercel.app/resources#docs";
+const SUPPORT_MAILTO = "mailto:kennethgarbo0@gmail.com";
+
 export function Header({ onMobileMenuOpen }: HeaderProps) {
   const router = useRouter();
   const { effectiveOrganizationId, clearOrganization } = useOrganization();
@@ -53,6 +58,7 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
   } = useSettingsModal();
 
   const [userPopoverOpen, setUserPopoverOpen] = useState(false);
+  const [helpPopoverOpen, setHelpPopoverOpen] = useState(false);
   const { canUseEmployeeView, employeeViewActive, setEmployeeViewActive } =
     useEmployeeView();
 
@@ -113,20 +119,49 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
             </TooltipTrigger>
             <TooltipContent position="bottom">Settings</TooltipContent>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <a
-                href="https://plinth-marketing.vercel.app/resources#docs"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hidden sm:flex items-center justify-center rounded-full hover:bg-[rgb(250,250,250)] w-9 h-9 shrink-0 text-sm font-normal transition-colors cursor-pointer group"
-                aria-label="Help"
+          <Popover open={helpPopoverOpen} onOpenChange={setHelpPopoverOpen}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="hidden sm:flex items-center justify-center rounded-full hover:bg-[rgb(250,250,250)] w-9 h-9 shrink-0 text-sm font-normal transition-colors cursor-pointer group"
+                    aria-label="Help"
+                    aria-expanded={helpPopoverOpen}
+                  >
+                    <HelpCircle className="h-4.5 w-4.5 transition-colors text-gray-900 group-hover:opacity-80" />
+                  </button>
+                </PopoverTrigger>
+              </TooltipTrigger>
+              <TooltipContent position="bottom">Help</TooltipContent>
+            </Tooltip>
+            <PopoverContent
+              className="w-[220px] p-1.5 rounded-xl border-0 shadow-lg ring-1 ring-black/5"
+              align="end"
+              side="bottom"
+              sideOffset={8}
+            >
+              <button
+                type="button"
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-normal text-[rgb(64,64,64)] transition-colors hover:bg-[rgb(250,250,250)]"
+                onClick={() => {
+                  setHelpPopoverOpen(false);
+                  window.open(HELP_DOCS_URL, "_blank", "noopener,noreferrer");
+                }}
               >
-                <HelpCircle className="h-4.5 w-4.5 transition-colors text-gray-900 group-hover:opacity-80" />
+                <BookOpen className="h-4 w-4 shrink-0 text-gray-700" />
+                Guide
+              </button>
+              <a
+                href={SUPPORT_MAILTO}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-normal text-[rgb(64,64,64)] transition-colors hover:bg-[rgb(250,250,250)]"
+                onClick={() => setHelpPopoverOpen(false)}
+              >
+                <Mail className="h-4 w-4 shrink-0 text-gray-700" />
+                Support
               </a>
-            </TooltipTrigger>
-            <TooltipContent position="bottom">Help</TooltipContent>
-          </Tooltip>
+            </PopoverContent>
+          </Popover>
           <Popover open={userPopoverOpen} onOpenChange={setUserPopoverOpen}>
             <PopoverTrigger asChild>
               <button
