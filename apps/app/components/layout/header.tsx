@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/tooltip";
 import { SettingsModal } from "@/components/settings-modal";
 import { useSettingsModal } from "@/hooks/settings-modal-context";
+import { NotificationBell } from "@/components/notifications/notification-bell";
 
 type HeaderProps = {
   onMobileMenuOpen?: () => void;
@@ -99,6 +100,7 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
           </button>
         </div>
         <div className="flex items-center gap-1.5 h-10">
+          {effectiveOrganizationId && <NotificationBell />}
           <Tooltip>
             <TooltipTrigger asChild>
               <button

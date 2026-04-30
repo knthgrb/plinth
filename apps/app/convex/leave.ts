@@ -8,6 +8,12 @@ import {
   getProratedAnnualSilTracker,
   getCompletedCalendarYearsSince,
 } from "./leaveCalculations";
+import { formatManilaNumericDate } from "@/lib/manila-date";
+import {
+  getUserIdForEmployeeInOrg,
+  getUserIdsForLeaveApprovers,
+  insertInAppNotification,
+} from "./notificationHelpers";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -526,6 +532,31 @@ export const createLeaveRequest = mutation({
       updatedAt: now,
     });
 
+    const typeLabel =
+      args.leaveType === "custom" &&
+      args.customLeaveType === GENERAL_LEAVE_CREDIT_KEY
+        ? "Annual leave"
+        : args.customLeaveType || args.leaveType;
+    const employeeName =
+      `${(employee as any).personalInfo?.firstName ?? ""} ${(employee as any).personalInfo?.lastName ?? ""}`.trim() ||
+      "An employee";
+    const periodStr = `${formatManilaNumericDate(args.startDate)} – ${formatManilaNumericDate(args.endDate)}`;
+    const approverUserIds = await getUserIdsForLeaveApprovers(
+      ctx,
+      args.organizationId,
+    );
+    for (const approverId of approverUserIds) {
+      await insertInAppNotification(ctx, {
+        userId: approverId,
+        organizationId: args.organizationId,
+        type: "leave_submitted",
+        title: `New leave request: ${employeeName}`,
+        body: `${typeLabel} · ${periodStr} · ${numberOfDays} day(s)`,
+        pathAfterOrg: "leave?tab=requests",
+        leaveRequestId: leaveRequestId as any,
+      });
+    }
+
     return leaveRequestId;
   },
 });
@@ -625,6 +656,29 @@ export const approveLeaveRequest = mutation({
       updatedAt: Date.now(),
     });
 
+    const typeLabelAppr =
+      request.leaveType === "custom" &&
+      request.customLeaveType === GENERAL_LEAVE_CREDIT_KEY
+        ? "Annual leave"
+        : request.customLeaveType || request.leaveType;
+    const requesterUserId = await getUserIdForEmployeeInOrg(
+      ctx,
+      request.organizationId,
+      request.employeeId,
+    );
+    if (requesterUserId) {
+      const periodAppr = `${formatManilaNumericDate(request.startDate)} – ${formatManilaNumericDate(request.endDate)}`;
+      await insertInAppNotification(ctx, {
+        userId: requesterUserId,
+        organizationId: request.organizationId,
+        type: "leave_approved",
+        title: "Leave request approved",
+        body: `Your ${typeLabelAppr} request (${periodAppr}) was approved.`,
+        pathAfterOrg: "leave?tab=history",
+        leaveRequestId: args.leaveRequestId,
+      });
+    }
+
     return { success: true };
   },
 });
@@ -652,6 +706,30 @@ export const rejectLeaveRequest = mutation({
       remarks: args.remarks,
       updatedAt: Date.now(),
     });
+
+    const typeLabelRej =
+      request.leaveType === "custom" &&
+      request.customLeaveType === GENERAL_LEAVE_CREDIT_KEY
+        ? "Annual leave"
+        : request.customLeaveType || request.leaveType;
+    const requesterRej = await getUserIdForEmployeeInOrg(
+      ctx,
+      request.organizationId,
+      request.employeeId,
+    );
+    if (requesterRej) {
+      const periodRej = `${formatManilaNumericDate(request.startDate)} – ${formatManilaNumericDate(request.endDate)}`;
+      const remarkExcerpt = (args.remarks || "").trim().slice(0, 200);
+      await insertInAppNotification(ctx, {
+        userId: requesterRej,
+        organizationId: request.organizationId,
+        type: "leave_rejected",
+        title: "Leave request not approved",
+        body: `Your ${typeLabelRej} request (${periodRej}) was declined.${remarkExcerpt ? ` Note: ${remarkExcerpt}` : ""}`,
+        pathAfterOrg: "leave?tab=history",
+        leaveRequestId: args.leaveRequestId,
+      });
+    }
 
     return { success: true };
   },

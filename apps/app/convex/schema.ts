@@ -79,6 +79,29 @@ export default defineSchema({
     .index("by_organization", ["organizationId"])
     .index("by_user_organization", ["userId", "organizationId"]),
 
+  /** In-app notifications (not chat); excludes new-message events. */
+  notifications: defineTable({
+    userId: v.id("users"),
+    organizationId: v.id("organizations"),
+    type: v.union(
+      v.literal("leave_submitted"),
+      v.literal("leave_approved"),
+      v.literal("leave_rejected"),
+      v.literal("payslip_ready"),
+    ),
+    title: v.string(),
+    body: v.optional(v.string()),
+    read: v.boolean(),
+    createdAt: v.number(),
+    /** App path after org id, e.g. "leave?tab=requests" or "payslips?payslipId=…" */
+    pathAfterOrg: v.string(),
+    leaveRequestId: v.optional(v.id("leaveRequests")),
+    payslipId: v.optional(v.id("payslips")),
+    payrollRunId: v.optional(v.id("payrollRuns")),
+  })
+    .index("by_user_org_created", ["userId", "organizationId", "createdAt"])
+    .index("by_user_org_unread", ["userId", "organizationId", "read"]),
+
   // Employees table (core module)
   employees: defineTable({
     organizationId: v.id("organizations"),

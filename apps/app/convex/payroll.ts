@@ -32,6 +32,10 @@ import {
 } from "@/lib/payroll-calculations";
 import { formatManilaNumericDate } from "@/lib/manila-date";
 import {
+  getUserIdForEmployeeInOrg,
+  insertInAppNotification,
+} from "./notificationHelpers";
+import {
   getVariableEarningsFromPayslip,
   recomputeGrossAndBasicFromVariableEarnings,
   recomputeNetFromEarningsAndLines,
@@ -2912,6 +2916,42 @@ export const updatePayrollRun = mutation({
   },
 });
 
+async function createPayslipReadyNotificationsForRun(
+  ctx: any,
+  payrollRunId: any,
+  payrollRunRaw: any,
+) {
+  const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
+  const orgRow = await ctx.db.get(payrollRun.organizationId);
+  const orgName = (orgRow as { name?: string } | null)?.name ?? "Your organization";
+  const payslipsRaw = await (ctx.db.query("payslips") as any)
+    .withIndex("by_payroll_run", (q: any) => q.eq("payrollRunId", payrollRunId))
+    .collect();
+  for (const raw of payslipsRaw) {
+    const payslip = decryptPayslipRowFromDb(raw);
+    if (!payslip) continue;
+    const userId = await getUserIdForEmployeeInOrg(
+      ctx,
+      payslip.organizationId,
+      payslip.employeeId,
+    );
+    if (!userId) continue;
+    const start = payrollRun.cutoffStart;
+    const end = payrollRun.cutoffEnd;
+    const periodLabel = `${formatManilaNumericDate(start)} – ${formatManilaNumericDate(end)}`;
+    await insertInAppNotification(ctx, {
+      userId,
+      organizationId: payslip.organizationId,
+      type: "payslip_ready",
+      title: "Payslip ready",
+      body: `Your payslip for ${periodLabel} is available (${orgName}).`,
+      pathAfterOrg: `payslips?payslipId=${payslip._id}`,
+      payslipId: payslip._id,
+      payrollRunId,
+    });
+  }
+}
+
 // Update payroll run status
 export const updatePayrollRunStatus = mutation({
   args: {
@@ -2979,9 +3019,14 @@ export const updatePayrollRunStatus = mutation({
 
     const updatedRun = await ctx.db.get(args.payrollRunId);
 
-    if (args.status === "finalized") {
+    if (args.status === "finalized" && updatedRun) {
       // Total to pay = sum of payslip netPay (same logic as generating payslips)
       await createExpenseItemsFromPayroll(ctx, updatedRun);
+      await createPayslipReadyNotificationsForRun(
+        ctx,
+        args.payrollRunId,
+        updatedRun,
+      );
     }
 
     if (args.status === "paid") {
