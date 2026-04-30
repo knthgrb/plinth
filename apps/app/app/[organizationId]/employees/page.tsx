@@ -31,7 +31,6 @@ import { getOrganizationPath } from "@/utils/organization-routing";
 import { useRouter } from "next/navigation";
 import {
   removeUserFromOrganization,
-  updateUserRoleInOrganization,
 } from "@/actions/organizations";
 import { sendMessageToEmployee } from "@/actions/chat";
 import { createUserForEmployee } from "@/actions/employees";
@@ -251,7 +250,6 @@ export default function EmployeesPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isBulkAddOpen, setIsBulkAddOpen] = useState(false);
   const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
-  const [updatingRole, setUpdatingRole] = useState<string | null>(null);
   const [isMessageDialogOpen, setIsMessageDialogOpen] = useState(false);
   const [messageEmployeeId, setMessageEmployeeId] = useState<string | null>(
     null,
@@ -615,42 +613,6 @@ export default function EmployeesPage() {
       });
     } finally {
       setIsDeletingEmployee(false);
-    }
-  };
-
-  const handleUpdateRole = async (
-    employee: any,
-    newRole: "admin" | "hr" | "employee",
-    e: React.MouseEvent,
-  ) => {
-    e.stopPropagation();
-    if (!currentOrganizationId || !isAdmin) return;
-
-    setUpdatingRole(employee._id);
-    try {
-      // Get user linked to this employee
-      const employeeUser = await getUserByEmployeeId({
-        organizationId: currentOrganizationId,
-        employeeId: employee._id,
-      });
-
-      if (employeeUser) {
-        await updateUserRoleInOrganization({
-          organizationId: currentOrganizationId,
-          userId: employeeUser._id,
-          role: newRole,
-        });
-        alert(`Role updated to ${newRole} successfully`);
-        window.location.reload();
-      } else {
-        alert(
-          "No user account found for this employee. Please invite them first.",
-        );
-      }
-    } catch (error: any) {
-      alert(error.message || "Failed to update role");
-    } finally {
-      setUpdatingRole(null);
     }
   };
 
@@ -1571,7 +1533,6 @@ export default function EmployeesPage() {
               isCreatingEmployee={isCreatingEmployee}
               isAdmin={isAdmin}
               updatingStatus={updatingStatus}
-              updatingRole={updatingRole}
               onRowClick={(employeeId: string) => {
                 setSelectedEmployeeId(employeeId);
                 setPanelMode("view");
@@ -1584,7 +1545,6 @@ export default function EmployeesPage() {
               }}
               onMessage={handleMessage}
               onUpdateStatus={handleUpdateStatus}
-              onUpdateRole={handleUpdateRole}
               onRemoveFromOrganization={handleRemoveFromOrganization}
               onRemoveEmployee={handleRemoveEmployee}
               onInvite={handleInvite}

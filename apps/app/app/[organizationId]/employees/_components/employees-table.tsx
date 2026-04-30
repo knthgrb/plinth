@@ -24,7 +24,6 @@ import {
   MessageSquare,
   MoreVertical,
   Pencil,
-  UserCog,
   UserMinus,
   Mail,
 } from "lucide-react";
@@ -44,18 +43,12 @@ interface EmployeesTableProps {
   isCreatingEmployee: boolean;
   isAdmin: boolean;
   updatingStatus: string | null;
-  updatingRole: string | null;
   onRowClick: (employeeId: string) => void;
   onEdit: (employeeId: string) => void;
   onMessage: (employeeId: string, e: MouseEvent) => void;
   onUpdateStatus: (
     employee: any,
     newStatus: "active" | "inactive" | "resigned" | "terminated",
-    e: MouseEvent
-  ) => void;
-  onUpdateRole: (
-    employee: any,
-    newRole: "admin" | "hr" | "employee",
     e: MouseEvent
   ) => void;
   onRemoveFromOrganization: (employee: any, e: MouseEvent) => void;
@@ -76,12 +69,10 @@ export function EmployeesTable({
   isCreatingEmployee,
   isAdmin,
   updatingStatus,
-  updatingRole,
   onRowClick,
   onEdit,
   onMessage,
   onUpdateStatus,
-  onUpdateRole,
   onRemoveFromOrganization,
   onRemoveEmployee,
   onInvite,
@@ -359,39 +350,6 @@ export function EmployeesTable({
                               </DropdownMenuItem>
                               {isAdmin && (
                                 <>
-                                  {/* Role options only available if employee has user account */}
-                                  {employeesUserAccounts[employee._id] && (
-                                    <>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        onClick={(e) =>
-                                          onUpdateRole(employee, "admin", e)
-                                        }
-                                        disabled={updatingRole === employee._id}
-                                      >
-                                        <UserCog className="h-4 w-4 mr-2" />
-                                        Set as Admin
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem
-                                        onClick={(e) =>
-                                          onUpdateRole(employee, "hr", e)
-                                        }
-                                        disabled={updatingRole === employee._id}
-                                      >
-                                        <UserCog className="h-4 w-4 mr-2" />
-                                        Set as HR
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem
-                                        onClick={(e) =>
-                                          onUpdateRole(employee, "employee", e)
-                                        }
-                                        disabled={updatingRole === employee._id}
-                                      >
-                                        <UserCog className="h-4 w-4 mr-2" />
-                                        Set as Employee
-                                      </DropdownMenuItem>
-                                    </>
-                                  )}
                                   <DropdownMenuSeparator />
                                   {employeesUserAccounts[employee._id] ? (
                                     <DropdownMenuItem
