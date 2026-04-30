@@ -697,6 +697,23 @@ export default defineSchema({
     .index("by_organization", ["organizationId"])
     .index("by_period", ["period"]),
 
+  /**
+   * Append-only log when a payslip on a finalized/paid run is edited.
+   * Rows with notified=false are pending until the updated PDF is sent in chat.
+   */
+  payslipCorrections: defineTable({
+    organizationId: v.id("organizations"),
+    payrollRunId: v.id("payrollRuns"),
+    payslipId: v.id("payslips"),
+    reason: v.string(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    notified: v.boolean(),
+  })
+    .index("by_organization_notified", ["organizationId", "notified"])
+    .index("by_payroll_run_notified", ["payrollRunId", "notified"])
+    .index("by_payslip", ["payslipId"]),
+
   // Evaluations table (employee performance evaluations)
   evaluations: defineTable({
     organizationId: v.id("organizations"),

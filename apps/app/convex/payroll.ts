@@ -2998,10 +2998,23 @@ export const deletePayrollRun = mutation({
     payrollRunId: v.id("payrollRuns"),
   },
   handler: async (ctx, args) => {
-    const payrollRun = await ctx.db.get(args.payrollRunId);
-    if (!payrollRun) throw new Error("Payroll run not found");
+    const payrollRunRaw = await ctx.db.get(args.payrollRunId);
+    if (!payrollRunRaw) throw new Error("Payroll run not found");
+    const payrollRunDecrypted = decryptPayrollRunFromDb(payrollRunRaw as any);
+    if (
+      payrollRunDecrypted.status !== "draft" &&
+      payrollRunDecrypted.status !== "cancelled"
+    ) {
+      throw new Error(
+        "Only draft or cancelled payroll runs can be deleted. Finalized runs are kept for the record; use payslip corrections if amounts need to change.",
+      );
+    }
+    const payrollRun = payrollRunRaw;
 
-    const userRecord = await checkAuth(ctx, payrollRun.organizationId);
+    const userRecord = await checkAuth(
+      ctx,
+      (payrollRun as { organizationId: any }).organizationId,
+    );
     const allowedRoles = ["owner", "admin", "hr", "accounting"];
     if (!allowedRoles.includes(userRecord.role)) {
       throw new Error("Not authorized to delete payroll runs");
@@ -3051,6 +3064,13 @@ export const deletePayrollRuns = mutation({
       const payrollRun = (await ctx.db.get(payrollRunId as any)) as any;
       if (!payrollRun) continue;
       if (payrollRun.organizationId !== firstRun.organizationId) continue;
+
+      const prDec = decryptPayrollRunFromDb(payrollRun as any);
+      if (prDec.status !== "draft" && prDec.status !== "cancelled") {
+        throw new Error(
+          "One or more selected runs are not draft or cancelled and cannot be deleted. Only draft or cancelled runs can be removed.",
+        );
+      }
 
       // Delete associated accounting cost items
       await deleteExpenseItemsFromPayroll(ctx, payrollRun);
@@ -4518,7 +4538,7 @@ async function findPlinthAccountEmailForEmployee(
   return null;
 }
 
-/** Who will receive emailed payslip PDFs when this run is finalized (Plinth accounts only). */
+/** Who can receive finalized payslip PDFs in chat (Plinth org accounts only). */
 export const getPayrollFinalizePayslipRecipients = query({
   args: {
     payrollRunId: v.id("payrollRuns"),
@@ -4916,6 +4936,8 @@ async function recalcWithholdingTaxAfterVariableEarningsEdit(
 export const updatePayslip = mutation({
   args: {
     payslipId: v.id("payslips"),
+    /** Required when the parent run is finalized or paid and this save changes the payslip (append-only correction log). */
+    correctionReason: v.optional(v.string()),
     deductions: v.optional(
       v.array(
         v.object({
@@ -5088,6 +5110,13 @@ export const updatePayslip = mutation({
     const rawPayslip = await ctx.db.get(args.payslipId);
     if (!rawPayslip) throw new Error("Payslip not found");
     const payslip = decryptPayslipRowFromDb(rawPayslip)!;
+
+    const payrollRunRaw = payslip.payrollRunId
+      ? await ctx.db.get(payslip.payrollRunId)
+      : null;
+    const payrollRun = payrollRunRaw
+      ? decryptPayrollRunFromDb(payrollRunRaw as any)
+      : null;
 
     // Check auth - owner, admin, hr, or accounting can edit
     const userRecord = await checkAuth(ctx, payslip.organizationId);
@@ -5309,6 +5338,17 @@ export const updatePayslip = mutation({
           ]
         : existingEditHistory;
 
+    const isFinalizedOrPaid =
+      payrollRun?.status === "finalized" || payrollRun?.status === "paid";
+    if (changes.length > 0 && isFinalizedOrPaid) {
+      const reason = (args.correctionReason ?? "").trim();
+      if (!reason) {
+        throw new Error(
+          "Correction reason is required when changing a payslip for a finalized or paid payroll run. Employees will see this when you send the updated payslip in chat.",
+        );
+      }
+    }
+
     await ctx.db.patch(
       args.payslipId,
       encryptPayslipPartialForDb({
@@ -5342,14 +5382,26 @@ export const updatePayslip = mutation({
             : undefined,
         editHistory:
           updatedEditHistory.length > 0 ? updatedEditHistory : undefined,
-      }) as any,
+      }    ) as any,
     );
+
+    if (changes.length > 0 && isFinalizedOrPaid) {
+      const reason = (args.correctionReason ?? "").trim();
+      if (reason) {
+        await ctx.db.insert("payslipCorrections", {
+          organizationId: payslip.organizationId,
+          payrollRunId: payslip.payrollRunId,
+          payslipId: args.payslipId,
+          reason,
+          createdBy: userRecord._id,
+          createdAt: Date.now(),
+          notified: false,
+        });
+      }
+    }
 
     // Re-sync accounting cost items when deductions/incentives/allowance change
     // so that Payroll, SSS, PhilHealth, Pag-IBIG, Tax expense items reflect updated totals
-    const payrollRun = payslip.payrollRunId
-      ? ((await ctx.db.get(payslip.payrollRunId)) as any)
-      : null;
     if (
       payrollRun &&
       (payrollRun.status === "finalized" || payrollRun.status === "paid")
@@ -5357,6 +5409,109 @@ export const updatePayslip = mutation({
       await createExpenseItemsFromPayroll(ctx, payrollRun);
     }
 
+    return { success: true };
+  },
+});
+
+/** Unnotified payslip correction rows per run (for UI: pending chat notifications). */
+export const getPendingPayslipCorrectionCountByRun = query({
+  args: {
+    organizationId: v.id("organizations"),
+  },
+  handler: async (ctx, args) => {
+    const userRecord = await checkAuth(ctx, args.organizationId);
+    const allowedRoles = ["owner", "admin", "hr", "accounting"];
+    if (!allowedRoles.includes(userRecord.role)) {
+      throw new Error("Not authorized");
+    }
+    const rows = await (ctx.db.query("payslipCorrections") as any)
+      .withIndex("by_organization_notified", (q: any) =>
+        q.eq("organizationId", args.organizationId).eq("notified", false),
+      )
+      .collect();
+    const byRunId: Record<
+      string,
+      { pendingCorrections: number; uniquePayslips: number }
+    > = {};
+    const payslipsByRun = new Map<string, Set<string>>();
+    for (const r of rows) {
+      const runK = String(r.payrollRunId);
+      if (!byRunId[runK]) {
+        byRunId[runK] = { pendingCorrections: 0, uniquePayslips: 0 };
+      }
+      byRunId[runK].pendingCorrections += 1;
+      if (!payslipsByRun.has(runK)) {
+        payslipsByRun.set(runK, new Set());
+      }
+      payslipsByRun.get(runK)!.add(String(r.payslipId));
+    }
+    for (const [runK, set] of payslipsByRun) {
+      if (!byRunId[runK]) {
+        byRunId[runK] = { pendingCorrections: 0, uniquePayslips: 0 };
+      }
+      byRunId[runK].uniquePayslips = set.size;
+    }
+    return { byRunId };
+  },
+});
+
+export const getUnnotifiedPayslipCorrectionsForRun = query({
+  args: { payrollRunId: v.id("payrollRuns") },
+  handler: async (ctx, args) => {
+    const prRaw = await ctx.db.get(args.payrollRunId);
+    if (!prRaw) throw new Error("Payroll run not found");
+    const payrollRun = decryptPayrollRunFromDb(prRaw as any);
+    const userRecord = await checkAuth(ctx, payrollRun.organizationId);
+    const allowedRoles = ["owner", "admin", "hr", "accounting"];
+    if (!allowedRoles.includes(userRecord.role)) {
+      throw new Error("Not authorized");
+    }
+    if (
+      payrollRun.status !== "finalized" &&
+      payrollRun.status !== "paid" &&
+      payrollRun.status !== "archived"
+    ) {
+      return { corrections: [] as const };
+    }
+    const rows = await (ctx.db.query("payslipCorrections") as any)
+      .withIndex("by_payroll_run_notified", (q: any) =>
+        q.eq("payrollRunId", args.payrollRunId).eq("notified", false),
+      )
+      .collect();
+    return { corrections: rows };
+  },
+});
+
+export const markPayslipCorrectionsNotified = mutation({
+  args: {
+    correctionIds: v.array(v.id("payslipCorrections")),
+  },
+  handler: async (ctx, args) => {
+    if (args.correctionIds.length === 0) {
+      return { success: true };
+    }
+    const first = (await ctx.db.get(args.correctionIds[0])) as
+      | { organizationId: any; notified?: boolean }
+      | null;
+    if (!first) throw new Error("Correction not found");
+    if (first.notified === true) {
+      return { success: true };
+    }
+    const userRecord = await checkAuth(ctx, first.organizationId);
+    const allowedRoles = ["owner", "admin", "hr", "accounting"];
+    if (!allowedRoles.includes(userRecord.role)) {
+      throw new Error("Not authorized");
+    }
+    for (const id of args.correctionIds) {
+      const row = await ctx.db.get(id);
+      if (!row) continue;
+      const o = row as { organizationId: any; notified?: boolean };
+      if (o.organizationId !== first.organizationId) {
+        throw new Error("Not authorized");
+      }
+      if (o.notified === true) continue;
+      await ctx.db.patch(id, { notified: true });
+    }
     return { success: true };
   },
 });

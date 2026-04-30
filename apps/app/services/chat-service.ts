@@ -67,6 +67,7 @@ export class ChatService {
     content: string;
     messageType?: "text" | "image" | "file" | "system";
     attachments?: string[];
+    payslipId?: string;
   }) {
     const convex = await getAuthedConvexClient();
 
@@ -92,6 +93,7 @@ export class ChatService {
       content: data.content,
       messageType: data.messageType || "text",
       attachments: data.attachments,
+      payslipId: data.payslipId,
     });
   }
 

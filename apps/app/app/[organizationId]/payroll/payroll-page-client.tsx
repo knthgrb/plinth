@@ -182,6 +182,7 @@ import {
   updatePayrollRun,
   deletePayrollRun,
   deletePayrollRuns,
+  sendPendingPayslipCorrectionsInChat,
   getPayslipMessages,
   getPayrollRunSummary,
   computePayrollPreviewBatch,
@@ -341,6 +342,12 @@ export default function PayrollPageClient() {
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
+  const pendingPayslipCorrections = useQuery(
+    (api as any).payroll.getPendingPayslipCorrectionCountByRun,
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
+  );
   /** Admin, HR, accounting, owner: can edit payslips and see payroll edit actions */
   const isAdminOrAccounting =
     user?.role === "admin" ||
@@ -398,6 +405,15 @@ export default function PayrollPageClient() {
     () => zeroPreviewEarnings(),
   );
   const [isSavingPayslip, setIsSavingPayslip] = useState(false);
+  const [payslipCorrectionReason, setPayslipCorrectionReason] = useState("");
+  const payslipEditSnapshotRef = useRef<{
+    deductions: string;
+    incentives: string;
+    earnings: string;
+  } | null>(null);
+  const [sendingCorrectionRunId, setSendingCorrectionRunId] = useState<
+    string | null
+  >(null);
   const [regeneratingPayrollRunId, setRegeneratingPayrollRunId] = useState<
     string | null
   >(null);
@@ -798,14 +814,51 @@ export default function PayrollPageClient() {
     setIsDeleteDialogOpen(true);
   };
 
+  const handleNotifyPayslipCorrections = async (payrollRun: any) => {
+    if (!payrollRun?._id || sendingCorrectionRunId) return;
+    setSendingCorrectionRunId(String(payrollRun._id));
+    try {
+      const result = await sendPendingPayslipCorrectionsInChat(
+        String(payrollRun._id),
+      );
+      const errTail =
+        result.errors.length > 0
+          ? ` ${result.errors.slice(0, 3).join("; ")}${
+              result.errors.length > 3 ? "…" : ""
+            }`
+          : "";
+      toast({
+        title: "Corrections sent",
+        description:
+          result.sent === 0
+            ? `No pending corrections to send.${errTail}`
+            : `Sent ${result.sent} corrected payslip(s) in chat.${errTail}`,
+        variant: result.errors.length > 0 && result.sent === 0 ? "destructive" : "default",
+      });
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error ? e.message : "Failed to send corrected payslips";
+      toast({
+        title: "Error",
+        description: message,
+        variant: "destructive",
+      });
+    } finally {
+      setSendingCorrectionRunId(null);
+    }
+  };
+
   const handleBulkDeletePayrollRuns = () => {
-    const selectedRuns = payrollRuns.filter((run) =>
-      selectedRunIds.includes(String(run._id)),
+    const selectedRuns = payrollRuns.filter(
+      (run) =>
+        selectedRunIds.includes(String(run._id)) &&
+        (run.status === "draft" || run.status === "cancelled"),
     );
     if (selectedRuns.length === 0) {
       toast({
-        title: "No runs selected",
-        description: "Select at least one payroll run to delete.",
+        title: "Nothing to delete",
+        description:
+          "Only draft or cancelled runs can be deleted. Deselect finalized or paid runs.",
       });
       return;
     }
@@ -934,6 +987,20 @@ export default function PayrollPageClient() {
     setEditIncentives(
       (payslip.incentives || []).map(normalizeIncentiveLineForUi),
     );
+    setPayslipCorrectionReason("");
+    payslipEditSnapshotRef.current = {
+      deductions: JSON.stringify(
+        (payslip.deductions || []).map((d: Deduction) => ({
+          name: (d.name || "").trim(),
+          amount: round2(Number(d.amount) || 0),
+          type: (d.type || "").trim(),
+        })),
+      ),
+      incentives: JSON.stringify(
+        (payslip.incentives || []).map(normalizeIncentiveLineForUi),
+      ),
+      earnings: JSON.stringify(earningsAtOpen),
+    };
     setIsEditPayslipOpen(true);
   };
 
@@ -1222,8 +1289,41 @@ export default function PayrollPageClient() {
         return;
       }
 
+      const snap = payslipEditSnapshotRef.current;
+      const nextDeductionsKey = JSON.stringify(
+        editDeductions.map((d) => ({
+          name: (d.name || "").trim(),
+          amount: round2(Number(d.amount) || 0),
+          type: (d.type || "").trim(),
+        })),
+      );
+      const nextIncentivesKey = JSON.stringify(editIncentives);
+      const nextEarningsKey = JSON.stringify(editEarnings);
+      const hasEdits = snap
+        ? nextDeductionsKey !== snap.deductions ||
+          nextIncentivesKey !== snap.incentives ||
+          nextEarningsKey !== snap.earnings
+        : true;
+      const run = selectedPayrollRun;
+      const needsCorrectionReason =
+        run &&
+        (run.status === "finalized" || run.status === "paid") &&
+        hasEdits;
+      if (needsCorrectionReason && !payslipCorrectionReason.trim()) {
+        toast({
+          title: "Correction reason required",
+          description:
+            "This payroll is finalized or paid. Describe what you changed (employees see it when the corrected payslip is sent in chat).",
+          variant: "destructive",
+        });
+        return;
+      }
+
       await updatePayslip({
         payslipId: editingPayslip._id,
+        correctionReason: needsCorrectionReason
+          ? payslipCorrectionReason.trim()
+          : undefined,
         deductions: editDeductions,
         // Always pass arrays (including []); `undefined` would make the server keep old lines
         incentives: editIncentives,
@@ -1254,9 +1354,13 @@ export default function PayrollPageClient() {
 
       setIsEditPayslipOpen(false);
       setEditingPayslip(null);
+      setPayslipCorrectionReason("");
+      payslipEditSnapshotRef.current = null;
       toast({
         title: "Success",
-        description: "Payslip updated successfully!",
+        description: needsCorrectionReason
+          ? "Payslip updated. Send corrected payslips to employees from the run menu when ready."
+          : "Payslip updated successfully!",
       });
     } catch (error: any) {
       console.error("Error updating payslip:", error);
@@ -2107,7 +2211,7 @@ export default function PayrollPageClient() {
         );
       }
 
-      // Finalize: show recipient dialog (emails only for employees with Plinth accounts)
+      // Finalize: show recipient dialog (chat PDFs for employees with Plinth org accounts)
       if (status === "finalized" && payrollRunId) {
         openPayrollFinalizeFlow(
           payrollRunId,
@@ -2818,6 +2922,11 @@ export default function PayrollPageClient() {
                   regeneratingPayrollRunId={regeneratingPayrollRunId}
                   onStatusChange={handleStatusChange}
                   onDelete={handleDeletePayrollRun}
+                  pendingCorrectionByRunId={
+                    pendingPayslipCorrections?.byRunId ?? {}
+                  }
+                  onNotifyCorrections={handleNotifyPayslipCorrections}
+                  sendingCorrectionRunId={sendingCorrectionRunId}
                 />
                 {filteredPayrollRuns.length > payrollRunsPageSize && (
                   <div className="flex items-center justify-between gap-4 border-t pt-4 mt-4">
@@ -2933,6 +3042,14 @@ export default function PayrollPageClient() {
               editEarnings={editEarnings}
               onUpdateEarning={updateEditEarning}
               onSave={handleSavePayslip}
+              showCorrectionReason={
+                Boolean(selectedPayrollRun) &&
+                (selectedPayrollRun.status === "finalized" ||
+                  selectedPayrollRun.status === "paid") &&
+                !editingPayslip?.__mode
+              }
+              correctionReason={payslipCorrectionReason}
+              onCorrectionReasonChange={setPayslipCorrectionReason}
             />
           </Suspense>
         )}

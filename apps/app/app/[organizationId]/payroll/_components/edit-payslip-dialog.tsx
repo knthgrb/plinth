@@ -9,6 +9,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, X } from "lucide-react";
@@ -70,6 +71,9 @@ interface EditPayslipDialogProps {
   editEarnings?: PreviewEditableEarnings;
   onUpdateEarning?: (key: PreviewEditableEarningKey, value: number) => void;
   onSave: () => void;
+  showCorrectionReason?: boolean;
+  correctionReason?: string;
+  onCorrectionReasonChange?: (value: string) => void;
 }
 
 export function EditPayslipDialog({
@@ -90,6 +94,9 @@ export function EditPayslipDialog({
   editEarnings,
   onUpdateEarning,
   onSave,
+  showCorrectionReason = false,
+  correctionReason = "",
+  onCorrectionReasonChange,
 }: EditPayslipDialogProps) {
   if (!editingPayslip) return null;
 
@@ -123,6 +130,26 @@ export function EditPayslipDialog({
         </div>
 
         <div className="overflow-y-auto flex-1 px-6 py-4 space-y-8 min-h-0">
+          {showCorrectionReason && onCorrectionReasonChange && (
+            <div className="space-y-2">
+              <Label htmlFor="payslip-correction-reason" className="text-base">
+                Reason for correction
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                This run is finalized or paid. If you change amounts, explain what
+                was wrong and what you fixed. Employees will see this when you send
+                the updated payslip in chat.
+              </p>
+              <Textarea
+                id="payslip-correction-reason"
+                value={correctionReason}
+                onChange={(e) => onCorrectionReasonChange(e.target.value)}
+                placeholder="e.g. Overtime line was under-counted; adjusted to match attendance."
+                className="min-h-[80px] resize-y"
+                disabled={isSavingPayslip}
+              />
+            </div>
+          )}
           {showVariableEarnings && editEarnings && onUpdateEarning && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-start justify-between gap-2">

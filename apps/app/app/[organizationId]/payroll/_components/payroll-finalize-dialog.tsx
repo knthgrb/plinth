@@ -16,7 +16,7 @@ import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import {
   updatePayrollRunStatus,
-  sendFinalizedPayrollPayslipEmails,
+  sendFinalizedPayrollPayslipsInChat,
 } from "@/actions/payroll";
 import { payslipPdfPasswordDescription } from "@/lib/payslip-pdf-password";
 import { useToast } from "@/components/ui/use-toast";
@@ -57,7 +57,7 @@ export function PayrollFinalizeDialog({
     setConfirming(true);
     try {
       await updatePayrollRunStatus(payrollRunId, "finalized");
-      const result = await sendFinalizedPayrollPayslipEmails(payrollRunId);
+      const result = await sendFinalizedPayrollPayslipsInChat(payrollRunId);
       const errTail =
         result.errors.length > 0
           ? ` Some sends failed: ${result.errors.slice(0, 3).join("; ")}${
@@ -66,7 +66,7 @@ export function PayrollFinalizeDialog({
           : "";
       toast({
         title: "Payroll finalized",
-        description: `Emailed ${result.sent} payslip PDF(s). ${result.withoutAccountCount} employee(s) have no Plinth account and were skipped.${errTail}`,
+        description: `Sent ${result.sent} payslip PDF(s) in chat. ${result.withoutAccountCount} employee(s) have no Plinth org account and were skipped.${errTail}`,
         variant:
           result.errors.length > 0 && result.sent === 0
             ? "destructive"
@@ -98,7 +98,7 @@ export function PayrollFinalizeDialog({
         onEscapeKeyDown={(e) => e.preventDefault()}
       >
         <DialogHeader>
-          <DialogTitle>Finalize payroll and email payslips</DialogTitle>
+          <DialogTitle>Finalize payroll and send payslips in chat</DialogTitle>
           <DialogDescription>
             PDFs are encrypted. Open password:{" "}
             {payslipPdfPasswordDescription()} Login passwords are never stored
@@ -124,7 +124,7 @@ export function PayrollFinalizeDialog({
           <div className="space-y-4 text-sm">
             <div>
               <p className="font-medium text-emerald-800 dark:text-emerald-200">
-                Will email PDF ({data.withAccount.length})
+                Will send PDF in 1:1 chat ({data.withAccount.length})
               </p>
               <p className="text-muted-foreground text-xs mb-1">
                 Has a Plinth account in this organization (login email)
@@ -200,7 +200,7 @@ export function PayrollFinalizeDialog({
                 Finalizing…
               </>
             ) : (
-              "Finalize and send emails"
+              "Finalize and send in chat"
             )}
           </Button>
         </DialogFooter>

@@ -133,6 +133,7 @@ export async function sendPayslipNotification(
 
 export async function updatePayslip(data: {
   payslipId: string;
+  correctionReason?: string;
   deductions?: Array<{
     name: string;
     amount: number;
@@ -159,6 +160,16 @@ export async function updatePayslip(data: {
   };
 }) {
   return PayrollService.updatePayslip(data);
+}
+
+export async function sendFinalizedPayrollPayslipsInChat(payrollRunId: string) {
+  return PayrollService.sendFinalizedPayrollPayslipsInChat(payrollRunId);
+}
+
+export async function sendPendingPayslipCorrectionsInChat(
+  payrollRunId: string
+) {
+  return PayrollService.sendPendingPayslipCorrectionsInChat(payrollRunId);
 }
 
 export async function updatePayrollRunStatus(

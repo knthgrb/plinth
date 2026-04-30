@@ -25,6 +25,7 @@ import {
   Eye,
   FileText,
   Loader2,
+  MessageSquare,
   MoreHorizontal,
   Pencil,
   Trash2,
@@ -48,6 +49,14 @@ interface PayrollRunsTableProps {
   regeneratingPayrollRunId?: string | null;
   onStatusChange: (run: any, status: string) => void;
   onDelete: (run: any) => void;
+  /** Pending payslip correction rows not yet sent in chat, keyed by payroll run id */
+  pendingCorrectionByRunId?: Record<
+    string,
+    { pendingCorrections: number; uniquePayslips: number }
+  >;
+  onNotifyCorrections?: (run: any) => void | Promise<void>;
+  /** When set, show spinner on that run's "Send corrected payslips" action */
+  sendingCorrectionRunId?: string | null;
 }
 
 export function PayrollRunsTable({
@@ -65,13 +74,18 @@ export function PayrollRunsTable({
   regeneratingPayrollRunId = null,
   onStatusChange,
   onDelete,
+  pendingCorrectionByRunId = {},
+  onNotifyCorrections,
+  sendingCorrectionRunId = null,
 }: PayrollRunsTableProps) {
-  const visibleRunIds = payrollRuns.map((run) => String(run._id));
-  const selectedVisibleCount = visibleRunIds.filter((id) =>
-    selectedRunIds.includes(id),
-  ).length;
-  const allVisibleSelected =
-    visibleRunIds.length > 0 && selectedVisibleCount === visibleRunIds.length;
+  const deletableVisibleRunIds = payrollRuns
+    .filter(
+      (r) => r.status === "draft" || r.status === "cancelled",
+    )
+    .map((r) => String(r._id));
+  const allDeletableSelected =
+    deletableVisibleRunIds.length > 0 &&
+    deletableVisibleRunIds.every((id) => selectedRunIds.includes(id));
 
   return (
     <Table>
@@ -79,15 +93,20 @@ export function PayrollRunsTable({
         <TableRow>
           <TableHead className="w-10">
             <Checkbox
-              checked={allVisibleSelected}
+              checked={allDeletableSelected}
               disabled={
-                disableSelection || visibleRunIds.length === 0 || !onToggleSelectAllVisible
+                disableSelection ||
+                deletableVisibleRunIds.length === 0 ||
+                !onToggleSelectAllVisible
               }
               onCheckedChange={(checked) => {
                 if (!onToggleSelectAllVisible) return;
-                onToggleSelectAllVisible(visibleRunIds, checked === true);
+                onToggleSelectAllVisible(
+                  deletableVisibleRunIds,
+                  checked === true,
+                );
               }}
-              aria-label="Select all visible payroll runs"
+              aria-label="Select all deletable (draft or cancelled) payroll runs"
             />
           </TableHead>
           <TableHead>Period</TableHead>
@@ -136,12 +155,14 @@ export function PayrollRunsTable({
                   )}`
                 : run.period;
 
+            const canSelectForDelete =
+              run.status === "draft" || run.status === "cancelled";
             return (
               <TableRow key={run._id}>
                 <TableCell>
                   <Checkbox
                     checked={selectedRunIds.includes(String(run._id))}
-                    disabled={disableSelection}
+                    disabled={disableSelection || !canSelectForDelete}
                     onCheckedChange={(checked) =>
                       onToggleRunSelection?.(String(run._id), checked === true)
                     }
@@ -236,6 +257,23 @@ export function PayrollRunsTable({
                         )}
                         {run.status === "finalized" && (
                           <>
+                            {onNotifyCorrections &&
+                              (pendingCorrectionByRunId[String(run._id)]
+                                ?.pendingCorrections ?? 0) > 0 && (
+                                <DropdownMenuItem
+                                  disabled={!!sendingCorrectionRunId}
+                                  onClick={() => void onNotifyCorrections(run)}
+                                >
+                                  {sendingCorrectionRunId === run._id ? (
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin shrink-0" />
+                                  ) : (
+                                    <MessageSquare className="h-4 w-4 mr-2" />
+                                  )}
+                                  {sendingCorrectionRunId === run._id
+                                    ? "Sending…"
+                                    : `Send corrected payslips (${pendingCorrectionByRunId[String(run._id)]?.uniquePayslips ?? 0})`}
+                                </DropdownMenuItem>
+                              )}
                             <DropdownMenuItem
                               onClick={() => onStatusChange(run, "paid")}
                             >
@@ -245,29 +283,52 @@ export function PayrollRunsTable({
                           </>
                         )}
                         {run.status === "paid" && (
-                          <DropdownMenuItem
-                            onClick={() => onStatusChange(run, "finalized")}
-                          >
-                            <Undo2 className="h-4 w-4 mr-2" />
-                            Revert to Finalized
-                          </DropdownMenuItem>
+                          <>
+                            {onNotifyCorrections &&
+                              (pendingCorrectionByRunId[String(run._id)]
+                                ?.pendingCorrections ?? 0) > 0 && (
+                                <DropdownMenuItem
+                                  disabled={!!sendingCorrectionRunId}
+                                  onClick={() => void onNotifyCorrections(run)}
+                                >
+                                  {sendingCorrectionRunId === run._id ? (
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin shrink-0" />
+                                  ) : (
+                                    <MessageSquare className="h-4 w-4 mr-2" />
+                                  )}
+                                  {sendingCorrectionRunId === run._id
+                                    ? "Sending…"
+                                    : `Send corrected payslips (${pendingCorrectionByRunId[String(run._id)]?.uniquePayslips ?? 0})`}
+                                </DropdownMenuItem>
+                              )}
+                            <DropdownMenuItem
+                              onClick={() => onStatusChange(run, "finalized")}
+                            >
+                              <Undo2 className="h-4 w-4 mr-2" />
+                              Revert to Finalized
+                            </DropdownMenuItem>
+                          </>
                         )}
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          disabled={disableSelection || isDeletingRunId === run._id}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDelete(run);
-                          }}
-                          className="text-red-600"
-                        >
-                          {isDeletingRunId === run._id ? (
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-4 w-4 mr-2" />
-                          )}
-                          {isDeletingRunId === run._id ? "Deleting..." : "Delete Run"}
-                        </DropdownMenuItem>
+                        {canSelectForDelete && (
+                          <DropdownMenuItem
+                            disabled={disableSelection || isDeletingRunId === run._id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDelete(run);
+                            }}
+                            className="text-red-600"
+                          >
+                            {isDeletingRunId === run._id ? (
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4 mr-2" />
+                            )}
+                            {isDeletingRunId === run._id
+                              ? "Deleting..."
+                              : "Delete run"}
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>

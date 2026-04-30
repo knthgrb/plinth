@@ -6,10 +6,35 @@ import { EmployeesService } from "./employees-service";
 import { sendEmail } from "@/lib/email";
 import { renderPayslipPdfBuffer } from "@/lib/payslip-pdf";
 import { buildPayslipEmailContent } from "@/lib/payslip-email-templates";
+import { payslipPdfPasswordDescription } from "@/lib/payslip-pdf-password";
+import { FilesService } from "./files-service";
 import {
   formatManilaNumericDate,
   formatManilaShortDate,
 } from "@/lib/manila-date";
+
+async function uploadPayslipPdfToStorage(pdf: Buffer): Promise<string> {
+  const uploadUrl = await FilesService.generateUploadUrl();
+  const uploadResult = await fetch(uploadUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/pdf" },
+    body: new Uint8Array(pdf),
+  });
+  if (!uploadResult.ok) {
+    throw new Error("Failed to upload payslip PDF to storage");
+  }
+  const responseText = await uploadResult.text();
+  let storageId: string;
+  try {
+    const jsonResponse = JSON.parse(responseText) as { storageId?: string };
+    storageId = jsonResponse.storageId ?? responseText;
+  } catch {
+    storageId = responseText;
+  }
+  return String(storageId)
+    .trim()
+    .replace(/^["']|["']$/g, "");
+}
 
 export class PayrollService {
   static async createPayrollRun(data: {
@@ -270,21 +295,41 @@ export class PayrollService {
       return String(payslip?.period ?? "payroll");
     };
 
-    // If method is chat, send via chat system
     if (method === "chat" && result.employeeId) {
       const payslip = await this.getPayslip(payslipId);
       const payslipPeriod = formatPayslipPeriod(payslip);
-      const baseUrl =
-        process.env.NEXT_PUBLIC_SITE_URL ||
-        process.env.SITE_URL ||
-        "http://localhost:3000";
-      const payslipUrl = `${baseUrl}/payslips?payslipId=${payslipId}`;
-
+      if (!payslip?.payrollRunId) {
+        throw new Error("Payslip is missing payroll run data");
+      }
+      const convex = await getAuthedConvexClient();
+      const finalizeCtx = await (convex.query as any)(
+        (api as any).payroll.getPayrollFinalizePayslipRecipients,
+        { payrollRunId: payslip.payrollRunId as Id<"payrollRuns"> },
+      );
+      if (!finalizeCtx) {
+        throw new Error("Could not load payroll context for chat send");
+      }
+      const pdf = await renderPayslipPdfBuffer({
+        payslip,
+        employee: payslip.employee,
+        organizationName: finalizeCtx.organizationName,
+        cutoffStart: finalizeCtx.cutoffStart,
+        cutoffEnd: finalizeCtx.cutoffEnd,
+        paySchedule: finalizeCtx.paySchedule,
+      });
+      const safePeriod = `${formatManilaShortDate(finalizeCtx.cutoffStart)}-${formatManilaShortDate(finalizeCtx.cutoffEnd)}`
+        .replace(/[^a-zA-Z0-9-_]+/g, "_")
+        .slice(0, 48);
+      const fileName = `payslip-${safePeriod}-${payslip.employeeId}.pdf`;
+      const messageBody = `Your payslip for ${payslipPeriod} is attached. PDF open password: ${payslipPdfPasswordDescription()}`;
+      const storageId = await uploadPayslipPdfToStorage(pdf);
       await ChatService.sendMessageToEmployee({
         organizationId: payslip.organizationId,
         employeeId: result.employeeId,
-        content: `Your payslip for ${payslipPeriod} is ready. View it here: ${payslipUrl}`,
-        messageType: "system",
+        content: messageBody,
+        messageType: "file",
+        attachments: [storageId],
+        payslipId,
       });
     }
 
@@ -329,6 +374,7 @@ export class PayrollService {
 
   static async updatePayslip(data: {
     payslipId: string;
+    correctionReason?: string;
     deductions?: Array<{
       name: string;
       amount: number;
@@ -357,6 +403,7 @@ export class PayrollService {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)((api as any).payroll.updatePayslip, {
       payslipId: data.payslipId as Id<"payslips">,
+      correctionReason: data.correctionReason,
       deductions: data.deductions,
       incentives: data.incentives,
       nonTaxableAllowance: data.nonTaxableAllowance,
@@ -379,10 +426,10 @@ export class PayrollService {
   }
 
   /**
-   * After a run is finalized: email password-protected payslip PDFs only to employees
-   * who have a Plinth account in this organization.
+   * After a run is finalized: send password-protected PDF payslips in chat (1:1 with
+   * the finalizing user as sender) for employees with a Plinth org account.
    */
-  static async sendFinalizedPayrollPayslipEmails(payrollRunId: string): Promise<{
+  static async sendFinalizedPayrollPayslipsInChat(payrollRunId: string): Promise<{
     sent: number;
     withoutAccountCount: number;
     errors: string[];
@@ -390,18 +437,20 @@ export class PayrollService {
     const convex = await getAuthedConvexClient();
     const recipients = await (convex.query as any)(
       (api as any).payroll.getPayrollFinalizePayslipRecipients,
-      { payrollRunId: payrollRunId as Id<"payrollRuns"> },
+      { payrollRunId: payrollRunId as Id<"payrollRuns"> }
     );
     if (!recipients) {
       throw new Error("Could not load payslip recipients");
     }
     if (recipients.runStatus !== "finalized") {
-      throw new Error("Payroll run must be finalized before sending payslip emails.");
+      throw new Error(
+        "Payroll run must be finalized before sending payslips in chat."
+      );
     }
 
     const payslips = await (convex.query as any)(
       (api as any).payroll.getPayslipsByPayrollRun,
-      { payrollRunId: payrollRunId as Id<"payrollRuns"> },
+      { payrollRunId: payrollRunId as Id<"payrollRuns"> }
     );
 
     let sent = 0;
@@ -410,20 +459,18 @@ export class PayrollService {
     for (const row of recipients.withAccount as Array<{
       employeeId: string;
       name: string;
-      email: string;
     }>) {
       const payslip = payslips.find(
-        (p: any) => String(p.employeeId) === String(row.employeeId),
+        (p: any) => String(p.employeeId) === String(row.employeeId)
       );
       if (!payslip?.employee) {
         errors.push(`${row.name}: missing payslip data`);
         continue;
       }
       try {
-        const period = `${formatManilaNumericDate(recipients.cutoffStart)} to ${formatManilaNumericDate(recipients.cutoffEnd)}`;
-        const safePeriod = `${formatManilaShortDate(recipients.cutoffStart)}-${formatManilaShortDate(recipients.cutoffEnd)}`
-          .replace(/[^a-zA-Z0-9-_]+/g, "_")
-          .slice(0, 48);
+        const period = `${formatManilaNumericDate(
+          recipients.cutoffStart
+        )} to ${formatManilaNumericDate(recipients.cutoffEnd)}`;
         const pdf = await renderPayslipPdfBuffer({
           payslip,
           employee: payslip.employee,
@@ -432,22 +479,17 @@ export class PayrollService {
           cutoffEnd: recipients.cutoffEnd,
           paySchedule: recipients.paySchedule,
         });
-        const { subject, html, text } = buildPayslipEmailContent(
-          payslip.employee.personalInfo.firstName,
-          period,
-        );
-        await sendEmail({
-          to: row.email,
-          subject,
-          html,
-          text,
-          attachments: [
-            {
-              filename: `payslip-${safePeriod}-${row.employeeId}.pdf`,
-              content: pdf,
-              type: "application/pdf",
-            },
-          ],
+        const messageBody = `Your payslip for ${period} (${
+          recipients.organizationName
+        }) is attached.\n\nPDF open password: ${payslipPdfPasswordDescription()}`;
+        const storageId = await uploadPayslipPdfToStorage(pdf);
+        await ChatService.sendMessageToEmployee({
+          organizationId: payslip.organizationId,
+          employeeId: row.employeeId,
+          content: messageBody,
+          messageType: "file",
+          attachments: [storageId],
+          payslipId: String(payslip._id),
         });
         sent += 1;
       } catch (e: any) {
@@ -460,6 +502,127 @@ export class PayrollService {
       withoutAccountCount: (recipients.withoutAccount as unknown[]).length,
       errors,
     };
+  }
+
+  /**
+   * Send in chat only employees who have a corrected payslip and pending notification rows
+   * (not yet marked notified). No-op for employees with no unnotified correction.
+   */
+  static async sendPendingPayslipCorrectionsInChat(
+    payrollRunId: string
+  ): Promise<{ sent: number; errors: string[] }> {
+    const convex = await getAuthedConvexClient();
+    const { corrections } = (await (convex.query as any)(
+      (api as any).payroll.getUnnotifiedPayslipCorrectionsForRun,
+      { payrollRunId: payrollRunId as Id<"payrollRuns"> }
+    )) as { corrections: Array<{ _id: string; payslipId: string; reason: string }> };
+    if (!corrections?.length) {
+      return { sent: 0, errors: [] };
+    }
+    const recipients = await (convex.query as any)(
+      (api as any).payroll.getPayrollFinalizePayslipRecipients,
+      { payrollRunId: payrollRunId as Id<"payrollRuns"> }
+    );
+    if (!recipients) {
+      throw new Error("Could not load payslip recipients");
+    }
+    const withAccount = new Set(
+      (recipients.withAccount as Array<{ employeeId: string }>).map((r) =>
+        String(r.employeeId)
+      )
+    );
+    const payslips = await (convex.query as any)(
+      (api as any).payroll.getPayslipsByPayrollRun,
+      { payrollRunId: payrollRunId as Id<"payrollRuns"> }
+    );
+
+    const byPayslip = new Map<
+      string,
+      { correctionIds: string[]; reasons: string[] }
+    >();
+    for (const c of corrections) {
+      const pid = String(c.payslipId);
+      if (!byPayslip.has(pid)) {
+        byPayslip.set(pid, { correctionIds: [], reasons: [] });
+      }
+      const g = byPayslip.get(pid)!;
+      g.correctionIds.push(c._id as string);
+      const r = String(c.reason || "").trim();
+      if (r) g.reasons.push(r);
+    }
+
+    const period = `${formatManilaNumericDate(
+      recipients.cutoffStart
+    )} to ${formatManilaNumericDate(recipients.cutoffEnd)}`;
+    const errors: string[] = [];
+    let sent = 0;
+
+    for (const [payslipId, group] of byPayslip) {
+      const payslip = payslips.find((p: any) => String(p._id) === payslipId);
+      if (!payslip?.employee) {
+        errors.push(`Payslip ${payslipId}: missing data`);
+        continue;
+      }
+      if (!withAccount.has(String(payslip.employeeId))) {
+        errors.push(
+          `${(payslip.employee as any).personalInfo?.firstName ?? "Employee"}: no Plinth org account; skipped.`
+        );
+        continue;
+      }
+      try {
+        const safePeriod = `${formatManilaShortDate(
+          recipients.cutoffStart
+        )}-${formatManilaShortDate(recipients.cutoffEnd)}`
+          .replace(/[^a-zA-Z0-9-_]+/g, "_")
+          .slice(0, 48);
+        const pdf = await renderPayslipPdfBuffer({
+          payslip,
+          employee: payslip.employee,
+          organizationName: recipients.organizationName,
+          cutoffStart: recipients.cutoffStart,
+          cutoffEnd: recipients.cutoffEnd,
+          paySchedule: recipients.paySchedule,
+        });
+        const reasonText =
+          group.reasons.length === 0
+            ? "Correction applied."
+            : group.reasons.map((r, i) => `${i + 1}. ${r}`).join("\n");
+        const messageBody = `Corrected payslip for ${period} (${recipients.organizationName}).\n\nReason for correction:\n${reasonText}\n\nPDF open password: ${payslipPdfPasswordDescription()}`;
+        const storageId = await uploadPayslipPdfToStorage(pdf);
+        await ChatService.sendMessageToEmployee({
+          organizationId: payslip.organizationId,
+          employeeId: String(payslip.employeeId),
+          content: messageBody,
+          messageType: "file",
+          attachments: [storageId],
+          payslipId,
+        });
+        await (convex.mutation as any)(
+          (api as any).payroll.markPayslipCorrectionsNotified,
+          {
+            correctionIds: group.correctionIds as Id<"payslipCorrections">[],
+          }
+        );
+        sent += 1;
+      } catch (e: any) {
+        errors.push(
+          `${(payslip.employee as any).personalInfo?.firstName ?? "Employee"}: ${e?.message ?? "send failed"}`
+        );
+      }
+    }
+
+    return { sent, errors };
+  }
+
+  /** @deprecated Use sendFinalizedPayrollPayslipsInChat. */
+  static async sendFinalizedPayrollPayslipEmails(
+    payrollRunId: string
+  ): Promise<{
+    sent: number;
+    withoutAccountCount: number;
+    errors: string[];
+  }> {
+    return this.sendFinalizedPayrollPayslipsInChat(payrollRunId);
   }
 
   static async deletePayrollRun(payrollRunId: string) {
