@@ -235,6 +235,7 @@ type EmployeeIncentive = {
 type PreviewPayslipEdits = {
   deductions: Deduction[];
   incentives: PayrollIncentiveLine[];
+  variableEarnings: PreviewEditableEarnings;
 };
 
 type GovernmentDeductionSettings = {
@@ -1758,10 +1759,13 @@ export default function PayrollPageClient() {
             previewDeductionOverrides[row.employeeId]?.[deduction.name] ??
             deduction.amount,
         }));
-        const totalDeductions = deductions.reduce(
-          (sum: number, deduction: any) => sum + (deduction.amount || 0),
-          0,
-        );
+        const { totalEarnings, netPay, totalDeductions, taxableGrossEarnings } =
+          recomputePreviewNet(
+            row.grossPay || 0,
+            row.nonTaxableAllowance || 0,
+            row.incentives || [],
+            deductions,
+          );
         const totalIncentives = (row.incentives || []).reduce(
           (sum: number, incentive: any) => sum + (incentive.amount || 0),
           0,
@@ -1772,14 +1776,11 @@ export default function PayrollPageClient() {
           payroll: row,
           employee: row.employee,
           deductions,
+          totalEarnings,
+          taxableGrossEarnings,
           totalDeductions,
           totalIncentives,
-          netPay: Math.max(
-            0,
-            (row.grossPay || 0) +
-              (row.nonTaxableAllowance || 0) -
-              totalDeductions,
-          ),
+          netPay,
         };
       });
 
@@ -1830,10 +1831,13 @@ export default function PayrollPageClient() {
             editPreviewDeductionOverrides[row.employeeId]?.[deduction.name] ??
             deduction.amount,
         }));
-        const totalDeductions = deductions.reduce(
-          (sum: number, deduction: any) => sum + (deduction.amount || 0),
-          0,
-        );
+        const { totalEarnings, netPay, totalDeductions, taxableGrossEarnings } =
+          recomputePreviewNet(
+            row.grossPay || 0,
+            row.nonTaxableAllowance || 0,
+            row.incentives || [],
+            deductions,
+          );
         const totalIncentives = (row.incentives || []).reduce(
           (sum: number, incentive: any) => sum + (incentive.amount || 0),
           0,
@@ -1844,14 +1848,11 @@ export default function PayrollPageClient() {
           payroll: row,
           employee: row.employee,
           deductions,
+          totalEarnings,
+          taxableGrossEarnings,
           totalDeductions,
           totalIncentives,
-          netPay: Math.max(
-            0,
-            (row.grossPay || 0) +
-              (row.nonTaxableAllowance || 0) -
-              totalDeductions,
-          ),
+          netPay,
         };
       });
 
@@ -2131,6 +2132,9 @@ export default function PayrollPageClient() {
                     : true,
               }))
             : [],
+          variableEarnings: {
+            ...getPreviewEarningsFromSource(row),
+          },
         };
         return acc;
       }, {});
@@ -2206,6 +2210,7 @@ export default function PayrollPageClient() {
               payslipId: payslip._id,
               deductions: edits.deductions,
               incentives: edits.incentives,
+              variableEarnings: edits.variableEarnings,
             });
           }),
         );
@@ -2430,6 +2435,37 @@ export default function PayrollPageClient() {
     setEditSubmitStatus(status);
     setIsSavingPayrollRun(true);
     try {
+      const previewEditsByEmployeeId = editPreviewData.reduce<
+        Record<string, PreviewPayslipEdits>
+      >((acc, row) => {
+        const employeeId = row?.employee?._id;
+        if (!employeeId) return acc;
+        acc[employeeId] = {
+          deductions: Array.isArray(row.deductions)
+            ? row.deductions.map((deduction: Deduction) => ({
+                name: deduction.name,
+                amount: deduction.amount,
+                type: deduction.type || "custom",
+              }))
+            : [],
+          incentives: Array.isArray(row.incentives)
+            ? row.incentives.map((incentive: any) => ({
+                name: incentive.name,
+                amount: incentive.amount,
+                type: incentive.type || "incentive",
+                taxable:
+                  typeof incentive?.taxable === "boolean"
+                    ? incentive.taxable
+                    : true,
+              }))
+            : [],
+          variableEarnings: {
+            ...getPreviewEarningsFromSource(row),
+          },
+        };
+        return acc;
+      }, {});
+
       const manualDeductions =
         editPreviewData.length > 0 && editSelectedEmployees.length > 0
           ? editSelectedEmployees.map((employeeId: string) => {
@@ -2479,6 +2515,29 @@ export default function PayrollPageClient() {
           manualDeductions.length > 0 ? manualDeductions : undefined,
         incentives: incentives.length > 0 ? incentives : undefined,
       });
+
+      if (
+        Object.keys(previewEditsByEmployeeId).length > 0
+      ) {
+        const updatedPayslips = await getPayslipsByPayrollRun(
+          editingPayrollRun._id,
+        );
+        await Promise.all(
+          (updatedPayslips || []).map(async (payslip: any) => {
+            const employeeId = String(
+              payslip.employeeId ?? payslip.employee?._id ?? "",
+            );
+            const edits = previewEditsByEmployeeId[employeeId];
+            if (!edits) return;
+            await updatePayslip({
+              payslipId: payslip._id,
+              deductions: edits.deductions,
+              incentives: edits.incentives,
+              variableEarnings: edits.variableEarnings,
+            });
+          }),
+        );
+      }
 
       if (status === "finalized") {
         const runId = editingPayrollRun._id;

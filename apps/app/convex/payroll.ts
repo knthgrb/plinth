@@ -30,7 +30,10 @@ import {
   holidayMatchesDate as holidayMatchesDateLib,
   type PayrollBaseResult,
 } from "@/lib/payroll-calculations";
-import { formatManilaNumericDate } from "@/lib/manila-date";
+import {
+  formatManilaNumericDate,
+  getManilaDateParts,
+} from "@/lib/manila-date";
 import {
   getUserIdForEmployeeInOrg,
   insertInAppNotification,
@@ -309,6 +312,22 @@ function getPayslipEmployeeFromSnapshot(payslip: any): any {
         : undefined,
   };
 }
+
+function hasManualVariableEarningsEdit(payslip: any): boolean {
+  return Array.isArray(payslip?.editHistory)
+    ? payslip.editHistory.some((entry: any) =>
+        Array.isArray(entry?.changes)
+          ? entry.changes.some(
+              (change: any) => change?.field === "variableEarnings",
+            )
+          : false,
+      )
+    : false;
+}
+
+type PersistedVariableEarningsOverride = VariableEarnings & {
+  holidayPayType?: "regular" | "special";
+};
 
 function normalizeConcernSummary(summary: any) {
   if (!summary || typeof summary !== "object") {
@@ -693,7 +712,7 @@ function getGovDeductionAmount(
   payFrequency: PayFrequency,
 ): number {
   if (payFrequency === "monthly") return monthlyAmount;
-  const dayOfMonth = new Date(cutoffStart).getDate();
+  const dayOfMonth = getManilaDateParts(cutoffStart).day;
   return dayOfMonth <= 15 ? monthlyAmount : 0;
 }
 
@@ -2286,7 +2305,7 @@ export const createPayrollRun = mutation({
       updatedAt: now,
     });
 
-    const { rates } = await getPayrollRates(ctx, args.organizationId);
+    const { base } = await getPayrollRates(ctx, args.organizationId);
     const taxSettings = await getTaxDeductionSettings(ctx, args.organizationId);
     const holidays = await (ctx.db.query("holidays") as any)
       .withIndex("by_organization", (q: any) =>
@@ -2318,11 +2337,18 @@ export const createPayrollRun = mutation({
           employee &&
           holidayAppliesToEmployee(holiday, employee)
         ) {
-          await ctx.db.patch(rec._id, {
-            isHoliday: true,
-            holidayType: holiday.type,
-            updatedAt: now,
-          });
+          const nextIsHoliday = true;
+          const nextHolidayType = holiday.type;
+          if (
+            rec.isHoliday !== nextIsHoliday ||
+            rec.holidayType !== nextHolidayType
+          ) {
+            await ctx.db.patch(rec._id, {
+              isHoliday: nextIsHoliday,
+              holidayType: nextHolidayType,
+              updatedAt: now,
+            });
+          }
         } else if (rec.isHoliday || rec.holidayType) {
           // Holiday deleted or doesn't apply to this employee's province — clear
           await ctx.db.patch(rec._id, {
@@ -2351,13 +2377,14 @@ export const createPayrollRun = mutation({
         continue;
       }
       const employee = decryptEmployeeFromDb(employeeRow);
+      const employeeRates = getEmployeePayrollRates(employee, base);
 
       const payrollBase = await buildEmployeePayrollBase(ctx, {
         employee: employeeRow,
         cutoffStart: args.cutoffStart,
         cutoffEnd: args.cutoffEnd,
         payFrequency,
-        payrollRates: rates,
+        payrollRates: employeeRates,
         holidays,
         leaveTypes,
         scheduleLunchContext: createRunScheduleLunchContext,
@@ -2625,6 +2652,11 @@ export const updatePayrollRun = mutation({
     }> = Array.isArray(previousDraftConfig.nonTaxableAllowanceOverrides)
       ? [...previousDraftConfig.nonTaxableAllowanceOverrides]
       : [];
+    const preservedEditHistoryByEmployee = new Map<string, any[]>();
+    const preservedVariableEarningsByEmployee = new Map<
+      string,
+      PersistedVariableEarningsOverride
+    >();
 
     if (existingPayslipsBeforeRegenerate.length > 0) {
       // When the client sends `manualDeductions` / `incentives`, those arrays are
@@ -2663,6 +2695,17 @@ export const updatePayrollRun = mutation({
         const p = decryptPayslipRowFromDb(raw);
         if (!p) continue;
         const empId = p.employeeId;
+        if (Array.isArray(p.editHistory) && p.editHistory.length > 0) {
+          preservedEditHistoryByEmployee.set(String(empId), [...p.editHistory]);
+        }
+        if (hasManualVariableEarningsEdit(p)) {
+          preservedVariableEarningsByEmployee.set(String(empId), {
+            ...getVariableEarningsFromPayslip(
+              p as unknown as Record<string, unknown>,
+            ),
+            holidayPayType: p.holidayPayType,
+          });
+        }
         if (!explicitManual) {
           const preservedDeductions = (p.deductions || []).filter(
             (d: { name?: string; type?: string }) =>
@@ -2767,7 +2810,7 @@ export const updatePayrollRun = mutation({
       const cutoffStart = args.cutoffStart ?? payrollRun.cutoffStart;
       const cutoffEnd = args.cutoffEnd ?? payrollRun.cutoffEnd;
 
-      const { rates } = await getPayrollRates(ctx, payrollRun.organizationId);
+      const { base } = await getPayrollRates(ctx, payrollRun.organizationId);
       const taxSettingsUpdate = await getTaxDeductionSettings(
         ctx,
         payrollRun.organizationId,
@@ -2805,11 +2848,18 @@ export const updatePayrollRun = mutation({
           const empRow = (await ctx.db.get(employeeId)) as any;
           const emp = empRow ? decryptEmployeeFromDb(empRow) : null;
           if (holiday && emp && holidayAppliesToEmployee(holiday, emp)) {
-            await ctx.db.patch(rec._id, {
-              isHoliday: true,
-              holidayType: holiday.type,
-              updatedAt: nowUpdate,
-            });
+            const nextIsHoliday = true;
+            const nextHolidayType = holiday.type;
+            if (
+              rec.isHoliday !== nextIsHoliday ||
+              rec.holidayType !== nextHolidayType
+            ) {
+              await ctx.db.patch(rec._id, {
+                isHoliday: nextIsHoliday,
+                holidayType: nextHolidayType,
+                updatedAt: nowUpdate,
+              });
+            }
           } else if (rec.isHoliday || rec.holidayType) {
             await ctx.db.patch(rec._id, {
               isHoliday: false,
@@ -2833,13 +2883,14 @@ export const updatePayrollRun = mutation({
           continue;
         }
         const employee = decryptEmployeeFromDb(employeeRow);
+        const employeeRates = getEmployeePayrollRates(employee, base);
 
         const payrollBase = await buildEmployeePayrollBase(ctx, {
           employee: employeeRow,
           cutoffStart,
           cutoffEnd,
           payFrequency: payFrequencyUpdate,
-          payrollRates: rates,
+          payrollRates: employeeRates,
           holidays,
           leaveTypes,
           scheduleLunchContext: runScheduleLunchContext,
@@ -2873,6 +2924,172 @@ export const updatePayrollRun = mutation({
           nonTaxableAllowanceOverride: allowanceOverrideEntry?.amount,
         });
 
+        let deductionsToPersist = canonical.deductions;
+        let grossPayToPersist = canonical.grossPay;
+        let basicPayToPersist = canonical.basicPay;
+        let netPayToPersist = canonical.netPay;
+        let holidayPayToPersist =
+          payrollBase.holidayPay > 0 ? round2(payrollBase.holidayPay) : undefined;
+        let holidayPayTypeToPersist = payrollBase.holidayPayType;
+        let nightDiffPayToPersist =
+          payrollBase.nightDiffPay > 0
+            ? round2(payrollBase.nightDiffPay)
+            : undefined;
+        let restDayPayToPersist =
+          (payrollBase.restDayPremiumPay ?? 0) > 0
+            ? round2(payrollBase.restDayPremiumPay!)
+            : undefined;
+        let overtimeRegularToPersist =
+          payrollBase.overtimeRegular > 0
+            ? round2(payrollBase.overtimeRegular)
+            : undefined;
+        let overtimeRestDayToPersist =
+          payrollBase.overtimeRestDay > 0
+            ? round2(payrollBase.overtimeRestDay)
+            : undefined;
+        let overtimeRestDayExcessToPersist =
+          payrollBase.overtimeRestDayExcess > 0
+            ? round2(payrollBase.overtimeRestDayExcess)
+            : undefined;
+        let overtimeSpecialHolidayToPersist =
+          payrollBase.overtimeSpecialHoliday > 0
+            ? round2(payrollBase.overtimeSpecialHoliday)
+            : undefined;
+        let overtimeSpecialHolidayExcessToPersist =
+          payrollBase.overtimeSpecialHolidayExcess > 0
+            ? round2(payrollBase.overtimeSpecialHolidayExcess)
+            : undefined;
+        let overtimeLegalHolidayToPersist =
+          payrollBase.overtimeLegalHoliday > 0
+            ? round2(payrollBase.overtimeLegalHoliday)
+            : undefined;
+        let overtimeLegalHolidayExcessToPersist =
+          payrollBase.overtimeLegalHolidayExcess > 0
+            ? round2(payrollBase.overtimeLegalHolidayExcess)
+            : undefined;
+
+        const variableEarningsOverride =
+          preservedVariableEarningsByEmployee.get(String(employeeId));
+        if (variableEarningsOverride) {
+          const atOpen: VariableEarnings = {
+            holidayPay: round2(payrollBase.holidayPay || 0),
+            nightDiffPay: round2(payrollBase.nightDiffPay || 0),
+            restDayPay: round2(payrollBase.restDayPremiumPay || 0),
+            overtimeRegular: round2(payrollBase.overtimeRegular || 0),
+            overtimeRestDay: round2(payrollBase.overtimeRestDay || 0),
+            overtimeRestDayExcess: round2(
+              payrollBase.overtimeRestDayExcess || 0,
+            ),
+            overtimeSpecialHoliday: round2(
+              payrollBase.overtimeSpecialHoliday || 0,
+            ),
+            overtimeSpecialHolidayExcess: round2(
+              payrollBase.overtimeSpecialHolidayExcess || 0,
+            ),
+            overtimeLegalHoliday: round2(
+              payrollBase.overtimeLegalHoliday || 0,
+            ),
+            overtimeLegalHolidayExcess: round2(
+              payrollBase.overtimeLegalHolidayExcess || 0,
+            ),
+          };
+          const nextE: VariableEarnings = {
+            holidayPay: round2(variableEarningsOverride.holidayPay || 0),
+            nightDiffPay: round2(variableEarningsOverride.nightDiffPay || 0),
+            restDayPay: round2(variableEarningsOverride.restDayPay || 0),
+            overtimeRegular: round2(
+              variableEarningsOverride.overtimeRegular || 0,
+            ),
+            overtimeRestDay: round2(
+              variableEarningsOverride.overtimeRestDay || 0,
+            ),
+            overtimeRestDayExcess: round2(
+              variableEarningsOverride.overtimeRestDayExcess || 0,
+            ),
+            overtimeSpecialHoliday: round2(
+              variableEarningsOverride.overtimeSpecialHoliday || 0,
+            ),
+            overtimeSpecialHolidayExcess: round2(
+              variableEarningsOverride.overtimeSpecialHolidayExcess || 0,
+            ),
+            overtimeLegalHoliday: round2(
+              variableEarningsOverride.overtimeLegalHoliday || 0,
+            ),
+            overtimeLegalHolidayExcess: round2(
+              variableEarningsOverride.overtimeLegalHolidayExcess || 0,
+            ),
+          };
+          const grossAndBasic = recomputeGrossAndBasicFromVariableEarnings(
+            {
+              grossPay: canonical.grossPay,
+              basicPay: canonical.basicPay,
+            },
+            atOpen,
+            nextE,
+            sumTaxableIncentiveAmounts(canonical.incentives),
+            sumTaxableIncentiveAmounts(canonical.incentives),
+          );
+          deductionsToPersist =
+            await recalcWithholdingTaxAfterVariableEarningsEdit(ctx, {
+              payslip: {
+                payrollRunId: args.payrollRunId,
+                periodStart: cutoffStart,
+                periodEnd: cutoffEnd,
+              },
+              employeeId,
+              organizationId: payrollRun.organizationId,
+              newDeductions: canonical.deductions,
+              recalculatedGross: grossAndBasic.grossPay,
+              atOpen,
+              nextE,
+            });
+          const netTotals = recomputeNetFromEarningsAndLines(
+            grossAndBasic.grossPay,
+            canonical.nonTaxableAllowance ?? 0,
+            canonical.incentives,
+            deductionsToPersist,
+          );
+          grossPayToPersist = grossAndBasic.grossPay;
+          basicPayToPersist = round2(grossAndBasic.basicPay);
+          netPayToPersist = netTotals.netPay;
+          holidayPayToPersist =
+            nextE.holidayPay > 0 ? round2(nextE.holidayPay) : undefined;
+          holidayPayTypeToPersist =
+            variableEarningsOverride.holidayPayType ?? holidayPayTypeToPersist;
+          nightDiffPayToPersist =
+            nextE.nightDiffPay > 0 ? round2(nextE.nightDiffPay) : undefined;
+          restDayPayToPersist =
+            nextE.restDayPay > 0 ? round2(nextE.restDayPay) : undefined;
+          overtimeRegularToPersist =
+            nextE.overtimeRegular > 0
+              ? round2(nextE.overtimeRegular)
+              : undefined;
+          overtimeRestDayToPersist =
+            nextE.overtimeRestDay > 0
+              ? round2(nextE.overtimeRestDay)
+              : undefined;
+          overtimeRestDayExcessToPersist =
+            nextE.overtimeRestDayExcess > 0
+              ? round2(nextE.overtimeRestDayExcess)
+              : undefined;
+          overtimeSpecialHolidayToPersist =
+            nextE.overtimeSpecialHoliday > 0
+              ? round2(nextE.overtimeSpecialHoliday)
+              : undefined;
+          overtimeSpecialHolidayExcessToPersist =
+            nextE.overtimeSpecialHolidayExcess > 0
+              ? round2(nextE.overtimeSpecialHolidayExcess)
+              : undefined;
+          overtimeLegalHolidayToPersist =
+            nextE.overtimeLegalHoliday > 0
+              ? round2(nextE.overtimeLegalHoliday)
+              : undefined;
+          overtimeLegalHolidayExcessToPersist =
+            nextE.overtimeLegalHolidayExcess > 0
+              ? round2(nextE.overtimeLegalHolidayExcess)
+              : undefined;
+        }
+
         await ctx.db.insert(
           "payslips",
           encryptPayslipRowForDb({
@@ -2883,60 +3100,31 @@ export const updatePayrollRun = mutation({
             period,
             periodStart: cutoffStart,
             periodEnd: cutoffEnd,
-            grossPay: canonical.grossPay,
-            basicPay: canonical.basicPay,
-            deductions: canonical.deductions,
+            grossPay: grossPayToPersist,
+            basicPay: basicPayToPersist,
+            deductions: deductionsToPersist,
             incentives:
               canonical.incentives.length > 0 ? canonical.incentives : undefined,
             nonTaxableAllowance: canonical.nonTaxableAllowance,
-            netPay: canonical.netPay,
+            netPay: netPayToPersist,
             daysWorked: payrollBase.daysWorked,
             absences: payrollBase.absences,
             lateHours: payrollBase.lateHours,
             undertimeHours: payrollBase.undertimeHours,
             overtimeHours: payrollBase.overtimeHours,
-            holidayPay:
-              payrollBase.holidayPay > 0
-                ? round2(payrollBase.holidayPay)
-                : undefined,
-            holidayPayType: payrollBase.holidayPayType,
-            nightDiffPay:
-              payrollBase.nightDiffPay > 0
-                ? round2(payrollBase.nightDiffPay)
-                : undefined,
+            holidayPay: holidayPayToPersist,
+            holidayPayType: holidayPayTypeToPersist,
+            nightDiffPay: nightDiffPayToPersist,
             nightDiffBreakdown: payrollBase.nightDiffBreakdown,
-            restDayPay:
-              (payrollBase.restDayPremiumPay ?? 0) > 0
-                ? round2(payrollBase.restDayPremiumPay!)
-                : undefined,
-            overtimeRegular:
-              payrollBase.overtimeRegular > 0
-                ? round2(payrollBase.overtimeRegular)
-                : undefined,
-            overtimeRestDay:
-              payrollBase.overtimeRestDay > 0
-                ? round2(payrollBase.overtimeRestDay)
-                : undefined,
-            overtimeRestDayExcess:
-              payrollBase.overtimeRestDayExcess > 0
-                ? round2(payrollBase.overtimeRestDayExcess)
-                : undefined,
-            overtimeSpecialHoliday:
-              payrollBase.overtimeSpecialHoliday > 0
-                ? round2(payrollBase.overtimeSpecialHoliday)
-                : undefined,
+            restDayPay: restDayPayToPersist,
+            overtimeRegular: overtimeRegularToPersist,
+            overtimeRestDay: overtimeRestDayToPersist,
+            overtimeRestDayExcess: overtimeRestDayExcessToPersist,
+            overtimeSpecialHoliday: overtimeSpecialHolidayToPersist,
             overtimeSpecialHolidayExcess:
-              payrollBase.overtimeSpecialHolidayExcess > 0
-                ? round2(payrollBase.overtimeSpecialHolidayExcess)
-                : undefined,
-            overtimeLegalHoliday:
-              payrollBase.overtimeLegalHoliday > 0
-                ? round2(payrollBase.overtimeLegalHoliday)
-                : undefined,
-            overtimeLegalHolidayExcess:
-              payrollBase.overtimeLegalHolidayExcess > 0
-                ? round2(payrollBase.overtimeLegalHolidayExcess)
-                : undefined,
+              overtimeSpecialHolidayExcessToPersist,
+            overtimeLegalHoliday: overtimeLegalHolidayToPersist,
+            overtimeLegalHolidayExcess: overtimeLegalHolidayExcessToPersist,
             pendingDeductions: canonical.pendingDeductions,
             noWorkNoPayDays:
               (payrollBase.noWorkNoPayDays ?? 0) > 0
@@ -2944,6 +3132,7 @@ export const updatePayrollRun = mutation({
                 : undefined,
             hasWorkedAtLeastOneDay: canonical.hasWorkedAtLeastOneDay,
             employerContributions: canonical.employerContributions,
+            editHistory: preservedEditHistoryByEmployee.get(String(employeeId)),
             concernSummary: {
               messageCount: 0,
             },
@@ -3669,8 +3858,8 @@ function getBasicPayFromPayslip(p: any): number {
     (p.overtimeSpecialHolidayExcess ?? 0) +
     (p.overtimeLegalHoliday ?? 0) +
     (p.overtimeLegalHolidayExcess ?? 0);
-  const incentives = (p.incentives ?? []).reduce(
-    (s: number, i: any) => s + (i.amount ?? 0),
+  const taxableIncentives = (p.incentives ?? []).reduce(
+    (s: number, i: any) => s + (i?.taxable === false ? 0 : (i.amount ?? 0)),
     0,
   );
   return (
@@ -3679,7 +3868,7 @@ function getBasicPayFromPayslip(p: any): number {
     (p.nightDiffPay ?? 0) -
     (p.restDayPay ?? 0) -
     overtime -
-    incentives
+    taxableIncentives
   );
 }
 
@@ -3739,7 +3928,7 @@ async function compute13thMonthAmountsInternal(
     .collect();
 
   const regularRuns = payrollRuns.filter(
-    (r: any) => (r.runType ?? "regular") !== "13th_month",
+    (r: any) => (r.runType ?? "regular") === "regular",
   );
   const runIds = new Set(regularRuns.map((r: any) => r._id));
 
@@ -3750,7 +3939,7 @@ async function compute13thMonthAmountsInternal(
     thirteenthMonthAmount: number;
   }> = [];
 
-  const { rates } = await getPayrollRates(ctx, args.organizationId);
+  const { base } = await getPayrollRates(ctx, args.organizationId);
   const holidays = await (ctx.db.query("holidays") as any)
     .withIndex("by_organization", (q: any) =>
       q.eq("organizationId", args.organizationId),
@@ -3819,17 +4008,20 @@ async function compute13thMonthAmountsInternal(
       }
       for (const { start, end } of cutoffs) {
         if (end > yearEnd) continue;
-        const base = await buildEmployeePayrollBase(ctx, {
+        const payrollBase = await buildEmployeePayrollBase(ctx, {
           employee,
           cutoffStart: start,
           cutoffEnd: end,
           payFrequency,
-          payrollRates: rates,
+          payrollRates: getEmployeePayrollRates(
+            decryptEmployeeFromDb(employee),
+            base,
+          ),
           holidays,
           leaveTypes,
           scheduleLunchContext: thirteenthMonthScheduleLunchContext,
         });
-        totalBasicPay += base.basicPay;
+        totalBasicPay += payrollBase.basicPay;
       }
     }
 

@@ -5,6 +5,7 @@
  */
 
 import { getSSSContribution } from "@/utils/sss";
+import { getManilaDateParts } from "@/lib/manila-date";
 
 const PHILHEALTH_EMPLOYEE_MONTHLY = 500;
 const PAGIBIG_EMPLOYEE_MONTHLY = 200;
@@ -47,7 +48,7 @@ export function getTaxDeductionAmount(
   taxDeductOnPay: "first" | "second",
 ): number {
   if (payFrequency === "monthly") return monthlyTax;
-  const dayOfMonth = new Date(cutoffStart).getDate();
+  const dayOfMonth = getManilaDateParts(cutoffStart).day;
   const isFirstPay = dayOfMonth <= 15;
 
   if (taxDeductionFrequency === "twice_per_month") {

@@ -116,18 +116,54 @@ function parsePeriodToDayRange(periodStr: string): { startDay: number; endDay: n
   };
 }
 
+async function resolvePayrollRunForCostItem(
+  ctx: any,
+  organizationId: any,
+  item: any,
+) {
+  if (item?.payrollRunId) {
+    const direct = await ctx.db.get(item.payrollRunId);
+    if (direct && direct.organizationId === organizationId) {
+      return direct;
+    }
+  }
+
+  const period = getPayrollPeriodFromCostItemName(item.name);
+  if (!period) return null;
+
+  const runs = await (ctx.db.query("payrollRuns") as any)
+    .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
+    .collect();
+
+  const exact = runs.find((run: any) => run.period === period);
+  if (exact) return exact;
+
+  const dayRange = parsePeriodToDayRange(period);
+  if (!dayRange) return null;
+
+  const dayMs = 86400000;
+  return (
+    runs.find((run: any) => {
+      const startDay = Math.floor((run.cutoffStart ?? 0) / dayMs);
+      const endDay = Math.floor((run.cutoffEnd ?? 0) / dayMs);
+      return (
+        startDay === dayRange.startDay &&
+        endDay === dayRange.endDay
+      );
+    }) ?? null
+  );
+}
+
 async function buildBreakdownForPayrollCostItem(
   ctx: any,
   organizationId: any,
   item: any,
 ) {
-  const period = getPayrollPeriodFromCostItemName(item.name);
-  if (!period) return undefined;
-
-  const payrollRun = await (ctx.db.query("payrollRuns") as any)
-    .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
-    .collect()
-    .then((runs: any[]) => runs.find((run) => run.period === period));
+  const payrollRun = await resolvePayrollRunForCostItem(
+    ctx,
+    organizationId,
+    item,
+  );
   if (!payrollRun) return undefined;
 
   const payslipsRaw = await (ctx.db.query("payslips") as any)
@@ -244,13 +280,11 @@ async function buildAttachmentIdsForPayrollCostItem(
   organizationId: any,
   item: any,
 ) {
-  const period = getPayrollPeriodFromCostItemName(item.name);
-  if (!period) return undefined;
-
-  const payrollRun = await (ctx.db.query("payrollRuns") as any)
-    .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
-    .collect()
-    .then((runs: any[]) => runs.find((run) => run.period === period));
+  const payrollRun = await resolvePayrollRunForCostItem(
+    ctx,
+    organizationId,
+    item,
+  );
   if (!payrollRun) return undefined;
 
   const payslipsRawAttach = await (ctx.db.query("payslips") as any)
