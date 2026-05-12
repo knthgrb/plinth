@@ -25,11 +25,11 @@ export class ConvexErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     const errorMessage = error.message || String(error);
 
-    // Unauthenticated or logout transition (hydration / fewer hooks): redirect to login, no error flash
+    // Do not treat Convex "Not authenticated" as logout — that string also appears
+    // briefly before the JWT is attached after refresh (ConvexSessionReadyGate prevents
+    // most cases). Only treat real React teardown / hydration issues as logout transitions.
     const isLogoutTransition =
-      /Not authenticated|Unauthenticated|Hydration|hydration|fewer hooks|Rendered fewer/i.test(
-        errorMessage
-      );
+      /Hydration|hydration|fewer hooks|Rendered fewer/i.test(errorMessage);
     if (isLogoutTransition && typeof window !== "undefined") {
       const pathname = window.location.pathname;
       const isPublicRoute = pathname === "/login" || pathname === "/signup" || pathname.startsWith("/invite");
@@ -63,11 +63,8 @@ export class ConvexErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       const errorMessage = this.state.error?.message || "";
 
-      // Unauthenticated or logout transition (hydration / fewer hooks): minimal UI, redirect already in componentDidCatch
       const isLogoutTransition =
-        /Not authenticated|Unauthenticated|Hydration|hydration|fewer hooks|Rendered fewer/i.test(
-          errorMessage
-        );
+        /Hydration|hydration|fewer hooks|Rendered fewer/i.test(errorMessage);
       if (isLogoutTransition) {
         return (
           <div className="flex h-screen items-center justify-center bg-white">
@@ -111,11 +108,9 @@ export function GlobalErrorHandler({ children }: { children: ReactNode }) {
       const error = event.reason;
       const errorMessage = error?.message || String(error);
 
-      // Unauthenticated or logout transition: redirect to login, no error flash or console noise
+      // Same as ConvexErrorBoundary: do not map Convex "Not authenticated" to hard logout.
       const isLogoutTransition =
-        /Not authenticated|Unauthenticated|Hydration|hydration|fewer hooks|Rendered fewer/i.test(
-          errorMessage
-        );
+        /Hydration|hydration|fewer hooks|Rendered fewer/i.test(errorMessage);
       if (isLogoutTransition && typeof window !== "undefined") {
         const pathname = window.location.pathname;
         const isPublicRoute = pathname === "/login" || pathname === "/signup" || pathname.startsWith("/invite");
@@ -150,11 +145,8 @@ export function GlobalErrorHandler({ children }: { children: ReactNode }) {
     const handleError = (event: ErrorEvent) => {
       const errorMessage = event.message || String(event.error);
 
-      // Unauthenticated or logout transition: redirect to login, no error flash or console noise
       const isLogoutTransition =
-        /Not authenticated|Unauthenticated|Hydration|hydration|fewer hooks|Rendered fewer/i.test(
-          errorMessage
-        );
+        /Hydration|hydration|fewer hooks|Rendered fewer/i.test(errorMessage);
       if (isLogoutTransition && typeof window !== "undefined") {
         const pathname = window.location.pathname;
         const isPublicRoute = pathname === "/login" || pathname === "/signup" || pathname.startsWith("/invite");

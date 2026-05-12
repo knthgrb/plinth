@@ -571,6 +571,14 @@ export default defineSchema({
         leaveTypes: v.number(),
         shifts: v.number(),
         employees: v.number(),
+        /** Max updatedAt of approved leave overlapping the cutoff (per draft employees). */
+        leaveRequests: v.optional(v.number()),
+        /** Org row updatedAt (pay cadence, etc.). */
+        organization: v.optional(v.number()),
+        /** Row counts so deletes are detected (max timestamp alone can go down). */
+        holidayRowCount: v.optional(v.number()),
+        shiftRowCount: v.optional(v.number()),
+        leaveTypeRowCount: v.optional(v.number()),
       }),
     ),
     /**

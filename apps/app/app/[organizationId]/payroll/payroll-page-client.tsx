@@ -312,9 +312,7 @@ function isGovernmentDeductionNameForSync(name: string): boolean {
   );
 }
 
-function filterCustomManualDeductionsForSync(
-  rows: Deduction[],
-): Deduction[] {
+function filterCustomManualDeductionsForSync(rows: Deduction[]): Deduction[] {
   return rows.filter(
     (d) =>
       (d.type || "").toLowerCase() !== "attendance" &&
@@ -335,7 +333,9 @@ export default function PayrollPageClient() {
   );
   const settings = useQuery(
     (api as any).settings.getSettings,
-    effectiveOrganizationId ? { organizationId: effectiveOrganizationId } : "skip",
+    effectiveOrganizationId
+      ? { organizationId: effectiveOrganizationId }
+      : "skip",
   );
   const employees = useQuery(
     (api as any).employees.getEmployees,
@@ -385,8 +385,10 @@ export default function PayrollPageClient() {
   /** Full preview from Step 3→4 reconcile; used on Step 4 before Step 5 so Restore sees WHT + attendance lines. */
   const [step4RestoreReferencePreview, setStep4RestoreReferencePreview] =
     useState<any[]>([]);
-  const [editStep4RestoreReferencePreview, setEditStep4RestoreReferencePreview] =
-    useState<any[]>([]);
+  const [
+    editStep4RestoreReferencePreview,
+    setEditStep4RestoreReferencePreview,
+  ] = useState<any[]>([]);
   /** Per-employee overrides for deduction amounts (e.g. SSS, PhilHealth) in pay preview */
   const [previewDeductionOverrides, setPreviewDeductionOverrides] = useState<
     Record<string, Record<string, number>>
@@ -501,21 +503,24 @@ export default function PayrollPageClient() {
     [],
   );
 
-  const loadPayrollRuns = async (opts?: { isInitialHydration?: boolean }) => {
-    if (!effectiveOrganizationId) return;
-    if (opts?.isInitialHydration) {
-      setPayrollRuns([]);
-      setPayrollRunsInitialReady(false);
-    }
-    try {
-      const runs = await getPayrollRuns(effectiveOrganizationId);
-      setPayrollRuns(runs);
-    } catch (error) {
-      console.error("Error loading payroll runs:", error);
-    } finally {
-      if (opts?.isInitialHydration) setPayrollRunsInitialReady(true);
-    }
-  };
+  const loadPayrollRuns = useCallback(
+    async (opts?: { isInitialHydration?: boolean }) => {
+      if (!effectiveOrganizationId) return;
+      if (opts?.isInitialHydration) {
+        setPayrollRuns([]);
+        setPayrollRunsInitialReady(false);
+      }
+      try {
+        const runs = await getPayrollRuns(effectiveOrganizationId);
+        setPayrollRuns(runs);
+      } catch (error) {
+        console.error("Error loading payroll runs:", error);
+      } finally {
+        if (opts?.isInitialHydration) setPayrollRunsInitialReady(true);
+      }
+    },
+    [effectiveOrganizationId],
+  );
 
   useEffect(() => {
     if (!effectiveOrganizationId) {
@@ -524,7 +529,23 @@ export default function PayrollPageClient() {
       return;
     }
     void loadPayrollRuns({ isInitialHydration: true });
-  }, [effectiveOrganizationId]);
+  }, [effectiveOrganizationId, loadPayrollRuns]);
+
+  // Server-action list is not Convex-reactive; refresh when returning to the tab so
+  // "outdated" matches the server after settings/holiday edits in another route.
+  useEffect(() => {
+    if (!effectiveOrganizationId) return;
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      void loadPayrollRuns();
+    };
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [effectiveOrganizationId, loadPayrollRuns]);
 
   const filteredPayrollRuns = useMemo(() => {
     let runs = payrollRuns;
@@ -834,7 +855,10 @@ export default function PayrollPageClient() {
           result.sent === 0
             ? `No pending corrections to send.${errTail}`
             : `Sent ${result.sent} corrected payslip(s) in chat.${errTail}`,
-        variant: result.errors.length > 0 && result.sent === 0 ? "destructive" : "default",
+        variant:
+          result.errors.length > 0 && result.sent === 0
+            ? "destructive"
+            : "default",
       });
     } catch (e: unknown) {
       const message =
@@ -1051,7 +1075,13 @@ export default function PayrollPageClient() {
     const hasAttendanceAlready = existingDeductions.some(isAttendanceDeduction);
     const attendanceDeductions: Deduction[] = [
       ...(!hasAttendanceAlready && preview.absentDeduction > 0
-        ? [{ name: absenceLabel, amount: preview.absentDeduction, type: "attendance" }]
+        ? [
+            {
+              name: absenceLabel,
+              amount: preview.absentDeduction,
+              type: "attendance",
+            },
+          ]
         : []),
       ...(!hasAttendanceAlready && preview.lateDeductionSpecialHoliday > 0
         ? [
@@ -1075,8 +1105,8 @@ export default function PayrollPageClient() {
         ? [
             {
               name:
-                (preview.lateDeductionSpecialHoliday > 0 ||
-                  preview.lateDeductionRegularHoliday > 0)
+                preview.lateDeductionSpecialHoliday > 0 ||
+                preview.lateDeductionRegularHoliday > 0
                   ? "Regular day late"
                   : "Late",
               amount: preview.lateDeductionRegularDay,
@@ -1085,7 +1115,13 @@ export default function PayrollPageClient() {
           ]
         : []),
       ...(!hasAttendanceAlready && preview.undertimeDeduction > 0
-        ? [{ name: "Undertime", amount: preview.undertimeDeduction, type: "attendance" }]
+        ? [
+            {
+              name: "Undertime",
+              amount: preview.undertimeDeduction,
+              type: "attendance",
+            },
+          ]
         : []),
     ];
     const initialDeductions = dedupePreviewEntries([
@@ -1180,13 +1216,17 @@ export default function PayrollPageClient() {
               },
             );
           }
-          const { totalEarnings, netPay, totalDeductions, taxableGrossEarnings } =
-            recomputePreviewNet(
-              grossPay,
-              p.nonTaxableAllowance || 0,
-              editIncentives,
-              deductionsForNet,
-            );
+          const {
+            totalEarnings,
+            netPay,
+            totalDeductions,
+            taxableGrossEarnings,
+          } = recomputePreviewNet(
+            grossPay,
+            p.nonTaxableAllowance || 0,
+            editIncentives,
+            deductionsForNet,
+          );
           const totalIncentives = round2(
             editIncentives.reduce((s, i) => s + (i.amount || 0), 0),
           );
@@ -1472,8 +1512,8 @@ export default function PayrollPageClient() {
       const cutoffMs =
         typeof editingPayslip.periodStart === "number"
           ? editingPayslip.periodStart
-          : selectedPayrollRun?.cutoffStart ??
-            (cutoffStart ? dateStringToLocalMs(cutoffStart) : null);
+          : (selectedPayrollRun?.cutoffStart ??
+            (cutoffStart ? dateStringToLocalMs(cutoffStart) : null));
       if (cutoffMs == null || Number.isNaN(cutoffMs)) return;
 
       const taxCutoff = getWithholdingTaxCutoffForEmployee(employee, {
@@ -1481,8 +1521,7 @@ export default function PayrollPageClient() {
         cutoffStart: cutoffMs,
         payFrequency,
         taxDeductionFrequency:
-          settings?.payrollSettings?.taxDeductionFrequency ??
-          "twice_per_month",
+          settings?.payrollSettings?.taxDeductionFrequency ?? "twice_per_month",
         taxDeductOnPay: settings?.payrollSettings?.taxDeductOnPay ?? "first",
       });
       const isDailyized = editingPayslip.dailyizedFirstCutoff === true;
@@ -1886,9 +1925,7 @@ export default function PayrollPageClient() {
           ? employeeDeductions
           : editEmployeeDeductions;
         const inc = isCreate ? employeeIncentives : editEmployeeIncentives;
-        const dedEnabled = isCreate
-          ? deductionsEnabled
-          : editDeductionsEnabled;
+        const dedEnabled = isCreate ? deductionsEnabled : editDeductionsEnabled;
         const gov = isCreate
           ? governmentDeductionSettings
           : editGovernmentDeductionSettings;
@@ -1909,7 +1946,8 @@ export default function PayrollPageClient() {
           employeeIds: emps,
           deductionsEnabled: dedEnabled,
           governmentDeductionSettings: gov,
-          manualDeductions: manualForBatch.length > 0 ? manualForBatch : undefined,
+          manualDeductions:
+            manualForBatch.length > 0 ? manualForBatch : undefined,
           incentives: incentForBatch.length > 0 ? incentForBatch : undefined,
         });
         const next: EmployeeDeduction[] = emps.map((employeeId) => {
@@ -1986,14 +2024,13 @@ export default function PayrollPageClient() {
           ? employeeDeductions
           : editEmployeeDeductions;
         const inc = isCreate ? employeeIncentives : editEmployeeIncentives;
-        const dedEnabled = isCreate
-          ? deductionsEnabled
-          : editDeductionsEnabled;
+        const dedEnabled = isCreate ? deductionsEnabled : editDeductionsEnabled;
         const gov = isCreate
           ? governmentDeductionSettings
           : editGovernmentDeductionSettings;
         const customRows = filterCustomManualDeductionsForSync(
-          customByEmp.find((e) => e.employeeId === employeeId)?.deductions ?? [],
+          customByEmp.find((e) => e.employeeId === employeeId)?.deductions ??
+            [],
         );
         const manualForBatch =
           customRows.length > 0
@@ -2016,7 +2053,8 @@ export default function PayrollPageClient() {
         if (!row?.deductions?.length) {
           toast({
             title: "Could not restore",
-            description: "No preview for this employee. Try re-syncing from Step 3.",
+            description:
+              "No preview for this employee. Try re-syncing from Step 3.",
             variant: "destructive",
           });
           return;
@@ -2516,9 +2554,7 @@ export default function PayrollPageClient() {
         incentives: incentives.length > 0 ? incentives : undefined,
       });
 
-      if (
-        Object.keys(previewEditsByEmployeeId).length > 0
-      ) {
+      if (Object.keys(previewEditsByEmployeeId).length > 0) {
         const updatedPayslips = await getPayslipsByPayrollRun(
           editingPayrollRun._id,
         );
@@ -2745,7 +2781,9 @@ export default function PayrollPageClient() {
                       onRestoreDefaultGovLine={(
                         employeeId: string,
                         name: string,
-                      ) => void restoreDefaultGovLine("create", employeeId, name)}
+                      ) =>
+                        void restoreDefaultGovLine("create", employeeId, name)
+                      }
                       restoringDefaultKey={restoringDefaultKey}
                       payrollPreviewRows={
                         previewData.length > 0
@@ -2964,7 +3002,8 @@ export default function PayrollPageClient() {
                   }}
                   onToggleSelectAllVisible={(runIds, checked) => {
                     setSelectedRunIds((prev) => {
-                      if (!checked) return prev.filter((id) => !runIds.includes(id));
+                      if (!checked)
+                        return prev.filter((id) => !runIds.includes(id));
                       return Array.from(new Set([...prev, ...runIds]));
                     });
                   }}
@@ -3286,7 +3325,9 @@ export default function PayrollPageClient() {
           }}
         >
           <DialogContent
-            onPointerDownOutside={(e) => isDeletingPayrollRun && e.preventDefault()}
+            onPointerDownOutside={(e) =>
+              isDeletingPayrollRun && e.preventDefault()
+            }
             onEscapeKeyDown={(e) => isDeletingPayrollRun && e.preventDefault()}
           >
             <DialogHeader>

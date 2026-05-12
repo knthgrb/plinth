@@ -80,6 +80,11 @@ type DraftDependencySnapshot = {
   leaveTypes: number;
   shifts: number;
   employees: number;
+  leaveRequests: number;
+  organization: number;
+  holidayRowCount: number;
+  shiftRowCount: number;
+  leaveTypeRowCount: number;
 };
 
 function maxTs(current: number, next: any): number {
@@ -132,23 +137,42 @@ async function captureDraftDependencySnapshot(ctx: any, args: {
     .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
     .collect();
   for (const row of holidayRows) holidays = maxTs(holidays, row);
+  const holidayRowCount = holidayRows.length;
 
   let leaveTypes = 0;
   const leaveTypeRows = await (ctx.db.query("leaveTypes") as any)
     .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
     .collect();
   for (const row of leaveTypeRows) leaveTypes = maxTs(leaveTypes, row);
+  const leaveTypeRowCount = leaveTypeRows.length;
 
   let shifts = 0;
   const shiftRows = await (ctx.db.query("shifts") as any)
     .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
     .collect();
   for (const row of shiftRows) shifts = maxTs(shifts, row);
+  const shiftRowCount = shiftRows.length;
 
   const settingsRow = await (ctx.db.query("settings") as any)
     .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
     .first();
   const payrollSettings = maxTs(0, settingsRow);
+
+  let leaveRequests = 0;
+  for (const employeeId of args.employeeIds) {
+    const leaves = await getApprovedLeaveRequestsForPayrollPeriod(
+      ctx,
+      employeeId,
+      args.cutoffStart,
+      args.cutoffEnd,
+    );
+    for (const row of leaves) {
+      leaveRequests = maxTs(leaveRequests, row);
+    }
+  }
+
+  const orgRow = await ctx.db.get(args.organizationId);
+  const organization = maxTs(0, orgRow);
 
   return {
     attendance,
@@ -157,22 +181,82 @@ async function captureDraftDependencySnapshot(ctx: any, args: {
     leaveTypes,
     shifts,
     employees,
+    leaveRequests,
+    organization,
+    holidayRowCount,
+    shiftRowCount,
+    leaveTypeRowCount,
   };
 }
 
 function hasDraftDependenciesChanged(
-  snapshot: DraftDependencySnapshot | undefined,
+  snapshot: Partial<DraftDependencySnapshot> | undefined,
   current: DraftDependencySnapshot,
 ): boolean {
   if (!snapshot) return true;
-  return (
-    current.attendance > snapshot.attendance ||
-    current.holidays > snapshot.holidays ||
-    current.payrollSettings > snapshot.payrollSettings ||
-    current.leaveTypes > snapshot.leaveTypes ||
-    current.shifts > snapshot.shifts ||
-    current.employees > snapshot.employees
-  );
+  if (
+    current.attendance > (snapshot.attendance ?? 0) ||
+    current.holidays > (snapshot.holidays ?? 0) ||
+    current.payrollSettings > (snapshot.payrollSettings ?? 0) ||
+    current.leaveTypes > (snapshot.leaveTypes ?? 0) ||
+    current.shifts > (snapshot.shifts ?? 0) ||
+    current.employees > (snapshot.employees ?? 0)
+  ) {
+    return true;
+  }
+  if (
+    snapshot.leaveRequests != null &&
+    current.leaveRequests > snapshot.leaveRequests
+  ) {
+    return true;
+  }
+  if (
+    snapshot.organization != null &&
+    current.organization > snapshot.organization
+  ) {
+    return true;
+  }
+  // Row counts: catches deletes and inserts when snapshot was captured with counts (post-upgrade regenerates).
+  if (
+    snapshot.holidayRowCount != null &&
+    current.holidayRowCount !== snapshot.holidayRowCount
+  ) {
+    return true;
+  }
+  if (
+    snapshot.shiftRowCount != null &&
+    current.shiftRowCount !== snapshot.shiftRowCount
+  ) {
+    return true;
+  }
+  if (
+    snapshot.leaveTypeRowCount != null &&
+    current.leaveTypeRowCount !== snapshot.leaveTypeRowCount
+  ) {
+    return true;
+  }
+  return false;
+}
+
+async function assertDraftDependenciesFreshForFinalize(
+  ctx: any,
+  payrollRun: any,
+): Promise<void> {
+  const employeeIds = await resolveDraftEmployeeIdsForRun(ctx, payrollRun);
+  const currentSnapshot = await captureDraftDependencySnapshot(ctx, {
+    organizationId: payrollRun.organizationId,
+    cutoffStart: payrollRun.cutoffStart,
+    cutoffEnd: payrollRun.cutoffEnd,
+    employeeIds,
+  });
+  const savedSnapshot = payrollRun.draftDependencySnapshot as
+    | Partial<DraftDependencySnapshot>
+    | undefined;
+  if (hasDraftDependenciesChanged(savedSnapshot, currentSnapshot)) {
+    throw new Error(
+      "Draft is outdated due to attendance, holidays, leave, rates, schedules, or related changes. Regenerate payslips before finalizing.",
+    );
+  }
 }
 
 const PAYROLL_SUMMARY_SNAPSHOT_V = 1 as const;
@@ -220,7 +304,7 @@ async function canUsePayrollSummarySnapshot(
     employeeIds,
   });
   return !hasDraftDependenciesChanged(
-    payrollRun.draftDependencySnapshot as DraftDependencySnapshot | undefined,
+    payrollRun.draftDependencySnapshot as Partial<DraftDependencySnapshot> | undefined,
     current,
   );
 }
@@ -3384,26 +3468,8 @@ export const updatePayrollRunStatus = mutation({
       );
     }
 
-    if (
-      args.status === "finalized" &&
-      payrollRun.status === "draft" &&
-      (payrollRun.runType ?? "regular") === "regular"
-    ) {
-      const employeeIds = await resolveDraftEmployeeIdsForRun(ctx, payrollRun);
-      const currentSnapshot = await captureDraftDependencySnapshot(ctx, {
-        organizationId: payrollRun.organizationId,
-        cutoffStart: payrollRun.cutoffStart,
-        cutoffEnd: payrollRun.cutoffEnd,
-        employeeIds,
-      });
-      const savedSnapshot = payrollRun.draftDependencySnapshot as
-        | DraftDependencySnapshot
-        | undefined;
-      if (hasDraftDependenciesChanged(savedSnapshot, currentSnapshot)) {
-        throw new Error(
-          "Draft is outdated due to attendance/holiday/rate/schedule changes. Regenerate payslips before finalizing.",
-        );
-      }
+    if (args.status === "finalized" && payrollRun.status === "draft") {
+      await assertDraftDependenciesFreshForFinalize(ctx, payrollRun);
     }
 
     // Remove cost items if archiving after finalize/paid
@@ -3985,21 +4051,27 @@ export const getPayrollRuns = query({
     const out: any[] = [];
     for (const run of runs) {
       const dec = decryptPayrollRunFromDb(run);
-      if (
-        dec.status === "draft" &&
-        (dec.runType ?? "regular") === "regular"
-      ) {
-        const employeeIds = await resolveDraftEmployeeIdsForRun(ctx, run);
-        const currentSnapshot = await captureDraftDependencySnapshot(ctx, {
-          organizationId: dec.organizationId,
-          cutoffStart: dec.cutoffStart,
-          cutoffEnd: dec.cutoffEnd,
-          employeeIds,
-        });
-        dec.isDraftOutdated = hasDraftDependenciesChanged(
-          run.draftDependencySnapshot as DraftDependencySnapshot | undefined,
-          currentSnapshot,
-        );
+      if (dec.status === "draft") {
+        const rt = dec.runType ?? "regular";
+        if (
+          rt === "regular" ||
+          rt === "13th_month" ||
+          rt === "leave_conversion"
+        ) {
+          const employeeIds = await resolveDraftEmployeeIdsForRun(ctx, run);
+          const currentSnapshot = await captureDraftDependencySnapshot(ctx, {
+            organizationId: dec.organizationId,
+            cutoffStart: dec.cutoffStart,
+            cutoffEnd: dec.cutoffEnd,
+            employeeIds,
+          });
+          dec.isDraftOutdated = hasDraftDependenciesChanged(
+            run.draftDependencySnapshot as Partial<DraftDependencySnapshot> | undefined,
+            currentSnapshot,
+          );
+        } else {
+          dec.isDraftOutdated = false;
+        }
       } else {
         dec.isDraftOutdated = false;
       }
