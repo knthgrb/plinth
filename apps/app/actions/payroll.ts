@@ -1,6 +1,7 @@
 "use server";
 
 import { PayrollService } from "@/services/payroll-service";
+import { getConvexUserFacingMessage } from "@/lib/convex-user-facing-error";
 
 export async function createPayrollRun(data: {
   organizationId: string;
@@ -176,11 +177,23 @@ export async function sendPendingPayslipCorrectionsInChat(
   return PayrollService.sendPendingPayslipCorrectionsInChat(payrollRunId);
 }
 
+export type UpdatePayrollRunStatusResult =
+  | { ok: true; data: { success: true } }
+  | { ok: false; error: string };
+
 export async function updatePayrollRunStatus(
   payrollRunId: string,
-  status: "draft" | "finalized" | "paid" | "archived" | "cancelled"
-) {
-  return PayrollService.updatePayrollRunStatus(payrollRunId, status);
+  status: "draft" | "finalized" | "paid" | "archived" | "cancelled",
+): Promise<UpdatePayrollRunStatusResult> {
+  try {
+    const data = await PayrollService.updatePayrollRunStatus(
+      payrollRunId,
+      status,
+    );
+    return { ok: true, data };
+  } catch (e: unknown) {
+    return { ok: false, error: getConvexUserFacingMessage(e) };
+  }
 }
 
 export async function sendFinalizedPayrollPayslipEmails(payrollRunId: string) {

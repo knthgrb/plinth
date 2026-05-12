@@ -816,7 +816,15 @@ export default function PayrollPageClient() {
 
   const handleArchivePayrollRun = async (payrollRun: any) => {
     try {
-      await updatePayrollRunStatus(payrollRun._id, "archived");
+      const result = await updatePayrollRunStatus(payrollRun._id, "archived");
+      if (!result.ok) {
+        toast({
+          title: "Error",
+          description: result.error,
+          variant: "destructive",
+        });
+        return;
+      }
       await loadPayrollRuns();
       toast({
         title: "Archived",
@@ -941,7 +949,15 @@ export default function PayrollPageClient() {
       return;
     }
     try {
-      await updatePayrollRunStatus(payrollRun._id, status as any);
+      const result = await updatePayrollRunStatus(payrollRun._id, status as any);
+      if (!result.ok) {
+        toast({
+          title: "Error",
+          description: result.error,
+          variant: "destructive",
+        });
+        return;
+      }
       await loadPayrollRuns();
       toast({
         title: "Status Updated",

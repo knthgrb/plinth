@@ -254,7 +254,7 @@ async function assertDraftDependenciesFreshForFinalize(
     | undefined;
   if (hasDraftDependenciesChanged(savedSnapshot, currentSnapshot)) {
     throw new Error(
-      "Draft is outdated due to attendance, holidays, leave, rates, schedules, or related changes. Regenerate payslips before finalizing.",
+      "This payroll run is out of date (attendance, holidays, leave, rates, or schedules changed after the last payslip calculation). Regenerate payslips from the payroll list, then finalize again.",
     );
   }
 }

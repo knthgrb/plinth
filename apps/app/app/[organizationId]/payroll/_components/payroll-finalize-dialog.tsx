@@ -53,7 +53,15 @@ export function PayrollFinalizeDialog({
     if (!payrollRunId || confirming) return;
     setConfirming(true);
     try {
-      await updatePayrollRunStatus(payrollRunId, "finalized");
+      const result = await updatePayrollRunStatus(payrollRunId, "finalized");
+      if (!result.ok) {
+        toast({
+          title: "Finalize failed",
+          description: result.error,
+          variant: "destructive",
+        });
+        return;
+      }
       toast({
         title: "Payroll finalized",
         description:
