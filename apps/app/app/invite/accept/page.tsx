@@ -21,6 +21,10 @@ import {
 } from "@/components/ui/dialog";
 import { Building2, User, Mail, LogOut } from "lucide-react";
 
+function normEmail(s: string | null | undefined): string {
+  return (s ?? "").trim().toLowerCase();
+}
+
 export default function AcceptInvitationPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -68,7 +72,10 @@ export default function AcceptInvitationPage() {
         if (userEmail) {
           setCurrentSessionEmail(userEmail);
           // Only show switch dialog when logged in as a *different* email (not for same-email)
-          if (invitation?.email && userEmail.toLowerCase() !== invitation.email.toLowerCase()) {
+          if (
+            invitation?.email &&
+            normEmail(userEmail) !== normEmail(invitation.email)
+          ) {
             setShowSwitchAccountDialog(true);
           }
         }
@@ -110,7 +117,7 @@ export default function AcceptInvitationPage() {
     // If there's a different account logged in, require sign out first
     if (
       currentSessionEmail &&
-      currentSessionEmail !== invitation.email &&
+      normEmail(currentSessionEmail) !== normEmail(invitation.email) &&
       !showSwitchAccountDialog
     ) {
       setShowSwitchAccountDialog(true);
@@ -121,7 +128,7 @@ export default function AcceptInvitationPage() {
     setIsProcessing(true);
 
     const isAlreadyLoggedInAsInvitee =
-      currentSessionEmail?.toLowerCase() === invitation.email?.toLowerCase();
+      normEmail(currentSessionEmail) === normEmail(invitation.email);
 
     try {
       // Already logged in as invitee: just add org and set as active, no password
@@ -180,7 +187,10 @@ export default function AcceptInvitationPage() {
       } else {
         // User exists in Convex database, but may not have Better Auth account yet
         // If there's a different session, sign out first
-        if (currentSessionEmail && currentSessionEmail !== invitation.email) {
+        if (
+          currentSessionEmail &&
+          normEmail(currentSessionEmail) !== normEmail(invitation.email)
+        ) {
           await authClient.signOut();
           await new Promise((resolve) => setTimeout(resolve, 300));
         }
@@ -337,7 +347,7 @@ export default function AcceptInvitationPage() {
           <CardContent>
             {/* Only show "sign out first" when logged in as a *different* email */}
             {currentSessionEmail &&
-              currentSessionEmail.toLowerCase() !== invitation.email?.toLowerCase() && (
+              normEmail(currentSessionEmail) !== normEmail(invitation.email) && (
                 <div className="mb-4 rounded-lg bg-yellow-50 border border-yellow-200 p-3">
                   <p className="text-sm text-yellow-800">
                     You are currently signed in as{" "}
@@ -381,7 +391,8 @@ export default function AcceptInvitationPage() {
             </div>
 
             <form onSubmit={handleAccept} className="space-y-4">
-              {currentSessionEmail?.toLowerCase() === invitation.email?.toLowerCase() ? (
+              {currentSessionEmail &&
+              normEmail(currentSessionEmail) === normEmail(invitation.email) ? (
                 <>
                   <p className="text-sm text-muted-foreground">
                     You're signed in as <strong>{invitation.email}</strong>. Click below to join this organization.
@@ -398,10 +409,19 @@ export default function AcceptInvitationPage() {
               ) : !currentSessionEmail && isExistingUser === true ? (
                 <>
                   <p className="text-sm text-muted-foreground">
-                    An account already exists for <strong>{invitation.email}</strong>. Please log in first to accept this invitation.
+                    An account already exists for{" "}
+                    <strong>{invitation.email}</strong>. Sign in with that
+                    account to accept this invitation. You will not create a new
+                    account.
                   </p>
                   <Button asChild className="w-full">
-                    <Link href={token ? `/login?redirect=${encodeURIComponent(`/invite/accept?token=${token}`)}` : "/login"}>
+                    <Link
+                      href={
+                        token
+                          ? `/login?email=${encodeURIComponent(invitation.email)}&redirect=${encodeURIComponent(`/invite/accept?token=${token}`)}`
+                          : `/login?email=${encodeURIComponent(invitation.email)}`
+                      }
+                    >
                       Log in to accept
                     </Link>
                   </Button>
@@ -427,7 +447,8 @@ export default function AcceptInvitationPage() {
                       disabled={
                         !!(
                           currentSessionEmail &&
-                          currentSessionEmail !== invitation.email
+                          normEmail(currentSessionEmail) !==
+                            normEmail(invitation.email)
                         )
                       }
                     />
@@ -458,7 +479,8 @@ export default function AcceptInvitationPage() {
                         disabled={
                           !!(
                             currentSessionEmail &&
-                            currentSessionEmail !== invitation.email
+                            normEmail(currentSessionEmail) !==
+                              normEmail(invitation.email)
                           )
                         }
                       />
@@ -480,7 +502,8 @@ export default function AcceptInvitationPage() {
                       (!isExistingUser && !confirmPassword) ||
                       !!(
                         currentSessionEmail &&
-                        currentSessionEmail !== invitation.email
+                        normEmail(currentSessionEmail) !==
+                          normEmail(invitation.email)
                       )
                     }
                   >

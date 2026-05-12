@@ -47,10 +47,10 @@ export async function addUserToOrganization(data: {
   email: string;
   role: "admin" | "hr" | "accounting" | "employee";
   employeeId?: string;
+  confirmInviteToExistingPlinthUser?: boolean;
 }) {
-  // Use server action that handles both invitation creation and email sending
   const { createInvitation } = await import("./invitations");
-  return await createInvitation(data);
+  return createInvitation(data);
 }
 
 export async function removeUserFromOrganization(

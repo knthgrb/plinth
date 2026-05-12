@@ -175,6 +175,7 @@ export async function createUserForEmployee(data: {
   organizationId: string;
   employeeId: string;
   role: "admin" | "hr" | "accounting" | "employee";
+  confirmInviteToExistingPlinthUser?: boolean;
 }) {
   const convex = await getAuthedConvexClient();
 
@@ -185,6 +186,8 @@ export async function createUserForEmployee(data: {
       organizationId: data.organizationId as Id<"organizations">,
       employeeId: data.employeeId as Id<"employees">,
       role: data.role,
+      confirmInviteToExistingPlinthUser:
+        data.confirmInviteToExistingPlinthUser === true ? true : undefined,
     },
   );
 

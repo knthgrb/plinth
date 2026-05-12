@@ -16,6 +16,57 @@ async function getUserRecord(ctx: any) {
   return userRecord;
 }
 
+function normalizeInviteEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+/** Convex `users.email` is indexed exactly; try common variants for case mismatches. */
+async function findUserByEmailLoose(ctx: any, email: string) {
+  const trimmed = email.trim();
+  const norm = normalizeInviteEmail(email);
+  const variants = Array.from(
+    new Set([trimmed, norm, email].filter((s) => s.length > 0)),
+  );
+  for (const variant of variants) {
+    const u = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q: any) => q.eq("email", variant))
+      .first();
+    if (u) return u;
+  }
+  return null;
+}
+
+/**
+ * When linking an employee to an existing Plinth account, align employee record names
+ * with the account display name (split into first / middle / last).
+ */
+function employeePersonalFromAccountDisplayName(
+  displayName: string,
+  fallbackEmail: string,
+): { firstName: string; lastName: string; middleName?: string } {
+  const trimmed = displayName.trim();
+  const localPart = (fallbackEmail.split("@")[0] || "user").trim() || "user";
+  if (!trimmed) {
+    return { firstName: localPart, lastName: localPart };
+  }
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: parts[0] };
+  }
+  if (parts.length === 2) {
+    return { firstName: parts[0], lastName: parts[1] };
+  }
+  return {
+    firstName: parts[0],
+    middleName: parts.slice(1, -1).join(" "),
+    lastName: parts[parts.length - 1],
+  };
+}
+
+/** Thrown when UI must show confirm for inviting an email that already has a Convex user. */
+const CONFIRM_EXISTING_PLINTH_USER = "CONFIRM_EXISTING_PLINTH_USER";
+
 // Create invitation (mutation - email will be sent from server action)
 export const createInvitation = mutation({
   args: {
@@ -29,6 +80,7 @@ export const createInvitation = mutation({
       v.literal("accounting")
     ),
     employeeId: v.optional(v.id("employees")),
+    confirmInviteToExistingPlinthUser: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userRecord = await getUserRecord(ctx);
@@ -53,10 +105,8 @@ export const createInvitation = mutation({
       throw new Error("Not authorized to invite users to organization");
     }
 
-    // Check if user is already in this organization
-    const existingUser = await (ctx.db.query("users") as any)
-      .withIndex("by_email", (q: any) => q.eq("email", args.email))
-      .first();
+    // Check if user is already in this organization (case-insensitive email match)
+    const existingUser = await findUserByEmailLoose(ctx, args.email);
 
     if (existingUser) {
       const existingUserOrg = await (ctx.db.query("userOrganizations") as any)
@@ -70,6 +120,10 @@ export const createInvitation = mutation({
       if (existingUserOrg) {
         throw new Error("User is already a member of this organization");
       }
+
+      if (!args.confirmInviteToExistingPlinthUser) {
+        throw new Error(CONFIRM_EXISTING_PLINTH_USER);
+      }
     }
 
     // Check for existing pending invitation
@@ -79,9 +133,10 @@ export const createInvitation = mutation({
       )
       .collect();
 
+    const inviteNorm = normalizeInviteEmail(args.email);
     const existingInvitation = existingInvitations.find(
       (inv: any) =>
-        inv.email === args.email &&
+        normalizeInviteEmail(inv.email) === inviteNorm &&
         inv.status === "pending" &&
         inv.organizationId === args.organizationId
     );
@@ -183,10 +238,104 @@ export const checkUserExists = query({
     email: v.string(),
   },
   handler: async (ctx, args) => {
-    const user = await (ctx.db.query("users") as any)
-      .withIndex("by_email", (q: any) => q.eq("email", args.email))
-      .first();
+    const user = await findUserByEmailLoose(ctx, args.email);
     return !!user;
+  },
+});
+
+export const getInviteRecipientPreview = query({
+  args: {
+    organizationId: v.id("organizations"),
+    email: v.optional(v.string()),
+    employeeId: v.optional(v.id("employees")),
+  },
+  handler: async (ctx, args) => {
+    if (!args.employeeId && !(args.email && String(args.email).trim())) {
+      throw new Error("Provide an email or employeeId");
+    }
+
+    const userRecord = await getUserRecord(ctx);
+
+    const userOrg = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_user_organization", (q: any) =>
+        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
+      )
+      .first();
+
+    const isAuthorized =
+      userOrg?.role === "owner" ||
+      userOrg?.role === "admin" ||
+      userOrg?.role === "hr" ||
+      (userRecord.organizationId === args.organizationId &&
+        (userRecord.role === "admin" ||
+          userRecord.role === "hr" ||
+          userRecord.role === "owner"));
+
+    if (!isAuthorized) {
+      throw new Error("Not authorized to preview invitations");
+    }
+
+    let inviteEmail = args.email?.trim() ?? "";
+    let employeeCurrentDisplayName: string | undefined;
+
+    if (args.employeeId) {
+      const employee = await ctx.db.get(args.employeeId);
+      if (!employee || employee.organizationId !== args.organizationId) {
+        throw new Error("Employee not found");
+      }
+      const p = employee.personalInfo as {
+        firstName: string;
+        lastName: string;
+        middleName?: string;
+        email: string;
+      };
+      inviteEmail = (p.email ?? "").trim();
+      employeeCurrentDisplayName = [p.firstName, p.middleName, p.lastName]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+    }
+
+    if (!inviteEmail) {
+      throw new Error("Email is required");
+    }
+
+    const existingConvexUser = await findUserByEmailLoose(ctx, inviteEmail);
+
+    let alreadyInOrg = false;
+    if (existingConvexUser) {
+      const link = await (ctx.db.query("userOrganizations") as any)
+        .withIndex("by_user_organization", (q: any) =>
+          q
+            .eq("userId", existingConvexUser._id)
+            .eq("organizationId", args.organizationId)
+        )
+        .first();
+      alreadyInOrg = !!link;
+    }
+
+    const needsConfirmForExistingUser = !!(
+      existingConvexUser && !alreadyInOrg
+    );
+
+    return {
+      inviteEmail,
+      existingConvexUser: existingConvexUser
+        ? {
+            name:
+              ((existingConvexUser as any).name as string | undefined) ?? null,
+            email: (existingConvexUser as any).email as string,
+          }
+        : null,
+      alreadyInOrg,
+      needsConfirmForExistingUser,
+      employeeWillBeRenamedToMatchAccount: !!(
+        args.employeeId &&
+        existingConvexUser &&
+        !alreadyInOrg
+      ),
+      employeeCurrentDisplayName,
+    };
   },
 });
 
@@ -217,26 +366,28 @@ export const acceptInvitation = mutation({
     // Try to get authenticated user (may not be authenticated yet for new users)
     const authUser = await authComponent.getAuthUser(ctx).catch(() => null);
 
-    // If authenticated, verify email matches
-    if (authUser && authUser.email !== invitation.email) {
+    // If authenticated, verify email matches (case-insensitive)
+    if (
+      authUser &&
+      normalizeInviteEmail(authUser.email) !==
+        normalizeInviteEmail(invitation.email)
+    ) {
       throw new Error("Invitation email does not match your account");
     }
 
     const now = Date.now();
 
-    // Use name from invitation (employee record) when available, else from form
     const nameToSet =
       (invitation as any).inviteeName ?? args.name ?? undefined;
 
-    // Get or create user record in Convex
-    let user = await (ctx.db.query("users") as any)
-      .withIndex("by_email", (q: any) => q.eq("email", invitation.email))
-      .first();
+    const existingConvexUser = await findUserByEmailLoose(
+      ctx,
+      invitation.email,
+    );
 
     let userId: any;
 
-    if (!user) {
-      // Create user record if it doesn't exist
+    if (!existingConvexUser) {
       userId = await ctx.db.insert("users", {
         email: invitation.email,
         name: nameToSet,
@@ -244,14 +395,8 @@ export const acceptInvitation = mutation({
         updatedAt: now,
       });
     } else {
-      userId = user._id;
-      if (nameToSet) {
-        // Update user name if provided (from invitation or form)
-        await ctx.db.patch(user._id, {
-          name: nameToSet,
-          updatedAt: now,
-        });
-      }
+      userId = existingConvexUser._id;
+      // Keep existing Plinth account name; do not overwrite from employee invitee name.
     }
 
     // Add user to organization
@@ -334,13 +479,38 @@ export const getInvitations = query({
       throw new Error("Not authorized");
     }
 
+    const memberLinks = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId)
+      )
+      .collect();
+
+    const memberEmailsLower = new Set<string>();
+    for (const link of memberLinks) {
+      const member = (await ctx.db.get(link.userId)) as {
+        email?: string;
+      } | null;
+      if (member?.email) {
+        memberEmailsLower.add(normalizeInviteEmail(member.email));
+      }
+    }
+
     const invitations = await (ctx.db.query("invitations") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId)
       )
       .collect();
 
-    return invitations.sort((a: any, b: any) => b.createdAt - a.createdAt);
+    const sorted = invitations.sort(
+      (a: any, b: any) => b.createdAt - a.createdAt
+    );
+
+    return sorted.map((inv: any) => ({
+      ...inv,
+      pendingNeedsAction:
+        inv.status === "pending" &&
+        !memberEmailsLower.has(normalizeInviteEmail(inv.email)),
+    }));
   },
 });
 
@@ -356,6 +526,7 @@ export const createUserForEmployee = mutation({
       v.literal("employee"),
       v.literal("accounting")
     ),
+    confirmInviteToExistingPlinthUser: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userRecord = await getUserRecord(ctx);
@@ -387,6 +558,8 @@ export const createUserForEmployee = mutation({
       throw new Error("Employee not found");
     }
 
+    const now = Date.now();
+
     // Cannot invite yourself (employee email matches current user)
     const inviterEmail = (userRecord as any).email;
     if (inviterEmail && (employee.personalInfo as any).email?.toLowerCase() === inviterEmail.toLowerCase()) {
@@ -406,11 +579,10 @@ export const createUserForEmployee = mutation({
     }
 
     // Check if user with this email already exists
-    const existingUser = await (ctx.db.query("users") as any)
-      .withIndex("by_email", (q: any) =>
-        q.eq("email", employee.personalInfo.email)
-      )
-      .first();
+    const existingUser = await findUserByEmailLoose(
+      ctx,
+      employee.personalInfo.email,
+    );
 
     if (existingUser) {
       // Check if this user is already in the organization
@@ -429,22 +601,66 @@ export const createUserForEmployee = mutation({
           "A user with this email is already in the organization"
         );
       }
+
+      if (!args.confirmInviteToExistingPlinthUser) {
+        throw new Error(CONFIRM_EXISTING_PLINTH_USER);
+      }
+
+      const parts = employeePersonalFromAccountDisplayName(
+        String((existingUser as any).name ?? ""),
+        String((existingUser as any).email ?? employee.personalInfo.email),
+      );
+      const pi = employee.personalInfo as {
+        firstName: string;
+        lastName: string;
+        middleName?: string;
+        email: string;
+        phone?: string;
+        address?: string;
+        province?: string;
+        dateOfBirth?: number;
+        civilStatus?: string;
+        emergencyContact?: {
+          name: string;
+          relationship: string;
+          phone: string;
+        };
+      };
+      const { middleName: _oldMiddle, ...piRest } = pi;
+      const updatedPersonal = {
+        ...piRest,
+        firstName: parts.firstName,
+        lastName: parts.lastName,
+        ...(parts.middleName ? { middleName: parts.middleName } : {}),
+      };
+      await ctx.db.patch(args.employeeId, {
+        personalInfo: updatedPersonal,
+        updatedAt: now,
+      });
     }
 
+    const employeeAfter = (await ctx.db.get(args.employeeId)) as typeof employee;
+
     // Build invitee name from employee record so we can set it on accept without asking
-    const p = employee.personalInfo as {
+    const p = employeeAfter.personalInfo as {
       firstName: string;
       lastName: string;
       middleName?: string;
     };
-    const inviteeName = [p.firstName, p.middleName, p.lastName]
+    const inviteeNameFromEmployee = [p.firstName, p.middleName, p.lastName]
       .filter(Boolean)
       .join(" ")
       .trim();
+    const accountDisplay =
+      existingUser && args.confirmInviteToExistingPlinthUser
+        ? String((existingUser as any).name ?? "").trim()
+        : "";
+    const inviteeName =
+      (accountDisplay.length > 0 ? accountDisplay : inviteeNameFromEmployee) ||
+      undefined;
 
     // Create invitation for the employee
     const token = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-    const now = Date.now();
     const expiresAt = now + 7 * 24 * 60 * 60 * 1000; // 7 days
 
     const invitationId = await ctx.db.insert("invitations", {

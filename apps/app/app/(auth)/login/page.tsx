@@ -33,6 +33,11 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    const e = searchParams.get("email");
+    if (e) setEmail(e);
+  }, [searchParams]);
+
   // Complete sign-out after navigating here (org tree is unmounted, so no Convex auth errors)
   useEffect(() => {
     if (typeof window === "undefined") return;

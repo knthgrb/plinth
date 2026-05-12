@@ -10,6 +10,7 @@ export class InvitationsService {
     email: string;
     role: "admin" | "hr" | "accounting" | "employee";
     employeeId?: string;
+    confirmInviteToExistingPlinthUser?: boolean;
   }) {
     const convex = await getAuthedConvexClient();
 
@@ -21,6 +22,8 @@ export class InvitationsService {
         email: data.email,
         role: data.role,
         employeeId: data.employeeId as Id<"employees"> | undefined,
+        confirmInviteToExistingPlinthUser:
+          data.confirmInviteToExistingPlinthUser === true ? true : undefined,
       },
     );
 

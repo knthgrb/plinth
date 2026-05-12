@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
@@ -43,7 +43,11 @@ import {
   updateUserRoleInOrganization,
   deleteOrganization,
 } from "@/actions/organizations";
-import { resendInvitation } from "@/actions/invitations";
+import {
+  resendInvitation,
+  previewInviteRecipient,
+  type InviteRecipientPreview,
+} from "@/actions/invitations";
 import { CreateOrganizationDialog } from "@/components/create-organization-dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { Spinner } from "@/components/ui/spinner";
@@ -70,6 +74,11 @@ export function OrganizationManagement(): React.ReactElement {
     email: "",
     role: "employee" as "admin" | "hr" | "accounting" | "employee",
   });
+  const [invitePreview, setInvitePreview] =
+    useState<InviteRecipientPreview | null>(null);
+  const [isInviteExistingUserDialogOpen, setIsInviteExistingUserDialogOpen] =
+    useState(false);
+  const [isSendingInvite, setIsSendingInvite] = useState(false);
   const [resendingId, setResendingId] = useState<string | null>(null);
 
   const members = useQuery(
@@ -81,6 +90,14 @@ export function OrganizationManagement(): React.ReactElement {
     (api as any).invitations.getInvitations,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
+
+  const pendingInvitationsToShow = useMemo(() => {
+    if (!invitations) return [];
+    return invitations.filter(
+      (inv: { status: string; pendingNeedsAction?: boolean }) =>
+        inv.status === "pending" && inv.pendingNeedsAction !== false,
+    );
+  }, [invitations]);
 
   const cancelInvitationMutation = useMutation(
     (api as any).invitations.cancelInvitation,
@@ -136,7 +153,11 @@ export function OrganizationManagement(): React.ReactElement {
       });
       refreshOrganizations();
     } catch (error: any) {
-      alert(error.message || "Failed to update organization");
+      toast({
+        title: "Could not save organization",
+        description: error.message || "Failed to update organization",
+        variant: "destructive",
+      });
     }
   };
 
@@ -144,17 +165,91 @@ export function OrganizationManagement(): React.ReactElement {
     e.preventDefault();
     if (!currentOrganizationId || !isOwnerOrAdmin) return;
 
+    const email = inviteFormData.email.trim();
+    if (!email) return;
+
+    setIsSendingInvite(true);
     try {
-      await addUserToOrganization({
+      const pr = await previewInviteRecipient({
         organizationId: currentOrganizationId,
-        email: inviteFormData.email,
+        email,
+      });
+      if (!pr.ok) {
+        toast({
+          title: "Could not verify invitation",
+          description: pr.error,
+          variant: "destructive",
+        });
+        return;
+      }
+      if (pr.preview.alreadyInOrg) {
+        toast({
+          title: "Already a member",
+          description:
+            "This email already belongs to a user in your organization.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (pr.preview.needsConfirmForExistingUser) {
+        setInvitePreview(pr.preview);
+        setIsInviteExistingUserDialogOpen(true);
+        return;
+      }
+
+      const result = await addUserToOrganization({
+        organizationId: currentOrganizationId,
+        email,
         role: inviteFormData.role,
+      });
+      if (!result.ok) {
+        toast({
+          title: "Invitation failed",
+          description: result.error,
+          variant: "destructive",
+        });
+        return;
+      }
+      toast({
+        title: "Invitation sent",
+        description: `We emailed ${email} with a link to join this organization.`,
       });
       setIsInviteDialogOpen(false);
       setInviteFormData({ email: "", role: "employee" });
-      // Refresh will happen automatically via useQuery
-    } catch (error: any) {
-      alert(error.message || "Failed to add user");
+    } finally {
+      setIsSendingInvite(false);
+    }
+  };
+
+  const handleConfirmInviteExistingUser = async () => {
+    if (!currentOrganizationId || !invitePreview) return;
+    const email = inviteFormData.email.trim();
+    setIsSendingInvite(true);
+    try {
+      const result = await addUserToOrganization({
+        organizationId: currentOrganizationId,
+        email,
+        role: inviteFormData.role,
+        confirmInviteToExistingPlinthUser: true,
+      });
+      if (!result.ok) {
+        toast({
+          title: "Invitation failed",
+          description: result.error,
+          variant: "destructive",
+        });
+        return;
+      }
+      toast({
+        title: "Invitation sent",
+        description: `We emailed ${email} with a link to join this organization.`,
+      });
+      setIsInviteExistingUserDialogOpen(false);
+      setInvitePreview(null);
+      setIsInviteDialogOpen(false);
+      setInviteFormData({ email: "", role: "employee" });
+    } finally {
+      setIsSendingInvite(false);
     }
   };
 
@@ -165,7 +260,11 @@ export function OrganizationManagement(): React.ReactElement {
     try {
       await removeUserFromOrganization(currentOrganizationId, userId);
     } catch (error: any) {
-      alert(error.message || "Failed to remove user");
+      toast({
+        title: "Could not remove user",
+        description: error.message || "Failed to remove user",
+        variant: "destructive",
+      });
     }
   };
 
@@ -183,7 +282,11 @@ export function OrganizationManagement(): React.ReactElement {
         role: newRole,
       });
     } catch (error: any) {
-      alert(error.message || "Failed to update role");
+      toast({
+        title: "Could not update role",
+        description: error.message || "Failed to update role",
+        variant: "destructive",
+      });
     }
   };
 
@@ -208,7 +311,11 @@ export function OrganizationManagement(): React.ReactElement {
         window.location.href = "/dashboard";
       }
     } catch (error: any) {
-      alert(error.message || "Failed to delete organization");
+      toast({
+        title: "Could not delete organization",
+        description: error.message || "Failed to delete organization",
+        variant: "destructive",
+      });
       setIsDeleting(false);
     }
   };
@@ -386,16 +493,14 @@ export function OrganizationManagement(): React.ReactElement {
           </Card>
         )}
 
-        {canViewMembers && invitations && invitations.length > 0 && (
+        {canViewMembers && pendingInvitationsToShow.length > 0 && (
           <Card>
             <CardHeader>
               <CardTitle>Pending Invitations</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {invitations
-                  .filter((inv: any) => inv.status === "pending")
-                  .map((invitation: any) => (
+                {pendingInvitationsToShow.map((invitation: any) => (
                     <div
                       key={invitation._id}
                       className="flex items-center justify-between p-3 border rounded-lg"
@@ -421,21 +526,20 @@ export function OrganizationManagement(): React.ReactElement {
                           disabled={resendingId === invitation._id}
                           onClick={async () => {
                             setResendingId(invitation._id);
-                            try {
-                              await resendInvitation(invitation._id);
+                            const result = await resendInvitation(invitation._id);
+                            if (!result.ok) {
+                              toast({
+                                title: "Failed to resend",
+                                description: result.error,
+                                variant: "destructive",
+                              });
+                            } else {
                               toast({
                                 title: "Invitation resent",
                                 description: `Email sent again to ${invitation.email}.`,
                               });
-                            } catch (error: any) {
-                              toast({
-                                title: "Failed to resend",
-                                description: error.message || "Failed to resend invitation.",
-                                variant: "destructive",
-                              });
-                            } finally {
-                              setResendingId(null);
                             }
+                            setResendingId(null);
                           }}
                           title="Resend invitation email"
                         >
@@ -454,9 +558,12 @@ export function OrganizationManagement(): React.ReactElement {
                                 invitationId: invitation._id,
                               });
                             } catch (error: any) {
-                              alert(
-                                error.message || "Failed to cancel invitation",
-                              );
+                              toast({
+                                title: "Could not cancel invitation",
+                                description:
+                                  error.message || "Failed to cancel invitation",
+                                variant: "destructive",
+                              });
                             }
                           }}
                           title="Cancel invitation"
@@ -607,9 +714,57 @@ export function OrganizationManagement(): React.ReactElement {
               >
                 Cancel
               </Button>
-              <Button type="submit">Send Invitation</Button>
+              <Button type="submit" disabled={isSendingInvite}>
+                {isSendingInvite ? "Checking…" : "Send Invitation"}
+              </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isInviteExistingUserDialogOpen}
+        onOpenChange={(open) => {
+          setIsInviteExistingUserDialogOpen(open);
+          if (!open) setInvitePreview(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Existing Plinth account</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                <p>
+                  This email is already registered on Plinth as{" "}
+                  <strong className="text-foreground">
+                    {invitePreview?.existingConvexUser?.name?.trim() ||
+                      invitePreview?.existingConvexUser?.email}
+                  </strong>
+                  . They will be asked to log in to accept this invitation; no
+                  new account will be created.
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIsInviteExistingUserDialogOpen(false);
+                setInvitePreview(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleConfirmInviteExistingUser()}
+              disabled={isSendingInvite}
+            >
+              {isSendingInvite ? "Sending…" : "Confirm and send invitation"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
