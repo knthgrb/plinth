@@ -357,6 +357,8 @@ export function PayslipDetail({
       ? `(${lateMinutes} ${lateMinutes === 1 ? "min" : "mins"})`
       : "";
   const holidayPayAmount = payslip.holidayPay ?? 0;
+  const storedRegularHolidayPay = payslip.regularHolidayPay ?? 0;
+  const storedSpecialHolidayPay = payslip.specialHolidayPay ?? 0;
   const hasLegalHolidayOvertime = (payslip.overtimeLegalHoliday ?? 0) > 0;
   const hasSpecialHolidayOvertime = (payslip.overtimeSpecialHoliday ?? 0) > 0;
 
@@ -449,6 +451,18 @@ export function PayslipDetail({
                     ? "Legal Holiday"
                     : "Special Holiday"
       : "Holiday";
+  const regularHolidayPayAmount =
+    storedRegularHolidayPay > 0
+      ? storedRegularHolidayPay
+      : storedSpecialHolidayPay <= 0 && holidayPayLabel === "Legal Holiday"
+        ? holidayPayAmount
+        : 0;
+  const specialHolidayPayAmount =
+    storedSpecialHolidayPay > 0
+      ? storedSpecialHolidayPay
+      : storedRegularHolidayPay <= 0 && holidayPayLabel === "Special Holiday"
+        ? holidayPayAmount
+        : 0;
 
   const basicPay = payslip.basicPay ?? fullBasicPay;
   const displayedDailyRate =
@@ -677,12 +691,24 @@ export function PayslipDetail({
                         </span>
                       </div>
                     )}
-                    {(payslip.holidayPay ?? 0) > 0 && (
+                    {regularHolidayPayAmount > 0 && (
                       <div className="flex justify-between">
-                        <span>{holidayPayLabel}</span>
+                        <span>Legal Holiday</span>
                         <span>
                           ₱
-                          {payslip.holidayPay!.toLocaleString("en-US", {
+                          {regularHolidayPayAmount.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {specialHolidayPayAmount > 0 && (
+                      <div className="flex justify-between">
+                        <span>Special Holiday</span>
+                        <span>
+                          ₱
+                          {specialHolidayPayAmount.toLocaleString("en-US", {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}

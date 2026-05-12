@@ -1,7 +1,10 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
-import { holidayMatchesDate } from "@/lib/payroll-calculations";
+import {
+  holidayAppliesToEmployee,
+  holidayMatchesDate,
+} from "@/lib/payroll-calculations";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -55,6 +58,35 @@ async function checkAuth(
   }
 
   return { ...userRecord, role: userRole, organizationId };
+}
+
+type HolidayDocLike = {
+  _id?: any;
+  organizationId: any;
+  date: number;
+  offsetDate?: number;
+  type: "regular" | "special" | "special_working";
+  isRecurring?: boolean;
+  applyToAll?: boolean;
+  provinces?: string[];
+  year?: number;
+};
+
+function resolveAttendanceHolidayForEmployee(args: {
+  attendanceDate: number;
+  holidays: HolidayDocLike[];
+  employee: any;
+}): { isHoliday: boolean; holidayType?: "regular" | "special" | "special_working" } {
+  const match = args.holidays.find(
+    (holiday) =>
+      holidayMatchesDate(holiday, args.attendanceDate) &&
+      holidayAppliesToEmployee(holiday, args.employee),
+  );
+  if (!match) return { isHoliday: false };
+  return {
+    isHoliday: true,
+    holidayType: match.type,
+  };
 }
 
 // Get holidays for organization
@@ -221,21 +253,60 @@ export const updateHoliday = mutation({
 
       await ctx.db.patch(args.holidayId, updates);
 
-      // Sync matching attendance so payroll and attendance UI stay in sync with holiday type/date.
-      if (args.type !== undefined || args.date !== undefined) {
+      // Recompute attendance holiday state after holiday changes so payroll, attendance,
+      // and draft-outdated checks all read the same source of truth.
+      if (
+        args.type !== undefined ||
+        args.date !== undefined ||
+        args.offsetDate !== undefined ||
+        args.clearOffsetDate === true ||
+        args.isRecurring !== undefined ||
+        args.applyToAll !== undefined ||
+        args.provinces !== undefined
+      ) {
         const updatedHoliday = await ctx.db.get(args.holidayId);
         if (updatedHoliday) {
+          const allHolidays = await (ctx.db.query("holidays") as any)
+            .withIndex("by_organization", (q: any) =>
+              q.eq("organizationId", updatedHoliday.organizationId),
+            )
+            .collect();
+          const holidaysForSync = allHolidays.map((entry: any) =>
+            entry._id === updatedHoliday._id ? updatedHoliday : entry,
+          );
           const attendance = await (ctx.db.query("attendance") as any)
             .withIndex("by_organization", (q: any) =>
               q.eq("organizationId", updatedHoliday.organizationId),
             )
             .collect();
+          const employees = await (ctx.db.query("employees") as any)
+            .withIndex("by_organization", (q: any) =>
+              q.eq("organizationId", updatedHoliday.organizationId),
+            )
+            .collect();
+          const employeesById = new Map(
+            employees.map((employee: any) => [String(employee._id), employee]),
+          );
           const now = Date.now();
           for (const rec of attendance) {
-            if (holidayMatchesDate(updatedHoliday, rec.date)) {
+            const wasAffected =
+              holidayMatchesDate(holiday, rec.date) ||
+              holidayMatchesDate(updatedHoliday, rec.date);
+            if (!wasAffected) continue;
+            const employee = employeesById.get(String(rec.employeeId));
+            if (!employee) continue;
+            const nextHoliday = resolveAttendanceHolidayForEmployee({
+              attendanceDate: rec.date,
+              holidays: holidaysForSync,
+              employee,
+            });
+            if (
+              rec.isHoliday !== nextHoliday.isHoliday ||
+              rec.holidayType !== nextHoliday.holidayType
+            ) {
               await ctx.db.patch(rec._id, {
-                isHoliday: true,
-                holidayType: updatedHoliday.type as "regular" | "special" | "special_working",
+                isHoliday: nextHoliday.isHoliday,
+                holidayType: nextHoliday.holidayType,
                 updatedAt: now,
               });
             }
@@ -266,19 +337,46 @@ export const deleteHoliday = mutation({
     // Authorize within the holiday's organization
     await checkAuth(ctx, holiday.organizationId, "hr");
 
-    // Clear isHoliday/holidayType on attendance that matched this holiday
-    // so payroll doesn't treat those days as holidays when regenerating payslips.
+    // Recompute holiday state from remaining holidays so we clear only what truly
+    // stopped being a holiday for that employee/date.
+    const remainingHolidays = await (ctx.db.query("holidays") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", holiday.organizationId),
+      )
+      .collect();
+    const holidaysForSync = remainingHolidays.filter(
+      (entry: any) => entry._id !== holiday._id,
+    );
     const attendance = await (ctx.db.query("attendance") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", holiday.organizationId),
       )
       .collect();
+    const employees = await (ctx.db.query("employees") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", holiday.organizationId),
+      )
+      .collect();
+    const employeesById = new Map(
+      employees.map((employee: any) => [String(employee._id), employee]),
+    );
     const now = Date.now();
     for (const rec of attendance) {
-      if (holidayMatchesDate(holiday, rec.date) && (rec.isHoliday || rec.holidayType)) {
+      if (!holidayMatchesDate(holiday, rec.date)) continue;
+      const employee = employeesById.get(String(rec.employeeId));
+      if (!employee) continue;
+      const nextHoliday = resolveAttendanceHolidayForEmployee({
+        attendanceDate: rec.date,
+        holidays: holidaysForSync,
+        employee,
+      });
+      if (
+        rec.isHoliday !== nextHoliday.isHoliday ||
+        rec.holidayType !== nextHoliday.holidayType
+      ) {
         await ctx.db.patch(rec._id, {
-          isHoliday: false,
-          holidayType: undefined,
+          isHoliday: nextHoliday.isHoliday,
+          holidayType: nextHoliday.holidayType,
           updatedAt: now,
         });
       }

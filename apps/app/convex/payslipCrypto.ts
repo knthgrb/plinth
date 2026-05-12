@@ -17,6 +17,8 @@ const NUMERIC_KEYS = [
   "undertimeHours",
   "overtimeHours",
   "holidayPay",
+  "regularHolidayPay",
+  "specialHolidayPay",
   "restDayPay",
   "nightDiffPay",
   "overtimeRegular",

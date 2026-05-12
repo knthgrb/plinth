@@ -467,7 +467,17 @@ export function renderPayslipPdfBuffer(args: {
 
     const taxableExtras: Array<{ label: string; amount: number }> = [];
     const hp = num(p.holidayPay);
-    if (hp > 0) taxableExtras.push({ label: "Holiday pay", amount: hp });
+    const regularHolidayPay = num((p as { regularHolidayPay?: number }).regularHolidayPay);
+    const specialHolidayPay = num((p as { specialHolidayPay?: number }).specialHolidayPay);
+    if (regularHolidayPay > 0) {
+      taxableExtras.push({ label: "Legal holiday", amount: regularHolidayPay });
+    }
+    if (specialHolidayPay > 0) {
+      taxableExtras.push({ label: "Special holiday", amount: specialHolidayPay });
+    }
+    if (hp > 0 && regularHolidayPay <= 0 && specialHolidayPay <= 0) {
+      taxableExtras.push({ label: "Holiday pay", amount: hp });
+    }
     const rd = num(p.restDayPay);
     if (rd > 0) taxableExtras.push({ label: "Rest day premium", amount: rd });
     const nd = num(p.nightDiffPay);

@@ -327,7 +327,75 @@ function hasManualVariableEarningsEdit(payslip: any): boolean {
 
 type PersistedVariableEarningsOverride = VariableEarnings & {
   holidayPayType?: "regular" | "special";
+  regularHolidayPay?: number;
+  specialHolidayPay?: number;
 };
+
+function splitHolidayPayForPersistence(args: {
+  payslipLike: {
+    holidayPay?: number;
+    regularHolidayPay?: number;
+    specialHolidayPay?: number;
+    holidayPayType?: "regular" | "special";
+  };
+  nextHolidayPay: number;
+}): {
+  regularHolidayPay?: number;
+  specialHolidayPay?: number;
+  holidayPayType?: "regular" | "special";
+} {
+  const nextHolidayPay = round2(args.nextHolidayPay || 0);
+  if (nextHolidayPay <= 0) {
+    return {
+      regularHolidayPay: undefined,
+      specialHolidayPay: undefined,
+      holidayPayType: undefined,
+    };
+  }
+
+  const currentRegular = round2(args.payslipLike.regularHolidayPay || 0);
+  const currentSpecial = round2(args.payslipLike.specialHolidayPay || 0);
+  const currentTotal = round2(currentRegular + currentSpecial);
+
+  if (currentTotal > 0) {
+    const regularShare = currentRegular / currentTotal;
+    const regularHolidayPay = round2(nextHolidayPay * regularShare);
+    const specialHolidayPay = round2(nextHolidayPay - regularHolidayPay);
+    return {
+      regularHolidayPay: regularHolidayPay > 0 ? regularHolidayPay : undefined,
+      specialHolidayPay: specialHolidayPay > 0 ? specialHolidayPay : undefined,
+      holidayPayType:
+        specialHolidayPay > 0
+          ? currentSpecial > 0
+            ? undefined
+            : "special"
+          : regularHolidayPay > 0
+            ? "regular"
+            : undefined,
+    };
+  }
+
+  if (args.payslipLike.holidayPayType === "regular") {
+    return {
+      regularHolidayPay: nextHolidayPay,
+      specialHolidayPay: undefined,
+      holidayPayType: "regular",
+    };
+  }
+  if (args.payslipLike.holidayPayType === "special") {
+    return {
+      regularHolidayPay: undefined,
+      specialHolidayPay: nextHolidayPay,
+      holidayPayType: "special",
+    };
+  }
+
+  return {
+    regularHolidayPay: undefined,
+    specialHolidayPay: undefined,
+    holidayPayType: undefined,
+  };
+}
 
 function normalizeConcernSummary(summary: any) {
   if (!summary || typeof summary !== "object") {
@@ -2036,6 +2104,8 @@ export const computeEmployeePayroll = query({
       undertimeHours: payrollBase.undertimeHours,
       overtimeHours: payrollBase.overtimeHours,
       holidayPay: payrollBase.holidayPay,
+      regularHolidayPay: payrollBase.regularHolidayPay,
+      specialHolidayPay: payrollBase.specialHolidayPay,
       holidayPayType: payrollBase.holidayPayType,
       restDayPay: payrollBase.restDayPremiumPay ?? 0,
       nightDiffPay: payrollBase.nightDiffPay,
@@ -2439,7 +2509,19 @@ export const createPayrollRun = mutation({
             payrollBase.holidayPay > 0
               ? round2(payrollBase.holidayPay)
               : undefined,
-          holidayPayType: payrollBase.holidayPayType,
+          regularHolidayPay:
+            (payrollBase.regularHolidayPay ?? 0) > 0
+              ? round2(payrollBase.regularHolidayPay!)
+              : undefined,
+          specialHolidayPay:
+            (payrollBase.specialHolidayPay ?? 0) > 0
+              ? round2(payrollBase.specialHolidayPay!)
+              : undefined,
+          holidayPayType:
+            (payrollBase.regularHolidayPay ?? 0) > 0 &&
+            (payrollBase.specialHolidayPay ?? 0) > 0
+              ? undefined
+              : payrollBase.holidayPayType,
           nightDiffPay:
             payrollBase.nightDiffPay > 0
               ? round2(payrollBase.nightDiffPay)
@@ -2704,6 +2786,8 @@ export const updatePayrollRun = mutation({
               p as unknown as Record<string, unknown>,
             ),
             holidayPayType: p.holidayPayType,
+            regularHolidayPay: p.regularHolidayPay,
+            specialHolidayPay: p.specialHolidayPay,
           });
         }
         if (!explicitManual) {
@@ -2930,7 +3014,18 @@ export const updatePayrollRun = mutation({
         let netPayToPersist = canonical.netPay;
         let holidayPayToPersist =
           payrollBase.holidayPay > 0 ? round2(payrollBase.holidayPay) : undefined;
-        let holidayPayTypeToPersist = payrollBase.holidayPayType;
+        let regularHolidayPayToPersist =
+          (payrollBase.regularHolidayPay ?? 0) > 0
+            ? round2(payrollBase.regularHolidayPay!)
+            : undefined;
+        let specialHolidayPayToPersist =
+          (payrollBase.specialHolidayPay ?? 0) > 0
+            ? round2(payrollBase.specialHolidayPay!)
+            : undefined;
+        let holidayPayTypeToPersist =
+          regularHolidayPayToPersist && specialHolidayPayToPersist
+            ? undefined
+            : payrollBase.holidayPayType;
         let nightDiffPayToPersist =
           payrollBase.nightDiffPay > 0
             ? round2(payrollBase.nightDiffPay)
@@ -3054,8 +3149,13 @@ export const updatePayrollRun = mutation({
           netPayToPersist = netTotals.netPay;
           holidayPayToPersist =
             nextE.holidayPay > 0 ? round2(nextE.holidayPay) : undefined;
-          holidayPayTypeToPersist =
-            variableEarningsOverride.holidayPayType ?? holidayPayTypeToPersist;
+          const holidaySplit = splitHolidayPayForPersistence({
+            payslipLike: variableEarningsOverride,
+            nextHolidayPay: nextE.holidayPay,
+          });
+          regularHolidayPayToPersist = holidaySplit.regularHolidayPay;
+          specialHolidayPayToPersist = holidaySplit.specialHolidayPay;
+          holidayPayTypeToPersist = holidaySplit.holidayPayType;
           nightDiffPayToPersist =
             nextE.nightDiffPay > 0 ? round2(nextE.nightDiffPay) : undefined;
           restDayPayToPersist =
@@ -3113,6 +3213,8 @@ export const updatePayrollRun = mutation({
             undertimeHours: payrollBase.undertimeHours,
             overtimeHours: payrollBase.overtimeHours,
             holidayPay: holidayPayToPersist,
+            regularHolidayPay: regularHolidayPayToPersist,
+            specialHolidayPay: specialHolidayPayToPersist,
             holidayPayType: holidayPayTypeToPersist,
             nightDiffPay: nightDiffPayToPersist,
             nightDiffBreakdown: payrollBase.nightDiffBreakdown,
@@ -5555,11 +5657,18 @@ export const updatePayslip = mutation({
         newIncentives,
         finalDeductions,
       );
+      const holidaySplit = splitHolidayPayForPersistence({
+        payslipLike: payslip,
+        nextHolidayPay: nextE.holidayPay,
+      });
       recalculatedGross = gbb.grossPay;
       recalculatedNet = netB.netPay;
       Object.assign(variableEarningsPatch, {
         basicPay: round2(gbb.basicPay),
         holidayPay: round2(nextE.holidayPay),
+        regularHolidayPay: holidaySplit.regularHolidayPay,
+        specialHolidayPay: holidaySplit.specialHolidayPay,
+        holidayPayType: holidaySplit.holidayPayType,
         nightDiffPay: round2(nextE.nightDiffPay),
         restDayPay: round2(nextE.restDayPay),
         overtimeRegular: round2(nextE.overtimeRegular),

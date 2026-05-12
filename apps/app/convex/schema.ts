@@ -661,6 +661,8 @@ export default defineSchema({
     undertimeHours: v.union(v.number(), v.string()),
     overtimeHours: v.union(v.number(), v.string()),
     holidayPay: v.optional(v.union(v.number(), v.string())),
+    regularHolidayPay: v.optional(v.union(v.number(), v.string())),
+    specialHolidayPay: v.optional(v.union(v.number(), v.string())),
     /** When holidayPay > 0: "regular" = Legal Holiday, "special" = Special Holiday (for label only). */
     holidayPayType: v.optional(
       v.union(v.literal("regular"), v.literal("special")),

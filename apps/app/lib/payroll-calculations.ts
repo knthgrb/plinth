@@ -53,6 +53,8 @@ export type PayrollBaseResult = {
   undertimeHours: number;
   overtimeHours: number;
   holidayPay: number;
+  regularHolidayPay?: number;
+  specialHolidayPay?: number;
   /** When holidayPay > 0, which type produced it so the payslip can show "Legal" vs "Special Holiday". */
   holidayPayType?: "regular" | "special";
   nightDiffPay: number;
@@ -1481,11 +1483,13 @@ export function calculatePayrollBaseFromRecords(args: {
     lateDeductionRegularHoliday;
 
   const holidayPayType =
-    holidayPayFromSpecial > 0
-      ? "special"
-      : holidayPayFromRegular > 0
-        ? "regular"
-        : undefined;
+    holidayPayFromSpecial > 0 && holidayPayFromRegular > 0
+      ? undefined
+      : holidayPayFromSpecial > 0
+        ? "special"
+        : holidayPayFromRegular > 0
+          ? "regular"
+          : undefined;
 
   // Round all monetary amounts to nearest hundredths for payslip
   return {
@@ -1498,6 +1502,10 @@ export function calculatePayrollBaseFromRecords(args: {
     undertimeHours,
     overtimeHours,
     holidayPay: round2(holidayPay),
+    regularHolidayPay:
+      holidayPayFromRegular > 0 ? round2(holidayPayFromRegular) : undefined,
+    specialHolidayPay:
+      holidayPayFromSpecial > 0 ? round2(holidayPayFromSpecial) : undefined,
     holidayPayType,
     nightDiffPay: round2(nightDiffPay),
     nightDiffBreakdown:

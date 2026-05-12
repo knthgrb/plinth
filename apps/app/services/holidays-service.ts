@@ -9,7 +9,7 @@ export class HolidaysService {
     holidays: Array<{
       name: string;
       date: number;
-      type: "regular" | "special";
+      type: "regular" | "special" | "special_working";
       isRecurring: boolean;
       year?: number;
     }>;
@@ -29,7 +29,7 @@ export class HolidaysService {
     name: string;
     date: number;
     offsetDate?: number;
-    type: "regular" | "special";
+    type: "regular" | "special" | "special_working";
     isRecurring: boolean;
     year?: number;
   }) {
@@ -54,7 +54,7 @@ export class HolidaysService {
       date?: number;
       offsetDate?: number;
       clearOffsetDate?: boolean;
-      type?: "regular" | "special";
+      type?: "regular" | "special" | "special_working";
       isRecurring?: boolean;
       year?: number;
     }
