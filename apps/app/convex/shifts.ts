@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { runOrgQuery } from "./queryAuthGrace";
 
 async function checkAuth(ctx: any, organizationId: any, requiredRole?: "owner" | "admin" | "hr") {
   const user = await authComponent.getAuthUser(ctx);
@@ -215,11 +216,13 @@ export async function getScheduleWithLunch(
 export const listShifts = query({
   args: { organizationId: v.id("organizations") },
   handler: async (ctx, args) => {
-    await checkAuth(ctx, args.organizationId);
-    const shifts = await (ctx.db.query("shifts") as any)
-      .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
-      .collect();
-    return shifts.sort((a: any, b: any) => a.name.localeCompare(b.name));
+    return runOrgQuery(async () => {
+      await checkAuth(ctx, args.organizationId);
+      const shifts = await (ctx.db.query("shifts") as any)
+        .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
+        .collect();
+      return shifts.sort((a: any, b: any) => a.name.localeCompare(b.name));
+    }, []);
   },
 });
 

@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
 import {
   calculateProratedLeave,
   getConvertibleLeaveDays,
@@ -78,6 +79,19 @@ async function checkAuth(
   const employeeId = userOrg?.employeeId ?? userRecord.employeeId;
 
   return { ...userRecord, role: userRole, organizationId, employeeId };
+}
+
+async function checkAuthForQuery(
+  ctx: any,
+  organizationId: any,
+  requiredRole?: "owner" | "admin" | "hr",
+) {
+  try {
+    return await checkAuth(ctx, organizationId, requiredRole);
+  } catch (e) {
+    if (isOrgQueryAuthGraceError(e)) return null;
+    throw e;
+  }
 }
 
 // Helper to calculate working days (excluding weekends)
@@ -279,7 +293,8 @@ export const getLeaveRequests = query({
     ),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId);
+    if (!userRecord) return [];
 
     // Employees can only see their own requests
     // If employee role and employeeId is provided, it must match their own
@@ -326,7 +341,8 @@ export const getLeaveRequest = query({
     const request = await ctx.db.get(args.leaveRequestId);
     if (!request) throw new Error("Leave request not found");
 
-    const userRecord = await checkAuth(ctx, request.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, request.organizationId);
+    if (!userRecord) return null;
 
     // Check authorization
     if (
@@ -353,7 +369,10 @@ export const getLeaveRequestApprovalInfo = query({
     const request = await ctx.db.get(args.leaveRequestId);
     if (!request) return { canApprove: false, blockReason: "Leave request not found" };
 
-    const userRecord = await checkAuth(ctx, request.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, request.organizationId);
+    if (!userRecord) {
+      return { canApprove: false, blockReason: "Not authenticated" };
+    }
     if (
       userRecord.role === "employee" &&
       userRecord.employeeId !== request.employeeId
@@ -770,7 +789,8 @@ export const getLeaveTypes = query({
     organizationId: v.id("organizations"),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId);
+    if (!userRecord) return [];
 
     const leaveTypes = await (ctx.db.query("leaveTypes") as any)
       .withIndex("by_organization", (q: any) =>
@@ -818,7 +838,8 @@ export const getEmployeeLeaveCredits = query({
     employeeId: v.id("employees"),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId);
+    if (!userRecord) return null;
 
     if (
       userRecord.role === "employee" &&

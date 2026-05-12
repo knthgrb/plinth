@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
 import { holidayAppliesToEmployee } from "@/lib/payroll-calculations";
 import {
   calculateLate,
@@ -155,6 +156,19 @@ async function checkAuth(
   return { ...userRecord, role: userRole, organizationId };
 }
 
+async function checkAuthForQuery(
+  ctx: any,
+  organizationId: any,
+  requiredRole?: "owner" | "admin" | "hr",
+) {
+  try {
+    return await checkAuth(ctx, organizationId, requiredRole);
+  } catch (e) {
+    if (isOrgQueryAuthGraceError(e)) return null;
+    throw e;
+  }
+}
+
 /** Resolves the employee id for the current user in this org (payslips / employee-view + punch). */
 async function resolveSelfEmployeeIdForOrg(
   ctx: any,
@@ -279,7 +293,8 @@ export const getEmployeeAttendance = query({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    const userRecord = await checkAuth(ctx, employee.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, employee.organizationId);
+    if (!userRecord) return [];
 
     if (userRecord.role === "employee") {
       const selfId = await resolveSelfEmployeeIdForOrg(
@@ -320,7 +335,8 @@ export const getAttendance = query({
     employeeId: v.optional(v.id("employees")),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId, "hr");
+    if (!userRecord) return [];
 
     let attendance = await (ctx.db.query("attendance") as any)
       .withIndex("by_organization", (q: any) =>

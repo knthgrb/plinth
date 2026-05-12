@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import type { Id } from "./_generated/dataModel";
+import { runOrgQuery } from "./queryAuthGrace";
 
 /** Types shown in employee experience (self payslip / own leave outcomes). Approver inbox is staff-only. */
 const forEmployeeExperienceFilter = (q: any) =>
@@ -43,20 +44,22 @@ export const getUnreadNotificationCount = query({
     forEmployeeExperience: v.optional(v.boolean()),
   },
   handler: async (ctx, { organizationId, forEmployeeExperience }) => {
-    const me = await checkAuth(ctx, organizationId);
-    let q = (ctx.db.query("notifications") as any).withIndex(
-      "by_user_org_unread",
-      (iq: any) =>
-        iq
-          .eq("userId", me._id)
-          .eq("organizationId", organizationId)
-          .eq("read", false),
-    );
-    if (forEmployeeExperience) {
-      q = q.filter(forEmployeeExperienceFilter);
-    }
-    const rows = await q.collect();
-    return { count: rows.length };
+    return runOrgQuery(async () => {
+      const me = await checkAuth(ctx, organizationId);
+      let q = (ctx.db.query("notifications") as any).withIndex(
+        "by_user_org_unread",
+        (iq: any) =>
+          iq
+            .eq("userId", me._id)
+            .eq("organizationId", organizationId)
+            .eq("read", false),
+      );
+      if (forEmployeeExperience) {
+        q = q.filter(forEmployeeExperienceFilter);
+      }
+      const rows = await q.collect();
+      return { count: rows.length };
+    }, { count: 0 });
   },
 });
 
@@ -67,17 +70,19 @@ export const getNotificationTabCounts = query({
     forEmployeeExperience: v.optional(v.boolean()),
   },
   handler: async (ctx, { organizationId, forEmployeeExperience }) => {
-    const me = await checkAuth(ctx, organizationId);
-    let q = (ctx.db.query("notifications") as any).withIndex(
-      "by_user_org_created",
-      (iq: any) => iq.eq("userId", me._id).eq("organizationId", organizationId),
-    );
-    if (forEmployeeExperience) {
-      q = q.filter(forEmployeeExperienceFilter);
-    }
-    const rows = (await q.collect()) as Array<{ read: boolean }>;
-    const unread = rows.filter((r) => !r.read).length;
-    return { total: rows.length, unread };
+    return runOrgQuery(async () => {
+      const me = await checkAuth(ctx, organizationId);
+      let q = (ctx.db.query("notifications") as any).withIndex(
+        "by_user_org_created",
+        (iq: any) => iq.eq("userId", me._id).eq("organizationId", organizationId),
+      );
+      if (forEmployeeExperience) {
+        q = q.filter(forEmployeeExperienceFilter);
+      }
+      const rows = (await q.collect()) as Array<{ read: boolean }>;
+      const unread = rows.filter((r) => !r.read).length;
+      return { total: rows.length, unread };
+    }, { total: 0, unread: 0 });
   },
 });
 
@@ -92,16 +97,49 @@ export const listNotificationsPage = query({
     forEmployeeExperience: v.optional(v.boolean()),
   },
   handler: async (ctx, { organizationId, limit, cursor, unreadOnly, forEmployeeExperience }) => {
-    const me = await checkAuth(ctx, organizationId);
-    const lim = Math.min(Math.max(1, limit), 50);
+    return runOrgQuery(async () => {
+      const me = await checkAuth(ctx, organizationId);
+      const lim = Math.min(Math.max(1, limit), 50);
 
-    if (unreadOnly) {
-      let unreadQuery = (ctx.db.query("notifications") as any)
-        .withIndex("by_user_org_read_created", (q: any) => {
+      if (unreadOnly) {
+        let unreadQuery = (ctx.db.query("notifications") as any)
+          .withIndex("by_user_org_read_created", (q: any) => {
+            const base = q
+              .eq("userId", me._id)
+              .eq("organizationId", organizationId)
+              .eq("read", false);
+            if (cursor !== undefined) {
+              return base.lt("createdAt", cursor);
+            }
+            return base;
+          })
+          .order("desc");
+        if (forEmployeeExperience) {
+          unreadQuery = unreadQuery.filter(forEmployeeExperienceFilter);
+        }
+        const batch = await unreadQuery.take(lim + 1);
+        const hasMore = batch.length > lim;
+        const items = (hasMore ? batch.slice(0, lim) : batch) as Array<{
+          _id: Id<"notifications">;
+          type: string;
+          title: string;
+          body?: string;
+          read: boolean;
+          createdAt: number;
+          pathAfterOrg: string;
+        }>;
+        const nextCursor =
+          hasMore && items.length > 0
+            ? items[items.length - 1].createdAt
+            : null;
+        return { items, nextCursor, hasMore };
+      }
+
+      let allQuery = (ctx.db.query("notifications") as any)
+        .withIndex("by_user_org_created", (q: any) => {
           const base = q
             .eq("userId", me._id)
-            .eq("organizationId", organizationId)
-            .eq("read", false);
+            .eq("organizationId", organizationId);
           if (cursor !== undefined) {
             return base.lt("createdAt", cursor);
           }
@@ -109,9 +147,9 @@ export const listNotificationsPage = query({
         })
         .order("desc");
       if (forEmployeeExperience) {
-        unreadQuery = unreadQuery.filter(forEmployeeExperienceFilter);
+        allQuery = allQuery.filter(forEmployeeExperienceFilter);
       }
-      const batch = await unreadQuery.take(lim + 1);
+      const batch = await allQuery.take(lim + 1);
       const hasMore = batch.length > lim;
       const items = (hasMore ? batch.slice(0, lim) : batch) as Array<{
         _id: Id<"notifications">;
@@ -123,40 +161,9 @@ export const listNotificationsPage = query({
         pathAfterOrg: string;
       }>;
       const nextCursor =
-        hasMore && items.length > 0
-          ? items[items.length - 1].createdAt
-          : null;
+        hasMore && items.length > 0 ? items[items.length - 1].createdAt : null;
       return { items, nextCursor, hasMore };
-    }
-
-    let allQuery = (ctx.db.query("notifications") as any)
-      .withIndex("by_user_org_created", (q: any) => {
-        const base = q
-          .eq("userId", me._id)
-          .eq("organizationId", organizationId);
-        if (cursor !== undefined) {
-          return base.lt("createdAt", cursor);
-        }
-        return base;
-      })
-      .order("desc");
-    if (forEmployeeExperience) {
-      allQuery = allQuery.filter(forEmployeeExperienceFilter);
-    }
-    const batch = await allQuery.take(lim + 1);
-    const hasMore = batch.length > lim;
-    const items = (hasMore ? batch.slice(0, lim) : batch) as Array<{
-      _id: Id<"notifications">;
-      type: string;
-      title: string;
-      body?: string;
-      read: boolean;
-      createdAt: number;
-      pathAfterOrg: string;
-    }>;
-    const nextCursor =
-      hasMore && items.length > 0 ? items[items.length - 1].createdAt : null;
-    return { items, nextCursor, hasMore };
+    }, { items: [], nextCursor: null, hasMore: false });
   },
 });
 

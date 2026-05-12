@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { runOrgQuery } from "./queryAuthGrace";
 
 // Mutation to ensure user record exists (can be called after signup/signin)
 export const ensureUserRecord = mutation({
@@ -495,13 +496,15 @@ export const deleteOrganization = mutation({
   },
 });
 
-// Get organization details
+// Get organization details (returns null when unauthenticated, unauthorized, or missing —
+// never throws so hard refresh + URL org id before client auth sync does not crash the app)
 export const getOrganization = query({
   args: {
     organizationId: v.id("organizations"),
   },
   handler: async (ctx, args) => {
-    const userRecord = await getUserRecord(ctx);
+    const userRecord = await getUserRecordOrNull(ctx);
+    if (!userRecord) return null;
 
     // Check if user has access to this organization
     const userOrg = await (ctx.db.query("userOrganizations") as any)
@@ -516,12 +519,12 @@ export const getOrganization = query({
       userOrg || userRecord.organizationId === args.organizationId;
 
     if (!hasAccess) {
-      throw new Error("Not authorized");
+      return null;
     }
 
     const organization = await ctx.db.get(args.organizationId);
     if (!organization) {
-      throw new Error("Organization not found");
+      return null;
     }
 
     return organization;
@@ -799,12 +802,14 @@ export const getDefaultRequirements = query({
     organizationId: v.id("organizations"),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    return runOrgQuery(async () => {
+      const userRecord = await checkAuth(ctx, args.organizationId);
 
-    const organization = await ctx.db.get(args.organizationId);
-    if (!organization) throw new Error("Organization not found");
+      const organization = await ctx.db.get(args.organizationId);
+      if (!organization) throw new Error("Organization not found");
 
-    return organization.defaultRequirements || [];
+      return organization.defaultRequirements || [];
+    }, []);
   },
 });
 

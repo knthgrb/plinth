@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { runOrgQuery } from "./queryAuthGrace";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -76,16 +77,18 @@ export const getAssets = query({
     organizationId: v.id("organizations"),
   },
   handler: async (ctx, args) => {
-    await checkAuth(ctx, args.organizationId);
+    return runOrgQuery(async () => {
+      await checkAuth(ctx, args.organizationId);
 
-    const assets = await ctx.db
-      .query("assets")
-      .withIndex("by_organization", (q) =>
-        q.eq("organizationId", args.organizationId)
-      )
-      .collect();
+      const assets = await ctx.db
+        .query("assets")
+        .withIndex("by_organization", (q) =>
+          q.eq("organizationId", args.organizationId),
+        )
+        .collect();
 
-    return assets;
+      return assets;
+    }, []);
   },
 });
 
@@ -95,11 +98,13 @@ export const getAsset = query({
     assetId: v.id("assets"),
   },
   handler: async (ctx, args) => {
-    const asset = await ctx.db.get(args.assetId);
-    if (!asset) throw new Error("Asset not found");
+    return runOrgQuery(async () => {
+      const asset = await ctx.db.get(args.assetId);
+      if (!asset) throw new Error("Asset not found");
 
-    await checkAuth(ctx, asset.organizationId);
-    return asset;
+      await checkAuth(ctx, asset.organizationId);
+      return asset;
+    }, null);
   },
 });
 

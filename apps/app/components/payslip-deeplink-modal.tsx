@@ -43,27 +43,31 @@ export function PayslipDeepLinkModal() {
   const {
     effectiveOrganizationId,
     currentOrganization,
+    isLoading: organizationContextLoading,
   } = useOrganization();
   const { isEmployeeExperienceUI } = useEmployeeView();
   const payslipId = usePayslipIdFromUrl();
 
+  const orgQueriesReady =
+    Boolean(effectiveOrganizationId) && !organizationContextLoading;
+
   const user = useQuery(
     (api as any).organizations.getCurrentUser,
-    effectiveOrganizationId
+    orgQueriesReady && effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
 
   const organization = useQuery(
     (api as any).organizations.getOrganization,
-    effectiveOrganizationId
+    orgQueriesReady && effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
 
   const payslipAccess = useQuery(
     (api as any).organizations.getEmployeeIdForPayslips,
-    effectiveOrganizationId
+    orgQueriesReady && effectiveOrganizationId
       ? {
           organizationId: effectiveOrganizationId as Id<"organizations">,
           employeeExperienceMode: Boolean(isEmployeeExperienceUI),

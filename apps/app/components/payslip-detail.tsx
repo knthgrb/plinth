@@ -433,32 +433,47 @@ export function PayslipDetail({
     }
   }
 
+  /** Calendar has both legal and special in period but payslip has no split — avoid mislabeling as special-only. */
+  const bothInferredUntypedHolidayPay =
+    holidayPayAmount > 0 &&
+    payslip.holidayPayType == null &&
+    inferredSpecialInRange &&
+    inferredRegularInRange;
+  const showAmbiguousCombinedHolidayRow =
+    bothInferredUntypedHolidayPay &&
+    storedRegularHolidayPay <= 0 &&
+    storedSpecialHolidayPay <= 0;
+
   const holidayPayLabel =
     holidayPayAmount > 0
       ? payslip.holidayPayType === "special"
         ? "Special Holiday"
         : payslip.holidayPayType === "regular"
           ? "Legal Holiday"
-          : inferredSpecialInRange
-            ? "Special Holiday"
-            : inferredRegularInRange
-              ? "Legal Holiday"
-              : hasLegalHolidayOvertime
+          : bothInferredUntypedHolidayPay
+            ? "Holiday pay (legal & special)"
+            : inferredSpecialInRange
+              ? "Special Holiday"
+              : inferredRegularInRange
                 ? "Legal Holiday"
-                : hasSpecialHolidayOvertime
-                  ? "Special Holiday"
-                  : holidayPayAmount >= dailyRate * 0.75
-                    ? "Legal Holiday"
-                    : "Special Holiday"
+                : hasLegalHolidayOvertime
+                  ? "Legal Holiday"
+                  : hasSpecialHolidayOvertime
+                    ? "Special Holiday"
+                    : holidayPayAmount >= dailyRate * 0.75
+                      ? "Legal Holiday"
+                      : "Special Holiday"
       : "Holiday";
-  const regularHolidayPayAmount =
-    storedRegularHolidayPay > 0
+  const regularHolidayPayAmount = showAmbiguousCombinedHolidayRow
+    ? 0
+    : storedRegularHolidayPay > 0
       ? storedRegularHolidayPay
       : storedSpecialHolidayPay <= 0 && holidayPayLabel === "Legal Holiday"
         ? holidayPayAmount
         : 0;
-  const specialHolidayPayAmount =
-    storedSpecialHolidayPay > 0
+  const specialHolidayPayAmount = showAmbiguousCombinedHolidayRow
+    ? 0
+    : storedSpecialHolidayPay > 0
       ? storedSpecialHolidayPay
       : storedRegularHolidayPay <= 0 && holidayPayLabel === "Special Holiday"
         ? holidayPayAmount
@@ -691,7 +706,20 @@ export function PayslipDetail({
                         </span>
                       </div>
                     )}
-                    {regularHolidayPayAmount > 0 && (
+                    {showAmbiguousCombinedHolidayRow && (
+                      <div className="flex justify-between">
+                        <span>{holidayPayLabel}</span>
+                        <span>
+                          ₱
+                          {holidayPayAmount.toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    {!showAmbiguousCombinedHolidayRow &&
+                      regularHolidayPayAmount > 0 && (
                       <div className="flex justify-between">
                         <span>Legal Holiday</span>
                         <span>
@@ -703,7 +731,8 @@ export function PayslipDetail({
                         </span>
                       </div>
                     )}
-                    {specialHolidayPayAmount > 0 && (
+                    {!showAmbiguousCombinedHolidayRow &&
+                      specialHolidayPayAmount > 0 && (
                       <div className="flex justify-between">
                         <span>Special Holiday</span>
                         <span>

@@ -181,7 +181,22 @@ export const getEmployee = query({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    const userRecord = await checkAuth(ctx, employee.organizationId);
+    let userRecord;
+    try {
+      userRecord = await checkAuth(ctx, employee.organizationId);
+    } catch (error: any) {
+      if (
+        error.message?.includes("Not authenticated") ||
+        error.message?.includes("Unauthenticated") ||
+        error.message?.includes("Not authorized") ||
+        error.message?.includes("User is not a member") ||
+        error.message?.includes("User record not found") ||
+        error.message?.includes("Please complete your account setup")
+      ) {
+        return null;
+      }
+      throw error;
+    }
 
     // Check authorization - employees can only view their own record unless admin/hr
     if (

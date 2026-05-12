@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { runOrgQuery } from "./queryAuthGrace";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -113,30 +114,29 @@ export const getDocuments = query({
     ),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    return runOrgQuery(async () => {
+      const userRecord = await checkAuth(ctx, args.organizationId);
 
-    let documents = await (ctx.db.query("documents") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
-      )
-      .collect();
+      let documents = await (ctx.db.query("documents") as any)
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", args.organizationId),
+        )
+        .collect();
 
-    // Per-user private library: only owner and admin can list the whole org.
-    if (!canViewAllDocumentsInOrg(userRecord.role)) {
-      documents = documents.filter(
-        (doc: any) => doc.createdBy === userRecord._id,
-      );
-    }
+      if (!canViewAllDocumentsInOrg(userRecord.role)) {
+        documents = documents.filter(
+          (doc: any) => doc.createdBy === userRecord._id,
+        );
+      }
 
-    // Filter by type if specified
-    if (args.type) {
-      documents = documents.filter((doc: any) => doc.type === args.type);
-    }
+      if (args.type) {
+        documents = documents.filter((doc: any) => doc.type === args.type);
+      }
 
-    // Sort by updated date
-    documents.sort((a: any, b: any) => b.updatedAt - a.updatedAt);
+      documents.sort((a: any, b: any) => b.updatedAt - a.updatedAt);
 
-    return documents;
+      return documents;
+    }, []);
   },
 });
 
@@ -146,19 +146,21 @@ export const getDocument = query({
     documentId: v.id("documents"),
   },
   handler: async (ctx, args) => {
-    const document = await ctx.db.get(args.documentId);
-    if (!document) throw new Error("Document not found");
+    return runOrgQuery(async () => {
+      const document = await ctx.db.get(args.documentId);
+      if (!document) throw new Error("Document not found");
 
-    const userRecord = await checkAuth(ctx, document.organizationId);
+      const userRecord = await checkAuth(ctx, document.organizationId);
 
-    if (
-      !canViewAllDocumentsInOrg(userRecord.role) &&
-      document.createdBy !== userRecord._id
-    ) {
-      throw new Error("Not authorized to view this document");
-    }
+      if (
+        !canViewAllDocumentsInOrg(userRecord.role) &&
+        document.createdBy !== userRecord._id
+      ) {
+        throw new Error("Not authorized to view this document");
+      }
 
-    return document;
+      return document;
+    }, null);
   },
 });
 

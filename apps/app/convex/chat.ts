@@ -12,6 +12,7 @@ import {
   unwrapSessionKey,
 } from "./chatSessionKey";
 import { bytesToBase64 } from "./binaryBase64";
+import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -71,7 +72,18 @@ async function checkAuth(
   return { ...userRecord, role: userRole, organizationId };
 }
 
-/** Reply preview: encrypted bodies pass through as ciphertext for client decryption. */
+async function checkAuthForQuery(
+  ctx: any,
+  organizationId: any,
+  requiredRole?: "owner" | "admin" | "hr" | "accounting" | "employee",
+) {
+  try {
+    return await checkAuth(ctx, organizationId, requiredRole);
+  } catch (e) {
+    if (isOrgQueryAuthGraceError(e)) return null;
+    throw e;
+  }
+}
 function buildReplyToPreview(replyMsg: any, replySender: any) {
   const replySenderName =
     replySender?.name || replySender?.email || "Unknown";
@@ -102,7 +114,7 @@ export const getUserByEmployeeId = query({
     employeeId: v.id("employees"),
   },
   handler: async (ctx, args) => {
-    await checkAuth(ctx, args.organizationId);
+    if (!(await checkAuthForQuery(ctx, args.organizationId))) return null;
 
     const employee = await ctx.db.get(args.employeeId);
     if (!employee || employee.organizationId !== args.organizationId) {
@@ -139,7 +151,7 @@ export const getPayrollAppealRecipient = query({
     excludeUserId: v.optional(v.id("users")),
   },
   handler: async (ctx, args) => {
-    await checkAuth(ctx, args.organizationId);
+    if (!(await checkAuthForQuery(ctx, args.organizationId))) return null;
 
     const userOrgs = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_organization", (q: any) =>
@@ -248,7 +260,14 @@ export const getConversations = query({
     cursor: v.optional(v.string()), // lastMessageAt timestamp as cursor
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId);
+    if (!userRecord) {
+      return {
+        conversations: [],
+        hasMore: false,
+        nextCursor: null,
+      };
+    }
     const limit = args.limit || 20;
 
     const conversations = await (ctx.db.query("conversations") as any)
@@ -336,7 +355,10 @@ export const getMessages = query({
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) throw new Error("Conversation not found");
 
-    const userRecord = await checkAuth(ctx, conversation.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, conversation.organizationId);
+    if (!userRecord) {
+      return { messages: [], hasMore: false, oldestTimestamp: null };
+    }
 
     // Check if user is a participant
     if (!conversation.participants.includes(userRecord._id)) {
@@ -696,8 +718,8 @@ export const getConversationById = query({
     if (!Array.isArray(conv.participants) || conv.participants.length === 0)
       return null;
 
-    const userRecord = await checkAuth(ctx, args.organizationId);
-    if (!conv.participants.includes(userRecord._id)) return null;
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId);
+    if (!userRecord || !conv.participants.includes(userRecord._id)) return null;
 
     // Return all participants (including current user) so members count and list are correct
     const participantUsers = await Promise.all(
@@ -726,7 +748,8 @@ export const getConversationByParticipant = query({
     participantId: v.id("users"),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId);
+    if (!userRecord) return null;
 
     const conversations = await (ctx.db.query("conversations") as any)
       .withIndex("by_organization", (q: any) =>
@@ -754,7 +777,8 @@ export const getOrganizationUsers = query({
     organizationId: v.id("organizations"),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId);
+    if (!userRecord) return [];
 
     // Get all user-organization relationships for this org
     const userOrgs = await (ctx.db.query("userOrganizations") as any)
@@ -889,7 +913,8 @@ export const listChannels = query({
     organizationId: v.id("organizations"),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId);
+    if (!userRecord) return [];
 
     const allChannels = await (ctx.db.query("conversations") as any)
       .withIndex("by_organization", (q: any) =>
@@ -1107,7 +1132,8 @@ export const getPinnedConversations = query({
     organizationId: v.id("organizations"),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId);
+    if (!userRecord) return [];
 
     const preferences = await (ctx.db.query("userChatPreferences") as any)
       .withIndex("by_user_organization", (q: any) =>
@@ -1125,16 +1151,17 @@ export const getUnreadCounts = query({
     organizationId: v.id("organizations"),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId);
+    if (!userRecord) return {};
 
     const conversations = await (ctx.db.query("conversations") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .collect();
 
     const userConvs = conversations.filter((c: any) =>
-      c.participants.includes(userRecord._id)
+      c.participants.includes(userRecord._id),
     );
 
     const counts: Record<string, number> = {};
@@ -1142,7 +1169,7 @@ export const getUnreadCounts = query({
     for (const conv of userConvs) {
       const messages = await (ctx.db.query("messages") as any)
         .withIndex("by_conversation", (q: any) =>
-          q.eq("conversationId", conv._id)
+          q.eq("conversationId", conv._id),
         )
         .collect();
 
@@ -1205,8 +1232,8 @@ export const getChatSessionKey = query({
   handler: async (ctx, args) => {
     const conv = await ctx.db.get(args.conversationId);
     if (!conv) return null;
-    const userRecord = await checkAuth(ctx, conv.organizationId);
-    if (!conv.participants.includes(userRecord._id)) return null;
+    const userRecord = await checkAuthForQuery(ctx, conv.organizationId);
+    if (!userRecord || !conv.participants.includes(userRecord._id)) return null;
     if (!conv.chatSessionKeyEnc || !getChatMasterSecret()) return null;
     try {
       const raw = unwrapSessionKey(
@@ -1225,7 +1252,8 @@ export const getChatSessionKey = query({
 export const listChatSessionKeysForOrganization = query({
   args: { organizationId: v.id("organizations") },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId);
+    if (!userRecord) return {};
     if (!getChatMasterSecret()) return {};
     const conversations = await (ctx.db.query("conversations") as any)
       .withIndex("by_organization", (q: any) =>

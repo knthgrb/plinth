@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { runOrgQuery } from "./queryAuthGrace";
 
 // Helper to enforce org + role (admin or hr)
 async function checkOrgHrAdmin(ctx: any, organizationId: any) {
@@ -45,22 +46,24 @@ export const getEvaluations = query({
     employeeId: v.optional(v.id("employees")),
   },
   handler: async (ctx, args) => {
-    await checkOrgHrAdmin(ctx, args.organizationId);
+    return runOrgQuery(async () => {
+      await checkOrgHrAdmin(ctx, args.organizationId);
 
-    let evaluations = await (ctx.db.query("evaluations") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
-      )
-      .collect();
+      let evaluations = await (ctx.db.query("evaluations") as any)
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", args.organizationId),
+        )
+        .collect();
 
-    if (args.employeeId) {
-      evaluations = evaluations.filter(
-        (e: any) => e.employeeId === args.employeeId
-      );
-    }
+      if (args.employeeId) {
+        evaluations = evaluations.filter(
+          (e: any) => e.employeeId === args.employeeId,
+        );
+      }
 
-    evaluations.sort((a: any, b: any) => b.evaluationDate - a.evaluationDate);
-    return evaluations;
+      evaluations.sort((a: any, b: any) => b.evaluationDate - a.evaluationDate);
+      return evaluations;
+    }, []);
   },
 });
 

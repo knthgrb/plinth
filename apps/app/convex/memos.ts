@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -56,6 +57,19 @@ async function checkAuth(
   return { ...userRecord, role: userRole, organizationId };
 }
 
+async function checkAuthForQuery(
+  ctx: any,
+  organizationId: any,
+  requiredRole?: "owner" | "admin" | "hr",
+) {
+  try {
+    return await checkAuth(ctx, organizationId, requiredRole);
+  } catch (e) {
+    if (isOrgQueryAuthGraceError(e)) return null;
+    throw e;
+  }
+}
+
 // Get memos
 export const getMemos = query({
   args: {
@@ -73,7 +87,8 @@ export const getMemos = query({
     employeeId: v.optional(v.id("employees")),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId);
+    if (!userRecord) return [];
 
     // Memos is hr/admin only - restrict access
     if (userRecord.role !== "admin" && userRecord.role !== "hr") {
@@ -129,7 +144,8 @@ export const getMemo = query({
     const memo = await ctx.db.get(args.memoId);
     if (!memo) throw new Error("Memo not found");
 
-    const userRecord = await checkAuth(ctx, memo.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, memo.organizationId);
+    if (!userRecord) return null;
 
     return memo;
   },
@@ -365,7 +381,8 @@ export const getMemoTemplates = query({
     ),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId, "hr");
+    if (!userRecord) return [];
 
     let templates = await (ctx.db.query("memoTemplates") as any)
       .withIndex("by_organization", (q: any) =>
@@ -391,7 +408,8 @@ export const getMemoTemplate = query({
     const template = await ctx.db.get(args.templateId);
     if (!template) throw new Error("Template not found");
 
-    const userRecord = await checkAuth(ctx, template.organizationId, "hr");
+    const userRecord = await checkAuthForQuery(ctx, template.organizationId, "hr");
+    if (!userRecord) return null;
 
     return template;
   },

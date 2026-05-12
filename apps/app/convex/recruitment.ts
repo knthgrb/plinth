@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import { encryptCompensationForDb } from "./employeeCompensationCrypto";
+import { runOrgQuery } from "./queryAuthGrace";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -71,20 +72,22 @@ export const getJobs = query({
     ),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    return runOrgQuery(async () => {
+      await checkAuth(ctx, args.organizationId);
 
-    let jobs = await (ctx.db.query("jobs") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .collect();
+      let jobs = await (ctx.db.query("jobs") as any)
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", args.organizationId),
+        )
+        .collect();
 
-    if (args.status) {
-      jobs = jobs.filter((j: any) => j.status === args.status);
-    }
+      if (args.status) {
+        jobs = jobs.filter((j: any) => j.status === args.status);
+      }
 
-    jobs.sort((a: any, b: any) => b.postedDate - a.postedDate);
-    return jobs;
+      jobs.sort((a: any, b: any) => b.postedDate - a.postedDate);
+      return jobs;
+    }, []);
   },
 });
 
@@ -94,12 +97,14 @@ export const getJob = query({
     jobId: v.id("jobs"),
   },
   handler: async (ctx, args) => {
-    const job = await ctx.db.get(args.jobId);
-    if (!job) throw new Error("Job not found");
+    return runOrgQuery(async () => {
+      const job = await ctx.db.get(args.jobId);
+      if (!job) throw new Error("Job not found");
 
-    const userRecord = await checkAuth(ctx, job.organizationId);
+      await checkAuth(ctx, job.organizationId);
 
-    return job;
+      return job;
+    }, null);
   },
 });
 
@@ -234,24 +239,26 @@ export const getApplicants = query({
     ),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
+    return runOrgQuery(async () => {
+      await checkAuth(ctx, args.organizationId, "hr");
 
-    let applicants = await (ctx.db.query("applicants") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .collect();
+      let applicants = await (ctx.db.query("applicants") as any)
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", args.organizationId),
+        )
+        .collect();
 
-    if (args.jobId) {
-      applicants = applicants.filter((a: any) => a.jobId === args.jobId);
-    }
+      if (args.jobId) {
+        applicants = applicants.filter((a: any) => a.jobId === args.jobId);
+      }
 
-    if (args.status) {
-      applicants = applicants.filter((a: any) => a.status === args.status);
-    }
+      if (args.status) {
+        applicants = applicants.filter((a: any) => a.status === args.status);
+      }
 
-    applicants.sort((a: any, b: any) => b.appliedDate - a.appliedDate);
-    return applicants;
+      applicants.sort((a: any, b: any) => b.appliedDate - a.appliedDate);
+      return applicants;
+    }, []);
   },
 });
 
@@ -261,12 +268,14 @@ export const getApplicant = query({
     applicantId: v.id("applicants"),
   },
   handler: async (ctx, args) => {
-    const applicant = await ctx.db.get(args.applicantId);
-    if (!applicant) throw new Error("Applicant not found");
+    return runOrgQuery(async () => {
+      const applicant = await ctx.db.get(args.applicantId);
+      if (!applicant) throw new Error("Applicant not found");
 
-    const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
+      await checkAuth(ctx, applicant.organizationId, "hr");
 
-    return applicant;
+      return applicant;
+    }, null);
   },
 });
 

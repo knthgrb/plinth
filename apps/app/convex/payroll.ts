@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
 import { decryptUtf8, isEncryptedPayload } from "./chatMessageBodyCrypto";
 import { getChatMasterSecret, unwrapSessionKey } from "./chatSessionKey";
 import {
@@ -339,6 +340,13 @@ function splitHolidayPayForPersistence(args: {
     holidayPayType?: "regular" | "special";
   };
   nextHolidayPay: number;
+  /**
+   * Fresh payroll breakdown (e.g. after holiday type edits). When both > 0, split
+   * `nextHolidayPay` in the same ratio so legal vs special lines stay correct even
+   * if the old payslip only had holidayPayType "special" or missing split.
+   */
+  computedRegularHolidayPay?: number;
+  computedSpecialHolidayPay?: number;
 }): {
   regularHolidayPay?: number;
   specialHolidayPay?: number;
@@ -351,6 +359,42 @@ function splitHolidayPayForPersistence(args: {
       specialHolidayPay: undefined,
       holidayPayType: undefined,
     };
+  }
+
+  const computedRegular = round2(args.computedRegularHolidayPay || 0);
+  const computedSpecial = round2(args.computedSpecialHolidayPay || 0);
+  const computedSum = round2(computedRegular + computedSpecial);
+  if (computedSum > 0 && nextHolidayPay > 0) {
+    if (computedRegular > 0 && computedSpecial > 0) {
+      const regularHolidayPay = round2(
+        nextHolidayPay * (computedRegular / computedSum),
+      );
+      const specialHolidayPay = round2(nextHolidayPay - regularHolidayPay);
+      return {
+        regularHolidayPay: regularHolidayPay > 0 ? regularHolidayPay : undefined,
+        specialHolidayPay: specialHolidayPay > 0 ? specialHolidayPay : undefined,
+        holidayPayType:
+          regularHolidayPay > 0 && specialHolidayPay > 0
+            ? undefined
+            : regularHolidayPay > 0
+              ? "regular"
+              : "special",
+      };
+    }
+    if (computedRegular > 0 && computedSpecial <= 0) {
+      return {
+        regularHolidayPay: nextHolidayPay,
+        specialHolidayPay: undefined,
+        holidayPayType: "regular",
+      };
+    }
+    if (computedSpecial > 0 && computedRegular <= 0) {
+      return {
+        regularHolidayPay: undefined,
+        specialHolidayPay: nextHolidayPay,
+        holidayPayType: "special",
+      };
+    }
   }
 
   const currentRegular = round2(args.payslipLike.regularHolidayPay || 0);
@@ -604,6 +648,19 @@ async function checkAuth(
   }
 
   return { ...userRecord, role: userRole, organizationId };
+}
+
+async function checkAuthForQuery(
+  ctx: any,
+  organizationId: any,
+  requiredRole?: "owner" | "admin" | "hr" | "accounting",
+) {
+  try {
+    return await checkAuth(ctx, organizationId, requiredRole);
+  } catch (e) {
+    if (isOrgQueryAuthGraceError(e)) return null;
+    throw e;
+  }
 }
 
 // Helper to get day name from date (lowercase)
@@ -2065,7 +2122,7 @@ export const computeEmployeePayroll = query({
     if (!employeeRaw) throw new Error("Employee not found");
     const employee = decryptEmployeeFromDb(employeeRaw);
 
-    await checkAuth(ctx, employee.organizationId);
+    if (!(await checkAuthForQuery(ctx, employee.organizationId))) return null;
 
     const organization = await ctx.db.get(employee.organizationId);
     const payFrequency: PayFrequency =
@@ -2200,7 +2257,7 @@ export const computePayrollPreviewBatch = query({
     ),
   },
   handler: async (ctx, args) => {
-    await checkAuth(ctx, args.organizationId);
+    if (!(await checkAuthForQuery(ctx, args.organizationId))) return null;
 
     const organization = await ctx.db.get(args.organizationId);
     if (!organization) {
@@ -3152,6 +3209,8 @@ export const updatePayrollRun = mutation({
           const holidaySplit = splitHolidayPayForPersistence({
             payslipLike: variableEarningsOverride,
             nextHolidayPay: nextE.holidayPay,
+            computedRegularHolidayPay: payrollBase.regularHolidayPay,
+            computedSpecialHolidayPay: payrollBase.specialHolidayPay,
           });
           regularHolidayPayToPersist = holidaySplit.regularHolidayPay;
           specialHolidayPayToPersist = holidaySplit.specialHolidayPay;
@@ -3906,7 +3965,8 @@ export const getPayrollRuns = query({
     year: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId);
+    if (!userRecord) return [];
 
     let runs = await (ctx.db.query("payrollRuns") as any)
       .withIndex("by_organization", (q: any) =>
@@ -3982,7 +4042,7 @@ export const compute13thMonthAmounts = query({
     employeeIds: v.optional(v.array(v.id("employees"))),
   },
   handler: async (ctx, args) => {
-    await checkAuth(ctx, args.organizationId);
+    if (!(await checkAuthForQuery(ctx, args.organizationId))) return null;
     return compute13thMonthAmountsInternal(ctx, {
       organizationId: args.organizationId,
       year: args.year,
@@ -4239,8 +4299,6 @@ async function computeLeaveConversionAmountsInternal(
     employeeIds: any[];
   },
 ) {
-  await checkAuth(ctx, args.organizationId);
-
   const settings = await (ctx.db.query("settings") as any)
     .withIndex("by_organization", (q: any) =>
       q.eq("organizationId", args.organizationId),
@@ -4387,7 +4445,7 @@ export const computeLeaveConversionAmounts = query({
     employeeIds: v.optional(v.array(v.id("employees"))),
   },
   handler: async (ctx, args) => {
-    await checkAuth(ctx, args.organizationId);
+    if (!(await checkAuthForQuery(ctx, args.organizationId))) return [];
     const employees = await (ctx.db.query("employees") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId),
@@ -4898,7 +4956,7 @@ export const getPayrollRunSummary = query({
     const payrollRunRaw = await ctx.db.get(args.payrollRunId);
     if (!payrollRunRaw) throw new Error("Payroll run not found");
     const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
-    await checkAuth(ctx, payrollRun.organizationId);
+    if (!(await checkAuthForQuery(ctx, payrollRun.organizationId))) return null;
     if (await canUsePayrollSummarySnapshot(ctx, payrollRun)) {
       const parsed = tryParsePayrollSummarySnapshot(
         (payrollRun as { summarySnapshot?: string }).summarySnapshot,
@@ -5004,7 +5062,8 @@ export const getPayrollFinalizePayslipRecipients = query({
     if (!payrollRunRaw) throw new Error("Payroll run not found");
     const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
 
-    const userRecord = await checkAuth(ctx, payrollRun.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, payrollRun.organizationId);
+    if (!userRecord) return null;
     const allowedRoles = ["owner", "admin", "hr", "accounting"];
     if (!allowedRoles.includes(userRecord.role)) {
       throw new Error("Not authorized");
@@ -5102,7 +5161,7 @@ export const getPayslipListByPayrollRun = query({
     const payrollRun = await ctx.db.get(args.payrollRunId);
     if (!payrollRun) throw new Error("Payroll run not found");
 
-    await checkAuth(ctx, payrollRun.organizationId);
+    if (!(await checkAuthForQuery(ctx, payrollRun.organizationId))) return [];
 
     const payslipsRaw = await (ctx.db.query("payslips") as any)
       .withIndex("by_payroll_run", (q: any) =>
@@ -5166,7 +5225,7 @@ export const getPayslipsByPayrollRun = query({
     const payrollRun = await ctx.db.get(args.payrollRunId);
     if (!payrollRun) throw new Error("Payroll run not found");
 
-    await checkAuth(ctx, payrollRun.organizationId);
+    if (!(await checkAuthForQuery(ctx, payrollRun.organizationId))) return [];
 
     const payslipsRaw = await (ctx.db.query("payslips") as any)
       .withIndex("by_payroll_run", (q: any) =>
@@ -5216,7 +5275,8 @@ export const getEmployeePayslips = query({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    const userRecord = await checkAuth(ctx, employee.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, employee.organizationId);
+    if (!userRecord) return [];
 
     // Check authorization
     if (
@@ -5269,7 +5329,8 @@ export const getPayslip = query({
     if (!raw) throw new Error("Payslip not found");
     const payslip = decryptPayslipRowFromDb(raw)!;
 
-    const userRecord = await checkAuth(ctx, payslip.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, payslip.organizationId);
+    if (!userRecord) return null;
 
     // Check authorization
     if (
@@ -5886,7 +5947,8 @@ export const getPendingPayslipCorrectionCountByRun = query({
     organizationId: v.id("organizations"),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId);
+    if (!userRecord) return { byRunId: {} };
     const allowedRoles = ["owner", "admin", "hr", "accounting"];
     if (!allowedRoles.includes(userRecord.role)) {
       throw new Error("Not authorized");
@@ -5928,7 +5990,8 @@ export const getUnnotifiedPayslipCorrectionsForRun = query({
     const prRaw = await ctx.db.get(args.payrollRunId);
     if (!prRaw) throw new Error("Payroll run not found");
     const payrollRun = decryptPayrollRunFromDb(prRaw as any);
-    const userRecord = await checkAuth(ctx, payrollRun.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, payrollRun.organizationId);
+    if (!userRecord) return { corrections: [] as const };
     const allowedRoles = ["owner", "admin", "hr", "accounting"];
     if (!allowedRoles.includes(userRecord.role)) {
       throw new Error("Not authorized");
@@ -5992,7 +6055,8 @@ export const getPayslipMessages = query({
     const payslip = await ctx.db.get(args.payslipId);
     if (!payslip) throw new Error("Payslip not found");
 
-    const userRecord = await checkAuth(ctx, payslip.organizationId);
+    const userRecord = await checkAuthForQuery(ctx, payslip.organizationId);
+    if (!userRecord) return [];
 
     // Get all messages linked to this payslip
     const messages = await (ctx.db.query("messages") as any)
