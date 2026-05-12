@@ -25,7 +25,6 @@ import {
   MoreVertical,
   Pencil,
   UserMinus,
-  Mail,
 } from "lucide-react";
 
 type EmployeeColumnId =
@@ -53,13 +52,13 @@ interface EmployeesTableProps {
   ) => void;
   onRemoveFromOrganization: (employee: any, e: MouseEvent) => void;
   onRemoveEmployee: (employee: any, e: MouseEvent) => void;
-  onInvite: (employee: any, e: MouseEvent) => void;
-  sendingInvite: string | null;
   page: number;
   pageSize: number;
   totalEmployees: number;
   onPageChange: (page: number) => void;
   employeesUserAccounts: Record<string, boolean>;
+  /** Linked org membership via userOrganizations.employeeId — used for messaging. */
+  employeesInOrganization: Record<string, boolean>;
   visibleColumns: EmployeeColumnId[];
 }
 
@@ -75,13 +74,12 @@ export function EmployeesTable({
   onUpdateStatus,
   onRemoveFromOrganization,
   onRemoveEmployee,
-  onInvite,
-  sendingInvite,
   page,
   pageSize,
   totalEmployees,
   onPageChange,
   employeesUserAccounts,
+  employeesInOrganization,
   visibleColumns,
 }: EmployeesTableProps) {
   const totalPages = Math.max(1, Math.ceil(totalEmployees / pageSize));
@@ -288,7 +286,7 @@ export function EmployeesTable({
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               {/* Only show Send Message if employee has a user account */}
-                              {employeesUserAccounts[employee._id] && (
+                              {employeesInOrganization[employee._id] && (
                                 <DropdownMenuItem
                                   onClick={(e) => onMessage(employee._id, e)}
                                 >
@@ -296,18 +294,6 @@ export function EmployeesTable({
                                   Send Message
                                 </DropdownMenuItem>
                               )}
-                              {isAdmin &&
-                                !employeesUserAccounts[employee._id] && (
-                                  <DropdownMenuItem
-                                    onClick={(e) => onInvite(employee, e)}
-                                    disabled={sendingInvite === employee._id}
-                                  >
-                                    <Mail className="h-4 w-4 mr-2" />
-                                    {sendingInvite === employee._id
-                                      ? "Creating..."
-                                      : "Create User Account"}
-                                  </DropdownMenuItem>
-                                )}
                               <DropdownMenuSeparator />
                               {employee.employment.status === "active" ? (
                                 <DropdownMenuItem

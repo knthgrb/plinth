@@ -114,7 +114,6 @@ interface EmployeeDetailModalProps {
   onOpenChange: (open: boolean) => void;
   mode: "view" | "edit";
   onModeChange?: (mode: "view" | "edit") => void;
-  onMessageClick: (employeeId: string) => void;
   employeeData?: any; // Optional pre-fetched employee data to avoid refetching
   hasUserAccount?: boolean; // When true, email cannot be edited (tied to auth account)
 }
@@ -125,7 +124,6 @@ export function EmployeeDetailModal({
   onOpenChange,
   mode,
   onModeChange,
-  onMessageClick,
   employeeData,
   hasUserAccount = false,
 }: EmployeeDetailModalProps) {

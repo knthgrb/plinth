@@ -450,6 +450,143 @@ export const checkEmployeesUserAccounts = query({
   },
 });
 
+/** True when this employee is linked as an org member (userOrganizations.employeeId in this org). */
+export const checkEmployeesInOrganization = query({
+  args: {
+    employeeIds: v.array(v.id("employees")),
+    organizationId: v.id("organizations"),
+  },
+  handler: async (ctx, args) => {
+    await checkAuth(ctx, args.organizationId);
+
+    const userOrgs = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .collect();
+
+    const inOrg = new Set<string>();
+    const idSet = new Set(args.employeeIds.map((id) => id as string));
+    for (const uo of userOrgs) {
+      if (uo.employeeId && idSet.has(uo.employeeId as string)) {
+        inOrg.add(uo.employeeId as string);
+      }
+    }
+
+    const result: Record<string, boolean> = {};
+    for (const id of args.employeeIds) {
+      result[id as string] = inOrg.has(id as string);
+    }
+    return result;
+  },
+});
+
+function normalizeInviteListEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+/** Employees with a record in this org who are not org members yet (no linked membership, no member email match, no pending invite). */
+export const listEmployeesAvailableForOrgInvite = query({
+  args: {
+    organizationId: v.id("organizations"),
+  },
+  handler: async (ctx, args) => {
+    try {
+      const userRecord = await checkAuth(ctx, args.organizationId);
+      const userRole = (userRecord as { role?: string }).role;
+      const canInvite =
+        userRole === "owner" || userRole === "admin" || userRole === "hr";
+      if (!canInvite) {
+        return [];
+      }
+
+      const employees = await (ctx.db.query("employees") as any)
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", args.organizationId),
+        )
+        .collect();
+
+      const userOrgs = await (ctx.db.query("userOrganizations") as any)
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", args.organizationId),
+        )
+        .collect();
+
+      const linkedEmployeeIds = new Set<string>(
+        userOrgs
+          .map((uo: { employeeId?: string }) => uo.employeeId)
+          .filter((id: string | undefined): id is string => !!id),
+      );
+
+      const memberEmails = new Set<string>();
+      for (const uo of userOrgs) {
+        const user = await ctx.db.get(uo.userId);
+        if (user && (user as { email?: string }).email) {
+          memberEmails.add(
+            normalizeInviteListEmail(String((user as { email: string }).email)),
+          );
+        }
+      }
+
+      const invitations = await (ctx.db.query("invitations") as any)
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", args.organizationId),
+        )
+        .collect();
+
+      const pendingInviteEmails = new Set<string>();
+      for (const inv of invitations) {
+        if (inv.status === "pending") {
+          pendingInviteEmails.add(
+            normalizeInviteListEmail(String(inv.email)),
+          );
+        }
+      }
+
+      const out: {
+        _id: string;
+        firstName: string;
+        lastName: string;
+        middleName?: string;
+        email: string;
+      }[] = [];
+
+      for (const raw of employees) {
+        const e = decryptEmployeeFromDb(raw);
+        const em = String((e as { personalInfo?: { email?: string } }).personalInfo?.email ?? "").trim();
+        if (!em) continue;
+        const emNorm = normalizeInviteListEmail(em);
+        if (linkedEmployeeIds.has(e._id as string)) continue;
+        if (memberEmails.has(emNorm)) continue;
+        if (pendingInviteEmails.has(emNorm)) continue;
+        out.push({
+          _id: e._id as string,
+          firstName: (e as { personalInfo: { firstName: string } }).personalInfo
+            .firstName,
+          lastName: (e as { personalInfo: { lastName: string } }).personalInfo
+            .lastName,
+          middleName: (e as { personalInfo: { middleName?: string } }).personalInfo
+            .middleName,
+          email: em,
+        });
+      }
+
+      return out;
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "";
+      if (
+        msg.includes("Not authenticated") ||
+        msg.includes("Unauthenticated") ||
+        msg.includes("Not authorized") ||
+        msg.includes("User is not a member")
+      ) {
+        return [];
+      }
+      throw error;
+    }
+  },
+});
+
 // Create employee
 export const createEmployee = mutation({
   args: {

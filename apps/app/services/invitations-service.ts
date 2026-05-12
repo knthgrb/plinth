@@ -65,6 +65,78 @@ export class InvitationsService {
     return invitationId;
   }
 
+  static async batchCreateInvitations(data: {
+    organizationId: string;
+    role: "admin" | "hr" | "accounting" | "employee";
+    confirmInviteToExistingPlinthUser?: boolean;
+    items: { email: string; employeeId?: string }[];
+  }): Promise<{
+    createdInvitationIds: string[];
+    skipped: { email: string; reason: string }[];
+    needsConfirmForEmails: string[];
+  }> {
+    const convex = await getAuthedConvexClient();
+
+    const result = (await (convex.mutation as any)(
+      (api as any).invitations.batchCreateInvitations,
+      {
+        organizationId: data.organizationId as Id<"organizations">,
+        role: data.role,
+        confirmInviteToExistingPlinthUser:
+          data.confirmInviteToExistingPlinthUser === true ? true : undefined,
+        items: data.items.map((i) => ({
+          email: i.email.trim(),
+          employeeId: i.employeeId
+            ? (i.employeeId as Id<"employees">)
+            : undefined,
+        })),
+      },
+    )) as {
+      created: { invitationId: Id<"invitations">; email: string }[];
+      skipped: { email: string; reason: string }[];
+      needsConfirmForEmails: string[];
+    };
+
+    const sendOne = async (invitationId: Id<"invitations">, toEmail: string) => {
+      const invitation = await (convex.query as any)(
+        api.invitations.getInvitationById,
+        { invitationId },
+      );
+      if (!invitation) return;
+      const baseUrl =
+        process.env.NEXT_PUBLIC_SITE_URL ||
+        process.env.SITE_URL ||
+        "http://localhost:3000";
+      const invitationLink = `${baseUrl}/invite/accept?token=${invitation.token}`;
+      const emailContent = generateInvitationEmail(
+        invitation.organization.name,
+        invitation.inviter.name || invitation.inviter.email,
+        invitation.role,
+        invitationLink,
+      );
+      try {
+        await sendEmail({
+          to: toEmail,
+          subject: emailContent.subject,
+          html: emailContent.html,
+          text: emailContent.text,
+        });
+      } catch (error: unknown) {
+        console.error("Failed to send invitation email:", error);
+      }
+    };
+
+    await Promise.all(
+      result.created.map((c) => sendOne(c.invitationId, c.email)),
+    );
+
+    return {
+      createdInvitationIds: result.created.map((c) => String(c.invitationId)),
+      skipped: result.skipped,
+      needsConfirmForEmails: result.needsConfirmForEmails,
+    };
+  }
+
   static async resendInvitation(invitationId: string) {
     const convex = await getAuthedConvexClient();
 

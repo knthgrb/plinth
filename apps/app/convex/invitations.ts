@@ -64,8 +64,299 @@ function employeePersonalFromAccountDisplayName(
   };
 }
 
+function normalizeDisplayNameForCompare(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * When inviting an existing Plinth user linked to an employee record, we only
+ * rewrite the employee's first/middle/last if the account profile name and the
+ * employee record name are not the same (ignoring case and extra spaces).
+ * Empty account display name never triggers a rename.
+ */
+function accountDisplayNameDiffersFromEmployeeRecord(
+  accountDisplayName: string,
+  employeePersonal: {
+    firstName: string;
+    lastName: string;
+    middleName?: string;
+  },
+): boolean {
+  const accountNorm = normalizeDisplayNameForCompare(accountDisplayName);
+  if (!accountNorm) return false;
+  const employeeFull = [
+    employeePersonal.firstName,
+    employeePersonal.middleName,
+    employeePersonal.lastName,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const employeeNorm = normalizeDisplayNameForCompare(employeeFull);
+  return accountNorm !== employeeNorm;
+}
+
 /** Thrown when UI must show confirm for inviting an email that already has a Convex user. */
 const CONFIRM_EXISTING_PLINTH_USER = "CONFIRM_EXISTING_PLINTH_USER";
+
+type SoftInviteResult =
+  | { kind: "created"; invitationId: any; email: string }
+  | { kind: "skipped"; email: string; reason: string }
+  | { kind: "needs_confirm"; email: string };
+
+async function tryCreateOrgInvitationSoft(
+  ctx: any,
+  params: {
+    organizationId: any;
+    role: string;
+    userRecord: any;
+    email: string;
+    employeeId?: any;
+    confirmInviteToExistingPlinthUser?: boolean;
+    existingInvitations: any[];
+    pendingEmailsThisBatch: Set<string>;
+  },
+): Promise<SoftInviteResult> {
+  const {
+    organizationId,
+    role,
+    userRecord,
+    email: emailInput,
+    employeeId,
+    confirmInviteToExistingPlinthUser,
+    existingInvitations,
+    pendingEmailsThisBatch,
+  } = params;
+
+  const now = Date.now();
+  let email = emailInput.trim();
+  let inviteeName: string | undefined;
+  const resolvedEmployeeId = employeeId;
+
+  if (employeeId) {
+    const employee = await ctx.db.get(employeeId);
+    if (!employee || employee.organizationId !== organizationId) {
+      return {
+        kind: "skipped",
+        email: emailInput,
+        reason: "Employee not found",
+      };
+    }
+    const empEmail = String((employee.personalInfo as any).email ?? "").trim();
+    if (!empEmail) {
+      return {
+        kind: "skipped",
+        email: emailInput,
+        reason: "Employee has no email on file",
+      };
+    }
+    if (normalizeInviteEmail(empEmail) !== normalizeInviteEmail(email)) {
+      return {
+        kind: "skipped",
+        email: emailInput,
+        reason: "Email does not match selected employee",
+      };
+    }
+    email = empEmail;
+
+    const existingUserOrgForEmployee = await (
+      ctx.db.query("userOrganizations") as any
+    )
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", organizationId),
+      )
+      .filter((q: any) => q.eq(q.field("employeeId"), employeeId))
+      .first();
+
+    if (existingUserOrgForEmployee) {
+      return {
+        kind: "skipped",
+        email,
+        reason: "Employee is already a member of this organization",
+      };
+    }
+
+    const inviterEmail = (userRecord as any).email;
+    if (
+      inviterEmail &&
+      normalizeInviteEmail(email) === normalizeInviteEmail(inviterEmail)
+    ) {
+      return {
+        kind: "skipped",
+        email,
+        reason: "You cannot send an invitation to your own email address.",
+      };
+    }
+  } else {
+    if (!email) {
+      return {
+        kind: "skipped",
+        email: emailInput,
+        reason: "Email is required",
+      };
+    }
+    const inviterEmail = (userRecord as any).email;
+    if (
+      inviterEmail &&
+      normalizeInviteEmail(email) === normalizeInviteEmail(inviterEmail)
+    ) {
+      return {
+        kind: "skipped",
+        email,
+        reason: "You cannot send an invitation to your own email address.",
+      };
+    }
+  }
+
+  const inviteNorm = normalizeInviteEmail(email);
+
+  if (pendingEmailsThisBatch.has(inviteNorm)) {
+    return {
+      kind: "skipped",
+      email,
+      reason: "Duplicate in this invite list",
+    };
+  }
+
+  const existingUser = await findUserByEmailLoose(ctx, email);
+
+  if (existingUser) {
+    const existingUserOrg = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_user_organization", (q: any) =>
+        q
+          .eq("userId", existingUser._id)
+          .eq("organizationId", organizationId),
+      )
+      .first();
+
+    if (existingUserOrg) {
+      return {
+        kind: "skipped",
+        email,
+        reason: "User is already a member of this organization",
+      };
+    }
+
+    if (!confirmInviteToExistingPlinthUser) {
+      return { kind: "needs_confirm", email };
+    }
+
+    if (resolvedEmployeeId) {
+      const employeeDoc = await ctx.db.get(resolvedEmployeeId);
+      if (!employeeDoc) {
+        return { kind: "skipped", email, reason: "Employee not found" };
+      }
+      const pi = (employeeDoc as any).personalInfo as {
+        firstName: string;
+        lastName: string;
+        middleName?: string;
+        email: string;
+        phone?: string;
+        address?: string;
+        province?: string;
+        dateOfBirth?: number;
+        civilStatus?: string;
+        emergencyContact?: {
+          name: string;
+          relationship: string;
+          phone: string;
+        };
+      };
+
+      const accountNameRaw = String((existingUser as any).name ?? "");
+      if (
+        accountDisplayNameDiffersFromEmployeeRecord(accountNameRaw, {
+          firstName: pi.firstName,
+          lastName: pi.lastName,
+          middleName: pi.middleName,
+        })
+      ) {
+        const parts = employeePersonalFromAccountDisplayName(
+          accountNameRaw,
+          String((existingUser as any).email ?? email),
+        );
+        const piRest = { ...pi };
+        delete (piRest as { middleName?: string }).middleName;
+        const updatedPersonal = {
+          ...piRest,
+          firstName: parts.firstName,
+          lastName: parts.lastName,
+          ...(parts.middleName ? { middleName: parts.middleName } : {}),
+        };
+        await ctx.db.patch(resolvedEmployeeId, {
+          personalInfo: updatedPersonal,
+          updatedAt: now,
+        });
+      }
+
+      const employeeAfter = await ctx.db.get(resolvedEmployeeId);
+      const p = (employeeAfter as any).personalInfo as {
+        firstName: string;
+        lastName: string;
+        middleName?: string;
+      };
+      const inviteeNameFromEmployee = [p.firstName, p.middleName, p.lastName]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+      const accountDisplay = accountNameRaw.trim();
+      inviteeName =
+        (accountDisplay.length > 0 ? accountDisplay : inviteeNameFromEmployee) ||
+        undefined;
+    }
+  } else if (resolvedEmployeeId) {
+    const employeeDoc = await ctx.db.get(resolvedEmployeeId);
+    if (employeeDoc) {
+      const p = (employeeDoc as any).personalInfo as {
+        firstName: string;
+        lastName: string;
+        middleName?: string;
+      };
+      inviteeName =
+        [p.firstName, p.middleName, p.lastName].filter(Boolean).join(" ").trim() ||
+        undefined;
+    }
+  }
+
+  const existingInvitation = existingInvitations.find(
+    (inv: any) =>
+      normalizeInviteEmail(inv.email) === inviteNorm &&
+      inv.status === "pending" &&
+      inv.organizationId === organizationId,
+  );
+
+  if (existingInvitation) {
+    return {
+      kind: "skipped",
+      email,
+      reason: "An invitation has already been sent to this email",
+    };
+  }
+
+  const token = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+  const expiresAt = now + 7 * 24 * 60 * 60 * 1000;
+
+  const invitationId = await ctx.db.insert("invitations", {
+    organizationId,
+    email,
+    role,
+    invitedBy: userRecord._id,
+    token,
+    status: "pending",
+    expiresAt,
+    createdAt: now,
+    ...(resolvedEmployeeId ? { employeeId: resolvedEmployeeId } : {}),
+    ...(inviteeName ? { inviteeName } : {}),
+  });
+
+  pendingEmailsThisBatch.add(inviteNorm);
+  existingInvitations.push({
+    email,
+    status: "pending",
+    organizationId,
+  });
+
+  return { kind: "created", invitationId, email };
+}
 
 // Create invitation (mutation - email will be sent from server action)
 export const createInvitation = mutation({
@@ -105,65 +396,114 @@ export const createInvitation = mutation({
       throw new Error("Not authorized to invite users to organization");
     }
 
-    // Check if user is already in this organization (case-insensitive email match)
-    const existingUser = await findUserByEmailLoose(ctx, args.email);
-
-    if (existingUser) {
-      const existingUserOrg = await (ctx.db.query("userOrganizations") as any)
-        .withIndex("by_user_organization", (q: any) =>
-          q
-            .eq("userId", existingUser._id)
-            .eq("organizationId", args.organizationId)
-        )
-        .first();
-
-      if (existingUserOrg) {
-        throw new Error("User is already a member of this organization");
-      }
-
-      if (!args.confirmInviteToExistingPlinthUser) {
-        throw new Error(CONFIRM_EXISTING_PLINTH_USER);
-      }
-    }
-
-    // Check for existing pending invitation
     const existingInvitations = await (ctx.db.query("invitations") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .collect();
 
-    const inviteNorm = normalizeInviteEmail(args.email);
-    const existingInvitation = existingInvitations.find(
-      (inv: any) =>
-        normalizeInviteEmail(inv.email) === inviteNorm &&
-        inv.status === "pending" &&
-        inv.organizationId === args.organizationId
-    );
-
-    if (existingInvitation) {
-      throw new Error("An invitation has already been sent to this email");
-    }
-
-    // Generate unique token
-    const token = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-
-    const now = Date.now();
-    const expiresAt = now + 7 * 24 * 60 * 60 * 1000; // 7 days
-
-    // Create invitation
-    const invitationId = await ctx.db.insert("invitations", {
+    const pendingEmailsThisBatch = new Set<string>();
+    const result = await tryCreateOrgInvitationSoft(ctx, {
       organizationId: args.organizationId,
-      email: args.email,
       role: args.role,
-      invitedBy: userRecord._id,
-      token,
-      status: "pending",
-      expiresAt,
-      createdAt: now,
+      userRecord,
+      email: args.email,
+      employeeId: args.employeeId,
+      confirmInviteToExistingPlinthUser:
+        args.confirmInviteToExistingPlinthUser === true ? true : undefined,
+      existingInvitations,
+      pendingEmailsThisBatch,
     });
 
-    return invitationId;
+    if (result.kind === "needs_confirm") {
+      throw new Error(CONFIRM_EXISTING_PLINTH_USER);
+    }
+    if (result.kind === "skipped") {
+      throw new Error(result.reason);
+    }
+    return result.invitationId;
+  },
+});
+
+export const batchCreateInvitations = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    role: v.union(
+      v.literal("admin"),
+      v.literal("owner"),
+      v.literal("hr"),
+      v.literal("employee"),
+      v.literal("accounting"),
+    ),
+    confirmInviteToExistingPlinthUser: v.optional(v.boolean()),
+    items: v.array(
+      v.object({
+        email: v.string(),
+        employeeId: v.optional(v.id("employees")),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const userRecord = await getUserRecord(ctx);
+
+    const userOrg = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_user_organization", (q: any) =>
+        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId),
+      )
+      .first();
+
+    const isAuthorized =
+      userOrg?.role === "owner" ||
+      userOrg?.role === "admin" ||
+      userOrg?.role === "hr" ||
+      (userRecord.organizationId === args.organizationId &&
+        (userRecord.role === "admin" ||
+          userRecord.role === "hr" ||
+          userRecord.role === "owner"));
+
+    if (!isAuthorized) {
+      throw new Error("Not authorized to invite users to organization");
+    }
+
+    const existingInvitations = await (ctx.db.query("invitations") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .collect();
+
+    const pendingEmailsThisBatch = new Set<string>();
+    const created: { invitationId: any; email: string }[] = [];
+    const skipped: { email: string; reason: string }[] = [];
+    const needsConfirmForEmails: string[] = [];
+
+    const confirm =
+      args.confirmInviteToExistingPlinthUser === true ? true : undefined;
+
+    for (const item of args.items) {
+      const result = await tryCreateOrgInvitationSoft(ctx, {
+        organizationId: args.organizationId,
+        role: args.role,
+        userRecord,
+        email: item.email,
+        employeeId: item.employeeId,
+        confirmInviteToExistingPlinthUser: confirm,
+        existingInvitations,
+        pendingEmailsThisBatch,
+      });
+
+      if (result.kind === "created") {
+        created.push({
+          invitationId: result.invitationId,
+          email: result.email,
+        });
+      } else if (result.kind === "skipped") {
+        skipped.push({ email: result.email, reason: result.reason });
+      } else {
+        needsConfirmForEmails.push(result.email);
+      }
+    }
+
+    return { created, skipped, needsConfirmForEmails };
   },
 });
 
@@ -318,6 +658,23 @@ export const getInviteRecipientPreview = query({
       existingConvexUser && !alreadyInOrg
     );
 
+    let employeeWillBeRenamedToMatchAccount = false;
+    if (args.employeeId && existingConvexUser && !alreadyInOrg) {
+      const emp = await ctx.db.get(args.employeeId);
+      if (emp) {
+        const ep = emp.personalInfo as {
+          firstName: string;
+          lastName: string;
+          middleName?: string;
+        };
+        employeeWillBeRenamedToMatchAccount =
+          accountDisplayNameDiffersFromEmployeeRecord(
+            String((existingConvexUser as any).name ?? ""),
+            ep,
+          );
+      }
+    }
+
     return {
       inviteEmail,
       existingConvexUser: existingConvexUser
@@ -329,11 +686,7 @@ export const getInviteRecipientPreview = query({
         : null,
       alreadyInOrg,
       needsConfirmForExistingUser,
-      employeeWillBeRenamedToMatchAccount: !!(
-        args.employeeId &&
-        existingConvexUser &&
-        !alreadyInOrg
-      ),
+      employeeWillBeRenamedToMatchAccount,
       employeeCurrentDisplayName,
     };
   },
@@ -606,10 +959,6 @@ export const createUserForEmployee = mutation({
         throw new Error(CONFIRM_EXISTING_PLINTH_USER);
       }
 
-      const parts = employeePersonalFromAccountDisplayName(
-        String((existingUser as any).name ?? ""),
-        String((existingUser as any).email ?? employee.personalInfo.email),
-      );
       const pi = employee.personalInfo as {
         firstName: string;
         lastName: string;
@@ -626,17 +975,32 @@ export const createUserForEmployee = mutation({
           phone: string;
         };
       };
-      const { middleName: _oldMiddle, ...piRest } = pi;
-      const updatedPersonal = {
-        ...piRest,
-        firstName: parts.firstName,
-        lastName: parts.lastName,
-        ...(parts.middleName ? { middleName: parts.middleName } : {}),
-      };
-      await ctx.db.patch(args.employeeId, {
-        personalInfo: updatedPersonal,
-        updatedAt: now,
-      });
+
+      const accountNameRaw = String((existingUser as any).name ?? "");
+      if (
+        accountDisplayNameDiffersFromEmployeeRecord(accountNameRaw, {
+          firstName: pi.firstName,
+          lastName: pi.lastName,
+          middleName: pi.middleName,
+        })
+      ) {
+        const parts = employeePersonalFromAccountDisplayName(
+          accountNameRaw,
+          String((existingUser as any).email ?? employee.personalInfo.email),
+        );
+        const piRest = { ...pi };
+        delete (piRest as { middleName?: string }).middleName;
+        const updatedPersonal = {
+          ...piRest,
+          firstName: parts.firstName,
+          lastName: parts.lastName,
+          ...(parts.middleName ? { middleName: parts.middleName } : {}),
+        };
+        await ctx.db.patch(args.employeeId, {
+          personalInfo: updatedPersonal,
+          updatedAt: now,
+        });
+      }
     }
 
     const employeeAfter = (await ctx.db.get(args.employeeId)) as typeof employee;

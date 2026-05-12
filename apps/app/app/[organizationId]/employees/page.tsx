@@ -25,17 +25,13 @@ import {
   getUserByEmployeeId,
   updateEmployee,
   deleteEmployee,
-  createUserForEmployee,
 } from "@/actions/employees";
 import { useOrganization } from "@/hooks/organization-context";
-import { getOrganizationPath } from "@/utils/organization-routing";
 import { useRouter } from "next/navigation";
 import {
   removeUserFromOrganization,
 } from "@/actions/organizations";
 import { sendMessageToEmployee } from "@/actions/chat";
-import { previewInviteRecipient } from "@/actions/invitations";
-import type { InviteRecipientPreview } from "@/actions/invitations";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import dynamic from "next/dynamic";
@@ -249,6 +245,17 @@ export default function EmployeesPage() {
       : "skip",
   );
 
+  const employeesInOrganization: Record<string, boolean> | undefined =
+    useQuery(
+      (api as any).employees.checkEmployeesInOrganization,
+      currentOrganizationId && employees && employees.length > 0
+        ? {
+            organizationId: currentOrganizationId,
+            employeeIds: employees.map((emp: any) => emp._id),
+          }
+        : "skip",
+    );
+
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isBulkAddOpen, setIsBulkAddOpen] = useState(false);
   const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
@@ -259,14 +266,6 @@ export default function EmployeesPage() {
   const [messageContent, setMessageContent] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
-  const [sendingInvite, setSendingInvite] = useState<string | null>(null);
-  const [isEmployeeInviteConfirmOpen, setIsEmployeeInviteConfirmOpen] =
-    useState(false);
-  const [employeeInvitePreview, setEmployeeInvitePreview] =
-    useState<InviteRecipientPreview | null>(null);
-  const [employeeInviteTarget, setEmployeeInviteTarget] = useState<
-    any | null
-  >(null);
   const [employeeToDelete, setEmployeeToDelete] = useState<any | null>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
   const [isDeletingEmployee, setIsDeletingEmployee] = useState(false);
@@ -647,103 +646,6 @@ export default function EmployeesPage() {
       alert(error.message || "Failed to update status");
     } finally {
       setUpdatingStatus(null);
-    }
-  };
-
-  const handleInvite = async (employee: any, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!currentOrganizationId || !isAdmin) return;
-
-    if (!employee.personalInfo?.email) {
-      toast({
-        title: "Error",
-        description: "Employee email is required to create a user account",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setSendingInvite(employee._id);
-    try {
-      const pr = await previewInviteRecipient({
-        organizationId: currentOrganizationId,
-        employeeId: employee._id,
-      });
-      if (!pr.ok) {
-        toast({
-          title: "Error",
-          description: pr.error,
-          variant: "destructive",
-        });
-        return;
-      }
-      if (pr.preview.alreadyInOrg) {
-        toast({
-          title: "Already in organization",
-          description:
-            "A user with this email is already a member of this organization.",
-          variant: "destructive",
-        });
-        return;
-      }
-      if (pr.preview.needsConfirmForExistingUser) {
-        setEmployeeInvitePreview(pr.preview);
-        setEmployeeInviteTarget(employee);
-        setIsEmployeeInviteConfirmOpen(true);
-        return;
-      }
-
-      await createUserForEmployee({
-        organizationId: currentOrganizationId,
-        employeeId: employee._id,
-        role: "employee",
-      });
-      toast({
-        title: "Success",
-        description: `Invitation sent to ${employee.personalInfo.email}`,
-      });
-      router.refresh();
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description:
-          error.message ||
-          "Failed to create user account. The employee may already have a user account.",
-        variant: "destructive",
-      });
-    } finally {
-      setSendingInvite(null);
-    }
-  };
-
-  const handleConfirmEmployeeInvite = async () => {
-    if (!currentOrganizationId || !employeeInviteTarget) return;
-    setSendingInvite(employeeInviteTarget._id);
-    try {
-      await createUserForEmployee({
-        organizationId: currentOrganizationId,
-        employeeId: employeeInviteTarget._id,
-        role: "employee",
-        confirmInviteToExistingPlinthUser: true,
-      });
-      toast({
-        title: "Success",
-        description: `Invitation sent to ${employeeInviteTarget.personalInfo.email}`,
-      });
-      setIsEmployeeInviteConfirmOpen(false);
-      setEmployeeInvitePreview(null);
-      setEmployeeInviteTarget(null);
-      router.refresh();
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description:
-          error.message ||
-          "Failed to send invitation.",
-        variant: "destructive",
-      });
-    } finally {
-      setSendingInvite(null);
     }
   };
 
@@ -1616,13 +1518,12 @@ export default function EmployeesPage() {
               onUpdateStatus={handleUpdateStatus}
               onRemoveFromOrganization={handleRemoveFromOrganization}
               onRemoveEmployee={handleRemoveEmployee}
-              onInvite={handleInvite}
-              sendingInvite={sendingInvite}
               page={page}
               pageSize={pageSize}
               totalEmployees={totalEmployees}
               onPageChange={setPage}
               employeesUserAccounts={employeesUserAccounts ?? {}}
+              employeesInOrganization={employeesInOrganization ?? {}}
               visibleColumns={visibleColumns}
             />
           </CardContent>
@@ -1714,74 +1615,6 @@ export default function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={isEmployeeInviteConfirmOpen}
-        onOpenChange={(open) => {
-          setIsEmployeeInviteConfirmOpen(open);
-          if (!open) {
-            setEmployeeInvitePreview(null);
-            setEmployeeInviteTarget(null);
-          }
-        }}
-      >
-        <DialogContent className="max-w-[95vw] sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-lg sm:text-xl">
-              Existing Plinth account
-            </DialogTitle>
-            <DialogDescription asChild>
-              <div className="space-y-3 text-sm text-muted-foreground">
-                <p>
-                  This email is already registered on Plinth as{" "}
-                  <strong className="text-foreground">
-                    {employeeInvitePreview?.existingConvexUser?.name?.trim() ||
-                      employeeInvitePreview?.existingConvexUser?.email}
-                  </strong>
-                  . They will be asked to log in to accept the invitation; no
-                  new account will be created.
-                </p>
-                {employeeInvitePreview?.employeeWillBeRenamedToMatchAccount &&
-                  employeeInvitePreview.employeeCurrentDisplayName && (
-                    <p>
-                      The employee record name (
-                      <strong className="text-foreground">
-                        {employeeInvitePreview.employeeCurrentDisplayName}
-                      </strong>
-                      ) will be updated to match this account name so records stay
-                      consistent.
-                    </p>
-                  )}
-              </div>
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setIsEmployeeInviteConfirmOpen(false);
-                setEmployeeInvitePreview(null);
-                setEmployeeInviteTarget(null);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              onClick={() => void handleConfirmEmployeeInvite()}
-              disabled={
-                sendingInvite === employeeInviteTarget?._id &&
-                employeeInviteTarget !== null
-              }
-            >
-              {sendingInvite === employeeInviteTarget?._id
-                ? "Sending…"
-                : "Confirm and send invitation"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* Quick Message Dialog */}
       <Dialog open={isMessageDialogOpen} onOpenChange={setIsMessageDialogOpen}>
         <DialogContent className="max-w-[95vw] sm:max-w-md">
@@ -1837,15 +1670,6 @@ export default function EmployeesPage() {
           onOpenChange={setIsPanelOpen}
           mode={panelMode}
           onModeChange={setPanelMode}
-          onMessageClick={(employeeId) => {
-            setIsPanelOpen(false);
-            router.push(
-              getOrganizationPath(
-                currentOrganizationId,
-                `/chat?employeeId=${employeeId}`,
-              ),
-            );
-          }}
           employeeData={
             selectedEmployeeId
               ? filteredEmployees?.find(

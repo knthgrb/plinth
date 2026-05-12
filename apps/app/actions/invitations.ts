@@ -61,6 +61,40 @@ export async function createInvitation(data: {
   }
 }
 
+export type BatchCreateInvitationsItem = {
+  email: string;
+  employeeId?: string;
+};
+
+export type BatchCreateInvitationsResult =
+  | {
+      ok: true;
+      createdInvitationIds: string[];
+      skipped: { email: string; reason: string }[];
+      needsConfirmForEmails: string[];
+    }
+  | { ok: false; error: string };
+
+export async function batchCreateInvitations(data: {
+  organizationId: string;
+  role: "admin" | "hr" | "accounting" | "employee";
+  items: BatchCreateInvitationsItem[];
+  confirmInviteToExistingPlinthUser?: boolean;
+}): Promise<BatchCreateInvitationsResult> {
+  try {
+    const out = await InvitationsService.batchCreateInvitations({
+      organizationId: data.organizationId,
+      role: data.role,
+      items: data.items,
+      confirmInviteToExistingPlinthUser:
+        data.confirmInviteToExistingPlinthUser === true ? true : undefined,
+    });
+    return { ok: true, ...out };
+  } catch (e: unknown) {
+    return { ok: false, error: getConvexUserFacingMessage(e) };
+  }
+}
+
 export type ResendInvitationResult =
   | { ok: true }
   | { ok: false; error: string };

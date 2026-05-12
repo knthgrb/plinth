@@ -24,7 +24,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Select,
@@ -33,24 +32,46 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Pencil, Trash2, UserPlus, Mail, X, Send } from "lucide-react";
 import { useMutation } from "convex/react";
 import { format } from "date-fns";
 import {
   updateOrganization,
-  addUserToOrganization,
   removeUserFromOrganization,
   updateUserRoleInOrganization,
   deleteOrganization,
 } from "@/actions/organizations";
 import {
   resendInvitation,
-  previewInviteRecipient,
-  type InviteRecipientPreview,
+  batchCreateInvitations,
+  type BatchCreateInvitationsItem,
 } from "@/actions/invitations";
 import { CreateOrganizationDialog } from "@/components/create-organization-dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { Spinner } from "@/components/ui/spinner";
+
+type InviteableEmployeeRow = {
+  _id: string;
+  firstName: string;
+  lastName: string;
+  middleName?: string;
+  email: string;
+};
+
+function normalizeInviteEmailUi(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function isValidEmailFormat(email: string): boolean {
+  const t = email.trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t);
+}
 
 export function OrganizationManagement(): React.ReactElement {
   const {
@@ -70,16 +91,29 @@ export function OrganizationManagement(): React.ReactElement {
     email: "",
     taxId: "",
   });
-  const [inviteFormData, setInviteFormData] = useState({
-    email: "",
-    role: "employee" as "admin" | "hr" | "accounting" | "employee",
-  });
-  const [invitePreview, setInvitePreview] =
-    useState<InviteRecipientPreview | null>(null);
+  const [inviteRoleOnly, setInviteRoleOnly] = useState<
+    "admin" | "hr" | "accounting" | "employee"
+  >("employee");
+  const [manualInviteEmailDraft, setManualInviteEmailDraft] = useState("");
+  const [manualInviteEmails, setManualInviteEmails] = useState<string[]>([]);
+  const [selectedInviteEmployeeIds, setSelectedInviteEmployeeIds] = useState<
+    string[]
+  >([]);
+  const [employeeInvitePickerOpen, setEmployeeInvitePickerOpen] =
+    useState(false);
+  const [pendingBatchInviteItems, setPendingBatchInviteItems] = useState<
+    BatchCreateInvitationsItem[]
+  >([]);
+  const [batchConfirmEmails, setBatchConfirmEmails] = useState<string[]>([]);
   const [isInviteExistingUserDialogOpen, setIsInviteExistingUserDialogOpen] =
     useState(false);
   const [isSendingInvite, setIsSendingInvite] = useState(false);
   const [resendingId, setResendingId] = useState<string | null>(null);
+
+  const inviteableEmployees = useQuery(
+    (api as any).employees.listEmployeesAvailableForOrgInvite,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  ) as InviteableEmployeeRow[] | undefined;
 
   const members = useQuery(
     (api as any).organizations.getOrganizationMembers,
@@ -130,6 +164,8 @@ export function OrganizationManagement(): React.ReactElement {
   /** Owner, admin, HR, accounting can see members list */
   const canViewMembers =
     role === "admin" || role === "accounting" || role === "owner" || role === "hr";
+  const canInviteUsers =
+    role === "owner" || role === "admin" || role === "hr";
 
   const handleEditOrganization = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -161,46 +197,59 @@ export function OrganizationManagement(): React.ReactElement {
     }
   };
 
-  const handleInviteUser = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentOrganizationId || !isOwnerOrAdmin) return;
+  const buildInviteBatchItems = (): BatchCreateInvitationsItem[] => {
+    const seen = new Set<string>();
+    const items: BatchCreateInvitationsItem[] = [];
+    for (const id of selectedInviteEmployeeIds) {
+      const row = inviteableEmployees?.find((e) => e._id === id);
+      if (!row?.email) continue;
+      const n = normalizeInviteEmailUi(row.email);
+      if (seen.has(n)) continue;
+      seen.add(n);
+      items.push({ email: row.email.trim(), employeeId: id });
+    }
+    for (const em of manualInviteEmails) {
+      const trimmed = em.trim();
+      if (!trimmed) continue;
+      const n = normalizeInviteEmailUi(trimmed);
+      if (seen.has(n)) continue;
+      seen.add(n);
+      items.push({ email: trimmed });
+    }
+    return items;
+  };
 
-    const email = inviteFormData.email.trim();
-    if (!email) return;
+  const resetInviteDialogState = () => {
+    setManualInviteEmailDraft("");
+    setManualInviteEmails([]);
+    setSelectedInviteEmployeeIds([]);
+    setInviteRoleOnly("employee");
+    setPendingBatchInviteItems([]);
+    setBatchConfirmEmails([]);
+  };
+
+  const runBatchInvites = async (
+    items: BatchCreateInvitationsItem[],
+    confirmInviteToExistingPlinthUser?: boolean,
+  ): Promise<void> => {
+    if (!currentOrganizationId || !canInviteUsers) return;
+    if (items.length === 0) {
+      toast({
+        title: "Add recipients",
+        description:
+          "Select employees and/or add at least one email address to invite.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     setIsSendingInvite(true);
     try {
-      const pr = await previewInviteRecipient({
+      const result = await batchCreateInvitations({
         organizationId: currentOrganizationId,
-        email,
-      });
-      if (!pr.ok) {
-        toast({
-          title: "Could not verify invitation",
-          description: pr.error,
-          variant: "destructive",
-        });
-        return;
-      }
-      if (pr.preview.alreadyInOrg) {
-        toast({
-          title: "Already a member",
-          description:
-            "This email already belongs to a user in your organization.",
-          variant: "destructive",
-        });
-        return;
-      }
-      if (pr.preview.needsConfirmForExistingUser) {
-        setInvitePreview(pr.preview);
-        setIsInviteExistingUserDialogOpen(true);
-        return;
-      }
-
-      const result = await addUserToOrganization({
-        organizationId: currentOrganizationId,
-        email,
-        role: inviteFormData.role,
+        role: inviteRoleOnly,
+        items,
+        confirmInviteToExistingPlinthUser,
       });
       if (!result.ok) {
         toast({
@@ -210,47 +259,99 @@ export function OrganizationManagement(): React.ReactElement {
         });
         return;
       }
-      toast({
-        title: "Invitation sent",
-        description: `We emailed ${email} with a link to join this organization.`,
-      });
+
+      if (
+        result.needsConfirmForEmails.length > 0 &&
+        !confirmInviteToExistingPlinthUser
+      ) {
+        setPendingBatchInviteItems(items);
+        setBatchConfirmEmails(result.needsConfirmForEmails);
+        setIsInviteExistingUserDialogOpen(true);
+        if (result.createdInvitationIds.length > 0) {
+          toast({
+            title: "Partial invitations sent",
+            description: `${result.createdInvitationIds.length} invitation(s) sent. Confirm to send to ${result.needsConfirmForEmails.length} address(es) that already have a Plinth account.`,
+          });
+        }
+        return;
+      }
+
+      const nSent = result.createdInvitationIds.length;
+      const nSkip = result.skipped.length;
+      if (nSent > 0) {
+        toast({
+          title: nSent === 1 ? "Invitation sent" : "Invitations sent",
+          description:
+            nSkip > 0
+              ? `Emailed ${nSent} recipient(s). ${nSkip} skipped (already invited or ineligible).`
+              : `Emailed ${nSent} recipient(s) with a link to join this organization.`,
+        });
+      } else if (nSkip > 0) {
+        toast({
+          title: "No new invitations",
+          description: result.skipped
+            .map((s) => `${s.email}: ${s.reason}`)
+            .slice(0, 4)
+            .join(" · "),
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setIsInviteExistingUserDialogOpen(false);
       setIsInviteDialogOpen(false);
-      setInviteFormData({ email: "", role: "employee" });
+      resetInviteDialogState();
     } finally {
       setIsSendingInvite(false);
     }
   };
 
-  const handleConfirmInviteExistingUser = async () => {
-    if (!currentOrganizationId || !invitePreview) return;
-    const email = inviteFormData.email.trim();
-    setIsSendingInvite(true);
-    try {
-      const result = await addUserToOrganization({
-        organizationId: currentOrganizationId,
-        email,
-        role: inviteFormData.role,
-        confirmInviteToExistingPlinthUser: true,
-      });
-      if (!result.ok) {
-        toast({
-          title: "Invitation failed",
-          description: result.error,
-          variant: "destructive",
-        });
-        return;
-      }
+  const handleInviteFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await runBatchInvites(buildInviteBatchItems());
+  };
+
+  const handleConfirmBatchInviteExistingUsers = async () => {
+    if (pendingBatchInviteItems.length === 0) return;
+    await runBatchInvites(pendingBatchInviteItems, true);
+  };
+
+  const handleAddManualInviteEmail = () => {
+    const raw = manualInviteEmailDraft.trim();
+    if (!raw) return;
+    if (!isValidEmailFormat(raw)) {
       toast({
-        title: "Invitation sent",
-        description: `We emailed ${email} with a link to join this organization.`,
+        title: "Invalid email",
+        description: "Enter a valid email address.",
+        variant: "destructive",
       });
-      setIsInviteExistingUserDialogOpen(false);
-      setInvitePreview(null);
-      setIsInviteDialogOpen(false);
-      setInviteFormData({ email: "", role: "employee" });
-    } finally {
-      setIsSendingInvite(false);
+      return;
     }
+    const norm = normalizeInviteEmailUi(raw);
+    if (
+      manualInviteEmails.some((e) => normalizeInviteEmailUi(e) === norm) ||
+      selectedInviteEmployeeIds.some((id) => {
+        const row = inviteableEmployees?.find((e) => e._id === id);
+        return row && normalizeInviteEmailUi(row.email) === norm;
+      })
+    ) {
+      toast({
+        title: "Already in list",
+        description: "This address is already included.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setManualInviteEmails((prev) => [...prev, raw]);
+    setManualInviteEmailDraft("");
+  };
+
+  const toggleInviteEmployee = (employeeId: string) => {
+    setSelectedInviteEmployeeIds((prev) =>
+      prev.includes(employeeId)
+        ? prev.filter((id) => id !== employeeId)
+        : [...prev, employeeId],
+    );
   };
 
   const handleRemoveUser = async (userId: string) => {
@@ -409,14 +510,14 @@ export function OrganizationManagement(): React.ReactElement {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Organization Members</CardTitle>
-              {isOwnerOrAdmin && (
+              {canInviteUsers && (
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => setIsInviteDialogOpen(true)}
                 >
                   <UserPlus className="h-4 w-4 mr-2" />
-                  Add User
+                  Invite user
                 </Button>
               )}
             </CardHeader>
@@ -660,41 +761,151 @@ export function OrganizationManagement(): React.ReactElement {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
-        <DialogContent>
+      <Dialog
+        open={isInviteDialogOpen}
+        onOpenChange={(open) => {
+          setIsInviteDialogOpen(open);
+          if (!open) {
+            resetInviteDialogState();
+          }
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Send Invitation</DialogTitle>
+            <DialogTitle>Invite users</DialogTitle>
             <DialogDescription>
-              Send an email invitation to join this organization. The user will
-              receive an email with a link to accept the invitation.
+              Choose employees without an org account yet and/or add email
+              addresses, then send invitations in one batch.
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleInviteUser}>
+          <form onSubmit={(e) => void handleInviteFormSubmit(e)}>
             <div className="grid gap-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="invite-email">Email <span className="text-red-500">*</span></Label>
-                <Input
-                  id="invite-email"
-                  type="email"
-                  value={inviteFormData.email}
-                  onChange={(e) =>
-                    setInviteFormData({
-                      ...inviteFormData,
-                      email: e.target.value,
-                    })
-                  }
-                  required
-                />
+                <Label>Employees (not in organization yet)</Label>
+                <Popover
+                  open={employeeInvitePickerOpen}
+                  onOpenChange={setEmployeeInvitePickerOpen}
+                >
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full justify-start font-normal"
+                    >
+                      {selectedInviteEmployeeIds.length === 0
+                        ? "Select employees…"
+                        : `${selectedInviteEmployeeIds.length} selected`}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="w-[var(--radix-popover-trigger-width)] p-0 max-h-72 overflow-y-auto"
+                    align="start"
+                  >
+                    {!inviteableEmployees || inviteableEmployees.length === 0 ? (
+                      <p className="text-sm text-muted-foreground p-3">
+                        No employees are available to invite (everyone with a
+                        record may already be a member or invited).
+                      </p>
+                    ) : (
+                      <ul className="py-1">
+                        {inviteableEmployees.map((emp) => {
+                          const label = [emp.firstName, emp.middleName, emp.lastName]
+                            .filter(Boolean)
+                            .join(" ");
+                          const checked = selectedInviteEmployeeIds.includes(
+                            emp._id,
+                          );
+                          return (
+                            <li key={emp._id}>
+                              <label className="flex items-start gap-2 px-3 py-2 cursor-pointer hover:bg-muted/60 text-sm">
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={() =>
+                                    toggleInviteEmployee(emp._id)
+                                  }
+                                  className="mt-0.5"
+                                />
+                                <span className="min-w-0">
+                                  <span className="font-medium block truncate">
+                                    {label}
+                                  </span>
+                                  <span className="text-muted-foreground text-xs break-all">
+                                    {emp.email}
+                                  </span>
+                                </span>
+                              </label>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </PopoverContent>
+                </Popover>
               </div>
+
               <div className="space-y-2">
-                <Label htmlFor="invite-role">Role <span className="text-red-500">*</span></Label>
+                <Label htmlFor="invite-email-manual">Email addresses</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="invite-email-manual"
+                    type="email"
+                    placeholder="name@company.com"
+                    value={manualInviteEmailDraft}
+                    onChange={(e) =>
+                      setManualInviteEmailDraft(e.target.value)
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleAddManualInviteEmail();
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={handleAddManualInviteEmail}
+                  >
+                    Add
+                  </Button>
+                </div>
+                {manualInviteEmails.length > 0 && (
+                  <ul className="flex flex-wrap gap-2 pt-1">
+                    {manualInviteEmails.map((em) => (
+                      <li
+                        key={em}
+                        className="inline-flex items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 text-sm"
+                      >
+                        <span className="max-w-[220px] truncate">{em}</span>
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-foreground p-0.5"
+                          onClick={() =>
+                            setManualInviteEmails((prev) =>
+                              prev.filter((x) => x !== em),
+                            )
+                          }
+                          aria-label={`Remove ${em}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="invite-role-batch">
+                  Role <span className="text-red-500">*</span>
+                </Label>
                 <Select
-                  value={inviteFormData.role}
-                  onValueChange={(value: any) =>
-                    setInviteFormData({ ...inviteFormData, role: value })
+                  value={inviteRoleOnly}
+                  onValueChange={(value: "admin" | "hr" | "accounting" | "employee") =>
+                    setInviteRoleOnly(value)
                   }
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="invite-role-batch">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -715,7 +926,7 @@ export function OrganizationManagement(): React.ReactElement {
                 Cancel
               </Button>
               <Button type="submit" disabled={isSendingInvite}>
-                {isSendingInvite ? "Checking…" : "Send Invitation"}
+                {isSendingInvite ? "Sending…" : "Send invitations"}
               </Button>
             </DialogFooter>
           </form>
@@ -726,23 +937,27 @@ export function OrganizationManagement(): React.ReactElement {
         open={isInviteExistingUserDialogOpen}
         onOpenChange={(open) => {
           setIsInviteExistingUserDialogOpen(open);
-          if (!open) setInvitePreview(null);
+          if (!open) {
+            setBatchConfirmEmails([]);
+            setPendingBatchInviteItems([]);
+          }
         }}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Existing Plinth account</DialogTitle>
+            <DialogTitle>Existing Plinth account(s)</DialogTitle>
             <DialogDescription asChild>
               <div className="space-y-3 text-sm text-muted-foreground">
                 <p>
-                  This email is already registered on Plinth as{" "}
-                  <strong className="text-foreground">
-                    {invitePreview?.existingConvexUser?.name?.trim() ||
-                      invitePreview?.existingConvexUser?.email}
-                  </strong>
-                  . They will be asked to log in to accept this invitation; no
-                  new account will be created.
+                  The following {batchConfirmEmails.length === 1 ? "address is" : "addresses are"}{" "}
+                  already registered on Plinth. They will be asked to log in to
+                  accept; no new account will be created.
                 </p>
+                <ul className="list-disc pl-5 space-y-1 text-foreground">
+                  {batchConfirmEmails.map((em) => (
+                    <li key={em}>{em}</li>
+                  ))}
+                </ul>
               </div>
             </DialogDescription>
           </DialogHeader>
@@ -752,17 +967,18 @@ export function OrganizationManagement(): React.ReactElement {
               variant="outline"
               onClick={() => {
                 setIsInviteExistingUserDialogOpen(false);
-                setInvitePreview(null);
+                setBatchConfirmEmails([]);
+                setPendingBatchInviteItems([]);
               }}
             >
               Cancel
             </Button>
             <Button
               type="button"
-              onClick={() => void handleConfirmInviteExistingUser()}
+              onClick={() => void handleConfirmBatchInviteExistingUsers()}
               disabled={isSendingInvite}
             >
-              {isSendingInvite ? "Sending…" : "Confirm and send invitation"}
+              {isSendingInvite ? "Sending…" : "Confirm and send invitations"}
             </Button>
           </DialogFooter>
         </DialogContent>
