@@ -1,5 +1,6 @@
 /**
- * Email utility for sending transactional emails via SendGrid
+ * Transactional email via SendGrid (`TRANSACTIONAL_EMAIL_*`).
+ * From line: display name defaults to "Plinth"; set TRANSACTIONAL_EMAIL_FROM_NAME to override.
  */
 
 export interface EmailAttachment {
@@ -20,6 +21,9 @@ interface EmailOptions {
 export async function sendEmail(options: EmailOptions): Promise<void> {
   const provider = process.env.TRANSACTIONAL_EMAIL_PROVIDER;
   const from = process.env.TRANSACTIONAL_EMAIL_FROM;
+  // Display name in the inbox; sending address remains TRANSACTIONAL_EMAIL_FROM.
+  const fromName =
+    process.env.TRANSACTIONAL_EMAIL_FROM_NAME?.trim() || "Plinth";
   const url = process.env.TRANSACTIONAL_EMAIL_URL;
   const token = process.env.TRANSACTIONAL_EMAIL_TOKEN;
 
@@ -41,7 +45,7 @@ export async function sendEmail(options: EmailOptions): Promise<void> {
             subject: options.subject,
           },
         ],
-        from: { email: from },
+        from: { email: from, name: fromName },
         ...(options.attachments?.length
           ? {
               attachments: options.attachments.map((a) => ({

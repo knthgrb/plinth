@@ -8,6 +8,7 @@ import {
   ConvexErrorBoundary,
   GlobalErrorHandler,
 } from "@/components/error-boundary";
+import { LoaderOverlayProvider } from "@/hooks/loader-overlay-context";
 import { MainLoader } from "@/components/main-loader";
 
 const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL!, {
@@ -87,7 +88,9 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
     <GlobalErrorHandler>
       <ConvexErrorBoundary>
         <ConvexBetterAuthProvider client={convex} authClient={authClient}>
-          <ConvexSessionReadyGate>{children}</ConvexSessionReadyGate>
+          <LoaderOverlayProvider>
+            <ConvexSessionReadyGate>{children}</ConvexSessionReadyGate>
+          </LoaderOverlayProvider>
         </ConvexBetterAuthProvider>
       </ConvexErrorBoundary>
     </GlobalErrorHandler>
