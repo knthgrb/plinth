@@ -322,6 +322,51 @@ function filterCustomManualDeductionsForSync(rows: Deduction[]): Deduction[] {
   );
 }
 
+function buildAuthoritativeManualDeductionsPayload(
+  employeeIds: string[],
+  employeeDeductions: EmployeeDeduction[],
+  referencePreviewRows: any[] | null | undefined,
+): EmployeeDeduction[] {
+  return employeeIds.map((employeeId) => {
+    const currentRows =
+      employeeDeductions.find((entry) => entry.employeeId === employeeId)
+        ?.deductions ?? [];
+    const currentNames = new Set(
+      currentRows.map((row) => (row.name || "").trim().toLowerCase()),
+    );
+    const referenceRows = Array.isArray(referencePreviewRows)
+      ? (
+          referencePreviewRows.find(
+            (row: any) =>
+              String(row?.employee?._id ?? row?.employeeId ?? "") ===
+              String(employeeId),
+          )?.deductions ?? []
+        )
+      : [];
+    const removedSystemRows = referenceRows
+      .filter((row: Deduction) => {
+        const name = (row?.name || "").trim();
+        if (!name) return false;
+        const isSystemRow =
+          isAttendanceDeductionEntry(row) ||
+          isGovernmentDeductionNameForSync(name);
+        return isSystemRow && !currentNames.has(name.toLowerCase());
+      })
+      .map((row: Deduction) => ({
+        name: row.name,
+        amount: 0,
+        type:
+          row.type ||
+          (isAttendanceDeductionEntry(row) ? "attendance" : "government"),
+      }));
+
+    return {
+      employeeId,
+      deductions: [...currentRows, ...removedSystemRows],
+    };
+  });
+}
+
 export default function PayrollPageClient() {
   const { toast } = useToast();
   const { effectiveOrganizationId, currentOrganization } = useOrganization();
@@ -1822,8 +1867,10 @@ export default function PayrollPageClient() {
         employeeIds: selectedEmployees,
         deductionsEnabled,
         governmentDeductionSettings,
-        manualDeductions: employeeDeductions.filter(
-          (entry) => entry.deductions.length > 0,
+        manualDeductions: buildAuthoritativeManualDeductionsPayload(
+          selectedEmployees,
+          employeeDeductions,
+          step4RestoreReferencePreview,
         ),
         incentives: employeeIncentives.filter(
           (entry) => entry.incentives.length > 0,
@@ -1894,8 +1941,10 @@ export default function PayrollPageClient() {
         employeeIds: editSelectedEmployees,
         deductionsEnabled: editDeductionsEnabled,
         governmentDeductionSettings: editGovernmentDeductionSettings,
-        manualDeductions: editEmployeeDeductions.filter(
-          (entry) => entry.deductions.length > 0,
+        manualDeductions: buildAuthoritativeManualDeductionsPayload(
+          editSelectedEmployees,
+          editEmployeeDeductions,
+          editStep4RestoreReferencePreview,
         ),
         incentives: editEmployeeIncentives.filter(
           (entry) => entry.incentives.length > 0,
@@ -2235,8 +2284,10 @@ export default function PayrollPageClient() {
           return { employeeId, deductions };
         });
       } else {
-        manualDeductions = employeeDeductions.filter(
-          (ed) => ed.deductions.length > 0,
+        manualDeductions = buildAuthoritativeManualDeductionsPayload(
+          selectedEmployees,
+          employeeDeductions,
+          step4RestoreReferencePreview,
         );
       }
 
@@ -2558,7 +2609,11 @@ export default function PayrollPageClient() {
                 })),
               };
             })
-          : editEmployeeDeductions.filter((ed) => ed.deductions.length > 0);
+          : buildAuthoritativeManualDeductionsPayload(
+              editSelectedEmployees,
+              editEmployeeDeductions,
+              editStep4RestoreReferencePreview,
+            );
       const incentives = editEmployeeIncentives.filter(
         (ei) => ei.incentives.length > 0,
       );

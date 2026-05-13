@@ -1888,11 +1888,20 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
 
   let deductions: PayrollLine[] = [];
   const manualDeductionLines = args.manualDeductionEntry?.deductions ?? [];
-  const hasOverrideGovernmentDeductions = manualDeductionLines.some((line) =>
-    isGovernmentDeductionName(line.name),
+  const hasOverrideSystemDeductions = manualDeductionLines.some(
+    (line) =>
+      isGovernmentDeductionName(line.name) || isAttendanceDeductionEntry(line),
+  );
+  const removedAttendanceLineNames = new Set(
+    manualDeductionLines
+      .filter(
+        (line) =>
+          isAttendanceDeductionEntry(line) && round2(line.amount || 0) <= 0,
+      )
+      .map((line) => (line.name || "").trim()),
   );
 
-  if (hasOverrideGovernmentDeductions) {
+  if (hasOverrideSystemDeductions) {
     let nonAttendanceOverrideLines = manualDeductionLines.filter(
       (line) => !isAttendanceDeductionEntry(line),
     );
@@ -2010,7 +2019,11 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
     }
   }
 
-  deductions.push(...attendanceDeductions);
+  deductions.push(
+    ...attendanceDeductions.filter(
+      (line) => !removedAttendanceLineNames.has((line.name || "").trim()),
+    ),
+  );
 
   const orgId = employee.organizationId;
   const trainCapEnabled = await getTrainNinetyThousandCapOnAdditions(
