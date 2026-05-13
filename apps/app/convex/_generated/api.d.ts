@@ -40,6 +40,7 @@ import type * as payrollRunCrypto from "../payrollRunCrypto.js";
 import type * as payrollVariableEarningsMath from "../payrollVariableEarningsMath.js";
 import type * as payslipCrypto from "../payslipCrypto.js";
 import type * as payslipPin from "../payslipPin.js";
+import type * as payslipPinReset from "../payslipPinReset.js";
 import type * as queryAuthGrace from "../queryAuthGrace.js";
 import type * as recruitment from "../recruitment.js";
 import type * as settings from "../settings.js";
@@ -86,6 +87,7 @@ declare const fullApi: ApiFromModules<{
   payrollVariableEarningsMath: typeof payrollVariableEarningsMath;
   payslipCrypto: typeof payslipCrypto;
   payslipPin: typeof payslipPin;
+  payslipPinReset: typeof payslipPinReset;
   queryAuthGrace: typeof queryAuthGrace;
   recruitment: typeof recruitment;
   settings: typeof settings;

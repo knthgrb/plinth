@@ -320,6 +320,17 @@ export default defineSchema({
     .index("by_status", ["employment.status"])
     .index("by_department", ["employment.department"]),
 
+  /** Short-lived tokens for "Forgot PIN" payslip access. */
+  payslipPinResets: defineTable({
+    employeeId: v.id("employees"),
+    tokenHash: v.string(),
+    expiresAt: v.number(),
+    usedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_employee", ["employeeId"])
+    .index("by_token_hash", ["tokenHash"]),
+
   // Employee schedule history (effective-dated snapshots).
   // Used so attendance/payroll resolve the schedule that was active on a specific date.
   employeeScheduleHistory: defineTable({
