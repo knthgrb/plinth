@@ -44,6 +44,7 @@ interface ThirteenthMonthTabProps {
   onEdit: (run: any) => void;
   onStatusChange: (run: any, status: string) => void;
   onDelete: (run: any) => void;
+  canDeletePayrollRuns?: boolean;
 }
 
 export function ThirteenthMonthTab({
@@ -55,6 +56,7 @@ export function ThirteenthMonthTab({
   onEdit,
   onStatusChange,
   onDelete,
+  canDeletePayrollRuns = true,
 }: ThirteenthMonthTabProps) {
   const { toast } = useToast();
   const currentYear = new Date().getFullYear();
@@ -346,6 +348,7 @@ export function ThirteenthMonthTab({
               onEdit={onEdit}
               onStatusChange={onStatusChange}
               onDelete={onDelete}
+              canDeletePayrollRuns={canDeletePayrollRuns}
             />
           )}
         </CardContent>

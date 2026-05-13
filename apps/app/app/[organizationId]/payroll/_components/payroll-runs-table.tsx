@@ -57,6 +57,8 @@ interface PayrollRunsTableProps {
   onNotifyCorrections?: (run: any) => void | Promise<void>;
   /** When set, show spinner on that run's "Send corrected payslips" action */
   sendingCorrectionRunId?: string | null;
+  /** Owner, admin, HR only — employees and accounting cannot delete runs */
+  canDeletePayrollRuns?: boolean;
 }
 
 export function PayrollRunsTable({
@@ -77,6 +79,7 @@ export function PayrollRunsTable({
   pendingCorrectionByRunId = {},
   onNotifyCorrections,
   sendingCorrectionRunId = null,
+  canDeletePayrollRuns = true,
 }: PayrollRunsTableProps) {
   const deletableVisibleRunIds = payrollRuns
     .filter(
@@ -87,28 +90,32 @@ export function PayrollRunsTable({
     deletableVisibleRunIds.length > 0 &&
     deletableVisibleRunIds.every((id) => selectedRunIds.includes(id));
 
+  const colSpan = canDeletePayrollRuns ? 5 : 4;
+
   return (
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="w-10">
-            <Checkbox
-              checked={allDeletableSelected}
-              disabled={
-                disableSelection ||
-                deletableVisibleRunIds.length === 0 ||
-                !onToggleSelectAllVisible
-              }
-              onCheckedChange={(checked) => {
-                if (!onToggleSelectAllVisible) return;
-                onToggleSelectAllVisible(
-                  deletableVisibleRunIds,
-                  checked === true,
-                );
-              }}
-              aria-label="Select all deletable (draft or cancelled) payroll runs"
-            />
-          </TableHead>
+          {canDeletePayrollRuns && (
+            <TableHead className="w-10">
+              <Checkbox
+                checked={allDeletableSelected}
+                disabled={
+                  disableSelection ||
+                  deletableVisibleRunIds.length === 0 ||
+                  !onToggleSelectAllVisible
+                }
+                onCheckedChange={(checked) => {
+                  if (!onToggleSelectAllVisible) return;
+                  onToggleSelectAllVisible(
+                    deletableVisibleRunIds,
+                    checked === true,
+                  );
+                }}
+                aria-label="Select all deletable (draft or cancelled) payroll runs"
+              />
+            </TableHead>
+          )}
           <TableHead>Period</TableHead>
           <TableHead>Status</TableHead>
           <TableHead>Processed Date</TableHead>
@@ -119,9 +126,11 @@ export function PayrollRunsTable({
         {isLoading ? (
           Array.from({ length: 6 }).map((_, i) => (
             <TableRow key={`sk-${i}`}>
-              <TableCell>
-                <div className="h-4 w-4 rounded bg-gray-200 animate-pulse" />
-              </TableCell>
+              {canDeletePayrollRuns && (
+                <TableCell>
+                  <div className="h-4 w-4 rounded bg-gray-200 animate-pulse" />
+                </TableCell>
+              )}
               <TableCell>
                 <div className="h-4 w-40 max-w-full rounded bg-gray-200 animate-pulse" />
               </TableCell>
@@ -138,7 +147,7 @@ export function PayrollRunsTable({
           ))
         ) : payrollRuns?.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={5} className="text-center text-gray-500">
+            <TableCell colSpan={colSpan} className="text-center text-gray-500">
               No payroll runs found
             </TableCell>
           </TableRow>
@@ -159,16 +168,21 @@ export function PayrollRunsTable({
               run.status === "draft" || run.status === "cancelled";
             return (
               <TableRow key={run._id}>
-                <TableCell>
-                  <Checkbox
-                    checked={selectedRunIds.includes(String(run._id))}
-                    disabled={disableSelection || !canSelectForDelete}
-                    onCheckedChange={(checked) =>
-                      onToggleRunSelection?.(String(run._id), checked === true)
-                    }
-                    aria-label={`Select payroll run ${periodDisplay}`}
-                  />
-                </TableCell>
+                {canDeletePayrollRuns && (
+                  <TableCell>
+                    <Checkbox
+                      checked={selectedRunIds.includes(String(run._id))}
+                      disabled={disableSelection || !canSelectForDelete}
+                      onCheckedChange={(checked) =>
+                        onToggleRunSelection?.(
+                          String(run._id),
+                          checked === true,
+                        )
+                      }
+                      aria-label={`Select payroll run ${periodDisplay}`}
+                    />
+                  </TableCell>
+                )}
                 <TableCell>{periodDisplay}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">
@@ -310,9 +324,11 @@ export function PayrollRunsTable({
                           </>
                         )}
                         <DropdownMenuSeparator />
-                        {canSelectForDelete && (
+                        {canSelectForDelete && canDeletePayrollRuns && (
                           <DropdownMenuItem
-                            disabled={disableSelection || isDeletingRunId === run._id}
+                            disabled={
+                              disableSelection || isDeletingRunId === run._id
+                            }
                             onClick={(e) => {
                               e.stopPropagation();
                               onDelete(run);

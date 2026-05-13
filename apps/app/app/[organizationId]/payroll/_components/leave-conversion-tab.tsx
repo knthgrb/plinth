@@ -43,6 +43,7 @@ interface LeaveConversionTabProps {
   onEdit: (run: any) => void;
   onStatusChange: (run: any, status: string) => void;
   onDelete: (run: any) => void;
+  canDeletePayrollRuns?: boolean;
 }
 
 export function LeaveConversionTab({
@@ -54,6 +55,7 @@ export function LeaveConversionTab({
   onEdit,
   onStatusChange,
   onDelete,
+  canDeletePayrollRuns = true,
 }: LeaveConversionTabProps) {
   const { toast } = useToast();
   const currentYear = new Date().getFullYear();
@@ -366,6 +368,7 @@ export function LeaveConversionTab({
               onEdit={onEdit}
               onStatusChange={onStatusChange}
               onDelete={onDelete}
+              canDeletePayrollRuns={canDeletePayrollRuns}
             />
           )}
         </CardContent>

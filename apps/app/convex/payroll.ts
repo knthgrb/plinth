@@ -3534,9 +3534,11 @@ export const deletePayrollRun = mutation({
       ctx,
       (payrollRun as { organizationId: any }).organizationId,
     );
-    const allowedRoles = ["owner", "admin", "hr", "accounting"];
-    if (!allowedRoles.includes(userRecord.role)) {
-      throw new Error("Not authorized to delete payroll runs");
+    const deleteRunRoles = ["owner", "admin", "hr"];
+    if (!deleteRunRoles.includes(userRecord.role)) {
+      throw new Error(
+        "Not authorized to delete payroll runs. Only owners, admins, and HR can remove draft or cancelled runs.",
+      );
     }
 
     // Delete all associated accounting cost items (Payroll, SSS, Pag-IBIG, PhilHealth, Tax) created when this run was finalized
@@ -3573,9 +3575,11 @@ export const deletePayrollRuns = mutation({
     if (!firstRun) throw new Error("Payroll run not found");
 
     const userRecord = await checkAuth(ctx, firstRun.organizationId);
-    const allowedRoles = ["owner", "admin", "hr", "accounting"];
-    if (!allowedRoles.includes(userRecord.role)) {
-      throw new Error("Not authorized to delete payroll runs");
+    const deleteRunRoles = ["owner", "admin", "hr"];
+    if (!deleteRunRoles.includes(userRecord.role)) {
+      throw new Error(
+        "Not authorized to delete payroll runs. Only owners, admins, and HR can remove draft or cancelled runs.",
+      );
     }
 
     let deletedCount = 0;

@@ -358,6 +358,11 @@ export default function PayrollPageClient() {
   /** Admin, HR, owner can edit deductions in pay preview (Step 5) */
   const canEditPreviewDeductions =
     user?.role === "admin" || user?.role === "hr" || user?.role === "owner";
+  /** Draft/cancelled run deletion: owner, admin, HR only (not employee or accounting) */
+  const canDeletePayrollRuns =
+    user?.role === "owner" ||
+    user?.role === "admin" ||
+    user?.role === "hr";
   const [payrollRuns, setPayrollRuns] = useState<any[]>([]);
   const [payrollRunsInitialReady, setPayrollRunsInitialReady] = useState(false);
   const [filterMonth, setFilterMonth] = useState("");
@@ -840,6 +845,15 @@ export default function PayrollPageClient() {
   };
 
   const handleDeletePayrollRun = (payrollRun: any) => {
+    if (!canDeletePayrollRuns) {
+      toast({
+        title: "Not allowed",
+        description:
+          "Only organization owners, admins, and HR can delete payroll runs.",
+        variant: "destructive",
+      });
+      return;
+    }
     setPayrollRunsToDelete([payrollRun]);
     setIsDeleteDialogOpen(true);
   };
@@ -882,6 +896,15 @@ export default function PayrollPageClient() {
   };
 
   const handleBulkDeletePayrollRuns = () => {
+    if (!canDeletePayrollRuns) {
+      toast({
+        title: "Not allowed",
+        description:
+          "Only organization owners, admins, and HR can delete payroll runs.",
+        variant: "destructive",
+      });
+      return;
+    }
     const selectedRuns = payrollRuns.filter(
       (run) =>
         selectedRunIds.includes(String(run._id)) &&
@@ -2981,7 +3004,7 @@ export default function PayrollPageClient() {
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-4 space-y-0">
                 <CardTitle>Payroll Runs</CardTitle>
                 <div className="flex items-center gap-2">
-                  {selectedRunIds.length > 0 && (
+                  {canDeletePayrollRuns && selectedRunIds.length > 0 && (
                     <Button
                       variant="destructive"
                       size="sm"
@@ -3036,6 +3059,7 @@ export default function PayrollPageClient() {
                   regeneratingPayrollRunId={regeneratingPayrollRunId}
                   onStatusChange={handleStatusChange}
                   onDelete={handleDeletePayrollRun}
+                  canDeletePayrollRuns={canDeletePayrollRuns}
                   pendingCorrectionByRunId={
                     pendingPayslipCorrections?.byRunId ?? {}
                   }
@@ -3095,6 +3119,7 @@ export default function PayrollPageClient() {
                 onEdit={handleEditPayrollRun}
                 onStatusChange={handleStatusChange}
                 onDelete={handleDeletePayrollRun}
+                canDeletePayrollRuns={canDeletePayrollRuns}
               />
             )}
           </TabsContent>
@@ -3109,6 +3134,7 @@ export default function PayrollPageClient() {
                 onEdit={handleEditPayrollRun}
                 onStatusChange={handleStatusChange}
                 onDelete={handleDeletePayrollRun}
+                canDeletePayrollRuns={canDeletePayrollRuns}
               />
             )}
           </TabsContent>
