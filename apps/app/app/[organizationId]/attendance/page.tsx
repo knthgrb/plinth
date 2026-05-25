@@ -1999,6 +1999,10 @@ export default function AttendancePage() {
                                     const record = empAttendance[dateTimestamp];
                                     const isLast =
                                       index === summaryMonthDates.length - 1;
+                                    const isRestDayCell = isEmployeeRestDay(
+                                      dateTimestamp,
+                                      employee.schedule,
+                                    );
                                     const dayLate =
                                       record &&
                                     record.status !== "absent" &&
@@ -2035,10 +2039,6 @@ export default function AttendancePage() {
                                                 record.actualOut,
                                               )
                                         : null;
-                                    const isRestDayCell = isEmployeeRestDay(
-                                      dateTimestamp,
-                                      employee.schedule,
-                                    );
                                     const hasDayLate =
                                       dayLate != null && dayLate > 0;
                                     const hasDayUndertime =
