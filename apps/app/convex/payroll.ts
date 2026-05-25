@@ -26,6 +26,7 @@ import {
 import {
   calculateNightDiffWorkHoursForAttendance,
   calculatePayrollBaseFromRecords,
+  normalizeRestDayPremiumMultiplier,
   getMatchingHolidayForDate,
   holidayAppliesToEmployee,
   holidayMatchesDate as holidayMatchesDateLib,
@@ -911,10 +912,10 @@ function derivePayrollRatesFromBase(base: BasePayrollConfig): PayrollRates {
   const regHol = base.regularHolidayRate ?? DEFAULT_REGULAR_HOLIDAY;
   const specHol = base.specialHolidayRate ?? DEFAULT_SPECIAL_HOLIDAY;
   const otReg = base.overtimeRegularRate ?? DEFAULT_REGULAR_OT;
-  // Backward compat: value > 1.5 treated as legacy rest day OT rate (169%); infer premium = value/1.30
   const rawRest = base.overtimeRestDayRate ?? DEFAULT_REST_DAY_PREMIUM;
-  const restDayPremiumRate =
-    rawRest > 1.5 ? rawRest / OT_PREMIUM_REST_DAY_AND_HOLIDAY : rawRest;
+  const restDayPremiumRate = normalizeRestDayPremiumMultiplier(
+    rawRest > 1.5 ? rawRest / OT_PREMIUM_REST_DAY_AND_HOLIDAY : rawRest,
+  );
 
   return {
     regularOt: otReg,
@@ -3198,31 +3199,19 @@ export const updatePayrollRun = mutation({
               payrollBase.overtimeLegalHolidayExcess || 0,
             ),
           };
+          // Attendance-driven premiums (rest day, OT) always refresh from payroll;
+          // preserve manual edits to holiday / night diff only.
           const nextE: VariableEarnings = {
             holidayPay: round2(variableEarningsOverride.holidayPay || 0),
             nightDiffPay: round2(variableEarningsOverride.nightDiffPay || 0),
-            restDayPay: round2(variableEarningsOverride.restDayPay || 0),
-            overtimeRegular: round2(
-              variableEarningsOverride.overtimeRegular || 0,
-            ),
-            overtimeRestDay: round2(
-              variableEarningsOverride.overtimeRestDay || 0,
-            ),
-            overtimeRestDayExcess: round2(
-              variableEarningsOverride.overtimeRestDayExcess || 0,
-            ),
-            overtimeSpecialHoliday: round2(
-              variableEarningsOverride.overtimeSpecialHoliday || 0,
-            ),
-            overtimeSpecialHolidayExcess: round2(
-              variableEarningsOverride.overtimeSpecialHolidayExcess || 0,
-            ),
-            overtimeLegalHoliday: round2(
-              variableEarningsOverride.overtimeLegalHoliday || 0,
-            ),
-            overtimeLegalHolidayExcess: round2(
-              variableEarningsOverride.overtimeLegalHolidayExcess || 0,
-            ),
+            restDayPay: atOpen.restDayPay,
+            overtimeRegular: atOpen.overtimeRegular,
+            overtimeRestDay: atOpen.overtimeRestDay,
+            overtimeRestDayExcess: atOpen.overtimeRestDayExcess,
+            overtimeSpecialHoliday: atOpen.overtimeSpecialHoliday,
+            overtimeSpecialHolidayExcess: atOpen.overtimeSpecialHolidayExcess,
+            overtimeLegalHoliday: atOpen.overtimeLegalHoliday,
+            overtimeLegalHolidayExcess: atOpen.overtimeLegalHolidayExcess,
           };
           const grossAndBasic = recomputeGrossAndBasicFromVariableEarnings(
             {

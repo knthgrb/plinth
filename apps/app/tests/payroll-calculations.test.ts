@@ -4,6 +4,7 @@ import {
   calculateNightDiffWorkHoursForAttendance,
   calculatePayrollBaseFromRecords,
   isEmployeeRestDay,
+  normalizeRestDayPremiumMultiplier,
   type ResolvedPayrollRates,
 } from "@/lib/payroll-calculations";
 
@@ -608,6 +609,47 @@ describe("payroll calculations", () => {
     });
     expect(result.restDayPremiumPay).toBeGreaterThan(0);
     expect(result.undertimeDeduction).toBe(0);
+  });
+
+  it("treats legacy 0.3 rest day setting as 30% additional (1.3 multiplier)", () => {
+    expect(normalizeRestDayPremiumMultiplier(0.3)).toBeCloseTo(1.3, 2);
+    const saturday = Date.UTC(2026, 4, 23);
+    const result = calculate({
+      payrollRates: { ...baseRates, restDayPremiumRate: 0.3, restDayOt: 0.69 },
+      attendance: [
+        {
+          date: saturday,
+          status: "present",
+          actualIn: "06:00",
+          actualOut: "14:30",
+          scheduleIn: "06:00",
+          scheduleOut: "15:00",
+        },
+      ],
+      cutoffStart: Date.UTC(2026, 4, 11),
+      cutoffEnd: Date.UTC(2026, 4, 25),
+    });
+    expect(result.restDayPremiumPay).toBeGreaterThan(0);
+  });
+
+  it("pays rest day premium for Mon–Fri schedule on Saturday (6am–2:30pm)", () => {
+    const saturday = Date.UTC(2026, 4, 23);
+    const result = calculate({
+      attendance: [
+        {
+          date: saturday,
+          status: "present",
+          actualIn: "6:00 AM",
+          actualOut: "2:30 PM",
+          scheduleIn: "06:00",
+          scheduleOut: "15:00",
+        },
+      ],
+      cutoffStart: Date.UTC(2026, 4, 11),
+      cutoffEnd: Date.UTC(2026, 4, 25),
+    });
+    expect(isEmployeeRestDay(saturday, createEmployee().schedule)).toBe(true);
+    expect(result.restDayPremiumPay).toBeGreaterThan(0);
   });
 
   it("calculates rest day work: premium (first 8h at 130%) and OT (excess at 169%)", () => {

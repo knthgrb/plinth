@@ -339,13 +339,49 @@ function getHolidayInfo(
   return { isHoliday: false };
 }
 
-function timeStringToMinutes(time: string | undefined): number | null {
+/** Parse clock times to HH:mm (24h). Supports "9:00 AM", "14:30", etc. */
+function parseFlexibleTimeToHHmm(time: string | undefined): string | null {
   if (!time || typeof time !== "string") return null;
-  const [hourPart, minutePart = "0"] = time.trim().split(":");
+  const s = time.trim();
+  if (!s) return null;
+  const amPm = /\s*(AM|PM|am|pm)\s*$/i.exec(s);
+  if (amPm) {
+    const rest = s.replace(/\s*(AM|PM|am|pm)\s*$/i, "").trim();
+    const parts = rest.split(/[:\s]+/);
+    let h = parseInt(parts[0] ?? "", 10);
+    const m = parts[1] ? parseInt(parts[1], 10) : 0;
+    if (Number.isNaN(h)) return null;
+    if (amPm[1].toUpperCase() === "PM" && h !== 12) h += 12;
+    if (amPm[1].toUpperCase() === "AM" && h === 12) h = 0;
+    return `${h.toString().padStart(2, "0")}:${(m || 0).toString().padStart(2, "0")}`;
+  }
+  const match = /^(\d{1,2}):(\d{2})$/.exec(s);
+  if (match) {
+    const h = parseInt(match[1]!, 10);
+    const m = parseInt(match[2]!, 10);
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+      return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+    }
+  }
+  return null;
+}
+
+function timeStringToMinutes(time: string | undefined): number | null {
+  const hhmm = parseFlexibleTimeToHHmm(time);
+  if (!hhmm) return null;
+  const [hourPart, minutePart = "0"] = hhmm.split(":");
   const hours = Number(hourPart);
   const minutes = Number(minutePart);
   if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
   return hours * 60 + minutes;
+}
+
+/** Total pay multiplier for rest day (e.g. 1.3 = 130% of hourly). */
+export function normalizeRestDayPremiumMultiplier(raw: number): number {
+  if (!raw || Number.isNaN(raw)) return 1.3;
+  if (raw > 1.5) return raw / 1.3;
+  if (raw > 0 && raw < 1) return 1 + raw;
+  return raw;
 }
 
 /**
@@ -1292,9 +1328,10 @@ export function calculatePayrollBaseFromRecords(args: {
         const hoursWorked = getHoursWorkedFromAttendance(att);
         const restDayPremiumHours = Math.min(hoursWorked, 8);
         const restDayOTHours = Math.max(0, hoursWorked - 8);
-        const restDayPremiumTotalRate =
+        const restDayPremiumTotalRate = normalizeRestDayPremiumMultiplier(
           (payrollRates as { restDayPremiumRate?: number })
-            .restDayPremiumRate ?? payrollRates.restDayOt / 1.3;
+            .restDayPremiumRate ?? payrollRates.restDayOt / 1.3,
+        );
         const restDayPremiumAdditionalRate = Math.max(
           0,
           restDayPremiumTotalRate - 1,
