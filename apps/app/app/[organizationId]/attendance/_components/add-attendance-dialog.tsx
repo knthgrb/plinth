@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Loader2 } from "lucide-react";
+import { Plus, Loader2, AlertTriangle } from "lucide-react";
 import { format } from "date-fns";
 import { createAttendance } from "@/actions/attendance";
 import { useToast } from "@/components/ui/use-toast";
@@ -39,6 +39,10 @@ import {
   formatTime12Hour,
 } from "@/utils/attendance-calculations";
 import { holidayAppliesToEmployee } from "@/lib/payroll-calculations";
+import {
+  parseYmdToAttendanceDateMs,
+  sameManilaCalendarDay,
+} from "@/lib/manila-date";
 
 interface AddAttendanceDialogProps {
   employees: any[] | undefined;
@@ -71,6 +75,36 @@ export function AddAttendanceDialog({
   const [useManualLate, setUseManualLate] = useState(false);
   const [useManualUndertime, setUseManualUndertime] = useState(false);
   const [notes, setNotes] = useState("");
+  const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
+
+  const attendanceDateTs = useMemo(() => {
+    try {
+      return parseYmdToAttendanceDateMs(selectedDate);
+    } catch {
+      return null;
+    }
+  }, [selectedDate]);
+
+  const employeeAttendance = useQuery(
+    (api as any).attendance.getEmployeeAttendance,
+    selectedEmployee && attendanceDateTs != null
+      ? {
+          employeeId: selectedEmployee,
+          startDate: attendanceDateTs - 86400000,
+          endDate: attendanceDateTs + 86400000,
+        }
+      : "skip",
+  );
+
+  const existingOnDay = useMemo(() => {
+    if (!employeeAttendance || attendanceDateTs == null) return [];
+    return employeeAttendance.filter((r: { date: number }) =>
+      sameManilaCalendarDay(r.date, attendanceDateTs),
+    );
+  }, [employeeAttendance, attendanceDateTs]);
+
+  const primaryExistingId =
+    existingOnDay.length > 0 ? (existingOnDay[0] as { _id: string })._id : null;
 
   const holidays = useQuery(
     (api as any).holidays.getHolidays,
@@ -190,11 +224,12 @@ export function AddAttendanceDialog({
     employeeSchedule?.isWorkday,
   ]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentOrganizationId || !selectedEmployee) return;
+  const submitAttendance = useCallback(
+    async (overwriteAttendanceId?: string) => {
+      if (!currentOrganizationId || !selectedEmployee || attendanceDateTs == null) {
+        return;
+      }
 
-    try {
       const employee = employees?.find((e: any) => e._id === selectedEmployee);
       if (!employee) return;
 
@@ -229,12 +264,11 @@ export function AddAttendanceDialog({
           ? parseFloat(overtime)
           : undefined;
 
-      const dateTimestamp = new Date(selectedDate).getTime();
-
       await createAttendance({
         organizationId: currentOrganizationId,
         employeeId: selectedEmployee,
-        date: dateTimestamp,
+        date: attendanceDateTs,
+        overwriteAttendanceId,
         scheduleIn: daySchedule.in,
         scheduleOut: daySchedule.out,
         actualIn: finalTimeIn,
@@ -266,15 +300,57 @@ export function AddAttendanceDialog({
       setUseManualUndertime(false);
       toast({
         title: "Success",
-        description: "Attendance record created successfully",
+        description: overwriteAttendanceId
+          ? "Attendance record updated successfully"
+          : "Attendance record created successfully",
         variant: "success",
       });
       onSuccess?.();
+    },
+    [
+      attendanceDateTs,
+      currentOrganizationId,
+      employees,
+      finalLate,
+      finalUndertime,
+      notes,
+      onSuccess,
+      overtime,
+      selectedDate,
+      selectedEmployee,
+      status,
+      timeIn,
+      timeOut,
+      toast,
+      useManualLate,
+      useManualUndertime,
+    ],
+  );
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentOrganizationId || !selectedEmployee) return;
+
+    if (existingOnDay.length > 0) {
+      setShowOverwriteConfirm(true);
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await submitAttendance(undefined);
     } catch (error) {
       console.error("Error creating attendance:", error);
+      const message =
+        error instanceof Error ? error.message : "Unknown error";
+      if (message.startsWith("ATTENDANCE_EXISTS")) {
+        setShowOverwriteConfirm(true);
+        return;
+      }
       toast({
         title: "Error",
-        description: "Failed to create attendance record. Please try again.",
+        description:
+          message || "Failed to create attendance record. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -282,7 +358,32 @@ export function AddAttendanceDialog({
     }
   };
 
+  const handleOverwriteConfirm = async () => {
+    if (!primaryExistingId) {
+      setShowOverwriteConfirm(false);
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      await submitAttendance(primaryExistingId);
+    } catch (error) {
+      console.error("Error overwriting attendance:", error);
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to overwrite attendance record.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+      setShowOverwriteConfirm(false);
+    }
+  };
+
   return (
+    <>
     <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
       <DialogTrigger asChild>
         <Button>
@@ -326,6 +427,18 @@ export function AddAttendanceDialog({
                   />
                 </div>
               </div>
+              {existingOnDay.length > 0 && (
+                <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <p>
+                    This employee already has attendance on this date
+                    {existingOnDay.length > 1
+                      ? ` (${existingOnDay.length} records — duplicates will be removed if you overwrite)`
+                      : ""}
+                    . Saving will ask whether to overwrite the existing record.
+                  </p>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="status">Status <span className="text-red-500">*</span></Label>
                 <Select
@@ -584,5 +697,45 @@ export function AddAttendanceDialog({
         </form>
       </DialogContent>
     </Dialog>
+    <Dialog open={showOverwriteConfirm} onOpenChange={setShowOverwriteConfirm}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Attendance already exists</DialogTitle>
+          <DialogDescription>
+            This employee already has a record for{" "}
+            {selectedDate
+              ? format(new Date(selectedDate), "MMM dd, yyyy")
+              : "this date"}
+            . Overwrite replaces that record{existingOnDay.length > 1 ? " and removes duplicate entries for the same day" : ""}.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setShowOverwriteConfirm(false)}
+            disabled={isSubmitting}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={handleOverwriteConfirm}
+            disabled={isSubmitting || !primaryExistingId}
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Overwriting...
+              </>
+            ) : (
+              "Overwrite"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

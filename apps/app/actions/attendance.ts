@@ -24,6 +24,7 @@ export async function createAttendance(data: {
     | "leave_with_pay"
     | "leave_without_pay"
     | "no_work";
+  overwriteAttendanceId?: string;
 }) {
   return AttendanceService.createAttendance(data);
 }
@@ -81,6 +82,7 @@ export async function bulkCreateAttendance(
       | "leave_with_pay"
       | "leave_without_pay"
       | "no_work";
+    overwrite?: boolean;
   }>
 ) {
   return AttendanceService.bulkCreateAttendance(entries);

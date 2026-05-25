@@ -64,3 +64,45 @@ export function formatManilaNumericDate(timestampMs: number): string {
   const { monthIndex, day, year } = getManilaDateParts(timestampMs);
   return `${monthIndex + 1}/${day}/${year}`;
 }
+
+/** Canonical attendance `date` field: midnight UTC for the Manila calendar day. */
+export function normalizeAttendanceDateMs(timestampMs: number): number {
+  const { year, monthIndex, day } = getManilaDateParts(timestampMs);
+  return Date.UTC(year, monthIndex, day, 0, 0, 0, 0);
+}
+
+/** Parse `YYYY-MM-DD` as a Manila calendar attendance date. */
+export function parseYmdToAttendanceDateMs(ymd: string): number {
+  const isoMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec((ymd ?? "").trim());
+  if (!isoMatch) {
+    throw new Error("Invalid date");
+  }
+  const year = parseInt(isoMatch[1], 10);
+  const monthIndex = parseInt(isoMatch[2], 10) - 1;
+  const day = parseInt(isoMatch[3], 10);
+  if (monthIndex < 0 || monthIndex > 11 || day < 1 || day > 31) {
+    throw new Error("Invalid date");
+  }
+  const ts = Date.UTC(year, monthIndex, day, 0, 0, 0, 0);
+  const check = getManilaDateParts(ts);
+  if (
+    check.year !== year ||
+    check.monthIndex !== monthIndex ||
+    check.day !== day
+  ) {
+    throw new Error("Invalid date");
+  }
+  return ts;
+}
+
+export function sameManilaCalendarDay(aMs: number, bMs: number): boolean {
+  const a = getManilaDateParts(aMs);
+  const b = getManilaDateParts(bMs);
+  return (
+    a.year === b.year && a.monthIndex === b.monthIndex && a.day === b.day
+  );
+}
+
+export function attendanceDayKey(employeeId: string, dateMs: number): string {
+  return `${employeeId}:${normalizeAttendanceDateMs(dateMs)}`;
+}

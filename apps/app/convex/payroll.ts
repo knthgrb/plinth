@@ -29,6 +29,7 @@ import {
   getMatchingHolidayForDate,
   holidayAppliesToEmployee,
   holidayMatchesDate as holidayMatchesDateLib,
+  isEmployeeRestDay,
   type PayrollBaseResult,
 } from "@/lib/payroll-calculations";
 import {
@@ -747,51 +748,6 @@ async function checkAuthForQuery(
   }
 }
 
-// Helper to get day name from date (lowercase)
-function getDayName(date: number): string {
-  const dayNames = [
-    "sunday",
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
-  ];
-  const dateObj = new Date(date);
-  return dayNames[dateObj.getDay()];
-}
-
-// Helper to check if a date is a rest day for an employee.
-// Uses the employee's scheduled work days: only returns true when that day is
-// explicitly a non-workday (e.g. Saturday/Sunday). Work on such days is rest day OT.
-// If schedule is missing or the day key is missing, we treat as work day (return false)
-// so we never add rest day pay by mistake.
-function isRestDay(date: number, employeeSchedule: any): boolean {
-  if (!employeeSchedule?.defaultSchedule) return false;
-  const dayName = getDayName(date);
-  const daySchedule =
-    employeeSchedule.defaultSchedule[
-      dayName as keyof typeof employeeSchedule.defaultSchedule
-    ];
-  if (!daySchedule || typeof daySchedule.isWorkday !== "boolean") return false;
-
-  // Check if there's a schedule override for this date
-  if (employeeSchedule.scheduleOverrides) {
-    const override = employeeSchedule.scheduleOverrides.find(
-      (o: any) =>
-        new Date(o.date).toDateString() === new Date(date).toDateString(),
-    );
-    if (override) {
-      // If there's an override, it's not a rest day (override means working)
-      return false;
-    }
-  }
-
-  // If isWorkday is false, it's a rest day
-  return !daySchedule.isWorkday;
-}
-
 // Helper to calculate working days in the month for an employee based on their schedule
 // This lets us derive the divisor dynamically instead of hardcoding /26.
 function getWorkingDaysInMonth(
@@ -812,7 +768,7 @@ function getWorkingDaysInMonth(
     const currentTs = current.getTime();
 
     // If this date is not a rest day for the employee, count it as a working day
-    if (!isRestDay(currentTs, employeeSchedule)) {
+    if (!isEmployeeRestDay(currentTs, employeeSchedule)) {
       workingDays++;
     }
   }
@@ -836,7 +792,7 @@ function getWorkingDaysInRange(
 
   while (current <= end) {
     const ts = current.getTime();
-    if (!isRestDay(ts, employeeSchedule)) {
+    if (!isEmployeeRestDay(ts, employeeSchedule)) {
       workingDays++;
     }
     current.setDate(current.getDate() + 1);
@@ -942,7 +898,7 @@ export type BasePayrollConfig = {
   regularHolidayRate: number; // 2.0 = 200%
   specialHolidayRate: number; // 1.3 = 130%
   overtimeRegularRate: number; // 1.25 = 125%
-  // REST_DAY_PREMIUM = 130%. Stored as overtimeRestDayRate for backward compat. First 8h on rest day at 130%; excess at 130%×1.30=169%. Holiday OT = holiday%×1.30.
+  // REST_DAY_PREMIUM stored as overtimeRestDayRate (e.g. 1.3 = 30% additional). Pay uses (rate−1)×hourly; excess OT uses restDayOt (e.g. 1.69 = 69% additional).
   overtimeRestDayRate: number;
   dailyRateIncludesAllowance: boolean;
   dailyRateWorkingDaysPerYear: number;

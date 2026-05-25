@@ -256,44 +256,6 @@ function normalizeIncentiveLineForUi(raw: unknown): PayrollIncentiveLine {
   };
 }
 
-// Helper to get day name from timestamp
-function getDayName(date: number): string {
-  const days = [
-    "sunday",
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
-  ];
-  return days[new Date(date).getDay()];
-}
-
-// Helper to check if a date is a rest day for an employee
-function isRestDay(date: number, employeeSchedule: any): boolean {
-  const dayName = getDayName(date);
-  const daySchedule =
-    employeeSchedule?.defaultSchedule?.[
-      dayName as keyof typeof employeeSchedule.defaultSchedule
-    ];
-
-  // Check if there's a schedule override for this date
-  if (employeeSchedule?.scheduleOverrides) {
-    const override = employeeSchedule.scheduleOverrides.find(
-      (o: any) =>
-        new Date(o.date).toDateString() === new Date(date).toDateString(),
-    );
-    if (override) {
-      // If there's an override, it's not a rest day (override means working)
-      return false;
-    }
-  }
-
-  // If isWorkday is false, it's a rest day
-  return !daySchedule?.isWorkday;
-}
-
 // Helper to calculate working days in a specific cutoff range (inclusive)
 // Parse "YYYY-MM-DD" as local midnight (not UTC) so cutoff aligns with attendance dates
 function dateStringToLocalMs(dateStr: string): number {

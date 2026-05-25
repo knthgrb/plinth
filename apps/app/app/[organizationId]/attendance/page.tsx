@@ -67,8 +67,11 @@ import {
   formatTime12Hour,
   calculateLate as attendanceCalculateLate,
   calculateUndertime as attendanceCalculateUndertime,
+  shouldHighlightActualIn,
+  shouldHighlightActualOut,
   MANILA_OFFSET_MS,
 } from "@/utils/attendance-calculations";
+import { isEmployeeRestDay } from "@/lib/payroll-calculations";
 
 // Lazy load modal components
 const AddAttendanceDialog = lazy(() =>
@@ -1386,8 +1389,15 @@ export default function AttendancePage() {
                               effectiveStatus === "leave_with_pay" ||
                               effectiveStatus === "leave_without_pay" ||
                               effectiveStatus === "no_work";
+                            const isRestDayRecord =
+                              !!selectedEmployee &&
+                              isEmployeeRestDay(
+                                record.date,
+                                selectedEmployee.schedule,
+                              );
                             // Late and undertime: use stored value when manually overridden (including 0), else auto-calculate
-                            const late = isAbsentOrLeave
+                            const late =
+                              isAbsentOrLeave || isRestDayRecord
                               ? null
                               : record.lateManualOverride === true
                                 ? (record.late ?? 0)
@@ -1397,7 +1407,8 @@ export default function AttendancePage() {
                                       record.scheduleIn,
                                       record.actualIn,
                                     );
-                            const undertime = isAbsentOrLeave
+                            const undertime =
+                              isAbsentOrLeave || isRestDayRecord
                               ? null
                               : record.undertimeManualOverride === true
                                 ? Math.round((record.undertime ?? 0) * 60)
@@ -1412,6 +1423,26 @@ export default function AttendancePage() {
                             const hasLate = late !== null && late > 0;
                             const hasUndertime =
                               undertime !== null && undertime > 0;
+                            const highlightTimeIn =
+                              !isAbsentOrLeave &&
+                              shouldHighlightActualIn(
+                                record.scheduleIn,
+                                record.scheduleOut,
+                                record.actualIn,
+                                record.actualOut,
+                                late,
+                                undertime,
+                                record.lunchStart,
+                              );
+                            const highlightTimeOut =
+                              !isAbsentOrLeave &&
+                              shouldHighlightActualOut(
+                                record.scheduleIn,
+                                record.scheduleOut,
+                                record.actualIn,
+                                record.actualOut,
+                                undertime,
+                              );
                             return (
                               <TableRow key={record._id} className="text-sm">
                                 <TableCell className="font-medium py-1.5 px-3 align-top">
@@ -1450,8 +1481,17 @@ export default function AttendancePage() {
                                         </Popover>
                                       ) : null}
                                     </div>
-                                    {dayHolidays.length > 0 && (
+                                    {(dayHolidays.length > 0 ||
+                                      isRestDayRecord) && (
                                       <div className="flex flex-wrap gap-1">
+                                        {isRestDayRecord && (
+                                          <Badge
+                                            variant="secondary"
+                                            className="text-[10px] font-medium px-1.5 py-0.5 border-0 bg-violet-100 text-violet-800"
+                                          >
+                                            REST DAY
+                                          </Badge>
+                                        )}
                                         {dayHolidays.map((h) => (
                                           <Badge
                                             key={(h as HolidayDisplay).isOffset ? `${h._id}-offset` : h._id}
@@ -1478,7 +1518,7 @@ export default function AttendancePage() {
                                   </div>
                                 </TableCell>
                                 <TableCell
-                                  className={`hidden sm:table-cell py-1.5 px-3 ${hasLate ? "text-red-600 font-medium" : ""}`}
+                                  className={`hidden sm:table-cell py-1.5 px-3 ${highlightTimeIn ? "text-red-600 font-medium" : ""}`}
                                 >
                                   {                                  effectiveStatus === "leave" ||
                                   effectiveStatus === "absent" ||
@@ -1489,7 +1529,7 @@ export default function AttendancePage() {
                                       : "-"}
                                 </TableCell>
                                 <TableCell
-                                  className={`hidden sm:table-cell py-1.5 px-3 ${hasUndertime ? "text-red-600 font-medium" : ""}`}
+                                  className={`hidden sm:table-cell py-1.5 px-3 ${highlightTimeOut ? "text-red-600 font-medium" : ""}`}
                                 >
                                   {                                  effectiveStatus === "leave" ||
                                   effectiveStatus === "absent" ||
@@ -1965,7 +2005,8 @@ export default function AttendancePage() {
                                     record.status !== "leave" &&
                                     record.status !== "leave_with_pay" &&
                                     record.status !== "leave_without_pay" &&
-                                    record.status !== "no_work"
+                                    record.status !== "no_work" &&
+                                    !isRestDayCell
                                         ? record.lateManualOverride === true
                                           ? (record.late ?? 0)
                                           : record.late != null
@@ -1981,7 +2022,8 @@ export default function AttendancePage() {
                                     record.status !== "leave" &&
                                     record.status !== "leave_with_pay" &&
                                     record.status !== "leave_without_pay" &&
-                                    record.status !== "no_work"
+                                    record.status !== "no_work" &&
+                                    !isRestDayCell
                                         ? record.undertimeManualOverride === true
                                           ? Math.round((record.undertime ?? 0) * 60)
                                           : record.undertime != null
@@ -1993,10 +2035,34 @@ export default function AttendancePage() {
                                                 record.actualOut,
                                               )
                                         : null;
+                                    const isRestDayCell = isEmployeeRestDay(
+                                      dateTimestamp,
+                                      employee.schedule,
+                                    );
                                     const hasDayLate =
                                       dayLate != null && dayLate > 0;
                                     const hasDayUndertime =
                                       dayUndertime != null && dayUndertime > 0;
+                                    const highlightDayTimeIn =
+                                      record &&
+                                      shouldHighlightActualIn(
+                                        record.scheduleIn,
+                                        record.scheduleOut,
+                                        record.actualIn,
+                                        record.actualOut,
+                                        dayLate,
+                                        dayUndertime,
+                                        record.lunchStart,
+                                      );
+                                    const highlightDayTimeOut =
+                                      record &&
+                                      shouldHighlightActualOut(
+                                        record.scheduleIn,
+                                        record.scheduleOut,
+                                        record.actualIn,
+                                        record.actualOut,
+                                        dayUndertime,
+                                      );
                                     return (
                                       <TableCell
                                         key={dateTimestamp}
@@ -2012,7 +2078,7 @@ export default function AttendancePage() {
                                                 record.status === "leave_without_pay" ||
                                                 record.status === "absent"
                                                     ? "text-gray-400"
-                                                    : hasDayLate
+                                                    : highlightDayTimeIn
                                                       ? "text-red-600 font-medium"
                                                       : "text-gray-900"
                                                 }
@@ -2037,7 +2103,7 @@ export default function AttendancePage() {
                                                 record.status === "absent" ||
                                                   record.status === "no_work"
                                                     ? "text-gray-400"
-                                                    : hasDayUndertime
+                                                    : highlightDayTimeOut
                                                       ? "text-red-600 font-medium"
                                                       : "text-gray-900"
                                                 }
@@ -2055,8 +2121,17 @@ export default function AttendancePage() {
                                                     : "-"}
                                               </span>
                                             </div>
-                                            {dayHolidays.length > 0 && (
+                                            {(dayHolidays.length > 0 ||
+                                              isRestDayCell) && (
                                               <div className="mt-0.5 flex flex-wrap gap-0.5 justify-center">
+                                                {isRestDayCell && (
+                                                  <Badge
+                                                    variant="outline"
+                                                    className="text-[9px] px-1 py-0 border-violet-200 text-violet-700"
+                                                  >
+                                                    RD
+                                                  </Badge>
+                                                )}
                                                 {dayHolidays.map((h) => (
                                                   <Badge
                                                     key={(h as HolidayDisplay).isOffset ? `${h._id}-offset` : h._id}

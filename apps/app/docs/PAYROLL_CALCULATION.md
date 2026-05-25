@@ -78,7 +78,23 @@ Night diff applies to **actual worked time** that falls in the window **10:00 PM
 
 ---
 
-## 5. Holiday pay
+## 5. Rest day work (scheduled off days, e.g. Saturday/Sunday)
+
+When an employee’s schedule marks a day as **not a workday** (`isWorkday: false`) and they still clock in:
+
+- **Rest day premium** (payslip: “Rest day premium”): first **8 hours actually worked** × hourly rate × **(rest day premium rate − 1)** — same “% additional” model as night differential and holiday premium (default **30%** additional when the org rate is 130%).
+- **Rest day OT** (payslip: “Overtime — Rest Day” / “Overtime — RD over 8 hrs.”): hours worked **beyond 8** × hourly rate × **(rest day OT rate − 1)** (default **69%** additional when the OT rate is 169%). Manual **overtime** hours on the attendance row are not double-counted on rest days.
+- **Daily / hourly** employees also receive **base hourly** for all hours worked on the rest day (monthly employees already have semi-monthly basic pay).
+- **Late / undertime deductions do not apply** on rest days (no comparison to the weekday 9–6 schedule).
+- **Night differential** on rest days uses rest-day night rates (see org/employee night-diff settings); segments on a rest day without a legal/special holiday use `nightDiffRestDay` / `nightDiffRestDayOt`.
+
+Only days explicitly marked **off** in the employee work schedule (`isWorkday: false`) are rest days — e.g. MON–FRI workdays means Sat/Sun are rest; an employee with Wednesday off has Wednesday as rest. A missing `isWorkday` flag is **not** treated as a rest day. A **schedule override** on that date means the employee is expected to work and rest-day premiums are skipped.
+
+**After changing attendance or schedule**, re-run or refresh the payroll draft so payslip lines are recomputed.
+
+---
+
+## 6. Holiday pay
 
 - **Regular holiday**: (daily rate or basic daily) × (regularHolidayRate − 1), e.g. 200% → 1× extra day pay.
 - **Special holiday**: (daily rate or basic daily) × (specialHolidayRate − 1), e.g. 130% → 0.3× extra.
@@ -86,7 +102,7 @@ Night diff applies to **actual worked time** that falls in the window **10:00 PM
 
 ---
 
-## 6. Sample scenarios
+## 7. Sample scenarios
 
 ### Scenario A: Regular day, OT until 11 PM
 
@@ -110,7 +126,7 @@ Night diff applies to **actual worked time** that falls in the window **10:00 PM
 
 ---
 
-## 7. Configuration
+## 8. Configuration
 
 - **Organization (defaults)**: Settings → Payroll → Night Differential % and the five advanced night-diff rates (night diff on OT, regular holiday, special holiday, reg holiday+OT+night, spec holiday+OT+night).
 - **Per employee**: Employee → Edit → Compensation. Same five night-diff rates can be overridden per employee; otherwise org defaults apply.

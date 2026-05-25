@@ -26,6 +26,7 @@ export class AttendanceService {
       | "leave_with_pay"
       | "leave_without_pay"
       | "no_work";
+    overwriteAttendanceId?: string;
   }) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(
@@ -34,6 +35,9 @@ export class AttendanceService {
         ...data,
         organizationId: data.organizationId as Id<"organizations">,
         employeeId: data.employeeId as Id<"employees">,
+        overwriteAttendanceId: data.overwriteAttendanceId
+          ? (data.overwriteAttendanceId as Id<"attendance">)
+          : undefined,
       },
     );
   }
@@ -100,6 +104,7 @@ export class AttendanceService {
         | "leave_with_pay"
         | "leave_without_pay"
         | "no_work";
+      overwrite?: boolean;
     }>,
   ) {
     const convex = await getAuthedConvexClient();

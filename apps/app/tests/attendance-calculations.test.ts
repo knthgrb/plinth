@@ -5,8 +5,11 @@ import {
   calculateOvertime,
   calculateUndertime,
   clockOutIsNextCalendarDay,
+  isEarlyDeparture,
   pairInOutGlobalMinutes,
   scheduleEndsNextCalendarDay,
+  shouldHighlightActualIn,
+  shouldHighlightActualOut,
 } from "@/utils/attendance-calculations";
 
 describe("pairInOutGlobalMinutes", () => {
@@ -83,5 +86,70 @@ describe("calculateOvertime", () => {
   it("uses global timeline when actualIn is provided", () => {
     const ot = calculateOvertime("23:00", "00:00", "14:00", "14:00");
     expect(ot).toBe(1);
+  });
+});
+
+describe("attendance time highlight", () => {
+  it("late arrival with on-schedule or later clock-out highlights in, not out", () => {
+    const schedIn = "09:00";
+    const schedOut = "18:00";
+    const actualIn = "13:00";
+    const actualOut = "18:25";
+    const undertimeMins = Math.round(
+      calculateUndertime(schedIn, schedOut, actualIn, actualOut) * 60,
+    );
+    expect(undertimeMins).toBeGreaterThan(0);
+    expect(isEarlyDeparture(schedIn, schedOut, actualIn, actualOut)).toBe(
+      false,
+    );
+    expect(
+      shouldHighlightActualIn(
+        schedIn,
+        schedOut,
+        actualIn,
+        actualOut,
+        0,
+        undertimeMins,
+      ),
+    ).toBe(true);
+    expect(
+      shouldHighlightActualOut(
+        schedIn,
+        schedOut,
+        actualIn,
+        actualOut,
+        undertimeMins,
+      ),
+    ).toBe(false);
+  });
+
+  it("early departure highlights out, not in when on-time arrival", () => {
+    const schedIn = "09:00";
+    const schedOut = "18:00";
+    const actualIn = "09:00";
+    const actualOut = "17:00";
+    const undertimeMins = Math.round(
+      calculateUndertime(schedIn, schedOut, actualIn, actualOut) * 60,
+    );
+    expect(undertimeMins).toBeGreaterThan(0);
+    expect(
+      shouldHighlightActualIn(
+        schedIn,
+        schedOut,
+        actualIn,
+        actualOut,
+        0,
+        undertimeMins,
+      ),
+    ).toBe(false);
+    expect(
+      shouldHighlightActualOut(
+        schedIn,
+        schedOut,
+        actualIn,
+        actualOut,
+        undertimeMins,
+      ),
+    ).toBe(true);
   });
 });

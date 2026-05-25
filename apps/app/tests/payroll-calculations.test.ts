@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   calculateNightDiffWorkHoursForAttendance,
   calculatePayrollBaseFromRecords,
+  isEmployeeRestDay,
   type ResolvedPayrollRates,
 } from "@/lib/payroll-calculations";
 
@@ -554,6 +555,61 @@ describe("payroll calculations", () => {
     expect(result.overtimeRegular).toBeCloseTo(431.03, 2);
   });
 
+  it("does not treat a day as rest when isWorkday is omitted (must match schedule selection)", () => {
+    const wednesday = Date.UTC(2026, 4, 20);
+    const employee = createEmployee({
+      schedule: {
+        defaultSchedule: {
+          monday: { in: "09:00", out: "18:00", isWorkday: true },
+          tuesday: { in: "09:00", out: "18:00", isWorkday: true },
+          wednesday: { in: "09:00", out: "18:00" },
+          thursday: { in: "09:00", out: "18:00", isWorkday: true },
+          friday: { in: "09:00", out: "18:00", isWorkday: true },
+          saturday: { in: "09:00", out: "18:00", isWorkday: false },
+          sunday: { in: "09:00", out: "18:00", isWorkday: false },
+        },
+        scheduleOverrides: [],
+      },
+    });
+    expect(isEmployeeRestDay(wednesday, employee.schedule)).toBe(false);
+  });
+
+  it("pays rest day premium on any scheduled off day (e.g. Wednesday off)", () => {
+    const wednesday = Date.UTC(2026, 4, 20);
+    const employee = createEmployee({
+      schedule: {
+        defaultSchedule: {
+          monday: { in: "09:00", out: "18:00", isWorkday: true },
+          tuesday: { in: "09:00", out: "18:00", isWorkday: true },
+          wednesday: { in: "09:00", out: "18:00", isWorkday: false },
+          thursday: { in: "09:00", out: "18:00", isWorkday: true },
+          friday: { in: "09:00", out: "18:00", isWorkday: true },
+          saturday: { in: "09:00", out: "18:00", isWorkday: true },
+          sunday: { in: "09:00", out: "18:00", isWorkday: true },
+        },
+        scheduleOverrides: [],
+      },
+    });
+    expect(isEmployeeRestDay(wednesday, employee.schedule)).toBe(true);
+    const result = calculate({
+      employee,
+      attendance: [
+        {
+          date: wednesday,
+          status: "present",
+          actualIn: "09:00",
+          actualOut: "18:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+        },
+      ],
+      cutoffStart: wednesday,
+      cutoffEnd: wednesday,
+    });
+    expect(result.restDayPremiumPay).toBeGreaterThan(0);
+    expect(result.undertimeDeduction).toBe(0);
+  });
+
   it("calculates rest day work: premium (first 8h at 130%) and OT (excess at 169%)", () => {
     // Use UTC so Feb 21 00:00 UTC is Saturday. actualIn 09:00, actualOut 20:00 → 10h worked (minus 1h lunch).
     const date = Date.UTC(2026, 1, 21);
@@ -573,9 +629,9 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
 
-    // 8h at 130% + 2h at 169%. Hourly ≈ 172.41 (30k×12/261/8).
-    expect(result.restDayPremiumPay).toBeCloseTo(1793.06, 1);
-    expect(result.overtimeRestDay).toBeCloseTo(582.76, 1);
+    // 8h at 30% additional + 2h at 69% additional (rates 1.3 / 1.69). Hourly ≈ 172.41.
+    expect(result.restDayPremiumPay).toBeCloseTo(413.78, 1);
+    expect(result.overtimeRestDay).toBeCloseTo(237.92, 1);
   });
 
   it("calculates regular holiday overtime separately from the holiday premium", () => {

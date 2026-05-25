@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -30,7 +30,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Upload, X, RotateCcw, Loader2, FileSpreadsheet } from "lucide-react";
+import {
+  Upload,
+  X,
+  RotateCcw,
+  Loader2,
+  FileSpreadsheet,
+  AlertTriangle,
+} from "lucide-react";
 import { format } from "date-fns";
 import { bulkCreateAttendance } from "@/actions/attendance";
 import { useToast } from "@/components/ui/use-toast";
@@ -41,7 +48,15 @@ import {
   calculateLate,
   calculateUndertime,
 } from "@/utils/attendance-calculations";
-import { holidayAppliesToEmployee } from "@/lib/payroll-calculations";
+import {
+  holidayAppliesToEmployee,
+  isEmployeeRestDay,
+} from "@/lib/payroll-calculations";
+import {
+  attendanceDayKey,
+  normalizeAttendanceDateMs,
+  parseYmdToAttendanceDateMs,
+} from "@/lib/manila-date";
 
 // Parse time string to HH:mm (24h). Supports "9:00 AM", "17:00", "9:00", etc.
 function parseTimeToHHmm(input: string): string | null {
@@ -205,23 +220,18 @@ function isBiometricTimesheetFormat(text: string): boolean {
   return false;
 }
 
-// Parse date string as local calendar date (avoid UTC midnight shifting the day). Supports YYYY-MM-DD and MM/DD/YYYY.
+// Parse date as Manila calendar attendance day (canonical UTC midnight). Supports YYYY-MM-DD and MM/DD/YYYY.
 function parseDateToLocalTimestamp(dateStr: string): { ts: number; label: string } | { ts: 0; label: string } {
   const s = (dateStr ?? "").trim();
   if (!s) return { ts: 0, label: "—" };
   const isoMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
   if (isoMatch) {
-    const y = parseInt(isoMatch[1], 10);
-    const m = parseInt(isoMatch[2], 10) - 1;
-    const d = parseInt(isoMatch[3], 10);
-    if (m < 0 || m > 11 || d < 1 || d > 31) return { ts: 0, label: s };
-    const date = new Date(y, m, d);
-    if (date.getFullYear() !== y || date.getMonth() !== m || date.getDate() !== d)
+    try {
+      const ts = parseYmdToAttendanceDateMs(s);
+      return { ts, label: format(new Date(ts), "MMM dd, yyyy") };
+    } catch {
       return { ts: 0, label: s };
-    return {
-      ts: date.getTime(),
-      label: format(date, "MMM dd, yyyy"),
-    };
+    }
   }
   const slashMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
   if (slashMatch) {
@@ -229,21 +239,13 @@ function parseDateToLocalTimestamp(dateStr: string): { ts: number; label: string
     const day = parseInt(slashMatch[2], 10);
     const year = parseInt(slashMatch[3], 10);
     if (month < 1 || month > 12 || day < 1 || day > 31) return { ts: 0, label: s };
-    const date = new Date(year, month - 1, day);
-    if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day)
-      return { ts: 0, label: s };
-    return {
-      ts: date.getTime(),
-      label: format(date, "MMM dd, yyyy"),
-    };
+    const ts = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+    return { ts, label: format(new Date(ts), "MMM dd, yyyy") };
   }
   const other = new Date(s);
   if (isNaN(other.getTime())) return { ts: 0, label: s };
-  const date = new Date(other.getFullYear(), other.getMonth(), other.getDate());
-  return {
-    ts: date.getTime(),
-    label: format(date, "MMM dd, yyyy"),
-  };
+  const ts = normalizeAttendanceDateMs(other.getTime());
+  return { ts, label: format(new Date(ts), "MMM dd, yyyy") };
 }
 
 interface BulkAddAttendanceDialogProps {
@@ -265,6 +267,7 @@ export function BulkAddAttendanceDialog({
     (api as any).holidays.getHolidays,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
+
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
   const [bulkStartDate, setBulkStartDate] = useState(
     format(new Date(), "yyyy-MM-dd"),
@@ -274,8 +277,8 @@ export function BulkAddAttendanceDialog({
   );
   const [bulkSelectedEmployee, setBulkSelectedEmployee] = useState("");
   const [isSubmittingBulk, setIsSubmittingBulk] = useState(false);
-  const [includeSaturday, setIncludeSaturday] = useState(false);
-  const [includeSunday, setIncludeSunday] = useState(false);
+  /** Rest days the user explicitly restored from excluded (manual bulk). */
+  const manuallyIncludedRestDaysRef = useRef<Set<number>>(new Set());
   // Map of date timestamp to { timeIn, timeOut, status, overtime, late, undertime, notes, useManualOvertime, useManualLate, useManualUndertime }
   const [bulkDayTimes, setBulkDayTimes] = useState<
     Record<
@@ -314,13 +317,19 @@ export function BulkAddAttendanceDialog({
     error: string | null;
     /** When true, row will be imported; when false, excluded. User can toggle per row. */
     includeInImport: boolean;
+    /** Existing DB record on this Manila day (import conflict). */
+    existingAttendanceId: string | null;
+    /** User must choose overwrite to import when a record already exists. */
+    overwriteExisting: boolean;
+    /** Scheduled rest day for this employee (isWorkday: false). Excluded from import by default. */
+    isRestDay: boolean;
   };
   const [csvPreviewRows, setCsvPreviewRows] = useState<CsvPreviewRow[]>([]);
+  const [bulkConflictResolutions, setBulkConflictResolutions] = useState<
+    Record<number, "overwrite" | "exclude">
+  >({});
   const [csvParseError, setCsvParseError] = useState<string | null>(null);
   const [isImportingCsv, setIsImportingCsv] = useState(false);
-  const [includeSaturdayCsv, setIncludeSaturdayCsv] = useState(false);
-  const [includeSundayCsv, setIncludeSundayCsv] = useState(false);
-
   const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
   const dayNamesList = [
     "sunday",
@@ -335,9 +344,6 @@ export function BulkAddAttendanceDialog({
   /** Day name for a date in Manila timezone so schedule lookup matches backend. */
   const getDayNameInManila = (timestamp: number): string =>
     dayNamesList[new Date(timestamp + MANILA_OFFSET_MS).getUTCDay()];
-
-  const getDayName = (date: Date): string =>
-    dayNamesList[date.getDay()];
 
   const canUseNoWorkForDate = (dateTs: number, employee: any): boolean => {
     if (!employee || !holidays) return false;
@@ -378,30 +384,14 @@ export function BulkAddAttendanceDialog({
 
     const currentDate = new Date(startDate);
     while (currentDate <= endDate) {
-      const dateTimestamp = new Date(currentDate);
-      dateTimestamp.setHours(0, 0, 0, 0);
-      const ts = dateTimestamp.getTime();
+      const ts = normalizeAttendanceDateMs(currentDate.getTime());
       // Use Manila day so per-day schedule matches backend
       const dayName = getDayNameInManila(ts);
-      const daySchedule =
-        employee.schedule.defaultSchedule[
-          dayName as keyof typeof employee.schedule.defaultSchedule
-        ];
-
-      const isSaturday = dayName === "saturday";
-      const isSunday = dayName === "sunday";
-      const shouldInclude =
-        daySchedule?.isWorkday ||
-        (isSaturday && includeSaturday) ||
-        (isSunday && includeSunday);
-
-      if (shouldInclude) {
-        dates.push({
-          date: new Date(currentDate),
-          timestamp: ts,
-          dayName,
-        });
-      }
+      dates.push({
+        date: new Date(currentDate),
+        timestamp: ts,
+        dayName,
+      });
 
       currentDate.setDate(currentDate.getDate() + 1);
     }
@@ -415,6 +405,148 @@ export function BulkAddAttendanceDialog({
       (dateInfo) => !excludedDates.has(dateInfo.timestamp),
     );
   };
+
+  const bulkRangeBounds = useMemo(() => {
+    if (!bulkStartDate || !bulkEndDate) return null;
+    try {
+      const start = parseYmdToAttendanceDateMs(bulkStartDate);
+      const end = parseYmdToAttendanceDateMs(bulkEndDate);
+      return { start, end };
+    } catch {
+      return null;
+    }
+  }, [bulkStartDate, bulkEndDate]);
+
+  const employeeRangeAttendance = useQuery(
+    (api as any).attendance.getEmployeeAttendance,
+    bulkSelectedEmployee && bulkRangeBounds
+      ? {
+          employeeId: bulkSelectedEmployee,
+          startDate: bulkRangeBounds.start - 86400000,
+          endDate: bulkRangeBounds.end + 86400000 * 2,
+        }
+      : "skip",
+  );
+
+  const existingAttendanceByDay = useMemo(() => {
+    const map = new Map<number, string>();
+    if (!employeeRangeAttendance) return map;
+    for (const record of employeeRangeAttendance as { _id: string; date: number }[]) {
+      const dayKey = normalizeAttendanceDateMs(record.date);
+      if (!map.has(dayKey)) {
+        map.set(dayKey, record._id);
+      }
+    }
+    return map;
+  }, [employeeRangeAttendance]);
+
+  const csvDateRange = useMemo(() => {
+    const timestamps = csvPreviewRows
+      .filter((r) => r.dateTs > 0 && r.employeeId)
+      .map((r) => r.dateTs);
+    if (timestamps.length === 0) return null;
+    return {
+      min: Math.min(...timestamps),
+      max: Math.max(...timestamps),
+    };
+  }, [csvPreviewRows]);
+
+  const orgAttendanceForCsv = useQuery(
+    (api as any).attendance.getAttendance,
+    currentOrganizationId && csvDateRange
+      ? {
+          organizationId: currentOrganizationId,
+          startDate: csvDateRange.min - 86400000,
+          endDate: csvDateRange.max + 86400000 * 2,
+        }
+      : "skip",
+  );
+
+  const existingAttendanceIdByCsvKey = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!orgAttendanceForCsv) return map;
+    for (const record of orgAttendanceForCsv as {
+      _id: string;
+      employeeId: string;
+      date: number;
+    }[]) {
+      const key = attendanceDayKey(record.employeeId, record.date);
+      if (!map.has(key)) {
+        map.set(key, record._id);
+      }
+    }
+    return map;
+  }, [orgAttendanceForCsv]);
+
+  useEffect(() => {
+    if (existingAttendanceIdByCsvKey.size === 0) return;
+    setCsvPreviewRows((prev) =>
+      prev.map((row) => {
+        if (!row.employeeId || row.dateTs <= 0) {
+          return { ...row, existingAttendanceId: null };
+        }
+        const key = attendanceDayKey(row.employeeId, row.dateTs);
+        return {
+          ...row,
+          existingAttendanceId: existingAttendanceIdByCsvKey.get(key) ?? null,
+        };
+      }),
+    );
+  }, [existingAttendanceIdByCsvKey]);
+
+  useEffect(() => {
+    setBulkConflictResolutions({});
+  }, [bulkSelectedEmployee, bulkStartDate, bulkEndDate]);
+
+  useEffect(() => {
+    manuallyIncludedRestDaysRef.current = new Set();
+  }, [bulkSelectedEmployee]);
+
+  const getExistingIdForDay = useCallback(
+    (dateTs: number): string | null => {
+      const dayKey = normalizeAttendanceDateMs(dateTs);
+      return existingAttendanceByDay.get(dayKey) ?? null;
+    },
+    [existingAttendanceByDay],
+  );
+
+  const isManualConflictResolved = useCallback(
+    (dateTs: number): boolean => {
+      const existingId = getExistingIdForDay(dateTs);
+      if (!existingId) return true;
+      const resolution = bulkConflictResolutions[dateTs];
+      return resolution === "overwrite" || resolution === "exclude";
+    },
+    [bulkConflictResolutions, getExistingIdForDay],
+  );
+
+  const manualUnresolvedConflictCount = useMemo(() => {
+    if (!bulkSelectedEmployee) return 0;
+    return getBulkDates().filter(
+      (d) => getExistingIdForDay(d.timestamp) && !isManualConflictResolved(d.timestamp),
+    ).length;
+  }, [
+    bulkSelectedEmployee,
+    bulkStartDate,
+    bulkEndDate,
+    excludedDates,
+    bulkConflictResolutions,
+    employeeRangeAttendance,
+    getExistingIdForDay,
+    isManualConflictResolved,
+  ]);
+
+  const csvUnresolvedConflictCount = useMemo(() => {
+    return csvPreviewRows.filter(
+      (r) =>
+        r.employeeId &&
+        !r.error &&
+        r.dateTs > 0 &&
+        r.includeInImport &&
+        r.existingAttendanceId &&
+        !r.overwriteExisting,
+    ).length;
+  }, [csvPreviewRows]);
 
   const normalize = (s: string) =>
     (s ?? "")
@@ -487,9 +619,8 @@ export function BulkAddAttendanceDialog({
           if (!emp) error = "Employee not found";
           else if (dateStr && dateTs === 0) error = "Invalid date";
 
-          const day = dateTs > 0 ? new Date(dateTs + MANILA_OFFSET_MS).getUTCDay() : -1;
-          const isWeekendExcluded =
-            (day === 6 && !includeSaturdayCsv) || (day === 0 && !includeSundayCsv);
+          const isRestDay =
+            !!emp && dateTs > 0 && isEmployeeRestDay(dateTs, emp.schedule);
           const row: CsvPreviewRow = {
             employeeId: emp?._id ?? null,
             employeeName: employeeKey || "—",
@@ -502,7 +633,10 @@ export function BulkAddAttendanceDialog({
             status,
             notes: "",
             error,
-            includeInImport: !isWeekendExcluded,
+            includeInImport: !isRestDay,
+            existingAttendanceId: null,
+            overwriteExisting: false,
+            isRestDay,
           };
           const dedupeKey = row.employeeId
             ? `${row.employeeId}-${dateTs}`
@@ -593,9 +727,8 @@ export function BulkAddAttendanceDialog({
         else if (status === "no_work" && dateTs > 0 && !canUseNoWorkForDate(dateTs, emp))
           error = "No work is only allowed on holiday dates for this employee";
 
-        const day = dateTs > 0 ? new Date(dateTs + MANILA_OFFSET_MS).getUTCDay() : -1;
-        const isWeekendExcluded =
-          (day === 6 && !includeSaturdayCsv) || (day === 0 && !includeSundayCsv);
+        const isRestDay =
+          !!emp && dateTs > 0 && isEmployeeRestDay(dateTs, emp.schedule);
         preview.push({
           employeeId: emp?._id ?? null,
           employeeName: employeeKey || "—",
@@ -608,7 +741,10 @@ export function BulkAddAttendanceDialog({
           status,
           notes,
           error,
-          includeInImport: !isWeekendExcluded,
+          includeInImport: !isRestDay,
+          existingAttendanceId: null,
+          overwriteExisting: false,
+          isRestDay,
         });
       }
       setCsvPreviewRows(preview);
@@ -619,6 +755,16 @@ export function BulkAddAttendanceDialog({
 
   const handleCSVImport = async () => {
     if (!currentOrganizationId) return;
+    if (csvUnresolvedConflictCount > 0) {
+      toast({
+        title: "Resolve conflicts first",
+        description:
+          "Some rows already have attendance. Choose Overwrite on each conflict or uncheck Include.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const valid = csvPreviewRows.filter(
       (r) => r.employeeId && !r.error && r.dateTs > 0,
     );
@@ -643,6 +789,7 @@ export function BulkAddAttendanceDialog({
         actualOut: r.actualOut,
         status: r.status,
         remarks: r.notes || undefined,
+        overwrite: r.existingAttendanceId ? true : undefined,
       }));
       await bulkCreateMutation({ entries });
       setIsBulkDialogOpen(false);
@@ -690,7 +837,10 @@ export function BulkAddAttendanceDialog({
 
     const dates = getAllBulkDates();
 
-    // Clean up excluded dates that are no longer in the range
+    const employee = employees?.find(
+      (e: any) => e._id === bulkSelectedEmployee,
+    );
+
     setExcludedDates((prev) => {
       const dateTimestamps = new Set(dates.map((d) => d.timestamp));
       const newExcluded = new Set<number>();
@@ -699,6 +849,16 @@ export function BulkAddAttendanceDialog({
           newExcluded.add(timestamp);
         }
       });
+      if (employee) {
+        for (const dateInfo of dates) {
+          if (
+            isEmployeeRestDay(dateInfo.timestamp, employee.schedule) &&
+            !manuallyIncludedRestDaysRef.current.has(dateInfo.timestamp)
+          ) {
+            newExcluded.add(dateInfo.timestamp);
+          }
+        }
+      }
       return newExcluded;
     });
 
@@ -757,14 +917,7 @@ export function BulkAddAttendanceDialog({
       });
       return merged;
     });
-  }, [
-    bulkStartDate,
-    bulkEndDate,
-    bulkSelectedEmployee,
-    includeSaturday,
-    includeSunday,
-    employees,
-  ]);
+  }, [bulkStartDate, bulkEndDate, bulkSelectedEmployee, employees]);
 
   const handleBulkSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -812,7 +965,22 @@ export function BulkAddAttendanceDialog({
         status: "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay" | "no_work";
       }> = [];
 
+      if (manualUnresolvedConflictCount > 0) {
+        toast({
+          title: "Resolve conflicts first",
+          description:
+            "Some dates already have attendance. Choose Overwrite or Exclude for each highlighted day.",
+          variant: "destructive",
+        });
+        setIsSubmittingBulk(false);
+        return;
+      }
+
       for (const dateInfo of dates) {
+        if (bulkConflictResolutions[dateInfo.timestamp] === "exclude") {
+          continue;
+        }
+
         const daySchedule =
           employee.schedule.defaultSchedule[
             dateInfo.dayName as keyof typeof employee.schedule.defaultSchedule
@@ -953,13 +1121,18 @@ export function BulkAddAttendanceDialog({
           entry.remarks = dayTimes.notes.trim();
         }
 
+        if (getExistingIdForDay(dateInfo.timestamp)) {
+          (entry as { overwrite?: boolean }).overwrite = true;
+        }
+
         entries.push(entry);
       }
 
       if (entries.length === 0) {
         toast({
           title: "Error",
-          description: "No workdays found in the selected date range",
+          description:
+            "No days selected. Include workdays or restore excluded rest days to add.",
           variant: "destructive",
         });
         setIsSubmittingBulk(false);
@@ -970,8 +1143,7 @@ export function BulkAddAttendanceDialog({
 
       setIsBulkDialogOpen(false);
       setBulkSelectedEmployee("");
-      setIncludeSaturday(false);
-      setIncludeSunday(false);
+      manuallyIncludedRestDaysRef.current = new Set();
       setBulkDayTimes({});
       setExcludedDates(new Set());
       toast({
@@ -1010,8 +1182,8 @@ export function BulkAddAttendanceDialog({
               </DialogTitle>
               <DialogDescription className="text-sm text-gray-500 mt-1">
                 {bulkMode === "manual"
-                  ? "Add attendance for an employee across a date range. Workdays only."
-                  : "Upload a CSV to import attendance in bulk."}
+                  ? "Add attendance for an employee across a date range. Workdays are included by default; scheduled rest days are excluded until you restore them."
+                  : "Upload a CSV to import attendance. Rows on each employee's scheduled rest days are excluded by default—review and check Include to import them."}
               </DialogDescription>
             </div>
             <div className="flex rounded-lg border border-gray-200 bg-gray-50/50 p-0.5 shrink-0">
@@ -1071,63 +1243,23 @@ export function BulkAddAttendanceDialog({
               )}
               {csvPreviewRows.length > 0 && (
                 <>
-                  <div className="space-y-2">
-                    <Label className="text-xs font-medium">Include weekend days</Label>
-                    <div className="flex flex-wrap gap-4">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={includeSaturdayCsv}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
-                            setIncludeSaturdayCsv(checked);
-                            setCsvPreviewRows((prev) =>
-                              prev.map((r) => {
-                                if (r.dateTs > 0 && new Date(r.dateTs).getDay() === 6) {
-                                  return { ...r, includeInImport: checked };
-                                }
-                                return r;
-                              })
-                            );
-                          }}
-                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="text-xs">Saturday</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={includeSundayCsv}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
-                            setIncludeSundayCsv(checked);
-                            setCsvPreviewRows((prev) =>
-                              prev.map((r) => {
-                                if (r.dateTs > 0 && new Date(r.dateTs).getDay() === 0) {
-                                  return { ...r, includeInImport: checked };
-                                }
-                                return r;
-                              })
-                            );
-                          }}
-                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="text-xs">Sunday</span>
-                      </label>
-                    </div>
-                    <p className="text-xs text-gray-500">
-                      By default, Saturday and Sunday are not imported. Use the checkboxes above to include all Saturdays or Sundays, then use the Include column in the table to include or exclude individual days.
-                    </p>
-                  </div>
+                  <p className="text-xs text-gray-500">
+                    Rows on an employee&apos;s scheduled rest days (per work schedule) are unchecked by default. Use the Include column to import rest-day work after review.
+                  </p>
                     <p className="text-xs text-gray-600">
                     {(() => {
                       const valid = csvPreviewRows.filter((r) => r.employeeId && !r.error && r.dateTs > 0);
                       const toImport = valid.filter((r) => r.includeInImport);
+                      const restExcluded = valid.filter(
+                        (r) => !r.includeInImport && r.isRestDay,
+                      ).length;
                       return (
                         <>
                           {toImport.length} row(s) will be imported.{" "}
                           {valid.length - toImport.length > 0 &&
                             `${valid.length - toImport.length} row(s) excluded. `}
+                          {restExcluded > 0 &&
+                            `${restExcluded} rest day(s) excluded by default. `}
                           {csvPreviewRows.filter((r) => r.error).length > 0 &&
                             `${csvPreviewRows.filter((r) => r.error).length} row(s) have errors.`}
                         </>
@@ -1145,18 +1277,37 @@ export function BulkAddAttendanceDialog({
                           <TableHead className="text-xs">Out</TableHead>
                           <TableHead className="text-xs">Status</TableHead>
                           <TableHead className="text-xs">Notes</TableHead>
+                          <TableHead className="text-xs">Conflict</TableHead>
                           <TableHead className="text-xs">Error</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {csvPreviewRows.map((r, i) => {
                           const isExcluded = !r.includeInImport;
-                          const displayStatus = isExcluded ? "Excluded" : r.status;
+                          const displayStatus = isExcluded
+                            ? r.isRestDay
+                              ? "Rest day (excluded)"
+                              : "Excluded"
+                            : r.status;
                           const rowError = isExcluded ? null : r.error;
+                          const hasConflict =
+                            r.includeInImport &&
+                            !!r.existingAttendanceId &&
+                            !r.overwriteExisting;
                           return (
                             <TableRow
                               key={i}
-                              className={rowError ? "bg-red-50" : isExcluded ? "bg-gray-50" : ""}
+                              className={
+                                rowError
+                                  ? "bg-red-50"
+                                  : hasConflict
+                                    ? "bg-amber-50"
+                                    : isExcluded && r.isRestDay
+                                      ? "bg-violet-50/80"
+                                      : isExcluded
+                                        ? "bg-gray-50"
+                                        : ""
+                              }
                             >
                               <TableCell className="text-xs w-0 p-2">
                                 {!r.error && r.dateTs > 0 ? (
@@ -1182,7 +1333,16 @@ export function BulkAddAttendanceDialog({
                                 )}
                               </TableCell>
                               <TableCell className="text-xs">{r.employeeName}</TableCell>
-                              <TableCell className="text-xs">{r.dateLabel}</TableCell>
+                              <TableCell className="text-xs">
+                                <div className="flex flex-col gap-0.5">
+                                  <span>{r.dateLabel}</span>
+                                  {r.isRestDay && (
+                                    <span className="text-[10px] font-medium text-violet-700">
+                                      Rest day
+                                    </span>
+                                  )}
+                                </div>
+                              </TableCell>
                               <TableCell className="text-xs">
                                 {formatHHmmTo12h(r.actualIn)}
                               </TableCell>
@@ -1191,6 +1351,31 @@ export function BulkAddAttendanceDialog({
                               </TableCell>
                               <TableCell className="text-xs">{displayStatus}</TableCell>
                               <TableCell className="text-xs max-w-[120px] truncate">{r.notes || "—"}</TableCell>
+                              <TableCell className="text-xs">
+                                {hasConflict ? (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 text-xs"
+                                    onClick={() =>
+                                      setCsvPreviewRows((prev) =>
+                                        prev.map((row, idx) =>
+                                          idx === i
+                                            ? { ...row, overwriteExisting: true }
+                                            : row,
+                                        ),
+                                      )
+                                    }
+                                  >
+                                    Overwrite
+                                  </Button>
+                                ) : r.existingAttendanceId && r.overwriteExisting ? (
+                                  <span className="text-amber-800">Will overwrite</span>
+                                ) : (
+                                  "—"
+                                )}
+                              </TableCell>
                               <TableCell className="text-xs text-red-600">{rowError ?? "—"}</TableCell>
                             </TableRow>
                           );
@@ -1198,6 +1383,12 @@ export function BulkAddAttendanceDialog({
                       </TableBody>
                     </Table>
                   </div>
+                  {csvUnresolvedConflictCount > 0 && (
+                    <p className="text-sm text-amber-800 flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      {csvUnresolvedConflictCount} row(s) conflict with existing attendance. Choose Overwrite or uncheck Include.
+                    </p>
+                  )}
                 </>
               )}
             </div>
@@ -1215,6 +1406,7 @@ export function BulkAddAttendanceDialog({
                 onClick={handleCSVImport}
                 disabled={
                   isImportingCsv ||
+                  csvUnresolvedConflictCount > 0 ||
                   csvPreviewRows.filter(
                     (r) => r.employeeId && !r.error && r.dateTs > 0 && r.includeInImport
                   ).length === 0
@@ -1241,7 +1433,7 @@ export function BulkAddAttendanceDialog({
               disabled={isSubmittingBulk}
               className="space-y-4"
             >
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="space-y-1.5 min-w-0">
                   <Label htmlFor="bulkEmployee" className="text-sm font-medium">
                     Employee *
@@ -1273,32 +1465,20 @@ export function BulkAddAttendanceDialog({
                     placeholder="Select end date"
                   />
                 </div>
-                <div className="space-y-1.5 min-w-0">
-                  <Label className="text-sm font-medium">Weekends</Label>
-                  <div className="flex items-center gap-4 h-10">
-                    <label className="flex items-center gap-2 cursor-pointer text-sm">
-                      <input
-                        type="checkbox"
-                        checked={includeSaturday}
-                        onChange={(e) => setIncludeSaturday(e.target.checked)}
-                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      Saturday
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer text-sm">
-                      <input
-                        type="checkbox"
-                        checked={includeSunday}
-                        onChange={(e) => setIncludeSunday(e.target.checked)}
-                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      Sunday
-                    </label>
-                  </div>
-                </div>
               </div>
               {bulkSelectedEmployee && bulkStartDate && bulkEndDate && (
+                <p className="text-xs text-gray-500">
+                  Scheduled rest days for this employee are listed under excluded dates. Click restore to include them in this bulk entry.
+                </p>
+              )}
+              {bulkSelectedEmployee && bulkStartDate && bulkEndDate && (
                 <div className="space-y-2 w-full min-w-0">
+                  {manualUnresolvedConflictCount > 0 && (
+                    <p className="text-sm text-amber-800 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      {manualUnresolvedConflictCount} day(s) already have attendance. Choose Overwrite or Exclude on each highlighted row before submitting.
+                    </p>
+                  )}
                   <Label className="text-sm font-medium">
                     Time In/Out for Each Day *
                   </Label>
@@ -1406,13 +1586,82 @@ export function BulkAddAttendanceDialog({
                               ? dayTimes.overtime
                               : "";
 
+                            const existingId = getExistingIdForDay(
+                              dateInfo.timestamp,
+                            );
+                            const conflictResolution =
+                              bulkConflictResolutions[dateInfo.timestamp];
+                            const hasUnresolvedConflict =
+                              !!existingId && !isManualConflictResolved(dateInfo.timestamp);
+                            const rowInputsDisabled =
+                              isSubmittingBulk || hasUnresolvedConflict;
+
                             return (
-                              <TableRow key={dateInfo.timestamp}>
+                              <TableRow
+                                key={dateInfo.timestamp}
+                                className={
+                                  hasUnresolvedConflict
+                                    ? "bg-amber-50"
+                                    : conflictResolution === "overwrite"
+                                      ? "bg-amber-50/40"
+                                      : undefined
+                                }
+                              >
                                 <TableCell className="font-medium text-xs sm:text-sm px-3 py-3 align-middle w-[100px]">
-                                  <div className="flex flex-col">
+                                  <div className="flex flex-col gap-1">
                                     <span>
                                       {format(dateInfo.date, "MMM dd, yyyy")}
                                     </span>
+                                    {existingId && (
+                                      <div className="flex flex-wrap gap-1">
+                                        {conflictResolution === "overwrite" ? (
+                                          <span className="text-[10px] text-amber-800">
+                                            Will overwrite
+                                          </span>
+                                        ) : conflictResolution === "exclude" ? (
+                                          <span className="text-[10px] text-gray-600">
+                                            Excluded
+                                          </span>
+                                        ) : (
+                                          <>
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="sm"
+                                              className="h-6 text-[10px] px-1.5"
+                                              onClick={() =>
+                                                setBulkConflictResolutions(
+                                                  (prev) => ({
+                                                    ...prev,
+                                                    [dateInfo.timestamp]:
+                                                      "overwrite",
+                                                  }),
+                                                )
+                                              }
+                                            >
+                                              Overwrite
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="sm"
+                                              className="h-6 text-[10px] px-1.5"
+                                              onClick={() =>
+                                                setBulkConflictResolutions(
+                                                  (prev) => ({
+                                                    ...prev,
+                                                    [dateInfo.timestamp]:
+                                                      "exclude",
+                                                  }),
+                                                )
+                                              }
+                                            >
+                                              Exclude
+                                            </Button>
+                                          </>
+                                        )}
+                                      </div>
+                                    )}
                                     <span className="text-gray-600 capitalize text-[10px] sm:hidden">
                                       {dateInfo.dayName.slice(0, 3)}
                                     </span>
@@ -1466,7 +1715,7 @@ export function BulkAddAttendanceDialog({
                                       dayTimes.status === "leave_with_pay" ||
                                       dayTimes.status === "leave_without_pay" ||
                                       dayTimes.status === "no_work" ||
-                                      isSubmittingBulk
+                                      rowInputsDisabled
                                     }
                                     placeholder="Time in"
                                     showLabel={false}
@@ -1518,7 +1767,7 @@ export function BulkAddAttendanceDialog({
                                       dayTimes.status === "leave_with_pay" ||
                                       dayTimes.status === "leave_without_pay" ||
                                       dayTimes.status === "no_work" ||
-                                      isSubmittingBulk
+                                      rowInputsDisabled
                                     }
                                     placeholder="Time out"
                                     showLabel={false}
@@ -1664,7 +1913,7 @@ export function BulkAddAttendanceDialog({
                                           }}
                                           className={`h-8 w-14 shrink-0 text-xs ${!dayTimes.useManualLate ? "bg-gray-50" : ""}`}
                                           placeholder="0"
-                                          disabled={isSubmittingBulk}
+                                          disabled={rowInputsDisabled}
                                           readOnly={!dayTimes.useManualLate}
                                           onFocus={() => {
                                             if (!dayTimes.useManualLate) {
@@ -1701,7 +1950,7 @@ export function BulkAddAttendanceDialog({
                                               }));
                                             }}
                                             className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 align-middle"
-                                            disabled={isSubmittingBulk}
+                                            disabled={rowInputsDisabled}
                                             title="Manual override"
                                           />
                                           <span className="text-[9px]">M</span>
@@ -1742,7 +1991,7 @@ export function BulkAddAttendanceDialog({
                                           }}
                                           className={`h-8 w-14 shrink-0 text-xs ${!dayTimes.useManualUndertime ? "bg-gray-50" : ""}`}
                                           placeholder="0"
-                                          disabled={isSubmittingBulk}
+                                          disabled={rowInputsDisabled}
                                           readOnly={
                                             !dayTimes.useManualUndertime
                                           }
@@ -1786,7 +2035,7 @@ export function BulkAddAttendanceDialog({
                                               }));
                                             }}
                                             className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 align-middle"
-                                            disabled={isSubmittingBulk}
+                                            disabled={rowInputsDisabled}
                                             title="Manual override"
                                           />
                                           <span className="text-[9px]">M</span>
@@ -1855,7 +2104,7 @@ export function BulkAddAttendanceDialog({
                                           dayTimes.status === "leave_with_pay" ||
                                           dayTimes.status === "leave_without_pay" ||
                                           dayTimes.status === "no_work" ||
-                                          isSubmittingBulk
+                                          rowInputsDisabled
                                         }
                                         readOnly={!dayTimes.useManualOvertime}
                                         onFocus={() => {
@@ -1898,7 +2147,7 @@ export function BulkAddAttendanceDialog({
                                                 }));
                                               }}
                                               className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 align-middle"
-                                              disabled={isSubmittingBulk}
+                                              disabled={rowInputsDisabled}
                                               title="Manual override"
                                             />
                                             <span className="text-[9px]">
@@ -1922,7 +2171,7 @@ export function BulkAddAttendanceDialog({
                                       }))
                                     }
                                     placeholder="Note"
-                                    disabled={isSubmittingBulk}
+                                    disabled={rowInputsDisabled}
                                     className="w-full min-w-0 text-xs"
                                   />
                                 </TableCell>
@@ -1932,6 +2181,21 @@ export function BulkAddAttendanceDialog({
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => {
+                                      const emp = employees?.find(
+                                        (e: any) =>
+                                          e._id === bulkSelectedEmployee,
+                                      );
+                                      if (
+                                        emp &&
+                                        isEmployeeRestDay(
+                                          dateInfo.timestamp,
+                                          emp.schedule,
+                                        )
+                                      ) {
+                                        manuallyIncludedRestDaysRef.current.delete(
+                                          dateInfo.timestamp,
+                                        );
+                                      }
                                       setExcludedDates((prev) => {
                                         const newSet = new Set(prev);
                                         newSet.add(dateInfo.timestamp);
@@ -1954,36 +2218,58 @@ export function BulkAddAttendanceDialog({
                   {getBulkDates().length === 0 &&
                     getExcludedDates().length === 0 && (
                       <p className="text-xs sm:text-sm text-gray-500 text-center py-2">
-                        No days to include. Please check your date range and
-                        weekend options.
+                        No days to include. Adjust the date range or restore
+                        excluded rest days below.
                       </p>
                     )}
                   {getExcludedDates().length > 0 && (
                     <div className="mt-3 sm:mt-4 space-y-2">
                       <Label className="text-xs sm:text-sm text-gray-600">
-                        Removed Dates (Click to restore)
+                        Excluded dates (rest days excluded by default — click to
+                        include)
                       </Label>
                       <div className="flex flex-wrap gap-1.5 sm:gap-2">
-                        {getExcludedDates().map((dateInfo) => (
+                        {getExcludedDates().map((dateInfo) => {
+                          const emp = employees?.find(
+                            (e: any) => e._id === bulkSelectedEmployee,
+                          );
+                          const isRest =
+                            !!emp &&
+                            isEmployeeRestDay(
+                              dateInfo.timestamp,
+                              emp.schedule,
+                            );
+                          return (
                           <Button
                             key={dateInfo.timestamp}
                             type="button"
                             variant="outline"
                             size="sm"
                             onClick={() => {
+                              if (isRest) {
+                                manuallyIncludedRestDaysRef.current.add(
+                                  dateInfo.timestamp,
+                                );
+                              }
                               setExcludedDates((prev) => {
                                 const newSet = new Set(prev);
                                 newSet.delete(dateInfo.timestamp);
                                 return newSet;
                               });
                             }}
-                            className="text-[10px] sm:text-xs h-7 sm:h-8 gap-1 sm:gap-1.5 px-2 sm:px-3 hover:bg-green-50 hover:text-green-700 hover:border-green-300"
+                            className={`text-[10px] sm:text-xs h-7 sm:h-8 gap-1 sm:gap-1.5 px-2 sm:px-3 hover:bg-green-50 hover:text-green-700 hover:border-green-300 ${
+                              isRest
+                                ? "border-violet-200 text-violet-800"
+                                : ""
+                            }`}
                           >
                             <RotateCcw className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
                             {format(dateInfo.date, "MMM dd")} (
-                            {dateInfo.dayName.slice(0, 3)})
+                            {dateInfo.dayName.slice(0, 3)}
+                            {isRest ? ", RD" : ""})
                           </Button>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -2003,7 +2289,7 @@ export function BulkAddAttendanceDialog({
             </Button>
             <Button
               type="submit"
-              disabled={isSubmittingBulk}
+              disabled={isSubmittingBulk || manualUnresolvedConflictCount > 0}
               className="w-full sm:w-auto order-1 sm:order-2"
             >
               {isSubmittingBulk ? (

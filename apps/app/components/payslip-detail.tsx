@@ -11,6 +11,7 @@ import {
   formatManilaShortDate,
   getManilaDateParts,
 } from "@/lib/manila-date";
+import { isEmployeeRestDay } from "@/lib/payroll-calculations";
 
 interface PayslipDetailProps {
   payslip: any;
@@ -168,38 +169,6 @@ export function PayslipDetail({
   const undertimeHours = payslip.undertimeHours || 0;
 
   // Helper to get day name from timestamp
-  const getDayName = (date: number): string => {
-    const days = [
-      "sunday",
-      "monday",
-      "tuesday",
-      "wednesday",
-      "thursday",
-      "friday",
-      "saturday",
-    ];
-    return days[new Date(date).getDay()];
-  };
-
-  // Helper to check if a date is a rest day
-  const isRestDay = (date: number, employeeSchedule: any): boolean => {
-    const dayName = getDayName(date);
-    const daySchedule =
-      employeeSchedule?.defaultSchedule?.[
-        dayName as keyof typeof employeeSchedule.defaultSchedule
-      ];
-
-    if (employeeSchedule?.scheduleOverrides) {
-      const override = employeeSchedule.scheduleOverrides.find(
-        (o: any) =>
-          new Date(o.date).toDateString() === new Date(date).toDateString(),
-      );
-      if (override) return false;
-    }
-
-    return !daySchedule?.isWorkday;
-  };
-
   // Calculate working days in cutoff period
   const calculateWorkingDaysInRange = (
     startDate: number,
@@ -216,7 +185,7 @@ export function PayslipDetail({
       if (!employeeSchedule || !employeeSchedule.defaultSchedule) {
         // If there is no schedule configured, treat all days as working days
         workingDays++;
-      } else if (!isRestDay(ts, employeeSchedule)) {
+      } else if (!isEmployeeRestDay(ts, employeeSchedule)) {
         workingDays++;
       }
       current.setDate(current.getDate() + 1);

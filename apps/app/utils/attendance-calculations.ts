@@ -175,6 +175,58 @@ export function calculateUndertime(
   return undertimeMinutes / 60;
 }
 
+/** Clock-out before scheduled end on the shift timeline (left early). */
+export function isEarlyDeparture(
+  scheduleIn: string,
+  scheduleOut: string,
+  actualIn: string | undefined,
+  actualOut: string | undefined,
+): boolean {
+  if (!actualOut?.trim() || !scheduleOut?.trim()) return false;
+  const sch = pairInOutGlobalMinutes(scheduleIn, scheduleOut);
+  const act = pairInOutGlobalMinutes(actualIn ?? scheduleIn, actualOut);
+  if (!sch || !act) return false;
+  return act.outGlobal < sch.outGlobal;
+}
+
+/**
+ * Red highlight on time in: late arrival, or undertime that is not from leaving early only.
+ */
+export function shouldHighlightActualIn(
+  scheduleIn: string,
+  scheduleOut: string,
+  actualIn: string | undefined,
+  actualOut: string | undefined,
+  lateMinutes: number | null | undefined,
+  undertimeMinutes: number | null | undefined,
+  lunchStart?: string,
+): boolean {
+  const late =
+    lateMinutes != null && lateMinutes > 0
+      ? lateMinutes
+      : calculateLate(scheduleIn, actualIn, lunchStart);
+  if (late > 0) return true;
+  if (undertimeMinutes == null || undertimeMinutes <= 0) return false;
+  if (
+    isEarlyDeparture(scheduleIn, scheduleOut, actualIn, actualOut)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/** Red highlight on time out only when the employee left before scheduled end. */
+export function shouldHighlightActualOut(
+  scheduleIn: string,
+  scheduleOut: string,
+  actualIn: string | undefined,
+  actualOut: string | undefined,
+  undertimeMinutes: number | null | undefined,
+): boolean {
+  if (undertimeMinutes == null || undertimeMinutes <= 0) return false;
+  return isEarlyDeparture(scheduleIn, scheduleOut, actualIn, actualOut);
+}
+
 /**
  * Convert time string (HH:mm) to minutes since midnight
  */

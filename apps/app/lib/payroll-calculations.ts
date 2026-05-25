@@ -164,27 +164,46 @@ function getDayName(date: number): string {
   return dayNames[dayOfWeek];
 }
 
-function isRestDay(date: number, employeeSchedule: any): boolean {
+/**
+ * True when the Manila calendar day is a scheduled rest day for this employee.
+ * Rest day premium / RD OT apply when they work on such a day.
+ */
+export function isEmployeeRestDay(
+  date: number,
+  employeeSchedule: {
+    defaultSchedule?: Record<
+      string,
+      { isWorkday?: boolean; in?: string; out?: string }
+    >;
+    scheduleOverrides?: Array<{ date: number | string }>;
+  } | null | undefined,
+): boolean {
   if (!employeeSchedule?.defaultSchedule) return false;
   const dayName = getDayName(date);
   const daySchedule =
     employeeSchedule.defaultSchedule[
       dayName as keyof typeof employeeSchedule.defaultSchedule
     ];
-  if (!daySchedule || typeof daySchedule.isWorkday !== "boolean") return false;
+  if (!daySchedule) return false;
 
   if (employeeSchedule.scheduleOverrides) {
     const { y: dY, m: dM, d: dD } = getManilaDateParts(date);
-    const override = employeeSchedule.scheduleOverrides.find((o: any) => {
-      const oParts = getManilaDateParts(new Date(o.date).getTime());
+    const override = employeeSchedule.scheduleOverrides.find((o) => {
+      const oTs =
+        typeof o.date === "number" ? o.date : new Date(o.date).getTime();
+      const oParts = getManilaDateParts(oTs);
       return oParts.y === dY && oParts.m === dM && oParts.d === dD;
     });
-    if (override) {
-      return false;
-    }
+    if (override) return false;
   }
 
-  return !daySchedule.isWorkday;
+  // Rest day = any weekday not selected as a workday in the employee schedule (isWorkday: false).
+  // Missing isWorkday is not treated as rest (avoids wrong RD pay on old/incomplete rows).
+  return daySchedule.isWorkday === false;
+}
+
+function isRestDay(date: number, employeeSchedule: any): boolean {
+  return isEmployeeRestDay(date, employeeSchedule);
 }
 
 function getDailyRateForEmployee(
@@ -991,6 +1010,8 @@ function getUndertimeHoursFromAttendance(att: {
 function getHoursWorkedFromAttendance(att: {
   actualIn?: string;
   actualOut?: string;
+  scheduleIn?: string;
+  scheduleOut?: string;
   status?: string;
   overtime?: number;
   lunchStart?: string;
@@ -998,17 +1019,29 @@ function getHoursWorkedFromAttendance(att: {
 }): number {
   const dayMultiplier = att.status === "half-day" ? 0.5 : 1;
   if (att.actualIn && att.actualOut) {
-    const inMins = timeStringToMinutes(att.actualIn) ?? 0;
-    const outMins = timeStringToMinutes(att.actualOut) ?? 0;
+    const schedIn = att.scheduleIn ?? att.actualIn;
+    const schedOut = att.scheduleOut ?? att.actualOut;
+    const paired = pairInOutGlobalMinutes(att.actualIn, att.actualOut);
+    if (!paired) return 0;
     let breakMins = 60;
     if (att.lunchStart != null && att.lunchEnd != null) {
       const ls = timeStringToMinutes(att.lunchStart) ?? 0;
       const le = timeStringToMinutes(att.lunchEnd) ?? 0;
-      const overlapStart = Math.max(inMins, ls);
-      const overlapEnd = Math.min(outMins, le);
-      breakMins = Math.max(0, overlapEnd - overlapStart);
+      if (ls < le) {
+        const sch = pairInOutGlobalMinutes(schedIn, schedOut);
+        const overlapStart = Math.max(
+          paired.inGlobal,
+          sch?.inGlobal ?? paired.inGlobal,
+          ls,
+        );
+        const overlapEnd = Math.min(paired.outGlobal, le);
+        breakMins = Math.max(0, overlapEnd - overlapStart);
+      }
     }
-    const workMins = Math.max(0, outMins - inMins - breakMins);
+    const workMins = Math.max(
+      0,
+      paired.outGlobal - paired.inGlobal - breakMins,
+    );
     return workMins / 60;
   }
   return 8 * dayMultiplier + (att.overtime ?? 0);
@@ -1259,13 +1292,21 @@ export function calculatePayrollBaseFromRecords(args: {
         const hoursWorked = getHoursWorkedFromAttendance(att);
         const restDayPremiumHours = Math.min(hoursWorked, 8);
         const restDayOTHours = Math.max(0, hoursWorked - 8);
-        const restDayPremiumRate =
+        const restDayPremiumTotalRate =
           (payrollRates as { restDayPremiumRate?: number })
             .restDayPremiumRate ?? payrollRates.restDayOt / 1.3;
+        const restDayPremiumAdditionalRate = Math.max(
+          0,
+          restDayPremiumTotalRate - 1,
+        );
+        const restDayOtAdditionalRate = Math.max(0, payrollRates.restDayOt - 1);
         const restDayPremiumAmount =
-          restDayPremiumHours * hourlyRate * restDayPremiumRate;
+          restDayPremiumHours * hourlyRate * restDayPremiumAdditionalRate;
         const restDayOTAmount =
-          restDayOTHours * hourlyRate * payrollRates.restDayOt;
+          restDayOTHours * hourlyRate * restDayOtAdditionalRate;
+        if (salaryType !== "monthly" || dailyizedFirstCutoff) {
+          basicPay += hoursWorked * hourlyRate;
+        }
         restDayPremiumPay += restDayPremiumAmount;
         overtimeRestDay += restDayOTAmount;
         basicPay += restDayPremiumAmount + restDayOTAmount;
@@ -1324,7 +1365,9 @@ export function calculatePayrollBaseFromRecords(args: {
       // Special Holiday: late_hours × hourly_rate × employee.specialHolidayRate (e.g. 1.3 = 130%)
       // Regular Day: late_hours × hourly_rate × 1.0
       // Rates come from employee.compensation or org defaults via getEmployeePayrollRates
-      const dayLateHours = getLateHoursFromAttendance(att);
+      const dayLateHours = isRestDayForEmployee
+        ? 0
+        : getLateHoursFromAttendance(att);
       if (dayLateHours > 0) {
         lateHours += dayLateHours;
         if (
@@ -1351,7 +1394,9 @@ export function calculatePayrollBaseFromRecords(args: {
         }
       }
 
-      const dayUndertimeHours = getUndertimeHoursFromAttendance(att);
+      const dayUndertimeHours = isRestDayForEmployee
+        ? 0
+        : getUndertimeHoursFromAttendance(att);
       if (dayUndertimeHours > 0) {
         undertimeHours += dayUndertimeHours;
         undertimeDeduction += dayUndertimeHours * hourlyRateBasicPlusAllowance;

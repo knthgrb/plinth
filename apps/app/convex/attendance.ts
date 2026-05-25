@@ -8,6 +8,10 @@ import {
   calculateUndertime,
 } from "@/utils/attendance-calculations";
 import { getScheduleWithLunch } from "./shifts";
+import {
+  normalizeAttendanceDateMs,
+  sameManilaCalendarDay,
+} from "@/lib/manila-date";
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 function getManilaDateParts(ts: number) {
@@ -223,6 +227,29 @@ function getManilaTodayDateUtcMs() {
   return Date.UTC(p.y, p.m, p.d, 0, 0, 0, 0);
 }
 
+async function findAttendanceOnManilaDay(
+  ctx: any,
+  employeeId: any,
+  dateTs: number,
+) {
+  const records = await (ctx.db.query("attendance") as any)
+    .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
+    .collect();
+  return records.filter((r: any) => sameManilaCalendarDay(r.date, dateTs));
+}
+
+async function deleteDuplicateAttendanceOnDay(
+  ctx: any,
+  records: { _id: any }[],
+  keepId: any,
+) {
+  for (const r of records) {
+    if (r._id !== keepId) {
+      await ctx.db.delete(r._id);
+    }
+  }
+}
+
 // Helper to get the employee's scheduled in/out time for a specific date,
 // taking into account defaultSchedule and any scheduleOverrides.
 // Uses Manila timezone for day-of-week so the correct per-day schedule is used.
@@ -394,19 +421,31 @@ export const createAttendance = mutation({
       v.literal("leave_without_pay"),
       v.literal("no_work"),
     ),
+    overwriteAttendanceId: v.optional(v.id("attendance")),
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
 
-    // Check if attendance already exists for this date
-    const existing = await (ctx.db.query("attendance") as any)
-      .withIndex("by_employee_date", (q: any) =>
-        q.eq("employeeId", args.employeeId).eq("date", args.date),
-      )
-      .first();
+    const normalizedDate = normalizeAttendanceDateMs(args.date);
+    const existingOnDay = await findAttendanceOnManilaDay(
+      ctx,
+      args.employeeId,
+      normalizedDate,
+    );
 
-    if (existing) {
-      throw new Error("Attendance already exists for this date");
+    if (args.overwriteAttendanceId) {
+      const target = existingOnDay.find(
+        (r: any) => r._id === args.overwriteAttendanceId,
+      );
+      if (!target) {
+        throw new Error(
+          "Attendance record to overwrite was not found for this date",
+        );
+      }
+    } else if (existingOnDay.length > 0) {
+      throw new Error(
+        `ATTENDANCE_EXISTS:${existingOnDay[0]._id}`,
+      );
     }
 
     // On regular/special holiday with no time in/out → no_work (no additional pay)
@@ -419,7 +458,7 @@ export const createAttendance = mutation({
 
     const employee = await ctx.db.get(args.employeeId);
     if (args.status === "no_work" && employee) {
-      if (!isNoWorkAllowedForEmployeeDate(args.date, holidays, employee)) {
+      if (!isNoWorkAllowedForEmployeeDate(normalizedDate, holidays, employee)) {
         throw new Error(
           "No work status is only allowed on holidays that apply to this employee",
         );
@@ -431,7 +470,10 @@ export const createAttendance = mutation({
       employee &&
       !STATUSES_PRESERVED_ON_HOLIDAY_NO_TIME.has(args.status)
     ) {
-      const holidayEntry = getMatchingHolidayEntryForDate(args.date, holidays);
+      const holidayEntry = getMatchingHolidayEntryForDate(
+        normalizedDate,
+        holidays,
+      );
       if (
         holidayEntry &&
         (holidayEntry.type === "regular" || holidayEntry.type === "special") &&
@@ -444,7 +486,7 @@ export const createAttendance = mutation({
       ? await getScheduleWithLunch(
           ctx,
           employee,
-          args.date,
+          normalizedDate,
           args.organizationId,
         )
       : null;
@@ -478,7 +520,10 @@ export const createAttendance = mutation({
     let isHoliday = args.isHoliday;
     let holidayType = args.holidayType;
     if (isHoliday === undefined && holidayType === undefined) {
-      const holidayEntry = getMatchingHolidayEntryForDate(args.date, holidays);
+      const holidayEntry = getMatchingHolidayEntryForDate(
+        normalizedDate,
+        holidays,
+      );
       if (
         holidayEntry &&
         employee &&
@@ -488,10 +533,10 @@ export const createAttendance = mutation({
         holidayType = holidayEntry.type as "regular" | "special" | "special_working";
       }
     }
-    const insertPayload: Record<string, unknown> = {
+    const rowPayload: Record<string, unknown> = {
       organizationId: args.organizationId,
       employeeId: args.employeeId,
-      date: args.date,
+      date: normalizedDate,
       scheduleIn,
       scheduleOut,
       actualIn: args.actualIn,
@@ -503,16 +548,25 @@ export const createAttendance = mutation({
       holidayType,
       remarks: args.remarks,
       status: resolvedStatus,
-      createdAt: now,
       updatedAt: now,
     };
-    if (lunchStart != null) insertPayload.lunchStart = lunchStart;
-    if (lunchEnd != null) insertPayload.lunchEnd = lunchEnd;
+    if (lunchStart != null) rowPayload.lunchStart = lunchStart;
+    if (lunchEnd != null) rowPayload.lunchEnd = lunchEnd;
 
-    const attendanceId = await ctx.db.insert(
-      "attendance",
-      insertPayload as any,
-    );
+    if (args.overwriteAttendanceId) {
+      await ctx.db.patch(args.overwriteAttendanceId, rowPayload as any);
+      await deleteDuplicateAttendanceOnDay(
+        ctx,
+        existingOnDay,
+        args.overwriteAttendanceId,
+      );
+      return args.overwriteAttendanceId;
+    }
+
+    const attendanceId = await ctx.db.insert("attendance", {
+      ...rowPayload,
+      createdAt: now,
+    } as any);
 
     return attendanceId;
   },
@@ -759,11 +813,12 @@ export const punchSelfAttendance = mutation({
     const dateTs = getManilaTodayDateUtcMs();
     const timeStr = getManilaNowHHmm();
 
-    const existing = await (ctx.db.query("attendance") as any)
-      .withIndex("by_employee_date", (q: any) =>
-        q.eq("employeeId", employeeId).eq("date", dateTs),
-      )
-      .first();
+    const existingOnDay = await findAttendanceOnManilaDay(
+      ctx,
+      employeeId,
+      dateTs,
+    );
+    const existing = existingOnDay[0] ?? null;
 
     const holidays = await (ctx.db.query("holidays") as any)
       .withIndex("by_organization", (q: any) =>
@@ -957,6 +1012,7 @@ export const bulkCreateAttendance = mutation({
           v.literal("leave_without_pay"),
           v.literal("no_work"),
         ),
+        overwrite: v.optional(v.boolean()),
       }),
     ),
   },
@@ -978,12 +1034,32 @@ export const bulkCreateAttendance = mutation({
           .collect()
       : [];
 
+    const batchSeen = new Set<string>();
+
     for (const entry of args.entries) {
-      const existing = await (ctx.db.query("attendance") as any)
-        .withIndex("by_employee_date", (q: any) =>
-          q.eq("employeeId", entry.employeeId).eq("date", entry.date),
-        )
-        .first();
+      const normalizedDate = normalizeAttendanceDateMs(entry.date);
+      const batchKey = `${entry.employeeId}:${normalizedDate}`;
+      if (batchSeen.has(batchKey) && !entry.overwrite) {
+        throw new Error(
+          "Duplicate dates in this batch. Resolve conflicts before submitting.",
+        );
+      }
+      if (!batchSeen.has(batchKey)) {
+        batchSeen.add(batchKey);
+      }
+
+      const existingOnDay = await findAttendanceOnManilaDay(
+        ctx,
+        entry.employeeId,
+        normalizedDate,
+      );
+      const existing = existingOnDay[0] ?? null;
+
+      if (existingOnDay.length > 0 && !entry.overwrite) {
+        throw new Error(
+          "Attendance already exists for one or more dates. Mark rows to overwrite or exclude them.",
+        );
+      }
 
       const employee = await ctx.db.get(entry.employeeId);
       const currentActualIn = entry.actualIn ?? existing?.actualIn;
@@ -1008,7 +1084,7 @@ export const bulkCreateAttendance = mutation({
         ? await getScheduleWithLunch(
             ctx,
             employee,
-            entry.date,
+            normalizedDate,
             entry.organizationId,
           )
         : null;
@@ -1074,7 +1150,13 @@ export const bulkCreateAttendance = mutation({
           calculatedUndertime > 0 ? calculatedUndertime : 0;
         updates.late = calculatedLate > 0 ? calculatedLate : 0;
 
+        updates.date = normalizedDate;
         await ctx.db.patch(existing._id, updates);
+        await deleteDuplicateAttendanceOnDay(
+          ctx,
+          existingOnDay,
+          existing._id,
+        );
         results.push({ id: existing._id, action: "updated" });
       } else {
         const calculatedUndertime =
@@ -1112,6 +1194,7 @@ export const bulkCreateAttendance = mutation({
         }
         const insertPayload: Record<string, unknown> = {
           ...entry,
+          date: normalizedDate,
           scheduleIn,
           scheduleOut,
           status: resolvedStatus,
