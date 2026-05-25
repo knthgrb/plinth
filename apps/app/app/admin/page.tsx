@@ -2,6 +2,7 @@
 
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import type { Doc } from "@/convex/_generated/dataModel";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { authClient } from "@/lib/auth-client";
@@ -92,7 +93,7 @@ export default function AdminPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 bg-white">
-                {demoRequests.map((req) => (
+                {demoRequests.map((req: Doc<"demoRequests">) => (
                   <tr key={req._id}>
                     <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-900">
                       {format(req.createdAt, "MMM d, yyyy HH:mm")}

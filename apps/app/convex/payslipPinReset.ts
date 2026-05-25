@@ -2,7 +2,8 @@
 
 import { v } from "convex/values";
 import { action, internalMutation, internalQuery } from "./_generated/server";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 
 const TOKEN_SALT_PREFIX = "payslip-pin-reset-v1-";
 const PIN_SALT_PREFIX = "payslip-pin-v1-";
@@ -30,7 +31,7 @@ function hashPin(employeeId: string, pin: string): string {
   return sha256Hex(PIN_SALT_PREFIX + employeeId + "-" + pin);
 }
 
-const insertReset = internalMutation({
+export const insertReset = internalMutation({
   args: {
     employeeId: v.id("employees"),
     tokenHash: v.string(),
@@ -48,7 +49,7 @@ const insertReset = internalMutation({
   },
 });
 
-const getResetByTokenHash = internalQuery({
+export const getResetByTokenHash = internalQuery({
   args: { tokenHash: v.string() },
   handler: async (ctx, args) => {
     const reset = await (ctx.db.query("payslipPinResets") as any)
@@ -58,7 +59,7 @@ const getResetByTokenHash = internalQuery({
   },
 });
 
-const markResetUsed = internalMutation({
+export const markResetUsed = internalMutation({
   args: { resetId: v.id("payslipPinResets") },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.resetId, { usedAt: Date.now() });
@@ -72,7 +73,14 @@ const markResetUsed = internalMutation({
  */
 export const createPayslipPinResetToken = action({
   args: { employeeId: v.id("employees") },
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    token: string;
+    employeeEmail: string;
+    organizationId: Id<"organizations">;
+  }> => {
     const employee = await ctx.runQuery(api.employees.getEmployee, {
       employeeId: args.employeeId,
     });
@@ -91,7 +99,7 @@ export const createPayslipPinResetToken = action({
     const tokenHash = hashToken(token);
     const expiresAt = Date.now() + RESET_TTL_MS;
 
-    await ctx.runMutation(insertReset, {
+    await ctx.runMutation(internal.payslipPinReset.insertReset, {
       employeeId: args.employeeId,
       tokenHash,
       expiresAt,
@@ -115,7 +123,9 @@ export const resetPayslipPinWithToken = action({
     if (trimmedPin.length < 4) throw new Error("PIN must be at least 4 characters");
 
     const tokenHash = hashToken(args.token);
-    const reset = await ctx.runQuery(getResetByTokenHash, { tokenHash });
+    const reset = await ctx.runQuery(internal.payslipPinReset.getResetByTokenHash, {
+      tokenHash,
+    });
     if (!reset) throw new Error("Reset link is invalid or has expired");
     if (reset.usedAt) throw new Error("Reset link has already been used");
     if (Date.now() > reset.expiresAt) throw new Error("Reset link has expired");
@@ -131,7 +141,9 @@ export const resetPayslipPinWithToken = action({
       hashedPin: hashed,
     });
 
-    await ctx.runMutation(markResetUsed, { resetId: reset._id });
+    await ctx.runMutation(internal.payslipPinReset.markResetUsed, {
+      resetId: reset._id,
+    });
     return { success: true };
   },
 });

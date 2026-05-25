@@ -192,7 +192,10 @@ import { useOrganization } from "@/hooks/organization-context";
 import { useToast } from "@/components/ui/use-toast";
 import { userFacingPayslipLoadError } from "@/lib/payslip-load-errors";
 import { PayslipDetail } from "@/components/payslip-detail";
-import { isAttendanceDeductionLineName } from "./_components/payroll-wizard-gov-helpers";
+import {
+  isAttendanceDeductionLineName,
+  isSystemGeneratedAttendanceRow,
+} from "./_components/payroll-wizard-gov-helpers";
 import {
   getPreviewEarningsFromSource,
   recomputeGrossAndBasicFromEarnings,
@@ -310,7 +313,7 @@ function buildAuthoritativeManualDeductionsPayload(
         const name = (row?.name || "").trim();
         if (!name) return false;
         const isSystemRow =
-          isAttendanceDeductionEntry(row) ||
+          isSystemGeneratedAttendanceRow(row) ||
           isGovernmentDeductionNameForSync(name);
         return isSystemRow && !currentNames.has(name.toLowerCase());
       })
@@ -319,7 +322,7 @@ function buildAuthoritativeManualDeductionsPayload(
         amount: 0,
         type:
           row.type ||
-          (isAttendanceDeductionEntry(row) ? "attendance" : "government"),
+          (isSystemGeneratedAttendanceRow(row) ? "attendance" : "government"),
       }));
 
     return {
