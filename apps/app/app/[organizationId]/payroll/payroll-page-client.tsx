@@ -350,7 +350,7 @@ export default function PayrollPageClient() {
   const employees = useQuery(
     (api as any).employees.getEmployees,
     effectiveOrganizationId
-      ? { organizationId: effectiveOrganizationId }
+      ? { organizationId: effectiveOrganizationId, status: "active" }
       : "skip",
   );
   const pendingPayslipCorrections = useQuery(

@@ -130,8 +130,8 @@ export default function EmployeesPage() {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [panelMode, setPanelMode] = useState<"view" | "edit">("view");
   const [statusFilter, setStatusFilter] = useState<
-    "active" | "inactive" | "resigned" | "terminated"
-  >("active");
+    "all" | "active" | "inactive" | "resigned" | "terminated"
+  >("all");
   const [departmentFilter, setDepartmentFilter] = useState<string>("all");
   const [nameFilter, setNameFilter] = useState("");
   const [positionFilter, setPositionFilter] = useState("");
@@ -170,7 +170,7 @@ export default function EmployeesPage() {
     currentOrganizationId
       ? {
           organizationId: currentOrganizationId,
-          status: statusFilter,
+          status: statusFilter !== "all" ? statusFilter : undefined,
           department: departmentFilter !== "all" ? departmentFilter : undefined,
         }
       : "skip",
@@ -184,6 +184,7 @@ export default function EmployeesPage() {
 
     const statusParam = params.get("status");
     if (
+      statusParam === "all" ||
       statusParam === "active" ||
       statusParam === "inactive" ||
       statusParam === "resigned" ||
@@ -374,7 +375,24 @@ export default function EmployeesPage() {
       list = list.filter((e: any) => (e.createdAt || 0) >= threshold);
     }
 
-    return list;
+    const statusRank: Record<string, number> = {
+      active: 0,
+      inactive: 1,
+      resigned: 2,
+      terminated: 3,
+    };
+    return [...list].sort((a: any, b: any) => {
+      const statusDiff =
+        (statusRank[a?.employment?.status] ?? 99) -
+        (statusRank[b?.employment?.status] ?? 99);
+      if (statusDiff !== 0) return statusDiff;
+      const aLast = (a?.personalInfo?.lastName ?? "").toLowerCase();
+      const bLast = (b?.personalInfo?.lastName ?? "").toLowerCase();
+      if (aLast !== bLast) return aLast.localeCompare(bLast);
+      const aFirst = (a?.personalInfo?.firstName ?? "").toLowerCase();
+      const bFirst = (b?.personalInfo?.firstName ?? "").toLowerCase();
+      return aFirst.localeCompare(bFirst);
+    });
   }, [employees, nameFilter, positionFilter, phoneFilter, createdDateFilter]);
   const totalEmployees = filteredEmployees?.length || 0;
   const pageSize = 10;
@@ -401,8 +419,8 @@ export default function EmployeesPage() {
 
     const params = new URLSearchParams(window.location.search);
 
-    // Status (default: active)
-    if (statusFilter && statusFilter !== "active") {
+    // Status (default: all)
+    if (statusFilter && statusFilter !== "all") {
       params.set("status", statusFilter);
     } else {
       params.delete("status");

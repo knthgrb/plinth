@@ -22,6 +22,7 @@ interface Employee {
     employeeId: string;
     position?: string;
     department?: string;
+    status?: "active" | "inactive" | "resigned" | "terminated";
   };
 }
 
@@ -31,6 +32,7 @@ interface EmployeeSelectProps {
   onValueChange: (value: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  includeInactive?: boolean;
 }
 
 export function EmployeeSelect({
@@ -39,6 +41,7 @@ export function EmployeeSelect({
   onValueChange,
   disabled = false,
   placeholder = "Select employee...",
+  includeInactive = false,
 }: EmployeeSelectProps) {
   const [open, setOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -49,9 +52,12 @@ export function EmployeeSelect({
 
   const filteredEmployees = useMemo(() => {
     if (!employees) return [];
-    if (!searchQuery.trim()) return employees;
+    const selectableEmployees = includeInactive
+      ? employees
+      : employees.filter((emp) => (emp.employment.status ?? "active") === "active");
+    if (!searchQuery.trim()) return selectableEmployees;
     const query = searchQuery.toLowerCase();
-    return employees.filter((emp) => {
+    return selectableEmployees.filter((emp) => {
       const fullName =
         `${emp.personalInfo.firstName} ${emp.personalInfo.lastName}`.toLowerCase();
       const employeeId = emp.employment.employeeId?.toLowerCase() || "";
@@ -62,7 +68,7 @@ export function EmployeeSelect({
         position.includes(query)
       );
     });
-  }, [employees, searchQuery]);
+  }, [employees, searchQuery, includeInactive]);
 
   const handleSelect = (employeeId: string) => {
     onValueChange(employeeId);

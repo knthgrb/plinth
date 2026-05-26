@@ -142,8 +142,8 @@ export const getEmployees = query({
       )
       .collect();
 
-    // Filter by status
-    if (args.status) {
+    // Filter by status ("all" means no status filter).
+    if (args.status && args.status !== "all") {
       employees = employees.filter(
         (e: any) => e.employment.status === args.status,
       );
@@ -167,6 +167,25 @@ export const getEmployees = query({
           e.employment.employeeId.toLowerCase().includes(searchLower),
       );
     }
+
+    const statusRank: Record<string, number> = {
+      active: 0,
+      inactive: 1,
+      resigned: 2,
+      terminated: 3,
+    };
+    employees.sort((a: any, b: any) => {
+      const statusDiff =
+        (statusRank[a?.employment?.status] ?? 99) -
+        (statusRank[b?.employment?.status] ?? 99);
+      if (statusDiff !== 0) return statusDiff;
+      const aLast = (a?.personalInfo?.lastName ?? "").toLowerCase();
+      const bLast = (b?.personalInfo?.lastName ?? "").toLowerCase();
+      if (aLast !== bLast) return aLast.localeCompare(bLast);
+      const aFirst = (a?.personalInfo?.firstName ?? "").toLowerCase();
+      const bFirst = (b?.personalInfo?.firstName ?? "").toLowerCase();
+      return aFirst.localeCompare(bFirst);
+    });
 
     return employees.map((e: any) => decryptEmployeeFromDb(e));
   },

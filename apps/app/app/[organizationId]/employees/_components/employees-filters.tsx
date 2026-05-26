@@ -27,9 +27,9 @@ type CreatedDateFilter = {
 interface EmployeesFiltersProps {
   departmentFilter: string;
   setDepartmentFilter: Dispatch<SetStateAction<string>>;
-  statusFilter: "active" | "inactive" | "resigned" | "terminated";
+  statusFilter: "all" | "active" | "inactive" | "resigned" | "terminated";
   setStatusFilter: Dispatch<
-    SetStateAction<"active" | "inactive" | "resigned" | "terminated">
+    SetStateAction<"all" | "active" | "inactive" | "resigned" | "terminated">
   >;
   settingsForDepartments: any;
   nameFilter: string;
@@ -48,6 +48,7 @@ interface EmployeesFiltersProps {
 
 // Status color mappings
 const STATUS_COLORS: Record<string, string> = {
+  all: "#6B7280", // neutral gray
   active: "#22C55E", // green
   inactive: "#9CA3AF", // gray
   resigned: "#F97316", // orange
@@ -55,6 +56,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
+  all: "All statuses",
   active: "Active",
   inactive: "Inactive (Archived)",
   resigned: "Resigned",
@@ -128,7 +130,7 @@ export function EmployeesFilters({
 
   const isDepartmentActive =
     departmentFilter !== "all" && departmentFilter !== "";
-  const isStatusActive = statusFilter !== "active";
+  const isStatusActive = statusFilter !== "all";
   const isNameActive = (nameFilter?.trim() ?? "") !== "";
   const isMoreFiltersActive =
     (positionFilter?.trim() ?? "") !== "" ||
@@ -141,7 +143,7 @@ export function EmployeesFilters({
   const handleClearFilters = (e: React.MouseEvent) => {
     e.preventDefault();
     setDepartmentFilter("all");
-    setStatusFilter("active");
+    setStatusFilter("all");
     setNameFilter("");
     setPositionFilter("");
     setPhoneFilter("");
@@ -294,13 +296,13 @@ export function EmployeesFilters({
                   tabIndex={0}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setStatusFilter("active");
+                    setStatusFilter("all");
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
                       e.stopPropagation();
-                      setStatusFilter("active");
+                      setStatusFilter("all");
                     }
                   }}
                   className="flex items-center justify-center w-3.5 h-3.5 rounded-full hover:bg-[rgb(230,230,230)] text-[rgb(100,100,100)] cursor-pointer"
@@ -342,7 +344,12 @@ export function EmployeesFilters({
                 type="button"
                 onClick={() => {
                   setStatusFilter(
-                    value as "active" | "inactive" | "resigned" | "terminated",
+                    value as
+                      | "all"
+                      | "active"
+                      | "inactive"
+                      | "resigned"
+                      | "terminated",
                   );
                   setStatusPopoverOpen(false);
                 }}
