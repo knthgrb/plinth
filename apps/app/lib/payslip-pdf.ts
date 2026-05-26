@@ -9,6 +9,7 @@ import {
   formatManilaShortMonthDay,
   getManilaDateParts,
 } from "@/lib/manila-date";
+import { groupNightDiffBreakdownRows } from "@/lib/night-diff-breakdown";
 
 /** Matches Plinth primary accent (#695eff) */
 const NET_PAY_PURPLE = "#695EFF";
@@ -479,9 +480,16 @@ export function renderPayslipPdfBuffer(args: {
       taxableExtras.push({ label: "Holiday pay", amount: hp });
     }
     const rd = num(p.restDayPay);
-    if (rd > 0) taxableExtras.push({ label: "Rest day premium", amount: rd });
-    const nd = num(p.nightDiffPay);
-    if (nd > 0) taxableExtras.push({ label: "Night differential", amount: nd });
+    if (rd > 0) taxableExtras.push({ label: "Rest day", amount: rd });
+    const nightDiffRows = groupNightDiffBreakdownRows(p.nightDiffBreakdown);
+    if (nightDiffRows.length > 0) {
+      taxableExtras.push(...nightDiffRows);
+    } else {
+      const nd = num(p.nightDiffPay);
+      if (nd > 0) {
+        taxableExtras.push({ label: "Night differential", amount: nd });
+      }
+    }
     for (const [label, key] of [
       ["Overtime — regular", p.overtimeRegular],
       ["Overtime — rest day", p.overtimeRestDay],

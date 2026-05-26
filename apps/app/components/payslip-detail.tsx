@@ -11,6 +11,7 @@ import {
   formatManilaShortDate,
   getManilaDateParts,
 } from "@/lib/manila-date";
+import { groupNightDiffBreakdownRows } from "@/lib/night-diff-breakdown";
 import { isEmployeeRestDay } from "@/lib/payroll-calculations";
 
 interface PayslipDetailProps {
@@ -509,6 +510,9 @@ export function PayslipDetail({
     nonTaxableAllowance +
     transportation +
     nonTaxableIncentivesTotal;
+  const nightDiffRows = groupNightDiffBreakdownRows(
+    payslip.nightDiffBreakdown,
+  );
 
   // Only show sections when they have at least one line with value > 0
   const hasOtherEarnings =
@@ -663,18 +667,34 @@ export function PayslipDetail({
                 <div className="mt-4">
                   <p className="font-semibold mb-2">Other Earnings</p>
                   <div className="space-y-1 text-sm">
-                    {(payslip.nightDiffPay ?? 0) > 0 && (
-                      <div className="flex justify-between">
-                        <span>Night Differential</span>
-                        <span>
-                          ₱
-                          {payslip.nightDiffPay!.toLocaleString("en-US", {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
-                        </span>
-                      </div>
-                    )}
+                    {nightDiffRows.length > 0
+                      ? nightDiffRows.map((row) => (
+                          <div
+                            key={row.label}
+                            className="flex justify-between"
+                          >
+                            <span>{row.label}</span>
+                            <span>
+                              ₱
+                              {row.amount.toLocaleString("en-US", {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </span>
+                          </div>
+                        ))
+                      : (payslip.nightDiffPay ?? 0) > 0 && (
+                          <div className="flex justify-between">
+                            <span>Night Differential</span>
+                            <span>
+                              ₱
+                              {payslip.nightDiffPay!.toLocaleString("en-US", {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </span>
+                          </div>
+                        )}
                     {showAmbiguousCombinedHolidayRow && (
                       <div className="flex justify-between">
                         <span>{holidayPayLabel}</span>
@@ -715,7 +735,7 @@ export function PayslipDetail({
                     )}
                     {(payslip.restDayPay ?? 0) > 0 && (
                       <div className="flex justify-between">
-                        <span>Rest Day Premium</span>
+                        <span>Rest Day</span>
                         <span>
                           ₱
                           {payslip.restDayPay!.toLocaleString("en-US", {

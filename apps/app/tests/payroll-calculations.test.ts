@@ -575,7 +575,7 @@ describe("payroll calculations", () => {
     expect(isEmployeeRestDay(wednesday, employee.schedule)).toBe(false);
   });
 
-  it("pays rest day premium on any scheduled off day (e.g. Wednesday off)", () => {
+  it("pays full rest day pay on any scheduled off day (e.g. Wednesday off)", () => {
     const wednesday = Date.UTC(2026, 4, 20);
     const employee = createEmployee({
       schedule: {
@@ -607,7 +607,7 @@ describe("payroll calculations", () => {
       cutoffStart: wednesday,
       cutoffEnd: wednesday,
     });
-    expect(result.restDayPremiumPay).toBeGreaterThan(0);
+    expect(result.restDayPremiumPay).toBeCloseTo(1793.1, 1);
     expect(result.undertimeDeduction).toBe(0);
   });
 
@@ -632,7 +632,7 @@ describe("payroll calculations", () => {
     expect(result.restDayPremiumPay).toBeGreaterThan(0);
   });
 
-  it("pays rest day premium for Mon–Fri schedule on Saturday (6am–2:30pm)", () => {
+  it("pays full rest day pay for Mon–Fri schedule on Saturday (6am–2:30pm)", () => {
     const saturday = Date.UTC(2026, 4, 23);
     const result = calculate({
       attendance: [
@@ -649,10 +649,10 @@ describe("payroll calculations", () => {
       cutoffEnd: Date.UTC(2026, 4, 25),
     });
     expect(isEmployeeRestDay(saturday, createEmployee().schedule)).toBe(true);
-    expect(result.restDayPremiumPay).toBeGreaterThan(0);
+    expect(result.restDayPremiumPay).toBeCloseTo(1681.03, 1);
   });
 
-  it("calculates rest day work: premium (first 8h at 130%) and OT (excess at 169%)", () => {
+  it("calculates rest day work: first 8h at 130% and OT beyond 8h at 169%", () => {
     // Use UTC so Feb 21 00:00 UTC is Saturday. actualIn 09:00, actualOut 20:00 → 10h worked (minus 1h lunch).
     const date = Date.UTC(2026, 1, 21);
     const result = calculate({
@@ -671,9 +671,9 @@ describe("payroll calculations", () => {
       cutoffEnd: date,
     });
 
-    // 8h at 30% additional + 2h at 69% additional (rates 1.3 / 1.69). Hourly ≈ 172.41.
-    expect(result.restDayPremiumPay).toBeCloseTo(413.78, 1);
-    expect(result.overtimeRestDay).toBeCloseTo(237.92, 1);
+    // 8h at 130% + 2h at 169%. Hourly ≈ 172.41.
+    expect(result.restDayPremiumPay).toBeCloseTo(1793.1, 1);
+    expect(result.overtimeRestDay).toBeCloseTo(582.76, 1);
   });
 
   it("calculates regular holiday overtime separately from the holiday premium", () => {
@@ -1108,6 +1108,12 @@ describe("payroll calculations", () => {
     const nightNextDay = 3 * nightDiffPremiumRestDay * hourly; // 3h 00:00-03:00 next day
     expect(result.nightDiffPay).toBeCloseTo(nightOnHoliday + nightNextDay, 1);
     expect(result.nightDiffPay).toBeCloseTo(101.72, 1);
+    expect(result.nightDiffBreakdown).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "regular_holiday" }),
+        expect.objectContaining({ category: "rest_day" }),
+      ]),
+    );
   });
 
   it("regular holiday night diff: 1h at 20% + 3h at 10% = P100.58 (hourly P201.15, next day weekday)", () => {

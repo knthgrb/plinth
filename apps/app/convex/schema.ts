@@ -697,6 +697,18 @@ export default defineSchema({
             label: v.string(),
             date: v.number(),
             amount: v.number(),
+            category: v.optional(
+              v.union(
+                v.literal("regular"),
+                v.literal("regular_ot"),
+                v.literal("rest_day"),
+                v.literal("rest_day_ot"),
+                v.literal("regular_holiday"),
+                v.literal("regular_holiday_ot"),
+                v.literal("special_holiday"),
+                v.literal("special_holiday_ot"),
+              ),
+            ),
           }),
         ),
       ),

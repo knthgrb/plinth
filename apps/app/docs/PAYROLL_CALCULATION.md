@@ -82,9 +82,8 @@ Night diff applies to **actual worked time** that falls in the window **10:00 PM
 
 When an employee’s schedule marks a day as **not a workday** (`isWorkday: false`) and they still clock in:
 
-- **Rest day premium** (payslip: “Rest day premium”): first **8 hours actually worked** × hourly rate × **(rest day premium rate − 1)** — same “% additional” model as night differential and holiday premium (default **30%** additional when the org rate is 130%).
-- **Rest day OT** (payslip: “Overtime — Rest Day” / “Overtime — RD over 8 hrs.”): hours worked **beyond 8** × hourly rate × **(rest day OT rate − 1)** (default **69%** additional when the OT rate is 169%). Manual **overtime** hours on the attendance row are not double-counted on rest days.
-- **Daily / hourly** employees also receive **base hourly** for all hours worked on the rest day (monthly employees already have semi-monthly basic pay).
+- **Rest day** (payslip: “Rest day”): first **8 hours actually worked** × hourly rate × **rest day premium rate** (default **130%** of hourly when the org rate is 130%).
+- **Rest day OT** (payslip: “Overtime — Rest Day” / “Overtime — RD over 8 hrs.”): hours worked **beyond 8** × hourly rate × **rest day OT rate** (default **169%** of hourly when the OT rate is 169%). Manual **overtime** hours on the attendance row are not double-counted on rest days.
 - **Late / undertime deductions do not apply** on rest days (no comparison to the weekday 9–6 schedule).
 - **Night differential** on rest days uses rest-day night rates (see org/employee night-diff settings); segments on a rest day without a legal/special holiday use `nightDiffRestDay` / `nightDiffRestDayOt`.
 

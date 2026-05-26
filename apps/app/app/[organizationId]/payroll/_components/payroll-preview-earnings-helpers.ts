@@ -20,7 +20,7 @@ export type PreviewEditableEarnings = Record<PreviewEditableEarningKey, number>;
 export const PREVIEW_EARNING_LABELS: Record<PreviewEditableEarningKey, string> = {
   holidayPay: "Holiday pay",
   nightDiffPay: "Night differential",
-  restDayPay: "Rest day premium",
+  restDayPay: "Rest day",
   overtimeRegular: "Overtime — regular",
   overtimeRestDay: "Overtime — rest day",
   overtimeRestDayExcess: "Overtime — RD over 8 hrs",

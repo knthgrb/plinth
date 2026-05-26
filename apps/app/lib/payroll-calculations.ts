@@ -59,7 +59,20 @@ export type PayrollBaseResult = {
   holidayPayType?: "regular" | "special";
   nightDiffPay: number;
   /** Per attendance day with positive night diff (debug / payslip); amounts rounded to 2 dp. */
-  nightDiffBreakdown?: Array<{ label: string; date: number; amount: number }>;
+  nightDiffBreakdown?: Array<{
+    label: string;
+    date: number;
+    amount: number;
+    category?:
+      | "regular"
+      | "regular_ot"
+      | "rest_day"
+      | "rest_day_ot"
+      | "regular_holiday"
+      | "regular_holiday_ot"
+      | "special_holiday"
+      | "special_holiday_ot";
+  }>;
   restDayPremiumPay: number;
   overtimeRegular: number;
   overtimeRestDay: number;
@@ -719,7 +732,23 @@ function calculateNightDiffPay(
   employee: any,
   hourlyRate: number,
   rates: ResolvedPayrollRates,
-): number {
+): {
+  total: number;
+  breakdown: Array<{
+    label: string;
+    date: number;
+    amount: number;
+    category?:
+      | "regular"
+      | "regular_ot"
+      | "rest_day"
+      | "rest_day_ot"
+      | "regular_holiday"
+      | "regular_holiday_ot"
+      | "special_holiday"
+      | "special_holiday_ot";
+  }>;
+} {
   // Effective in/out: paid night span starts at scheduled start when employee is early (if they worked past that time);
   // ends at scheduled end + OT (not unapproved late clock-out). If missing or no night hours on actuals, use schedule.
   const actualIn = att.actualIn;
@@ -759,10 +788,10 @@ function calculateNightDiffPay(
           hourlyRate,
           rates,
         )
-      : 0;
+      : { total: 0, breakdown: [] };
 
-  if (payFromActual > 0) return payFromActual;
-  if (!scheduleIn || !scheduleOut) return 0;
+  if (payFromActual.total > 0) return payFromActual;
+  if (!scheduleIn || !scheduleOut) return { total: 0, breakdown: [] };
 
   return computeNightDiffPayFromTimes(
     att,
@@ -789,7 +818,23 @@ function computeNightDiffPayFromTimes(
   employee: any,
   hourlyRate: number,
   rates: ResolvedPayrollRates,
-): number {
+): {
+  total: number;
+  breakdown: Array<{
+    label: string;
+    date: number;
+    amount: number;
+    category?:
+      | "regular"
+      | "regular_ot"
+      | "rest_day"
+      | "rest_day_ot"
+      | "regular_holiday"
+      | "regular_holiday_ot"
+      | "special_holiday"
+      | "special_holiday_ot";
+  }>;
+} {
   const segments = buildSegmentsExcludingLunch(
     att.date,
     inStr,
@@ -797,7 +842,7 @@ function computeNightDiffPayFromTimes(
     att.lunchStart,
     att.lunchEnd,
   );
-  if (segments.length === 0) return 0;
+  if (segments.length === 0) return { total: 0, breakdown: [] };
 
   const actualOutM = timeStringToMinutes(outStr);
   const actualInM = timeStringToMinutes(inStr);
@@ -826,6 +871,20 @@ function computeNightDiffPayFromTimes(
     rates.nightDiffRestDayOtRate ?? restDayOt * nightDiffRate;
 
   let pay = 0;
+  const breakdownByCategoryAndDay = new Map<string, {
+    label: string;
+    date: number;
+    amount: number;
+    category?:
+      | "regular"
+      | "regular_ot"
+      | "rest_day"
+      | "rest_day_ot"
+      | "regular_holiday"
+      | "regular_holiday_ot"
+      | "special_holiday"
+      | "special_holiday_ot";
+  }>();
   const attDayStart = getManilaDayStart(att.date);
   // Holiday rate only for night hours on the attendance calendar day. Resolve holiday once from attendance date.
   const holidayOnAttDay = getMatchingHolidayForDate(attDayStart, holidays);
@@ -905,26 +964,79 @@ function computeNightDiffPayFromTimes(
       for (const { startGlobal, endGlobal, isOT } of parts) {
         const mins = Math.max(0, endGlobal - startGlobal);
         if (mins <= 0) continue;
-        const premium = (() => {
-          if (isRegHol && isOT) return nightDiffRegHolOt - regularHolidayOt;
-          if (isRegHol && !isOT)
-            return Math.max(0, nightDiffRegHol - regularHolidayRate);
-          if (isSpecHol && isOT) return nightDiffSpecHolOt - specialHolidayOt;
-          if (isSpecHol && !isOT)
-            return Math.max(0, nightDiffSpecHol - specialHolidayRate);
-          if (isRestDaySeg && isOT)
-            return Math.max(0, nightDiffRestDayOt - restDayOt);
-          if (isRestDaySeg && !isOT)
-            return Math.max(0, nightDiffRestDay - restDayPremiumRate);
-          if (isOT) return nightDiffOnOt - regularOt;
-          return nightDiffRate >= 1 ? nightDiffRate - 1 : nightDiffRate;
+        const { premium, category } = (() => {
+          if (isRegHol && isOT) {
+            return {
+              premium: nightDiffRegHolOt - regularHolidayOt,
+              category: "regular_holiday_ot" as const,
+            };
+          }
+          if (isRegHol && !isOT) {
+            return {
+              premium: Math.max(0, nightDiffRegHol - regularHolidayRate),
+              category: "regular_holiday" as const,
+            };
+          }
+          if (isSpecHol && isOT) {
+            return {
+              premium: nightDiffSpecHolOt - specialHolidayOt,
+              category: "special_holiday_ot" as const,
+            };
+          }
+          if (isSpecHol && !isOT) {
+            return {
+              premium: Math.max(0, nightDiffSpecHol - specialHolidayRate),
+              category: "special_holiday" as const,
+            };
+          }
+          if (isRestDaySeg && isOT) {
+            return {
+              premium: Math.max(0, nightDiffRestDayOt - restDayOt),
+              category: "rest_day_ot" as const,
+            };
+          }
+          if (isRestDaySeg && !isOT) {
+            return {
+              premium: Math.max(0, nightDiffRestDay - restDayPremiumRate),
+              category: "rest_day" as const,
+            };
+          }
+          if (isOT) {
+            return {
+              premium: nightDiffOnOt - regularOt,
+              category: "regular_ot" as const,
+            };
+          }
+          return {
+            premium: nightDiffRate >= 1 ? nightDiffRate - 1 : nightDiffRate,
+            category: "regular" as const,
+          };
         })();
-        pay += (mins / 60) * hourlyRate * premium;
+        const amount = (mins / 60) * hourlyRate * premium;
+        pay += amount;
+        const key = `${seg.dayTimestamp}:${category}`;
+        const existing = breakdownByCategoryAndDay.get(key);
+        if (existing) {
+          existing.amount += amount;
+        } else {
+          breakdownByCategoryAndDay.set(key, {
+            label: formatNightDiffBreakdownLabel(seg.dayTimestamp),
+            date: seg.dayTimestamp,
+            amount,
+            category,
+          });
+        }
       }
     }
   });
 
-  return pay;
+  return {
+    total: pay,
+    breakdown: Array.from(breakdownByCategoryAndDay.values()).map((entry) => ({
+      ...entry,
+      amount: round2(entry.amount),
+    })),
+  };
 }
 
 function getLateHoursFromAttendance(att: {
@@ -1290,6 +1402,15 @@ export function calculatePayrollBaseFromRecords(args: {
     label: string;
     date: number;
     amount: number;
+    category?:
+      | "regular"
+      | "regular_ot"
+      | "rest_day"
+      | "rest_day_ot"
+      | "regular_holiday"
+      | "regular_holiday_ot"
+      | "special_holiday"
+      | "special_holiday_ot";
   }> = [];
 
   for (const att of periodAttendance) {
@@ -1332,18 +1453,10 @@ export function calculatePayrollBaseFromRecords(args: {
           (payrollRates as { restDayPremiumRate?: number })
             .restDayPremiumRate ?? payrollRates.restDayOt / 1.3,
         );
-        const restDayPremiumAdditionalRate = Math.max(
-          0,
-          restDayPremiumTotalRate - 1,
-        );
-        const restDayOtAdditionalRate = Math.max(0, payrollRates.restDayOt - 1);
         const restDayPremiumAmount =
-          restDayPremiumHours * hourlyRate * restDayPremiumAdditionalRate;
+          restDayPremiumHours * hourlyRate * restDayPremiumTotalRate;
         const restDayOTAmount =
-          restDayOTHours * hourlyRate * restDayOtAdditionalRate;
-        if (salaryType !== "monthly" || dailyizedFirstCutoff) {
-          basicPay += hoursWorked * hourlyRate;
-        }
+          restDayOTHours * hourlyRate * payrollRates.restDayOt;
         restDayPremiumPay += restDayPremiumAmount;
         overtimeRestDay += restDayOTAmount;
         basicPay += restDayPremiumAmount + restDayOTAmount;
@@ -1462,20 +1575,16 @@ export function calculatePayrollBaseFromRecords(args: {
         holidayPayFromSpecial += fullPremium;
       }
 
-      const dayNightDiffAmount = calculateNightDiffPay(
+      const dayNightDiff = calculateNightDiffPay(
         att,
         holidays,
         employee,
         hourlyRateBasicPlusAllowance,
         payrollRates,
       );
-      nightDiffPay += dayNightDiffAmount;
-      if (dayNightDiffAmount > 0) {
-        nightDiffBreakdown.push({
-          label: formatNightDiffBreakdownLabel(att.date),
-          date: att.date,
-          amount: round2(dayNightDiffAmount),
-        });
+      nightDiffPay += dayNightDiff.total;
+      if (dayNightDiff.breakdown.length > 0) {
+        nightDiffBreakdown.push(...dayNightDiff.breakdown);
       }
     } else if (att.status === "no_work") {
       // Holiday no_work policy is org-configurable:
