@@ -693,6 +693,7 @@ export class PayrollService {
     cutoffEnd?: number;
     employeeIds?: string[];
     deductionsEnabled?: boolean;
+    preserveExistingPayslipEdits?: boolean;
     manualDeductions?: Array<{
       employeeId: string;
       deductions: Array<{
@@ -726,6 +727,7 @@ export class PayrollService {
         cutoffEnd: data.cutoffEnd,
         employeeIds: data.employeeIds?.map((id) => id as Id<"employees">),
         deductionsEnabled: data.deductionsEnabled,
+        preserveExistingPayslipEdits: data.preserveExistingPayslipEdits,
         manualDeductions: data.manualDeductions?.map((md) => ({
           employeeId: md.employeeId as Id<"employees">,
           deductions: md.deductions,

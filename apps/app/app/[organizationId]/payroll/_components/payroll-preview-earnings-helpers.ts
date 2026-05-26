@@ -60,7 +60,10 @@ export function getPreviewEarningsFromSource(
 ): PreviewEditableEarnings {
   const o = p ?? {};
   return PREVIEW_EDITABLE_EARNINGS_KEYS.reduce((acc, k) => {
-    const v = o[k];
+    const v =
+      k === "restDayPay" && typeof o.restDayPremiumPay === "number"
+        ? o.restDayPay ?? o.restDayPremiumPay
+        : o[k];
     acc[k] = typeof v === "number" && !Number.isNaN(v) ? v : 0;
     return acc;
   }, {} as PreviewEditableEarnings);

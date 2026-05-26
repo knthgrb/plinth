@@ -241,6 +241,8 @@ type PreviewPayslipEdits = {
   variableEarnings: PreviewEditableEarnings;
 };
 
+type RegenerateMode = "preserve_edits" | "clean_rebuild";
+
 type GovernmentDeductionSettings = {
   employeeId: string;
   sss: { enabled: boolean; frequency: "full" | "half" };
@@ -435,6 +437,10 @@ export default function PayrollPageClient() {
   const [regeneratingPayrollRunId, setRegeneratingPayrollRunId] = useState<
     string | null
   >(null);
+  const [regenerateDialogOpen, setRegenerateDialogOpen] = useState(false);
+  const [regenerateMode, setRegenerateMode] =
+    useState<RegenerateMode>("preserve_edits");
+  const [regenerateTargetRun, setRegenerateTargetRun] = useState<any>(null);
   const [payslipConcerns, setPayslipConcerns] = useState<Record<string, any[]>>(
     {},
   );
@@ -1005,24 +1011,21 @@ export default function PayrollPageClient() {
     }
   };
 
-  const handleRegeneratePayslips = async (payrollRun: any) => {
+  const handleRegeneratePayslips = async (
+    payrollRun: any,
+    mode: RegenerateMode = "preserve_edits",
+  ) => {
     setRegeneratingPayrollRunId(payrollRun._id);
     try {
       const draftConfig = payrollRun.draftConfig ?? {};
       const employeeIds = draftConfig.employeeIds ?? [];
-      // Re-fetch attendance-driven payslips only. Do **not** send
-      // manualDeductions / incentives / governmentDeductionSettings from
-      // draftConfig here: if we pass them, the server treats them as
-      // authoritative and skips merging non-attendance lines from current
-      // payslips (where edit-payslip overrides live). Omitting them lets
-      // updatePayrollRun re-read stored draft + merge overrides from payslips
-      // before recreating rows.
       await updatePayrollRun({
         payrollRunId: payrollRun._id,
         cutoffStart: payrollRun.cutoffStart,
         cutoffEnd: payrollRun.cutoffEnd,
         employeeIds: employeeIds.length > 0 ? employeeIds : undefined,
         deductionsEnabled: payrollRun.deductionsEnabled,
+        preserveExistingPayslipEdits: mode === "preserve_edits",
       });
       await loadPayrollRuns();
       if (selectedPayrollRun?._id === payrollRun._id) {
@@ -1032,7 +1035,14 @@ export default function PayrollPageClient() {
         await handleViewSummary(payrollRun);
       }
       toast({
-        title: "Payslips regenerated",
+        title:
+          mode === "clean_rebuild"
+            ? "Payroll run rebuilt from draft"
+            : "Payslips regenerated",
+        description:
+          mode === "clean_rebuild"
+            ? "Per-payslip manual edits were discarded and the run was recalculated from the payroll draft."
+            : "Attendance-driven amounts were refreshed while keeping current payslip edits.",
       });
     } catch (error: any) {
       toast({
@@ -1043,6 +1053,25 @@ export default function PayrollPageClient() {
     } finally {
       setRegeneratingPayrollRunId(null);
     }
+  };
+
+  const openRegenerateDialog = (payrollRun: any) => {
+    setRegenerateTargetRun(payrollRun);
+    setRegenerateMode("preserve_edits");
+    setRegenerateDialogOpen(true);
+  };
+
+  const closeRegenerateDialog = () => {
+    setRegenerateDialogOpen(false);
+    setRegenerateTargetRun(null);
+    setRegenerateMode("preserve_edits");
+  };
+
+  const confirmRegeneratePayslips = async () => {
+    if (!regenerateTargetRun) return;
+    const targetRun = regenerateTargetRun;
+    closeRegenerateDialog();
+    await handleRegeneratePayslips(targetRun, regenerateMode);
   };
 
   const handleEditPayslip = (payslip: any) => {
@@ -1843,6 +1872,7 @@ export default function PayrollPageClient() {
       });
 
       const normalizedPreview = (preview || []).map((row: any) => {
+        const normalizedEarnings = getPreviewEarningsFromSource(row);
         const deductions = (row.deductions || []).map((deduction: any) => ({
           ...deduction,
           amount:
@@ -1863,6 +1893,7 @@ export default function PayrollPageClient() {
 
         return {
           ...row,
+          ...normalizedEarnings,
           payroll: row,
           employee: row.employee,
           deductions,
@@ -1917,6 +1948,7 @@ export default function PayrollPageClient() {
       });
 
       const normalizedPreview = (preview || []).map((row: any) => {
+        const normalizedEarnings = getPreviewEarningsFromSource(row);
         const deductions = (row.deductions || []).map((deduction: any) => ({
           ...deduction,
           amount:
@@ -1937,6 +1969,7 @@ export default function PayrollPageClient() {
 
         return {
           ...row,
+          ...normalizedEarnings,
           payroll: row,
           employee: row.employee,
           deductions,
@@ -3075,7 +3108,7 @@ export default function PayrollPageClient() {
                   onViewSummary={handleViewSummary}
                   onViewPayslips={handleViewPayslips}
                   onEdit={handleEditPayrollRun}
-                  onRegeneratePayslips={handleRegeneratePayslips}
+                  onRegeneratePayslips={openRegenerateDialog}
                   regeneratingPayrollRunId={regeneratingPayrollRunId}
                   onStatusChange={handleStatusChange}
                   onDelete={handleDeletePayrollRun}
@@ -3086,6 +3119,78 @@ export default function PayrollPageClient() {
                   onNotifyCorrections={handleNotifyPayslipCorrections}
                   sendingCorrectionRunId={sendingCorrectionRunId}
                 />
+                <Dialog
+                  open={regenerateDialogOpen}
+                  onOpenChange={(open) => {
+                    if (!open) {
+                      closeRegenerateDialog();
+                      return;
+                    }
+                    setRegenerateDialogOpen(true);
+                  }}
+                >
+                  <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                      <DialogTitle>Regenerate Payslips</DialogTitle>
+                      <DialogDescription>
+                        Choose whether to keep current payslip edits or rebuild
+                        this payroll run from the draft settings only.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                      <button
+                        type="button"
+                        className={`w-full rounded-lg border p-4 text-left transition ${
+                          regenerateMode === "preserve_edits"
+                            ? "border-gray-900 bg-gray-50"
+                            : "border-gray-200 hover:border-gray-300"
+                        }`}
+                        onClick={() => setRegenerateMode("preserve_edits")}
+                      >
+                        <div className="font-medium">
+                          Keep current payslip edits
+                        </div>
+                        <div className="mt-1 text-sm text-gray-600">
+                          Refresh attendance-based values while preserving
+                          existing payslip edits like added or removed
+                          deductions, additions, and edited earnings.
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        className={`w-full rounded-lg border p-4 text-left transition ${
+                          regenerateMode === "clean_rebuild"
+                            ? "border-gray-900 bg-gray-50"
+                            : "border-gray-200 hover:border-gray-300"
+                        }`}
+                        onClick={() => setRegenerateMode("clean_rebuild")}
+                      >
+                        <div className="font-medium">
+                          Rebuild from payroll draft only
+                        </div>
+                        <div className="mt-1 text-sm text-gray-600">
+                          Discard per-payslip manual edits and regenerate using
+                          the payroll run configuration.
+                        </div>
+                      </button>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={closeRegenerateDialog}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => void confirmRegeneratePayslips()}
+                      >
+                        Regenerate
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
                 {filteredPayrollRuns.length > payrollRunsPageSize && (
                   <div className="flex items-center justify-between gap-4 border-t pt-4 mt-4">
                     <p className="text-sm text-muted-foreground">

@@ -2385,6 +2385,22 @@ export const computePayrollPreviewBatch = query({
           employee,
           ...payrollBase,
           ...canonical,
+          holidayPay: payrollBase.holidayPay ?? 0,
+          regularHolidayPay: payrollBase.regularHolidayPay ?? 0,
+          specialHolidayPay: payrollBase.specialHolidayPay ?? 0,
+          holidayPayType: payrollBase.holidayPayType,
+          restDayPay: payrollBase.restDayPremiumPay ?? 0,
+          nightDiffPay: payrollBase.nightDiffPay ?? 0,
+          nightDiffBreakdown: payrollBase.nightDiffBreakdown,
+          overtimeRegular: payrollBase.overtimeRegular ?? 0,
+          overtimeRestDay: payrollBase.overtimeRestDay ?? 0,
+          overtimeRestDayExcess: payrollBase.overtimeRestDayExcess ?? 0,
+          overtimeSpecialHoliday: payrollBase.overtimeSpecialHoliday ?? 0,
+          overtimeSpecialHolidayExcess:
+            payrollBase.overtimeSpecialHolidayExcess ?? 0,
+          overtimeLegalHoliday: payrollBase.overtimeLegalHoliday ?? 0,
+          overtimeLegalHolidayExcess:
+            payrollBase.overtimeLegalHolidayExcess ?? 0,
         };
       }),
     );
@@ -2766,6 +2782,7 @@ export const updatePayrollRun = mutation({
       ),
     ),
     deductionsEnabled: v.optional(v.boolean()),
+    preserveExistingPayslipEdits: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     type GovSettingsEntry = {
@@ -2836,6 +2853,8 @@ export const updatePayrollRun = mutation({
         q.eq("payrollRunId", args.payrollRunId),
       )
       .collect();
+    const preserveExistingPayslipEdits =
+      args.preserveExistingPayslipEdits !== false;
 
     let mergedManualDeductions: ManualDeductionEntry[] = resolvedManualDeductions;
     let mergedIncentives: IncentiveEntry[] = resolvedIncentives;
@@ -2851,7 +2870,10 @@ export const updatePayrollRun = mutation({
       PersistedVariableEarningsOverride
     >();
 
-    if (existingPayslipsBeforeRegenerate.length > 0) {
+    if (
+      preserveExistingPayslipEdits &&
+      existingPayslipsBeforeRegenerate.length > 0
+    ) {
       // When the client sends `manualDeductions` / `incentives`, those arrays are
       // authoritative (e.g. Step 4 save) and we do not copy non-attendance lines
       // from existing payslips. When the keys are **omitted** (e.g. regenerate

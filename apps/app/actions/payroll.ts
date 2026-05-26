@@ -214,6 +214,7 @@ export async function updatePayrollRun(data: {
   cutoffEnd?: number;
   employeeIds?: string[];
   deductionsEnabled?: boolean;
+  preserveExistingPayslipEdits?: boolean;
   manualDeductions?: Array<{
     employeeId: string;
     deductions: Array<{
