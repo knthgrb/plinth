@@ -16,13 +16,15 @@ interface Column {
 interface EmployeeLeaveHistoryTabProps {
   leaveHistory: any[];
   columns: Column[];
-  configuredLeaveTypes?: Array<{ type: string; name: string }>;
+  configuredLeaveTypes?: Array<{ type: string; name: string; isPaid?: boolean }>;
+  cutoffDates?: { firstCutoff?: number; secondCutoff?: number };
 }
 
 export function EmployeeLeaveHistoryTab({
   leaveHistory,
   columns,
   configuredLeaveTypes = [],
+  cutoffDates,
 }: EmployeeLeaveHistoryTabProps) {
   return (
     <Card className="border-[rgb(230,230,230)] shadow-sm overflow-hidden">
@@ -39,6 +41,7 @@ export function EmployeeLeaveHistoryTab({
           leaveRequests={leaveHistory}
           columns={columns}
           configuredLeaveTypes={configuredLeaveTypes}
+          cutoffDates={cutoffDates}
         />
       </CardContent>
     </Card>

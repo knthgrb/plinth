@@ -820,6 +820,8 @@ export default defineSchema({
     formTemplateContent: v.optional(v.string()),
     filledFormContent: v.optional(v.string()),
     signatureDataUrl: v.optional(v.string()),
+    isPaid: v.optional(v.boolean()),
+    isManual: v.optional(v.boolean()),
     status: v.union(
       v.literal("pending"),
       v.literal("approved"),
@@ -1092,6 +1094,7 @@ export default defineSchema({
         // Daily rate from monthly: (basic + allowance?) × (12 / workingDaysPerYear)
         dailyRateIncludesAllowance: v.optional(v.boolean()), // If true, daily rate = (basic + allowance) × 12/261 (default true)
         dailyRateWorkingDaysPerYear: v.optional(v.number()), // Working days per year for daily rate (default 261)
+        payrollTabPassword: v.optional(v.string()),
         // Tax deduction: once_per_month = full tax on one pay; twice_per_month = half on 1st, half on 2nd (bimonthly only)
         taxDeductionFrequency: v.optional(
           v.union(v.literal("once_per_month"), v.literal("twice_per_month")),
@@ -1131,18 +1134,32 @@ export default defineSchema({
     ),
     // Prorated leave: when true, annual leave is prorated by months worked (e.g. new hires get (annual/12)*months)
     proratedLeave: v.optional(v.boolean()),
+    // Accrual schedule for tracker display and leave availability.
+    leaveAccrualFrequency: v.optional(
+      v.union(
+        v.literal("monthly"),
+        v.literal("semi_annual"),
+        v.literal("annual"),
+      ),
+    ),
     // Leave tracker mode: "general" uses Annual SIL base, "by_type" uses configured leave types sum.
     leaveTrackerMode: v.optional(
       v.union(v.literal("general"), v.literal("by_type")),
     ),
     // When true, anniversary leave is included in tracker totals.
     enableAnniversaryLeave: v.optional(v.boolean()),
+    // Cap for anniversary leave accrual. Default 15.
+    anniversaryLeaveMaxDays: v.optional(v.number()),
     // Max unused leave days convertible to cash (default 5)
     maxConvertibleLeaveDays: v.optional(v.number()),
     // Base annual SIL used by leave tracker formulas
     annualSil: v.optional(v.number()),
     // When true, proration starts from regularization date; when false, from hire date
     grantLeaveUponRegularization: v.optional(v.boolean()),
+    // When true, paid leave entitlement is zero until the employee is regularized.
+    paidLeaveRequiresRegularization: v.optional(v.boolean()),
+    // Employee-facing leave memo / guidelines text.
+    leaveGuidelines: v.optional(v.string()),
     // Leave request form template (Tiptap JSON string)
     leaveRequestFormTemplate: v.optional(v.string()),
     // PDF export: optional header/footer (text or inline image) for leave request PDFs
@@ -1300,6 +1317,8 @@ export default defineSchema({
           sortable: v.optional(v.boolean()),
           width: v.optional(v.string()),
           customField: v.optional(v.boolean()),
+          isDefault: v.optional(v.boolean()),
+          hidden: v.optional(v.boolean()),
         }),
       ),
     ),

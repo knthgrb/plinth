@@ -116,10 +116,14 @@ export const getSettings = query({
         _id: null,
         organizationId: args.organizationId,
         proratedLeave: true,
+        leaveAccrualFrequency: "monthly",
         leaveTrackerMode: "general",
         enableAnniversaryLeave: true,
+        anniversaryLeaveMaxDays: 15,
         annualSil: 8,
         grantLeaveUponRegularization: true,
+        paidLeaveRequiresRegularization: true,
+        leaveGuidelines: undefined,
         maxConvertibleLeaveDays: 5,
         leaveRequestFormTemplate: undefined,
         leaveRequestPdfLayout: undefined,
@@ -133,6 +137,7 @@ export const getSettings = query({
           overtimeRestDayRate: 1.3, // REST_DAY_PREMIUM 130%; first 8h at 130%, excess at 169%; holiday OT +30%
           dailyRateIncludesAllowance: true,
           dailyRateWorkingDaysPerYear: 261,
+          payrollTabPassword: "1234",
           taxDeductionFrequency: "twice_per_month",
           taxDeductOnPay: "first",
           holidayNoWorkNoPay: false,
@@ -152,10 +157,37 @@ export const getSettings = query({
         annualSil: 8,
       };
     }
+    if (settings.leaveAccrualFrequency === undefined) {
+      settings = {
+        ...settings,
+        leaveAccrualFrequency: "monthly",
+      };
+    }
+    if (settings.anniversaryLeaveMaxDays === undefined) {
+      settings = {
+        ...settings,
+        anniversaryLeaveMaxDays: 15,
+      };
+    }
+    if (settings.paidLeaveRequiresRegularization === undefined) {
+      settings = {
+        ...settings,
+        paidLeaveRequiresRegularization: true,
+      };
+    }
     if (settings.maxConvertibleLeaveDays === undefined) {
       settings = {
         ...settings,
         maxConvertibleLeaveDays: 5,
+      };
+    }
+    if (settings.payrollSettings?.payrollTabPassword === undefined) {
+      settings = {
+        ...settings,
+        payrollSettings: {
+          ...(settings.payrollSettings || {}),
+          payrollTabPassword: "1234",
+        },
       };
     }
 
@@ -182,6 +214,7 @@ export const updatePayrollSettings = mutation({
       specialHolidayOtRate: v.optional(v.number()),
       dailyRateIncludesAllowance: v.optional(v.boolean()),
       dailyRateWorkingDaysPerYear: v.optional(v.number()),
+      payrollTabPassword: v.optional(v.string()),
       taxDeductionFrequency: v.optional(
         v.union(v.literal("once_per_month"), v.literal("twice_per_month")),
       ),
@@ -272,12 +305,22 @@ export const updateLeaveTypes = mutation({
   args: {
     organizationId: v.id("organizations"),
     proratedLeave: v.optional(v.boolean()),
+    leaveAccrualFrequency: v.optional(
+      v.union(
+        v.literal("monthly"),
+        v.literal("semi_annual"),
+        v.literal("annual"),
+      ),
+    ),
     leaveTrackerMode: v.optional(
       v.union(v.literal("general"), v.literal("by_type")),
     ),
     enableAnniversaryLeave: v.optional(v.boolean()),
+    anniversaryLeaveMaxDays: v.optional(v.number()),
     annualSil: v.optional(v.number()),
     grantLeaveUponRegularization: v.optional(v.boolean()),
+    paidLeaveRequiresRegularization: v.optional(v.boolean()),
+    leaveGuidelines: v.optional(v.string()),
     leaveRequestFormTemplate: v.optional(v.string()),
     leaveRequestPdfLayout: v.optional(
       v.object({
@@ -350,17 +393,30 @@ export const updateLeaveTypes = mutation({
     if (args.proratedLeave !== undefined) {
       patch.proratedLeave = args.proratedLeave;
     }
+    if (args.leaveAccrualFrequency !== undefined) {
+      patch.leaveAccrualFrequency = args.leaveAccrualFrequency;
+    }
     if (args.leaveTrackerMode !== undefined) {
       patch.leaveTrackerMode = args.leaveTrackerMode;
     }
     if (args.enableAnniversaryLeave !== undefined) {
       patch.enableAnniversaryLeave = args.enableAnniversaryLeave;
     }
+    if (args.anniversaryLeaveMaxDays !== undefined) {
+      patch.anniversaryLeaveMaxDays = args.anniversaryLeaveMaxDays;
+    }
     if (args.annualSil !== undefined) {
       patch.annualSil = args.annualSil;
     }
     if (args.grantLeaveUponRegularization !== undefined) {
       patch.grantLeaveUponRegularization = args.grantLeaveUponRegularization;
+    }
+    if (args.paidLeaveRequiresRegularization !== undefined) {
+      patch.paidLeaveRequiresRegularization =
+        args.paidLeaveRequiresRegularization;
+    }
+    if (args.leaveGuidelines !== undefined) {
+      patch.leaveGuidelines = args.leaveGuidelines;
     }
     if (args.leaveRequestFormTemplate !== undefined) {
       patch.leaveRequestFormTemplate = args.leaveRequestFormTemplate;
@@ -379,10 +435,15 @@ export const updateLeaveTypes = mutation({
       await ctx.db.insert("settings", {
         organizationId: args.organizationId,
         proratedLeave: args.proratedLeave ?? true,
+        leaveAccrualFrequency: args.leaveAccrualFrequency ?? "monthly",
         leaveTrackerMode: args.leaveTrackerMode ?? "general",
         enableAnniversaryLeave: args.enableAnniversaryLeave ?? true,
+        anniversaryLeaveMaxDays: args.anniversaryLeaveMaxDays ?? 15,
         annualSil: args.annualSil ?? 8,
         grantLeaveUponRegularization: args.grantLeaveUponRegularization ?? true,
+        paidLeaveRequiresRegularization:
+          args.paidLeaveRequiresRegularization ?? true,
+        leaveGuidelines: args.leaveGuidelines,
         leaveRequestFormTemplate: args.leaveRequestFormTemplate,
         leaveRequestPdfLayout: args.leaveRequestPdfLayout,
         maxConvertibleLeaveDays: args.maxConvertibleLeaveDays ?? 5,
@@ -662,6 +723,8 @@ export const updateLeaveTableColumns = mutation({
         sortable: v.optional(v.boolean()),
         width: v.optional(v.string()),
         customField: v.optional(v.boolean()),
+        isDefault: v.optional(v.boolean()),
+        hidden: v.optional(v.boolean()),
       }),
     ),
   },

@@ -10,8 +10,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Settings } from "lucide-react";
+import { Plus, Settings } from "lucide-react";
 import { DynamicLeaveTable } from "./dynamic-leave-table";
+import { ManualLeaveEntryDialog } from "./manual-leave-entry-dialog";
 
 interface Column {
   id: string;
@@ -23,26 +24,47 @@ interface Column {
   customField?: boolean;
 }
 
+type LeaveHistoryRequest = {
+  employeeId: string;
+  filedDate?: number;
+  [key: string]: unknown;
+};
+
+type LeaveHistoryEmployee = {
+  _id: string;
+  personalInfo?: {
+    firstName?: string;
+    lastName?: string;
+  };
+};
+
 interface AdminLeaveHistoryTabProps {
-  leaveRequests: any[];
+  organizationId: string;
+  leaveRequests: LeaveHistoryRequest[];
   columns: Column[];
-  employees?: any[];
+  employees?: LeaveHistoryEmployee[];
   onManageColumns: () => void;
-  configuredLeaveTypes?: Array<{ type: string; name: string }>;
+  configuredLeaveTypes?: Array<{ type: string; name: string; isPaid?: boolean }>;
+  cutoffDates?: { firstCutoff?: number; secondCutoff?: number };
+  leaveTrackerMode?: "general" | "by_type";
 }
 
 export function AdminLeaveHistoryTab({
+  organizationId,
   leaveRequests,
   columns,
   employees,
   onManageColumns,
   configuredLeaveTypes = [],
+  cutoffDates,
+  leaveTrackerMode = "general",
 }: AdminLeaveHistoryTabProps) {
   const [employeeFilter, setEmployeeFilter] = useState<string>("all");
+  const [isManualDialogOpen, setIsManualDialogOpen] = useState(false);
 
   const filteredRequests = useMemo(() => {
     if (employeeFilter === "all") return leaveRequests;
-    return leaveRequests.filter((r: any) => r.employeeId === employeeFilter);
+    return leaveRequests.filter((request) => request.employeeId === employeeFilter);
   }, [leaveRequests, employeeFilter]);
 
   return (
@@ -64,13 +86,22 @@ export function AdminLeaveHistoryTab({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All employees</SelectItem>
-                {employees?.map((emp: any) => (
+                {employees?.map((emp) => (
                   <SelectItem key={emp._id} value={emp._id}>
                     {emp.personalInfo?.firstName} {emp.personalInfo?.lastName}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsManualDialogOpen(true)}
+              className="shrink-0 border-[rgb(230,230,230)]"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add history
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -90,8 +121,17 @@ export function AdminLeaveHistoryTab({
           employees={employees}
           pageSize={20}
           configuredLeaveTypes={configuredLeaveTypes}
+          cutoffDates={cutoffDates}
         />
       </CardContent>
+      <ManualLeaveEntryDialog
+        isOpen={isManualDialogOpen}
+        onOpenChange={setIsManualDialogOpen}
+        organizationId={organizationId}
+        employees={employees ?? []}
+        leaveTrackerMode={leaveTrackerMode}
+        configuredLeaveTypes={configuredLeaveTypes}
+      />
     </Card>
   );
 }

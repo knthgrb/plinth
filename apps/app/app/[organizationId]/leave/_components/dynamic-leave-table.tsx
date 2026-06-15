@@ -19,8 +19,11 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { format } from "date-fns";
-import { getStatusBadgeClass, getStatusBadgeStyle } from "@/utils/colors";
 import { GENERAL_LEAVE_CREDIT_KEY } from "@/lib/leave-constants";
+import {
+  formatLeaveCutoffPeriod,
+  resolveLeavePayLabel,
+} from "@/utils/leave-history-columns";
 
 const LEGACY_LEAVE_LABELS: Record<string, string> = {
   vacation: "Vacation leave",
@@ -71,7 +74,8 @@ interface DynamicLeaveTableProps {
   onRowClick?: (request: any) => void;
   pageSize?: number;
   /** Settings leave types (non-anniversary) for labeling custom / by-type requests */
-  configuredLeaveTypes?: Array<{ type: string; name: string }>;
+  configuredLeaveTypes?: Array<{ type: string; name: string; isPaid?: boolean }>;
+  cutoffDates?: { firstCutoff?: number; secondCutoff?: number };
 }
 
 type SortDirection = "asc" | "desc" | null;
@@ -84,6 +88,7 @@ export function DynamicLeaveTable({
   onRowClick,
   pageSize = 0,
   configuredLeaveTypes = [],
+  cutoffDates,
 }: DynamicLeaveTableProps) {
   const [sortState, setSortState] = useState<SortState>({
     field: "",
@@ -119,13 +124,58 @@ export function DynamicLeaveTable({
     return value;
   };
 
+  const getResolvedFieldValue = (request: any, field: string): any => {
+    if (field === "employee" && employees) {
+      const employee = employees.find((e: any) => e._id === request.employeeId);
+      return employee
+        ? `${employee.personalInfo?.firstName || ""} ${
+            employee.personalInfo?.lastName || ""
+          }`.trim()
+        : "Unknown";
+    }
+    if (field === "leaveType") {
+      return displayLeaveTypeLabel(request, configuredLeaveTypes);
+    }
+    if (field === "startDate") return request.startDate;
+    if (field === "endDate") return request.endDate;
+    if (field === "numberOfDays" || field === "days") {
+      return request.numberOfDays;
+    }
+    if (field === "status") return request.status;
+    if (field === "payStatus") {
+      return resolveLeavePayLabel(request, configuredLeaveTypes);
+    }
+    if (field === "reason") return request.reason;
+    if (field === "cutoffPeriod") {
+      return formatLeaveCutoffPeriod(request.startDate, cutoffDates);
+    }
+    if (field === "remarks") return request.remarks;
+    if (field === "filedDate") return request.filedDate;
+
+    return getFieldValue(request, field);
+  };
+
   const formatCellValue = (
     value: any,
     column: Column,
-    request: any
   ): React.ReactNode => {
     if (value === null || value === undefined) {
       return <span className="text-gray-400">—</span>;
+    }
+
+    if (column.field === "payStatus") {
+      const isWithoutPay = value === "w/o Pay";
+      return (
+        <Badge
+          className={
+            isWithoutPay
+              ? "bg-red-100 text-red-800 border-red-300 font-normal rounded-md hover:bg-red-100"
+              : "bg-emerald-100 text-emerald-800 border-emerald-300 font-normal rounded-md hover:bg-emerald-100"
+          }
+        >
+          {value}
+        </Badge>
+      );
     }
 
     switch (column.type) {
@@ -218,20 +268,8 @@ export function DynamicLeaveTable({
     }
 
     const sorted = [...leaveRequests].sort((a, b) => {
-      let aValue = getFieldValue(a, sortState.field);
-      let bValue = getFieldValue(b, sortState.field);
-
-      // Handle special "employee" field - sort by employee name
-      if (sortState.field === "employee" && employees) {
-        const aEmployee = employees.find((e: any) => e._id === a.employeeId);
-        const bEmployee = employees.find((e: any) => e._id === b.employeeId);
-        aValue = aEmployee
-          ? `${aEmployee.personalInfo?.firstName || ""} ${aEmployee.personalInfo?.lastName || ""}`.trim()
-          : "Unknown";
-        bValue = bEmployee
-          ? `${bEmployee.personalInfo?.firstName || ""} ${bEmployee.personalInfo?.lastName || ""}`.trim()
-          : "Unknown";
-      }
+      const aValue = getResolvedFieldValue(a, sortState.field);
+      const bValue = getResolvedFieldValue(b, sortState.field);
 
       // Handle null/undefined values - both nulls are equal
       const aIsNull = aValue === null || aValue === undefined || aValue === "";
@@ -312,7 +350,7 @@ export function DynamicLeaveTable({
     });
 
     return sorted;
-  }, [leaveRequests, sortState, columns, employees]);
+  }, [leaveRequests, sortState, columns, employees, configuredLeaveTypes, cutoffDates]);
 
   const totalPages = Math.max(
     1,
@@ -386,48 +424,14 @@ export function DynamicLeaveTable({
                   onClick={() => onRowClick?.(request)}
                 >
                   {visibleColumns.map((column) => {
-                    let value: any = getFieldValue(request, column.field);
-
-                    // Handle special cases
-                    if (column.field === "employee" && employees) {
-                      const employee = employees.find(
-                        (e: any) => e._id === request.employeeId
-                      );
-                      value = employee
-                        ? `${employee.personalInfo?.firstName || ""} ${
-                            employee.personalInfo?.lastName || ""
-                          }`.trim()
-                        : "Unknown";
-                    } else if (column.field === "leaveType") {
-                      value = displayLeaveTypeLabel(
-                        request,
-                        configuredLeaveTypes,
-                      );
-                    } else if (column.field === "startDate") {
-                      value = request.startDate;
-                    } else if (column.field === "endDate") {
-                      value = request.endDate;
-                    } else if (
-                      column.field === "numberOfDays" ||
-                      column.field === "days"
-                    ) {
-                      value = request.numberOfDays;
-                    } else if (column.field === "status") {
-                      value = request.status;
-                    } else if (column.field === "reason") {
-                      value = request.reason;
-                    } else if (column.field === "remarks") {
-                      value = request.remarks;
-                    } else if (column.field === "filedDate") {
-                      value = request.filedDate;
-                    }
+                    const value = getResolvedFieldValue(request, column.field);
 
                     return (
                       <TableCell
                         key={column.id}
                         style={{ width: column.width }}
                       >
-                        {formatCellValue(value, column, request)}
+                        {formatCellValue(value, column)}
                       </TableCell>
                     );
                   })}

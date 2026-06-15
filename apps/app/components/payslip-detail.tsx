@@ -855,7 +855,7 @@ export function PayslipDetail({
                     {/* Only show items with value > 0 */}
                     {payslip.adjustments && payslip.adjustments > 0 && (
                       <div className="flex justify-between">
-                        <span>Adjustments (+)</span>
+                        <span>Adjustments</span>
                         <span>
                           ₱
                           {payslip.adjustments.toLocaleString("en-US", {
@@ -925,7 +925,7 @@ export function PayslipDetail({
                     {payslip.adjustmentsNegative &&
                       payslip.adjustmentsNegative > 0 && (
                         <div className="flex justify-between">
-                          <span>Adjustments (-)</span>
+                          <span>Adjustments</span>
                           <span>
                             ₱
                             {payslip.adjustmentsNegative.toLocaleString(

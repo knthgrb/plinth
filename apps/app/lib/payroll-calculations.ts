@@ -1296,9 +1296,15 @@ export function calculatePayrollBaseFromRecords(args: {
       const leaveEnd = toLocalDayTimestamp(leave.endDate);
       if (dayTs < leaveStart || dayTs > leaveEnd) continue;
 
+      if (typeof leave.isPaid === "boolean") {
+        return leave.isPaid;
+      }
+
       if (leave.leaveType === "custom" && leave.customLeaveType) {
         const leaveType = leaveTypes.find(
-          (entry: any) => entry.name === leave.customLeaveType,
+          (entry: any) =>
+            entry.type === leave.customLeaveType ||
+            entry.name === leave.customLeaveType,
         );
         return leaveType?.isPaid ?? false;
       }

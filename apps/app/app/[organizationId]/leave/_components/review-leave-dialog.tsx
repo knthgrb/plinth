@@ -33,6 +33,7 @@ import {
   normalizeLeavePdfLayout,
   type LeavePdfLayout,
 } from "@/lib/leave-pdf-layout";
+import { canUseFilledLeaveForm } from "@/utils/leave-review-actions";
 
 type LeaveRequestRecord = {
   _id: string;
@@ -184,6 +185,10 @@ export function ReviewLeaveDialog({
   const employeeName = employee
     ? `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`
     : "Unknown Employee";
+  const canUsePdfActions = canUseFilledLeaveForm(
+    request.status,
+    request.filledFormContent,
+  );
 
   const pdfReviewedBy =
     request.status === "pending"
@@ -206,7 +211,7 @@ export function ReviewLeaveDialog({
   };
 
   const handleDownloadPdf = async () => {
-    if (!pdfContentRef.current) return;
+    if (!canUsePdfActions || !pdfContentRef.current) return;
 
     setIsDownloadingPdf(true);
     try {
@@ -229,7 +234,7 @@ export function ReviewLeaveDialog({
   };
 
   const handleSaveToDocuments = async () => {
-    if (!pdfContentRef.current || !organizationId) return;
+    if (!canUsePdfActions || !pdfContentRef.current || !organizationId) return;
 
     setIsSavingToDocuments(true);
     try {
@@ -379,7 +384,9 @@ export function ReviewLeaveDialog({
                 <div className="space-y-3 border-t border-[rgb(230,230,230)] pt-4">
                   {pdfReviewedBy ? (
                     <p className="text-sm">
-                      <span className="font-medium">Reviewed by:</span>{" "}
+                      <span className="font-medium">
+                        Approved by / on behalf of:
+                      </span>{" "}
                       {pdfReviewedBy}
                     </p>
                   ) : null}
@@ -389,13 +396,13 @@ export function ReviewLeaveDialog({
                   {pdfReviewerSignature ? (
                     <div>
                       <p className="mb-2 text-sm font-medium">
-                        Reviewer signature
+                        Approver signature
                       </p>
                       <div className="rounded border border-[rgb(230,230,230)] bg-white p-4">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={pdfReviewerSignature}
-                          alt="Reviewer signature"
+                          alt="Approver signature"
                           className="h-24 w-auto max-w-full object-contain"
                         />
                       </div>
@@ -454,7 +461,8 @@ export function ReviewLeaveDialog({
                   <div className="space-y-2 border-t border-[rgb(230,230,230)] pt-3 text-sm">
                     {request.approvedByName ? (
                       <p>
-                        <strong>Reviewed by:</strong> {request.approvedByName}
+                        <strong>Approved by / on behalf of:</strong>{" "}
+                        {request.approvedByName}
                       </p>
                     ) : null}
                     {request.reviewerPosition?.trim() ? (
@@ -462,11 +470,13 @@ export function ReviewLeaveDialog({
                     ) : null}
                     {request.reviewerSignatureDataUrl && (
                       <div>
-                        <p className="mb-1 font-medium">Reviewer signature</p>
+                        <p className="mb-1 font-medium">
+                          Approver signature
+                        </p>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={request.reviewerSignatureDataUrl}
-                          alt="Reviewer signature"
+                          alt="Approver signature"
                           className="h-20 w-auto max-w-full rounded border border-[rgb(230,230,230)] object-contain p-2"
                         />
                       </div>
@@ -517,19 +527,21 @@ export function ReviewLeaveDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="reviewed-by">Reviewed by</Label>
+              <Label htmlFor="reviewed-by">
+                Approved by / on behalf of
+              </Label>
               <Input
                 id="reviewed-by"
                 value={reviewedByName}
                 onChange={(e) => setReviewedByName(e.target.value)}
-                placeholder="Full name of reviewer"
+                placeholder="e.g. Maria Santos, on behalf of John Cruz"
                 disabled={!canApprove}
                 autoComplete="name"
               />
             </div>
             <div className="space-y-2">
               <Label htmlFor="reviewer-position">
-                Reviewer position{" "}
+                Approver position{" "}
                 <span className="font-normal text-muted-foreground">(optional)</span>
               </Label>
               <Input
@@ -541,7 +553,7 @@ export function ReviewLeaveDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label>Reviewer signature</Label>
+              <Label>Approver signature</Label>
               <SignaturePad
                 value={approverSignatureDataUrl}
                 onChange={setApproverSignatureDataUrl}
@@ -551,7 +563,7 @@ export function ReviewLeaveDialog({
           </div>
         )}
         <DialogFooter>
-          {request.filledFormContent && request.status !== "pending" && (
+          {canUsePdfActions && (
             <Button
               variant="outline"
               onClick={handleSaveToDocuments}
@@ -565,7 +577,7 @@ export function ReviewLeaveDialog({
               Save to Documents
             </Button>
           )}
-          {request.filledFormContent && request.status !== "pending" && (
+          {canUsePdfActions && (
             <Button
               variant="outline"
               onClick={handleDownloadPdf}

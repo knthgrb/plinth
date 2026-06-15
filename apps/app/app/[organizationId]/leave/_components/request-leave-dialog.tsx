@@ -105,7 +105,7 @@ type RequestingEmployee = {
   };
 };
 
-type ConfiguredLeaveType = { type: string; name: string };
+type ConfiguredLeaveType = { type: string; name: string; isPaid?: boolean };
 
 interface RequestLeaveDialogProps {
   isOpen: boolean;
@@ -138,22 +138,28 @@ export function RequestLeaveDialog({
     startDate: "",
     endDate: "",
     reason: "",
+    isPaid: true,
   });
   const [signatureDataUrl, setSignatureDataUrl] = useState("");
 
   useEffect(() => {
     if (!isOpen) return;
     const firstByType = configuredLeaveTypes[0]?.type;
-    setFormData({
-      leaveTypeKey:
-        leaveTrackerMode === "by_type" && firstByType
-          ? firstByType
-          : GENERAL_LEAVE_CREDIT_KEY,
-      startDate: "",
-      endDate: "",
-      reason: "",
-    });
-    setSignatureDataUrl("");
+    const firstByTypeIsPaid = configuredLeaveTypes[0]?.isPaid ?? true;
+    const resetTimer = window.setTimeout(() => {
+      setFormData({
+        leaveTypeKey:
+          leaveTrackerMode === "by_type" && firstByType
+            ? firstByType
+            : GENERAL_LEAVE_CREDIT_KEY,
+        startDate: "",
+        endDate: "",
+        reason: "",
+        isPaid: leaveTrackerMode === "by_type" ? firstByTypeIsPaid : true,
+      });
+      setSignatureDataUrl("");
+    }, 0);
+    return () => window.clearTimeout(resetTimer);
   }, [isOpen, leaveTrackerMode, configuredLeaveTypes]);
 
   const availableBalance = resolveAvailableBalance(
@@ -173,6 +179,7 @@ export function RequestLeaveDialog({
     formData.endDate &&
     new Date(formData.endDate) >= new Date(formData.startDate);
   const insufficientCredits =
+    formData.isPaid &&
     isValidRange &&
     requestedDays > 0 &&
     availableBalance != null &&
@@ -262,6 +269,7 @@ export function RequestLeaveDialog({
           leaveRequestFormTemplate ?? DEFAULT_LEAVE_REQUEST_TEMPLATE,
         filledFormContent,
         signatureDataUrl,
+        isPaid: formData.isPaid,
       });
       onOpenChange(false);
       toast({
@@ -315,9 +323,16 @@ export function RequestLeaveDialog({
                 ) : (
                   <Select
                     value={formData.leaveTypeKey}
-                    onValueChange={(value) =>
-                      setFormData({ ...formData, leaveTypeKey: value })
-                    }
+                    onValueChange={(value) => {
+                      const selected = configuredLeaveTypes.find(
+                        (t) => t.type === value,
+                      );
+                      setFormData({
+                        ...formData,
+                        leaveTypeKey: value,
+                        isPaid: selected?.isPaid ?? true,
+                      });
+                    }}
                   >
                     <SelectTrigger id="leaveType">
                       <SelectValue placeholder="Select leave type" />
@@ -338,6 +353,26 @@ export function RequestLeaveDialog({
                 )}
               </div>
             )}
+
+            <div className="space-y-2">
+              <Label htmlFor="payMode">
+                Pay mode <span className="text-red-500">*</span>
+              </Label>
+              <Select
+                value={formData.isPaid ? "paid" : "unpaid"}
+                onValueChange={(value) =>
+                  setFormData({ ...formData, isPaid: value === "paid" })
+                }
+              >
+                <SelectTrigger id="payMode">
+                  <SelectValue placeholder="Select pay mode" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="paid">With pay</SelectItem>
+                  <SelectItem value="unpaid">Without pay</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">

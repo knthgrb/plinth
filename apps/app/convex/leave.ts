@@ -3,12 +3,13 @@ import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
 import {
-  calculateProratedLeave,
   getConvertibleLeaveDays,
   GENERAL_LEAVE_CREDIT_KEY,
-  getProratedAnnualSilTracker,
-  getCompletedCalendarYearsSince,
 } from "./leaveCalculations";
+import {
+  calculateAnnualLeaveBase,
+  calculateAnniversaryLeave as calculatePolicyAnniversaryLeave,
+} from "@/utils/leave-policy-calculations";
 import { formatManilaNumericDate } from "@/lib/manila-date";
 import {
   getUserIdForEmployeeInOrg,
@@ -202,6 +203,31 @@ function isGeneralPoolLeaveRequest(request: any, leaveTrackerMode: string) {
   );
 }
 
+function getDefaultLeaveRequestIsPaid(request: any, settings: any) {
+  if (
+    request.leaveType === "custom" &&
+    request.customLeaveType === GENERAL_LEAVE_CREDIT_KEY
+  ) {
+    return true;
+  }
+
+  const typeKey =
+    request.leaveType === "custom" && request.customLeaveType
+      ? request.customLeaveType
+      : request.leaveType;
+  const configured = (settings?.leaveTypes ?? []).find(
+    (type: any) => type.type === typeKey,
+  );
+
+  return configured?.isPaid !== false;
+}
+
+function resolveLeaveRequestIsPaid(request: any, settings: any) {
+  return typeof request.isPaid === "boolean"
+    ? request.isPaid
+    : getDefaultLeaveRequestIsPaid(request, settings);
+}
+
 function getUsedForConfiguredType(leaveCredits: any, typeKey: string): number {
   if (typeKey === "vacation") return leaveCredits.vacation?.used ?? 0;
   if (typeKey === "sick") return leaveCredits.sick?.used ?? 0;
@@ -221,6 +247,9 @@ function computeGeneralLeaveSummary(
   const proratedLeaveSetting = settings?.proratedLeave !== false;
   const annualSilBase = settings?.annualSil ?? 8;
   const enableAnniversaryLeave = settings?.enableAnniversaryLeave !== false;
+  const anniversaryLeaveMaxDays = settings?.anniversaryLeaveMaxDays ?? 15;
+  const paidLeaveRequiresRegularization =
+    settings?.paidLeaveRequiresRegularization !== false;
 
   const base = (employee.leaveCredits || {}) as any;
   const leaveCredits = JSON.parse(
@@ -242,24 +271,28 @@ function computeGeneralLeaveSummary(
     };
   }
 
-  const prorationStartDate = grantLeaveUponRegularization
-    ? regularizationDate ?? hireDate
-    : hireDate;
-  // Anniversary counts only from regularization when that mode is on (no hire fallback).
   const anniversaryStartDate = grantLeaveUponRegularization
     ? regularizationDate
     : hireDate;
 
-  const proratedSil = proratedLeaveSetting
-    ? getProratedAnnualSilTracker(
-        annualSilBase,
-        prorationStartDate,
-        referenceDate,
-      )
-    : annualSilBase;
-  const anniversaryLeave = enableAnniversaryLeave
-    ? getCompletedCalendarYearsSince(anniversaryStartDate, referenceDate)
-    : 0;
+  const proratedSil = calculateAnnualLeaveBase({
+    annualLeave: annualSilBase,
+    hireDate,
+    regularizationDate,
+    referenceDate,
+    proratedLeave: proratedLeaveSetting,
+    grantLeaveUponRegularization,
+    paidLeaveRequiresRegularization,
+  });
+  const anniversaryLeave = calculatePolicyAnniversaryLeave({
+    enabled: enableAnniversaryLeave,
+    maxDays: anniversaryLeaveMaxDays,
+    startDate:
+      paidLeaveRequiresRegularization && !regularizationDate
+        ? undefined
+        : anniversaryStartDate,
+    referenceDate,
+  });
   const entitlementTotal =
     Math.round((proratedSil + anniversaryLeave) * 100) / 100;
   const usedCombined =
@@ -397,6 +430,11 @@ export const getLeaveRequestApprovalInfo = query({
       .first();
     const leaveTrackerMode = settings?.leaveTrackerMode ?? "general";
     const now = Date.now();
+    const requestIsPaid = resolveLeaveRequestIsPaid(request, settings);
+
+    if (!requestIsPaid) {
+      return { canApprove: true };
+    }
 
     if (isGeneralPoolLeaveRequest(request, leaveTrackerMode)) {
       const g = computeGeneralLeaveSummary(employee, settings, now);
@@ -457,6 +495,7 @@ export const createLeaveRequest = mutation({
     filledFormContent: v.optional(v.string()),
     signatureDataUrl: v.optional(v.string()),
     supportingDocuments: v.optional(v.array(v.id("_storage"))),
+    isPaid: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
@@ -491,6 +530,7 @@ export const createLeaveRequest = mutation({
     const usesGeneralPool =
       args.leaveType === "custom" &&
       args.customLeaveType === GENERAL_LEAVE_CREDIT_KEY;
+    const requestIsPaid = resolveLeaveRequestIsPaid(args, settings);
 
     if (leaveTrackerMode === "by_type" && usesGeneralPool) {
       throw new Error(
@@ -503,31 +543,33 @@ export const createLeaveRequest = mutation({
       throw new Error("Custom leave type name is required");
     }
 
-    if (usesGeneralPool && leaveTrackerMode === "general") {
-      const g = computeGeneralLeaveSummary(employee, settings, Date.now());
-      if (g.available < numberOfDays) {
-        throw new Error(
-          `Insufficient leave credits. Available: ${g.available} days, Requested: ${numberOfDays} days`,
+    if (requestIsPaid) {
+      if (usesGeneralPool && leaveTrackerMode === "general") {
+        const g = computeGeneralLeaveSummary(employee, settings, Date.now());
+        if (g.available < numberOfDays) {
+          throw new Error(
+            `Insufficient leave credits. Available: ${g.available} days, Requested: ${numberOfDays} days`,
+          );
+        }
+      } else {
+        const trackedCredit = hasTrackedCreditType(
+          employee.leaveCredits,
+          creditType,
         );
-      }
-    } else {
-      const trackedCredit = hasTrackedCreditType(
-        employee.leaveCredits,
-        creditType,
-      );
-      const balance = trackedCredit
-        ? getBalanceForType(employee.leaveCredits, creditType)
-        : Number.POSITIVE_INFINITY;
-      if (trackedCredit && balance < numberOfDays) {
-        const typeLabel =
-          creditType === "vacation"
-            ? "vacation"
-            : creditType === "sick"
-              ? "sick"
-              : creditType || "this leave type";
-        throw new Error(
-          `Insufficient ${typeLabel} leave credits. Available: ${balance} days, Requested: ${numberOfDays} days`,
-        );
+        const balance = trackedCredit
+          ? getBalanceForType(employee.leaveCredits, creditType)
+          : Number.POSITIVE_INFINITY;
+        if (trackedCredit && balance < numberOfDays) {
+          const typeLabel =
+            creditType === "vacation"
+              ? "vacation"
+              : creditType === "sick"
+                ? "sick"
+                : creditType || "this leave type";
+          throw new Error(
+            `Insufficient ${typeLabel} leave credits. Available: ${balance} days, Requested: ${numberOfDays} days`,
+          );
+        }
       }
     }
 
@@ -541,6 +583,7 @@ export const createLeaveRequest = mutation({
       endDate: args.endDate,
       numberOfDays,
       reason: args.reason,
+      isPaid: requestIsPaid,
       formTemplateContent: args.formTemplateContent,
       filledFormContent: args.filledFormContent,
       signatureDataUrl: args.signatureDataUrl,
@@ -577,6 +620,123 @@ export const createLeaveRequest = mutation({
     }
 
     return leaveRequestId;
+  },
+});
+
+export const createManualLeaveRequest = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    leaveType: v.union(
+      v.literal("vacation"),
+      v.literal("sick"),
+      v.literal("emergency"),
+      v.literal("maternity"),
+      v.literal("paternity"),
+      v.literal("custom"),
+    ),
+    customLeaveType: v.optional(v.string()),
+    startDate: v.number(),
+    endDate: v.number(),
+    numberOfDays: v.optional(v.number()),
+    reason: v.string(),
+    isPaid: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
+    const employee = await ctx.db.get(args.employeeId);
+    if (!employee) throw new Error("Employee not found");
+    if (employee.organizationId !== args.organizationId) {
+      throw new Error("Employee is not in this organization");
+    }
+    if (args.endDate < args.startDate) {
+      throw new Error("End date must be on or after start date");
+    }
+    if (args.leaveType === "custom" && !args.customLeaveType) {
+      throw new Error("Custom leave type name is required");
+    }
+
+    const numberOfDays =
+      args.numberOfDays !== undefined
+        ? args.numberOfDays
+        : calculateWorkingDays(args.startDate, args.endDate);
+    if (!Number.isFinite(numberOfDays) || numberOfDays <= 0) {
+      throw new Error("Leave days must be greater than zero");
+    }
+
+    const settings = await (ctx.db.query("settings") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .first();
+    const leaveTrackerMode = settings?.leaveTrackerMode ?? "general";
+    const usesGeneralPool =
+      args.leaveType === "custom" &&
+      args.customLeaveType === GENERAL_LEAVE_CREDIT_KEY;
+
+    if (leaveTrackerMode === "by_type" && usesGeneralPool) {
+      throw new Error("Select a configured leave type for this organization.");
+    }
+
+    if (args.isPaid) {
+      const leaveCredits = JSON.parse(
+        JSON.stringify(employee.leaveCredits || {}),
+      );
+      if (usesGeneralPool && leaveTrackerMode === "general") {
+        const g = computeGeneralLeaveSummary(employee, settings, Date.now());
+        if (g.available < numberOfDays) {
+          throw new Error(
+            `Insufficient leave credits. Available: ${g.available} days, Requested: ${numberOfDays} days`,
+          );
+        }
+        deductCreditsGeneralPool(leaveCredits, numberOfDays);
+        await ctx.db.patch(args.employeeId, { leaveCredits });
+      } else {
+        const creditType = getCreditType(args.leaveType, args.customLeaveType);
+        const trackedCredit = hasTrackedCreditType(leaveCredits, creditType);
+        const balance = trackedCredit
+          ? getBalanceForType(leaveCredits, creditType)
+          : Number.POSITIVE_INFINITY;
+
+        if (trackedCredit && balance < numberOfDays) {
+          const typeLabel =
+            creditType === "vacation"
+              ? "vacation"
+              : creditType === "sick"
+                ? "sick"
+                : creditType || "this leave type";
+          throw new Error(
+            `Insufficient ${typeLabel} leave credits. Available: ${balance} days, Requested: ${numberOfDays} days`,
+          );
+        }
+
+        if (trackedCredit) {
+          deductCreditsForType(leaveCredits, creditType, numberOfDays);
+          await ctx.db.patch(args.employeeId, { leaveCredits });
+        }
+      }
+    }
+
+    const now = Date.now();
+    return await ctx.db.insert("leaveRequests", {
+      organizationId: args.organizationId,
+      employeeId: args.employeeId,
+      leaveType: args.leaveType,
+      customLeaveType: args.customLeaveType,
+      startDate: args.startDate,
+      endDate: args.endDate,
+      numberOfDays,
+      reason: args.reason,
+      isPaid: args.isPaid,
+      isManual: true,
+      status: "approved",
+      filedDate: now,
+      reviewedBy: userRecord._id,
+      reviewedDate: now,
+      approvedByName: "Manual entry",
+      createdAt: now,
+      updatedAt: now,
+    });
   },
 });
 
@@ -619,45 +779,48 @@ export const approveLeaveRequest = mutation({
       .first();
     const leaveTrackerMode = settings?.leaveTrackerMode ?? "general";
     const nowApprove = Date.now();
+    const requestIsPaid = resolveLeaveRequestIsPaid(request, settings);
 
     const leaveCredits = JSON.parse(
       JSON.stringify(employee.leaveCredits || {}),
     );
 
-    if (isGeneralPoolLeaveRequest(request, leaveTrackerMode)) {
-      const g = computeGeneralLeaveSummary(employee, settings, nowApprove);
-      if (g.available < request.numberOfDays) {
-        throw new Error(
-          `Insufficient leave credits. Available: ${g.available} days, Requested: ${request.numberOfDays} days`,
-        );
-      }
-      deductCreditsGeneralPool(leaveCredits, request.numberOfDays);
-      await ctx.db.patch(request.employeeId, { leaveCredits });
-    } else {
-      const creditType = getCreditType(
-        request.leaveType,
-        request.customLeaveType,
-      );
-      const trackedCredit = hasTrackedCreditType(leaveCredits, creditType);
-      const balance = trackedCredit
-        ? getBalanceForType(leaveCredits, creditType)
-        : Number.POSITIVE_INFINITY;
-
-      if (trackedCredit && balance < request.numberOfDays) {
-        const typeLabel =
-          creditType === "vacation"
-            ? "vacation"
-            : creditType === "sick"
-              ? "sick"
-              : creditType || "this leave type";
-        throw new Error(
-          `Insufficient ${typeLabel} leave credits. Available: ${balance} days, Requested: ${request.numberOfDays} days`,
-        );
-      }
-
-      if (trackedCredit) {
-        deductCreditsForType(leaveCredits, creditType, request.numberOfDays);
+    if (requestIsPaid) {
+      if (isGeneralPoolLeaveRequest(request, leaveTrackerMode)) {
+        const g = computeGeneralLeaveSummary(employee, settings, nowApprove);
+        if (g.available < request.numberOfDays) {
+          throw new Error(
+            `Insufficient leave credits. Available: ${g.available} days, Requested: ${request.numberOfDays} days`,
+          );
+        }
+        deductCreditsGeneralPool(leaveCredits, request.numberOfDays);
         await ctx.db.patch(request.employeeId, { leaveCredits });
+      } else {
+        const creditType = getCreditType(
+          request.leaveType,
+          request.customLeaveType,
+        );
+        const trackedCredit = hasTrackedCreditType(leaveCredits, creditType);
+        const balance = trackedCredit
+          ? getBalanceForType(leaveCredits, creditType)
+          : Number.POSITIVE_INFINITY;
+
+        if (trackedCredit && balance < request.numberOfDays) {
+          const typeLabel =
+            creditType === "vacation"
+              ? "vacation"
+              : creditType === "sick"
+                ? "sick"
+                : creditType || "this leave type";
+          throw new Error(
+            `Insufficient ${typeLabel} leave credits. Available: ${balance} days, Requested: ${request.numberOfDays} days`,
+          );
+        }
+
+        if (trackedCredit) {
+          deductCreditsForType(leaveCredits, creditType, request.numberOfDays);
+          await ctx.db.patch(request.employeeId, { leaveCredits });
+        }
       }
     }
 
@@ -862,13 +1025,13 @@ export const getEmployeeLeaveCredits = query({
     const proratedLeaveSetting = settings?.proratedLeave !== false;
     const grantLeaveUponRegularization =
       settings?.grantLeaveUponRegularization !== false;
+    const paidLeaveRequiresRegularization =
+      settings?.paidLeaveRequiresRegularization !== false;
+    const anniversaryLeaveMaxDays = settings?.anniversaryLeaveMaxDays ?? 15;
     const vacationMax = 15;
     const sickMax = 15;
     const hireDate = employee.employment?.hireDate;
     const regularizationDate = employee.employment?.regularizationDate ?? undefined;
-    const prorationStartDate = grantLeaveUponRegularization
-      ? regularizationDate ?? hireDate
-      : hireDate;
 
     const base = (employee.leaveCredits || {}) as any;
     const leaveCredits = JSON.parse(
@@ -889,18 +1052,24 @@ export const getEmployeeLeaveCredits = query({
       maxConvertible,
     );
 
-    const vacationProrated =
-      hireDate && prorationStartDate
-        ? proratedLeaveSetting
-          ? calculateProratedLeave(vacationMax, prorationStartDate, now)
-          : vacationMax
-        : 0;
-    const sickProrated =
-      hireDate && prorationStartDate
-        ? proratedLeaveSetting
-          ? calculateProratedLeave(sickMax, prorationStartDate, now)
-          : sickMax
-        : 0;
+    const vacationProrated = calculateAnnualLeaveBase({
+      annualLeave: vacationMax,
+      hireDate,
+      regularizationDate,
+      referenceDate: now,
+      proratedLeave: proratedLeaveSetting,
+      grantLeaveUponRegularization,
+      paidLeaveRequiresRegularization,
+    });
+    const sickProrated = calculateAnnualLeaveBase({
+      annualLeave: sickMax,
+      hireDate,
+      regularizationDate,
+      referenceDate: now,
+      proratedLeave: proratedLeaveSetting,
+      grantLeaveUponRegularization,
+      paidLeaveRequiresRegularization,
+    });
 
     let generalLeave: any = undefined;
     let byTypeLeaves: any[] | undefined = undefined;
@@ -934,18 +1103,26 @@ export const getEmployeeLeaveCredits = query({
       const anniversaryStartDate = grantLeaveUponRegularization
         ? regularizationDate
         : hireDate;
-      const anniversaryLeave = enableAnniversaryLeave
-        ? getCompletedCalendarYearsSince(anniversaryStartDate, now)
-        : 0;
+      const anniversaryLeave = calculatePolicyAnniversaryLeave({
+        enabled: enableAnniversaryLeave,
+        maxDays: anniversaryLeaveMaxDays,
+        startDate:
+          paidLeaveRequiresRegularization && !regularizationDate
+            ? undefined
+            : anniversaryStartDate,
+        referenceDate: now,
+      });
 
       byTypeLeaves = configured.map((cfg: any) => {
-        const cap = proratedLeaveSetting
-          ? getProratedAnnualSilTracker(
-              Number(cfg.defaultCredits || 0),
-              prorationStartDate,
-              now,
-            )
-          : Number(cfg.defaultCredits || 0);
+        const cap = calculateAnnualLeaveBase({
+          annualLeave: Number(cfg.defaultCredits || 0),
+          hireDate,
+          regularizationDate,
+          referenceDate: now,
+          proratedLeave: proratedLeaveSetting,
+          grantLeaveUponRegularization,
+          paidLeaveRequiresRegularization,
+        });
         sumCaps += cap;
         const used = getUsedForConfiguredType(leaveCredits, cfg.type);
         const balance = Math.max(0, Math.round((cap - used) * 100) / 100);

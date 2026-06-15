@@ -65,6 +65,14 @@ const LeaveTrackerTab = dynamic(
   { ssr: false }
 );
 
+const ResignedLeaveConversionTab = dynamic(
+  () =>
+    import("./_components/resigned-leave-conversion-tab").then(
+      (mod) => mod.ResignedLeaveConversionTab
+    ),
+  { ssr: false }
+);
+
 interface Column {
   id: string;
   label: string;
@@ -78,7 +86,7 @@ interface Column {
 }
 
 const EMPLOYEE_TABS = ["credits", "history"] as const;
-const ADMIN_TABS = ["tracker", "requests", "history"] as const;
+const ADMIN_TABS = ["tracker", "requests", "history", "resigned"] as const;
 
 export default function LeavePage() {
   const pathname = usePathname();
@@ -175,7 +183,7 @@ export default function LeavePage() {
   const configuredLeaveTypesForRequests = useMemo(() => {
     return (settings?.leaveTypes ?? [])
       .filter((t: any) => !t.isAnniversary)
-      .map((t: any) => ({ type: t.type, name: t.name }));
+      .map((t: any) => ({ type: t.type, name: t.name, isPaid: t.isPaid }));
   }, [settings?.leaveTypes]);
 
   // Initialize columns from settings
@@ -295,11 +303,31 @@ export default function LeavePage() {
         hidden: false,
       },
       {
+        id: "payStatus",
+        label: "W or W/O Pay",
+        field: "payStatus",
+        type: "text",
+        sortable: true,
+        width: "130px",
+        isDefault: true,
+        hidden: false,
+      },
+      {
         id: "reason",
         label: "Reason",
         field: "reason",
         type: "text",
         sortable: false,
+        isDefault: true,
+        hidden: false,
+      },
+      {
+        id: "cutoffPeriod",
+        label: "Cut-off Period",
+        field: "cutoffPeriod",
+        type: "text",
+        sortable: true,
+        width: "160px",
         isDefault: true,
         hidden: false,
       },
@@ -451,6 +479,7 @@ export default function LeavePage() {
             <TabsContent value="credits" className="mt-0">
               <EmployeeSelfCreditsContent
                 leaveTrackerMode={leaveTrackerMode}
+                leaveGuidelines={settings?.leaveGuidelines}
                 employeeLeaveCredits={employeeLeaveCredits}
               />
             </TabsContent>
@@ -471,6 +500,7 @@ export default function LeavePage() {
                   leaveHistory={employeeLeaveHistory}
                   columns={selfViewHistoryColumns}
                   configuredLeaveTypes={configuredLeaveTypesForRequests}
+                  cutoffDates={settings?.cutoffDates}
                 />
               </Suspense>
             </TabsContent>
@@ -554,6 +584,12 @@ export default function LeavePage() {
               >
                 Leave history
               </TabsTrigger>
+              <TabsTrigger
+                value="resigned"
+                className="rounded-none border-b-2 border-transparent bg-transparent px-0 pb-3 pt-0 text-sm font-semibold text-[rgb(133,133,133)] data-[state=active]:border-brand-purple data-[state=active]:text-brand-purple data-[state=active]:shadow-none data-[state=active]:bg-transparent -mb-px"
+              >
+                Resigned conversion
+              </TabsTrigger>
             </TabsList>
           </div>
           <div className="mt-6" />
@@ -597,12 +633,15 @@ export default function LeavePage() {
               }
             >
               <AdminLeaveHistoryTab
+                organizationId={currentOrganizationId || ""}
                 leaveRequests={[...leaveRequestsActiveOnly].sort(
                   (a: any, b: any) => b.filedDate - a.filedDate
                 )}
                 columns={historyTableColumns}
                 employees={activeEmployees}
                 configuredLeaveTypes={configuredLeaveTypesForRequests}
+                cutoffDates={settings?.cutoffDates}
+                leaveTrackerMode={leaveTrackerMode}
                 onManageColumns={() => setIsHistoryColumnModalOpen(true)}
               />
             </Suspense>
@@ -628,13 +667,22 @@ export default function LeavePage() {
                   }
                   proratedLeave={settings?.proratedLeave ?? true}
                   annualSil={settings?.annualSil ?? 8}
+                  leaveAccrualFrequency={
+                    settings?.leaveAccrualFrequency ?? "monthly"
+                  }
                   leaveTrackerMode={settings?.leaveTrackerMode ?? "general"}
                   enableAnniversaryLeave={
                     settings?.enableAnniversaryLeave ?? true
                   }
+                  anniversaryLeaveMaxDays={
+                    settings?.anniversaryLeaveMaxDays ?? 15
+                  }
                   leaveTypes={settings?.leaveTypes ?? []}
                   grantLeaveUponRegularization={
                     settings?.grantLeaveUponRegularization ?? true
+                  }
+                  paidLeaveRequiresRegularization={
+                    settings?.paidLeaveRequiresRegularization ?? true
                   }
                   savedRows={settings?.leaveTrackerRows ?? []}
                   savedRowsByYear={
@@ -652,6 +700,46 @@ export default function LeavePage() {
                 />
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="resigned" className="mt-0">
+            <Suspense
+              fallback={
+                <Card className="border-[rgb(230,230,230)]">
+                  <CardContent className="py-12">
+                    <div className="text-center text-sm text-[rgb(133,133,133)]">
+                      Loading resigned employees…
+                    </div>
+                  </CardContent>
+                </Card>
+              }
+            >
+              <ResignedLeaveConversionTab
+                employees={employees ?? []}
+                annualSil={settings?.annualSil ?? 8}
+                proratedLeave={settings?.proratedLeave ?? true}
+                leaveTrackerMode={settings?.leaveTrackerMode ?? "general"}
+                leaveTypes={settings?.leaveTypes ?? []}
+                enableAnniversaryLeave={
+                  settings?.enableAnniversaryLeave ?? true
+                }
+                anniversaryLeaveMaxDays={
+                  settings?.anniversaryLeaveMaxDays ?? 15
+                }
+                grantLeaveUponRegularization={
+                  settings?.grantLeaveUponRegularization ?? true
+                }
+                paidLeaveRequiresRegularization={
+                  settings?.paidLeaveRequiresRegularization ?? true
+                }
+                leaveAccrualFrequency={
+                  settings?.leaveAccrualFrequency ?? "monthly"
+                }
+                maxConvertibleLeaveDays={
+                  settings?.maxConvertibleLeaveDays ?? 5
+                }
+              />
+            </Suspense>
           </TabsContent>
         </Tabs>
 

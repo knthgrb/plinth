@@ -32,6 +32,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { createLeaveConversionRun } from "@/actions/payroll";
+import { getActivePayrollEmployeeIds } from "@/utils/payroll-employee-filters";
 import { PayrollRunsTable } from "./payroll-runs-table";
 
 interface LeaveConversionTabProps {
@@ -66,8 +67,9 @@ export function LeaveConversionTab({
 
   const employees = useQuery(
     (api as any).employees.getEmployees,
-    organizationId ? { organizationId } : "skip",
+    organizationId ? { organizationId, status: "active" } : "skip",
   );
+  const activeEmployeeIds = getActivePayrollEmployeeIds(employees);
 
   const settings = useQuery(
     (api as any).settings.getSettings,
@@ -78,11 +80,11 @@ export function LeaveConversionTab({
 
   const amounts = useQuery(
     (api as any).payroll.computeLeaveConversionAmounts,
-    organizationId && selectedYear
+    organizationId && selectedYear && employees !== undefined
       ? {
           organizationId,
           year: selectedYear,
-          employeeIds: employees?.map((e: any) => e._id) ?? undefined,
+          employeeIds: activeEmployeeIds,
         }
       : "skip",
   );

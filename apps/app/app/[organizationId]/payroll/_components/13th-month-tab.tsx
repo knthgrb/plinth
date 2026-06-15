@@ -33,6 +33,7 @@ import { Plus, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/components/ui/use-toast";
 import { create13thMonthRun } from "@/actions/payroll";
+import { getActivePayrollEmployeeIds } from "@/utils/payroll-employee-filters";
 import { PayrollRunsTable } from "./payroll-runs-table";
 
 interface ThirteenthMonthTabProps {
@@ -67,16 +68,17 @@ export function ThirteenthMonthTab({
 
   const employees = useQuery(
     (api as any).employees.getEmployees,
-    organizationId ? { organizationId } : "skip",
+    organizationId ? { organizationId, status: "active" } : "skip",
   );
+  const activeEmployeeIds = getActivePayrollEmployeeIds(employees);
 
   const amounts = useQuery(
     (api as any).payroll.compute13thMonthAmounts,
-    organizationId && selectedYear
+    organizationId && selectedYear && employees !== undefined
       ? {
           organizationId,
           year: selectedYear,
-          employeeIds: employees?.map((e: any) => e._id) ?? undefined,
+          employeeIds: activeEmployeeIds,
         }
       : "skip",
   );

@@ -123,6 +123,45 @@ describe("attendance time highlight", () => {
     ).toBe(false);
   });
 
+  it("morning undertime after lunch highlights in, not out", () => {
+    const schedIn = "09:00";
+    const schedOut = "18:00";
+    const actualIn = "13:00";
+    const actualOut = "18:00";
+    const undertimeMins = Math.round(
+      calculateUndertime(
+        schedIn,
+        schedOut,
+        actualIn,
+        actualOut,
+        "12:00",
+        "13:00",
+      ) * 60,
+    );
+
+    expect(undertimeMins).toBe(180);
+    expect(
+      shouldHighlightActualIn(
+        schedIn,
+        schedOut,
+        actualIn,
+        actualOut,
+        0,
+        undertimeMins,
+        "12:00",
+      ),
+    ).toBe(true);
+    expect(
+      shouldHighlightActualOut(
+        schedIn,
+        schedOut,
+        actualIn,
+        actualOut,
+        undertimeMins,
+      ),
+    ).toBe(false);
+  });
+
   it("early departure highlights out, not in when on-time arrival", () => {
     const schedIn = "09:00";
     const schedOut = "18:00";

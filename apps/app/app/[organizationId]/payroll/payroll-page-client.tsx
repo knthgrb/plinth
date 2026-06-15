@@ -7,12 +7,15 @@ import {
   useRef,
   useCallback,
   Suspense,
+  type FormEvent,
 } from "react";
 import { useQuery } from "convex/react";
 import dynamic from "next/dynamic";
 import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -46,11 +49,17 @@ import {
   Download,
   Loader2,
   Trash2,
+  LockKeyhole,
 } from "lucide-react";
 import { format } from "date-fns";
 import { PayrollRunsTable } from "./_components/payroll-runs-table";
 import { ThirteenthMonthTab } from "./_components/13th-month-tab";
 import { LeaveConversionTab } from "./_components/leave-conversion-tab";
+import {
+  getPayrollUnlockStorageKey,
+  isPayrollPasswordCorrect,
+  isPayrollPasswordRequired,
+} from "@/utils/payroll-access";
 
 // Lazy load step components
 const PayrollStep1Dates = dynamic(
@@ -500,6 +509,13 @@ export default function PayrollPageClient() {
   const [activeTab, setActiveTab] = useState<
     "regular" | "13th_month" | "leave_conversion"
   >("regular");
+  const [isPayrollUnlocked, setIsPayrollUnlocked] = useState(false);
+  const [payrollPasswordInput, setPayrollPasswordInput] = useState("");
+  const [payrollPasswordError, setPayrollPasswordError] = useState("");
+
+  const payrollPasswordRequired = isPayrollPasswordRequired(
+    settings?.payrollSettings,
+  );
 
   const closeFinalizeDialog = useCallback(() => {
     setFinalizeDialogOpen(false);
@@ -567,6 +583,52 @@ export default function PayrollPageClient() {
       window.removeEventListener("focus", refresh);
     };
   }, [effectiveOrganizationId, loadPayrollRuns]);
+
+  useEffect(() => {
+    setPayrollPasswordInput("");
+    setPayrollPasswordError("");
+
+    if (!effectiveOrganizationId) {
+      setIsPayrollUnlocked(false);
+      return;
+    }
+
+    if (!payrollPasswordRequired) {
+      setIsPayrollUnlocked(true);
+      return;
+    }
+
+    const storageKey = getPayrollUnlockStorageKey(effectiveOrganizationId);
+    setIsPayrollUnlocked(sessionStorage.getItem(storageKey) === "1");
+  }, [effectiveOrganizationId, payrollPasswordRequired]);
+
+  const handlePayrollUnlock = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!effectiveOrganizationId) return;
+
+    if (
+      !isPayrollPasswordCorrect(
+        payrollPasswordInput,
+        settings?.payrollSettings,
+      )
+    ) {
+      setPayrollPasswordError("Incorrect payroll password.");
+      toast({
+        title: "Incorrect password",
+        description: "Please enter the configured payroll password.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    sessionStorage.setItem(
+      getPayrollUnlockStorageKey(effectiveOrganizationId),
+      "1",
+    );
+    setPayrollPasswordError("");
+    setPayrollPasswordInput("");
+    setIsPayrollUnlocked(true);
+  };
 
   const filteredPayrollRuns = useMemo(() => {
     let runs = payrollRuns;
@@ -2703,6 +2765,67 @@ export default function PayrollPageClient() {
       setEditSubmitStatus("idle");
     }
   };
+
+  if (effectiveOrganizationId && settings === undefined) {
+    return (
+      <MainLayout>
+        <div className="flex min-h-[60vh] items-center justify-center p-8">
+          <Card className="w-full max-w-sm">
+            <CardContent className="flex items-center justify-center gap-3 py-8 text-sm text-gray-600">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading payroll access...
+            </CardContent>
+          </Card>
+        </div>
+      </MainLayout>
+    );
+  }
+
+  if (payrollPasswordRequired && !isPayrollUnlocked) {
+    return (
+      <MainLayout>
+        <div className="flex min-h-[60vh] items-center justify-center p-8">
+          <Card className="w-full max-w-sm">
+            <CardHeader className="space-y-2">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700">
+                <LockKeyhole className="h-5 w-5" />
+              </div>
+              <CardTitle>Unlock Payroll</CardTitle>
+              <p className="text-sm text-gray-600">
+                Enter the organization payroll password to continue.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <form className="space-y-4" onSubmit={handlePayrollUnlock}>
+                <div className="space-y-2">
+                  <Label htmlFor="payroll-password">Payroll password</Label>
+                  <Input
+                    id="payroll-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={payrollPasswordInput}
+                    onChange={(event) => {
+                      setPayrollPasswordInput(event.target.value);
+                      setPayrollPasswordError("");
+                    }}
+                    aria-invalid={payrollPasswordError ? "true" : "false"}
+                  />
+                  {payrollPasswordError && (
+                    <p className="text-sm text-red-600">
+                      {payrollPasswordError}
+                    </p>
+                  )}
+                </div>
+                <Button type="submit" className="w-full">
+                  Unlock Payroll
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      </MainLayout>
+    );
+  }
 
   return (
     <MainLayout>

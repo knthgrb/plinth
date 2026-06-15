@@ -21,6 +21,7 @@ export class LeaveService {
     filledFormContent?: string;
     signatureDataUrl?: string;
     supportingDocuments?: string[];
+    isPaid?: boolean;
   }) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(

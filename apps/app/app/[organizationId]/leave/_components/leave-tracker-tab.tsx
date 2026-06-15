@@ -23,6 +23,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/components/ui/use-toast";
+import {
+  calculateLeaveTrackerAccrual,
+  getLeaveTrackerAccrualMonth,
+  getLeaveTrackerReferenceDate,
+} from "@/utils/leave-tracker-calculations";
+import {
+  calculateAnnualLeaveBase,
+  calculateAnniversaryLeave,
+  type LeaveAccrualFrequency,
+} from "@/utils/leave-policy-calculations";
 
 type TrackerOverride = {
   employeeId: string;
@@ -87,11 +97,14 @@ interface LeaveTrackerTabProps {
   proratedLeave?: boolean;
   annualSil?: number;
   grantLeaveUponRegularization?: boolean;
+  paidLeaveRequiresRegularization?: boolean;
   savedRows?: TrackerOverride[];
   /** Rows keyed by year; used when leaveTrackerByYear is available */
   savedRowsByYear?: Record<number, TrackerOverride[]>;
   leaveTrackerMode?: "general" | "by_type";
   enableAnniversaryLeave?: boolean;
+  anniversaryLeaveMaxDays?: number;
+  leaveAccrualFrequency?: LeaveAccrualFrequency;
   leaveTypes?: LeaveTypeSetting[];
 }
 
@@ -110,59 +123,6 @@ function formatDate(value?: number | null) {
   const day = String(date.getDate()).padStart(2, "0");
   const year = date.getFullYear();
   return `${month}-${day}-${year}`;
-}
-
-function getCompletedYearsSince(
-  startDate?: number | null,
-  referenceDate: number = Date.now(),
-) {
-  if (!startDate) return 0;
-
-  const start = new Date(startDate);
-  const end = new Date(referenceDate);
-  let years = end.getFullYear() - start.getFullYear();
-
-  const monthDiff = end.getMonth() - start.getMonth();
-  const dayDiff = end.getDate() - start.getDate();
-
-  if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
-    years -= 1;
-  }
-
-  return Math.max(0, years);
-}
-
-function getAccrualStartMonth(startDate: number) {
-  const date = new Date(startDate);
-  const month = date.getMonth() + 1;
-  return date.getDate() <= 15 ? month : month + 1;
-}
-
-function getProratedAnnualSil(
-  annualSil: number,
-  startDate: number | undefined,
-  referenceDate: number,
-) {
-  if (!startDate) return annualSil;
-
-  const start = new Date(startDate);
-  const reference = new Date(referenceDate);
-
-  if (start.getFullYear() < reference.getFullYear()) {
-    return annualSil;
-  }
-
-  if (start.getFullYear() > reference.getFullYear()) {
-    return 0;
-  }
-
-  const accrualStartMonth = getAccrualStartMonth(startDate);
-  if (accrualStartMonth > 12) {
-    return 0;
-  }
-
-  const monthsRemaining = 13 - accrualStartMonth;
-  return roundToTwo((annualSil / 12) * monthsRemaining);
 }
 
 function getEmployeeName(employee: TrackerEmployee) {
@@ -189,25 +149,30 @@ export function LeaveTrackerTab({
   proratedLeave = true,
   annualSil = 8,
   grantLeaveUponRegularization = true,
+  paidLeaveRequiresRegularization = true,
   savedRows,
   savedRowsByYear,
   leaveTrackerMode = "general",
   enableAnniversaryLeave = true,
+  anniversaryLeaveMaxDays = 15,
+  leaveAccrualFrequency = "monthly",
   leaveTypes = [],
 }: LeaveTrackerTabProps) {
   const { toast } = useToast();
   const updateLeaveTracker = useMutation(api.settings.updateLeaveTracker);
-  const currentYear = new Date().getFullYear();
+  const currentDate = useMemo(() => new Date(), []);
+  const currentYear = currentDate.getFullYear();
   const [selectedYear, setSelectedYear] = useState(currentYear);
   const [isSaving, setIsSaving] = useState(false);
   const [draftRows, setDraftRows] = useState<Record<string, DraftRow>>({});
 
-  // Reference date: end of selected year for historical tracking
   const referenceDate = useMemo(() => {
-    return new Date(selectedYear, 11, 31).getTime();
-  }, [selectedYear]);
+    return getLeaveTrackerReferenceDate(selectedYear, currentDate);
+  }, [selectedYear, currentDate]);
 
-  const currentMonthNumber = new Date(referenceDate).getMonth() + 1;
+  const currentMonthNumber = useMemo(() => {
+    return getLeaveTrackerAccrualMonth(selectedYear, currentDate);
+  }, [selectedYear, currentDate]);
 
   const savedRowsMap = useMemo(() => {
     const rows =
@@ -233,15 +198,12 @@ export function LeaveTrackerTab({
   const computedRows = useMemo(() => {
     return sortedEmployees.map((employee): ComputedRow => {
       const employeeId = employee._id as string;
+      const hireDate = employee?.employment?.hireDate;
       const regularizationDate =
         employee?.employment?.regularizationDate ?? undefined;
-      // Anniversary: only from regularization when that setting is on (no hire fallback).
       const anniversaryStartDate = grantLeaveUponRegularization
         ? regularizationDate
-        : employee?.employment?.hireDate;
-      const prorationStartDate = grantLeaveUponRegularization
-        ? regularizationDate ?? employee?.employment?.hireDate
-        : employee?.employment?.hireDate;
+        : hireDate;
 
       let formulaAnnualSil: number;
       let typeBreakdown: TypeBreakdownEntry[] | undefined;
@@ -249,9 +211,15 @@ export function LeaveTrackerTab({
       if (showByTypeColumns) {
         typeBreakdown = trackerNonAnniversaryTypes.map((t) => {
           const base = Number(t.defaultCredits || 0);
-          const value = proratedLeave
-            ? getProratedAnnualSil(base, prorationStartDate, referenceDate)
-            : base;
+          const value = calculateAnnualLeaveBase({
+            annualLeave: base,
+            hireDate,
+            regularizationDate,
+            referenceDate,
+            proratedLeave,
+            grantLeaveUponRegularization,
+            paidLeaveRequiresRegularization,
+          });
           return {
             typeKey: t.type,
             name: t.name,
@@ -264,17 +232,25 @@ export function LeaveTrackerTab({
       } else if (leaveTrackerMode === "by_type") {
         formulaAnnualSil = 0;
       } else {
-        formulaAnnualSil = proratedLeave
-          ? getProratedAnnualSil(annualSil, prorationStartDate, referenceDate)
-          : annualSil;
+        formulaAnnualSil = calculateAnnualLeaveBase({
+          annualLeave: annualSil,
+          hireDate,
+          regularizationDate,
+          referenceDate,
+          proratedLeave,
+          grantLeaveUponRegularization,
+          paidLeaveRequiresRegularization,
+        });
       }
-      const anniversaryLeaveYears = getCompletedYearsSince(
-        anniversaryStartDate,
+      const anniversaryLeave = calculateAnniversaryLeave({
+        enabled: enableAnniversaryLeave,
+        maxDays: anniversaryLeaveMaxDays,
+        startDate:
+          paidLeaveRequiresRegularization && !regularizationDate
+            ? undefined
+            : anniversaryStartDate,
         referenceDate,
-      );
-      const anniversaryLeave = enableAnniversaryLeave
-        ? anniversaryLeaveYears
-        : 0;
+      });
       // For current year use cumulative used; for past years with no saved data use 0
       const defaultAvailed =
         selectedYear < currentYear
@@ -307,7 +283,9 @@ export function LeaveTrackerTab({
     annualSil,
     currentYear,
     enableAnniversaryLeave,
+    anniversaryLeaveMaxDays,
     grantLeaveUponRegularization,
+    paidLeaveRequiresRegularization,
     proratedLeave,
     referenceDate,
     savedRowsMap,
@@ -337,12 +315,16 @@ export function LeaveTrackerTab({
         row.annualSilValue,
       );
       const total = roundToTwo(annualSil + row.anniversaryLeave);
-      const monthlyAccrual = roundToTwo(total / 12);
+      const trackerAccrual = calculateLeaveTrackerAccrual({
+        total,
+        accrualMonth: currentMonthNumber,
+        accrualFrequency: leaveAccrualFrequency,
+      });
       const accrued =
         row.employee?.employment?.hireDate &&
         row.employee.employment.hireDate > referenceDate
           ? 0
-          : roundToTwo(monthlyAccrual * currentMonthNumber);
+          : trackerAccrual.accrued;
       const availed = parseNumberOrFallback(
         draftRow?.availed ?? formatNumber(row.availedValue),
         row.availedValue,
@@ -352,13 +334,19 @@ export function LeaveTrackerTab({
         ...row,
         annualSil,
         total,
-        monthlyAccrual,
+        monthlyAccrual: trackerAccrual.monthlyAccrual,
         accrued,
         availed,
         balance: roundToTwo(accrued - availed),
       };
     });
-  }, [computedRows, currentMonthNumber, draftRows, referenceDate]);
+  }, [
+    computedRows,
+    currentMonthNumber,
+    draftRows,
+    leaveAccrualFrequency,
+    referenceDate,
+  ]);
 
   const rowsToPersist = useMemo(() => {
     return trackerRows.reduce<TrackerOverride[]>((rows, row) => {
@@ -508,15 +496,15 @@ export function LeaveTrackerTab({
                 {grantLeaveUponRegularization
                   ? "regularization date only (0 until that date is set)"
                   : "hire date"}
-                . Proration still falls back to hire when regularization is empty.
+                , capped at {anniversaryLeaveMaxDays} days.
               </>
             ) : (
               " Anniversary leave is off for totals."
             )}
           </p>
           <p className="text-xs text-[rgb(133,133,133)]">
-            `Monthly Accrual = Total / 12`, `Accrued = Monthly Accrual x current
-            month number`, and `Balance = Accrued - Availed`.
+            Accrual schedule: {leaveAccrualFrequency.replace("_", "-")}.
+            Balance is Accrued minus Availed.
           </p>
           </div>
           <div className="flex items-center gap-2">

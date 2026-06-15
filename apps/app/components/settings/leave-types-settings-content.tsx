@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
 import { useSettingsModal } from "@/hooks/settings-modal-context";
@@ -19,6 +20,7 @@ type TrackerTypeRow = {
   typeKey: string;
   name: string;
   maxDays: string;
+  isPaid: boolean;
 };
 
 /** Matches `settings.leaveTypes` from Convex schema. */
@@ -86,13 +88,21 @@ export function LeaveTypesSettingsContent() {
   const updateLeaveTypes = useMutation(api.settings.updateLeaveTypes);
 
   const [proratedLeave, setProratedLeave] = useState(true);
+  const [leaveAccrualFrequency, setLeaveAccrualFrequency] = useState<
+    "monthly" | "semi_annual" | "annual"
+  >("monthly");
   const [leaveTrackerMode, setLeaveTrackerMode] = useState<"general" | "by_type">("general");
   const [enableAnniversaryLeave, setEnableAnniversaryLeave] = useState(true);
+  const [anniversaryLeaveMaxDays, setAnniversaryLeaveMaxDays] =
+    useState("15");
   const [annualSil, setAnnualSil] = useState("8");
   const [grantLeaveUponRegularization, setGrantLeaveUponRegularization] =
     useState(true);
+  const [paidLeaveRequiresRegularization, setPaidLeaveRequiresRegularization] =
+    useState(true);
   const [maxConvertibleLeaveDays, setMaxConvertibleLeaveDays] =
     useState("5");
+  const [leaveGuidelines, setLeaveGuidelines] = useState("");
   const [trackerTypeRows, setTrackerTypeRows] = useState<TrackerTypeRow[]>(
     [],
   );
@@ -100,15 +110,23 @@ export function LeaveTypesSettingsContent() {
 
   useEffect(() => {
     setProratedLeave(settings?.proratedLeave ?? true);
+    setLeaveAccrualFrequency(settings?.leaveAccrualFrequency ?? "monthly");
     setLeaveTrackerMode(settings?.leaveTrackerMode ?? "general");
     setEnableAnniversaryLeave(settings?.enableAnniversaryLeave ?? true);
+    setAnniversaryLeaveMaxDays(
+      String(settings?.anniversaryLeaveMaxDays ?? 15),
+    );
     setAnnualSil(String(settings?.annualSil ?? 8));
     setGrantLeaveUponRegularization(
       settings?.grantLeaveUponRegularization ?? true,
     );
+    setPaidLeaveRequiresRegularization(
+      settings?.paidLeaveRequiresRegularization ?? true,
+    );
     setMaxConvertibleLeaveDays(
       String(settings?.maxConvertibleLeaveDays ?? 5),
     );
+    setLeaveGuidelines(settings?.leaveGuidelines ?? "");
     const leaveTypesList = (settings?.leaveTypes ?? []) as SettingsLeaveType[];
     const work = leaveTypesList.filter((t) => !t.isAnniversary);
     if (work.length > 0) {
@@ -117,11 +135,12 @@ export function LeaveTypesSettingsContent() {
           typeKey: t.type,
           name: t.name,
           maxDays: String(t.defaultCredits ?? 0),
+          isPaid: t.isPaid ?? true,
         })),
       );
     } else if ((settings?.leaveTrackerMode ?? "general") === "by_type") {
       setTrackerTypeRows([
-        { typeKey: "", name: "", maxDays: "5" },
+        { typeKey: "", name: "", maxDays: "5", isPaid: true },
       ]);
     } else {
       setTrackerTypeRows([]);
@@ -136,7 +155,7 @@ export function LeaveTypesSettingsContent() {
       setTrackerTypeRows((rows) =>
         rows.length > 0
           ? rows
-          : [{ typeKey: "", name: "", maxDays: "5" }],
+          : [{ typeKey: "", name: "", maxDays: "5", isPaid: true }],
       );
     }
   };
@@ -153,6 +172,20 @@ export function LeaveTypesSettingsContent() {
         });
         return;
       }
+    }
+    const parsedAnniversaryMax = Number(anniversaryLeaveMaxDays);
+    if (
+      !Number.isFinite(parsedAnniversaryMax) ||
+      parsedAnniversaryMax < 0 ||
+      parsedAnniversaryMax !== Math.floor(parsedAnniversaryMax)
+    ) {
+      toast({
+        title: "Error",
+        description:
+          "Anniversary leave max must be a valid non-negative integer.",
+        variant: "destructive",
+      });
+      return;
     }
     const parsedMaxConvertible = Number(maxConvertibleLeaveDays);
     if (
@@ -181,7 +214,7 @@ export function LeaveTypesSettingsContent() {
               type: r.typeKey.trim() || slugifyLeaveType(r.name, idx),
               name: r.name.trim() || `Leave ${idx + 1}`,
               defaultCredits: Math.max(0, Number(r.maxDays) || 0),
-              isPaid: true,
+              isPaid: r.isPaid,
               requiresApproval: true,
             }))
             .filter((e) => e.type !== ANNIVERSARY_LEAVE_TYPE_KEY)
@@ -210,14 +243,18 @@ export function LeaveTypesSettingsContent() {
       await updateLeaveTypes({
         organizationId: currentOrganizationId,
         proratedLeave,
+        leaveAccrualFrequency,
         leaveTrackerMode,
         enableAnniversaryLeave,
+        anniversaryLeaveMaxDays: parsedAnniversaryMax,
         annualSil:
           leaveTrackerMode === "general"
             ? parsedAnnualSil
             : (settings?.annualSil ?? 8),
         grantLeaveUponRegularization,
+        paidLeaveRequiresRegularization,
         maxConvertibleLeaveDays: parsedMaxConvertible,
+        leaveGuidelines: leaveGuidelines.trim() || undefined,
         ...(leaveTypesForMutation !== undefined
           ? { leaveTypes: leaveTypesForMutation }
           : {}),
@@ -350,7 +387,76 @@ export function LeaveTypesSettingsContent() {
                 In By leave type mode, Anniversary leave is a fixed row in the
                 list.
               </p>
+              {enableAnniversaryLeave ? (
+                <div className="pt-2">
+                  <Label
+                    htmlFor="anniversaryLeaveMaxDays"
+                    className="text-xs text-[rgb(100,100,100)]"
+                  >
+                    Max anniversary leave days
+                  </Label>
+                  <Input
+                    id="anniversaryLeaveMaxDays"
+                    value={anniversaryLeaveMaxDays}
+                    onChange={(event) =>
+                      setAnniversaryLeaveMaxDays(event.target.value)
+                    }
+                    inputMode="numeric"
+                    className="mt-1 max-w-[160px] bg-white"
+                  />
+                </div>
+              ) : null}
             </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-[#DDDDDD] bg-[rgb(250,250,250)] p-4">
+          <div className="mb-3 text-sm font-medium text-[rgb(64,64,64)]">
+            Accrual schedule
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {[
+              {
+                value: "monthly" as const,
+                title: "Monthly",
+                body: "Accrues evenly each month.",
+              },
+              {
+                value: "semi_annual" as const,
+                title: "Semi-annual",
+                body: "Releases half in the first half and full in the second half.",
+              },
+              {
+                value: "annual" as const,
+                title: "Annual",
+                body: "Releases the annual entitlement at once.",
+              },
+            ].map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setLeaveAccrualFrequency(option.value)}
+                className={`flex min-h-[92px] items-start gap-3 rounded-lg border p-3 text-left ${
+                  leaveAccrualFrequency === option.value
+                    ? "border-brand-purple bg-brand-purple/5"
+                    : "border-[#DDDDDD] bg-white"
+                }`}
+              >
+                <div className="mt-0.5 h-4 w-4 shrink-0">
+                  {leaveAccrualFrequency === option.value ? (
+                    <Check className="h-4 w-4 text-brand-purple" />
+                  ) : null}
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-[rgb(64,64,64)]">
+                    {option.title}
+                  </p>
+                  <p className="text-xs text-[rgb(133,133,133)]">
+                    {option.body}
+                  </p>
+                </div>
+              </button>
+            ))}
           </div>
         </div>
 
@@ -462,6 +568,26 @@ export function LeaveTypesSettingsContent() {
                       className="bg-white"
                     />
                   </div>
+                  <div className="flex w-full items-center gap-2 pb-2 sm:w-24">
+                    <Checkbox
+                      id={`leave-type-paid-${index}`}
+                      checked={row.isPaid}
+                      onCheckedChange={(checked) => {
+                        const isPaid = checked as boolean;
+                        setTrackerTypeRows((rows) =>
+                          rows.map((r, i) =>
+                            i === index ? { ...r, isPaid } : r,
+                          ),
+                        );
+                      }}
+                    />
+                    <Label
+                      htmlFor={`leave-type-paid-${index}`}
+                      className="cursor-pointer text-xs text-[rgb(100,100,100)]"
+                    >
+                      Paid
+                    </Label>
+                  </div>
                   <Button
                     type="button"
                     variant="ghost"
@@ -487,7 +613,7 @@ export function LeaveTypesSettingsContent() {
                 onClick={() =>
                   setTrackerTypeRows((rows) => [
                     ...rows,
-                    { typeKey: "", name: "", maxDays: "5" },
+                    { typeKey: "", name: "", maxDays: "5", isPaid: true },
                   ])
                 }
               >
@@ -581,6 +707,47 @@ export function LeaveTypesSettingsContent() {
               </div>
             </button>
           </div>
+          <div className="mt-4 flex items-start gap-3 border-t border-[#DDDDDD] pt-4">
+            <Checkbox
+              id="paidLeaveRequiresRegularization"
+              checked={paidLeaveRequiresRegularization}
+              onCheckedChange={(checked) =>
+                setPaidLeaveRequiresRegularization(checked as boolean)
+              }
+            />
+            <div className="space-y-1">
+              <Label
+                htmlFor="paidLeaveRequiresRegularization"
+                className="cursor-pointer text-sm font-medium text-[rgb(64,64,64)]"
+              >
+                Paid leave requires regularization
+              </Label>
+              <p className="text-xs text-[rgb(133,133,133)]">
+                Employees without a regularization date do not receive paid
+                leave entitlement. They can still file without pay.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-3 rounded-lg border border-[#DDDDDD] bg-[rgb(250,250,250)] p-4">
+          <div className="space-y-1">
+            <Label
+              htmlFor="leaveGuidelines"
+              className="text-sm font-medium text-[rgb(64,64,64)]"
+            >
+              Leave memo / guidelines
+            </Label>
+            <p className="text-xs text-[rgb(133,133,133)]">
+              This appears in the employee leave tab for quick policy reference.
+            </p>
+          </div>
+          <Textarea
+            id="leaveGuidelines"
+            value={leaveGuidelines}
+            onChange={(event) => setLeaveGuidelines(event.target.value)}
+            className="min-h-[140px] bg-white"
+          />
         </div>
 
         <div className="space-y-3 rounded-lg border border-[#DDDDDD] bg-[rgb(250,250,250)] p-4">

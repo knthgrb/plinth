@@ -54,6 +54,10 @@ import {
   getWithholdingTaxCutoffForEmployee,
   mergeWithholdingTaxDeductionLine,
 } from "@/lib/ph-withholding-tax";
+import {
+  calculateAnnualLeaveBase,
+  calculateAnniversaryLeave,
+} from "@/utils/leave-policy-calculations";
 
 function buildDraftPayrollConfig(args: {
   employeeIds: any[];
@@ -4090,6 +4094,10 @@ function getBasicPayFromPayslip(p: any): number {
   );
 }
 
+function isActivePayrollEmployee(employee: any): boolean {
+  return employee?.employment?.status === "active";
+}
+
 /** Compute 13th month amounts for employees. 13th month = total basic pay for year / 12. */
 export const compute13thMonthAmounts = query({
   args: {
@@ -4133,11 +4141,17 @@ async function compute13thMonthAmountsInternal(
       q.eq("organizationId", args.organizationId),
     )
     .collect();
+  const activeEmployeeIds = new Set(
+    employees.filter(isActivePayrollEmployee).map((e: any) => e._id),
+  );
 
   const employeeIds =
-    args.employeeIds && args.employeeIds.length > 0
+    args.employeeIds !== undefined
       ? args.employeeIds
-      : employees.map((e: any) => e._id);
+      : Array.from(activeEmployeeIds);
+  const scopedEmployeeIds = employeeIds.filter((employeeId: any) =>
+    activeEmployeeIds.has(employeeId),
+  );
 
   const payrollRuns = await (ctx.db.query("payrollRuns") as any)
     .withIndex("by_organization", (q: any) =>
@@ -4187,7 +4201,7 @@ async function compute13thMonthAmountsInternal(
     )
   ).flat() as any[];
 
-  for (const employeeId of employeeIds) {
+  for (const employeeId of scopedEmployeeIds) {
     const employee = employees.find((e: any) => e._id === employeeId);
     if (!employee) continue;
 
@@ -4270,6 +4284,10 @@ export const create13thMonthRun = mutation({
       year: args.year,
       employeeIds: args.employeeIds,
     });
+    const employeeIds = amounts.map((amount: any) => amount.employeeId);
+    if (employeeIds.length === 0) {
+      throw new Error("Select at least one active employee.");
+    }
 
     const amountMap = new Map(
       amounts.map((a: any) => [a.employeeId, a.thirteenthMonthAmount]),
@@ -4291,12 +4309,12 @@ export const create13thMonthRun = mutation({
       status: "draft",
       processedBy: userRecord._id,
       deductionsEnabled: false,
-      draftConfig: encryptDraftConfigForDb({ employeeIds: args.employeeIds }),
+      draftConfig: encryptDraftConfigForDb({ employeeIds }),
       createdAt: now,
       updatedAt: now,
     });
 
-    for (const employeeId of args.employeeIds) {
+    for (const employeeId of employeeIds) {
       const amt = amountMap.get(employeeId) ?? 0;
       if (amt <= 0) continue;
       const employeeRow = await ctx.db.get(employeeId);
@@ -4333,7 +4351,7 @@ export const create13thMonthRun = mutation({
       organizationId: args.organizationId,
       cutoffStart: yearStart,
       cutoffEnd: yearEnd,
-      employeeIds: args.employeeIds,
+      employeeIds,
     });
     await ctx.db.patch(payrollRunId, {
       processedAt: now,
@@ -4366,12 +4384,14 @@ async function computeLeaveConversionAmountsInternal(
       q.eq("organizationId", args.organizationId),
     )
     .collect();
+  const activeEmployeeIds = new Set(
+    employees.filter(isActivePayrollEmployee).map((e: any) => e._id),
+  );
 
-  const employeeIds =
-    args.employeeIds ??
-    employees
-      .filter((e: any) => e.employment?.status === "active")
-      .map((e: any) => e._id);
+  const employeeIds = args.employeeIds ?? Array.from(activeEmployeeIds);
+  const scopedEmployeeIds = employeeIds.filter((employeeId: any) =>
+    activeEmployeeIds.has(employeeId),
+  );
 
   const byYear = settings?.leaveTrackerByYear ?? [];
   const yearData = byYear.find((e: any) => e.year === args.year);
@@ -4388,46 +4408,16 @@ async function computeLeaveConversionAmountsInternal(
     settings?.grantLeaveUponRegularization !== false;
   const maxConvertibleLeaveDays = settings?.maxConvertibleLeaveDays ?? 5;
   const enableAnniversaryLeave = settings?.enableAnniversaryLeave !== false;
+  const anniversaryLeaveMaxDays = settings?.anniversaryLeaveMaxDays ?? 15;
+  const paidLeaveRequiresRegularization =
+    settings?.paidLeaveRequiresRegularization !== false;
 
   const referenceDate = new Date(args.year, 11, 31).getTime();
-
-  function getCompletedYearsSince(startDate: number | undefined, ref: number) {
-    if (!startDate) return 0;
-    const start = new Date(startDate);
-    const end = new Date(ref);
-    let years = end.getFullYear() - start.getFullYear();
-    const monthDiff = end.getMonth() - start.getMonth();
-    const dayDiff = end.getDate() - start.getDate();
-    if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) years -= 1;
-    return Math.max(0, years);
-  }
-
-  function getAccrualStartMonth(startDate: number) {
-    const date = new Date(startDate);
-    const month = date.getMonth() + 1;
-    return date.getDate() <= 15 ? month : month + 1;
-  }
-
-  function getProratedAnnualSil(
-    base: number,
-    startDate: number | undefined,
-    ref: number,
-  ) {
-    if (!startDate) return base;
-    const start = new Date(startDate);
-    const refDate = new Date(ref);
-    if (start.getFullYear() < refDate.getFullYear()) return base;
-    if (start.getFullYear() > refDate.getFullYear()) return 0;
-    const accrualStartMonth = getAccrualStartMonth(startDate);
-    if (accrualStartMonth > 12) return 0;
-    const monthsRemaining = 13 - accrualStartMonth;
-    return Math.round((base / 12) * monthsRemaining * 100) / 100;
-  }
 
   const amounts = await compute13thMonthAmountsInternal(ctx, {
     organizationId: args.organizationId,
     year: args.year,
-    employeeIds,
+    employeeIds: scopedEmployeeIds,
   });
 
   const workingDaysPerYear = 261;
@@ -4439,7 +4429,7 @@ async function computeLeaveConversionAmountsInternal(
     leaveConversionAmount: number;
   }> = [];
 
-  for (const empId of employeeIds) {
+  for (const empId of scopedEmployeeIds) {
     const employee = employees.find((e: any) => e._id === empId);
     if (!employee) continue;
 
@@ -4451,19 +4441,28 @@ async function computeLeaveConversionAmountsInternal(
     const regularizationDate =
       employee?.employment?.regularizationDate ?? undefined;
     const hireDate = employee?.employment?.hireDate;
-    const prorationStart = grantLeaveUponRegularization
-      ? regularizationDate ?? hireDate
-      : hireDate;
     const anniversaryStart = grantLeaveUponRegularization
       ? regularizationDate
       : hireDate;
 
-    const formulaAnnualSil = proratedLeave
-      ? getProratedAnnualSil(annualSil, prorationStart, referenceDate)
-      : annualSil;
-    const anniversaryLeave = enableAnniversaryLeave
-      ? getCompletedYearsSince(anniversaryStart, referenceDate)
-      : 0;
+    const formulaAnnualSil = calculateAnnualLeaveBase({
+      annualLeave: annualSil,
+      hireDate,
+      regularizationDate,
+      referenceDate,
+      proratedLeave,
+      grantLeaveUponRegularization,
+      paidLeaveRequiresRegularization,
+    });
+    const anniversaryLeave = calculateAnniversaryLeave({
+      enabled: enableAnniversaryLeave,
+      maxDays: anniversaryLeaveMaxDays,
+      startDate:
+        paidLeaveRequiresRegularization && !regularizationDate
+          ? undefined
+          : anniversaryStart,
+      referenceDate,
+    });
 
     const savedRow = rowsMap.get(empId) as
       | { annualSilOverride?: number; availed?: number }
@@ -4507,15 +4506,16 @@ export const computeLeaveConversionAmounts = query({
         q.eq("organizationId", args.organizationId),
       )
       .collect();
-    const employeeIds =
-      args.employeeIds ??
-      employees
-        .filter((e: any) => e.employment?.status === "active")
-        .map((e: any) => e._id);
+    const activeEmployeeIds = new Set(
+      employees.filter(isActivePayrollEmployee).map((e: any) => e._id),
+    );
+    const employeeIds = args.employeeIds ?? Array.from(activeEmployeeIds);
     return computeLeaveConversionAmountsInternal(ctx, {
       organizationId: args.organizationId,
       year: args.year,
-      employeeIds,
+      employeeIds: employeeIds.filter((employeeId: any) =>
+        activeEmployeeIds.has(employeeId),
+      ),
     });
   },
 });
@@ -4535,6 +4535,10 @@ export const createLeaveConversionRun = mutation({
       year: args.year,
       employeeIds: args.employeeIds,
     });
+    const employeeIds = amounts.map((amount: any) => amount.employeeId);
+    if (employeeIds.length === 0) {
+      throw new Error("Select at least one active employee.");
+    }
 
     const amountMap = new Map(
       amounts.map((a: any) => [a.employeeId, a.leaveConversionAmount]),
@@ -4556,12 +4560,12 @@ export const createLeaveConversionRun = mutation({
       status: "draft",
       processedBy: userRecord._id,
       deductionsEnabled: false,
-      draftConfig: encryptDraftConfigForDb({ employeeIds: args.employeeIds }),
+      draftConfig: encryptDraftConfigForDb({ employeeIds }),
       createdAt: now,
       updatedAt: now,
     });
 
-    for (const employeeId of args.employeeIds) {
+    for (const employeeId of employeeIds) {
       const amt = amountMap.get(employeeId) ?? 0;
       if (amt <= 0) continue;
       const employeeRow = await ctx.db.get(employeeId);
@@ -4598,7 +4602,7 @@ export const createLeaveConversionRun = mutation({
       organizationId: args.organizationId,
       cutoffStart: yearStart,
       cutoffEnd: yearEnd,
-      employeeIds: args.employeeIds,
+      employeeIds,
     });
     await ctx.db.patch(payrollRunId, {
       processedAt: now,
@@ -4782,10 +4786,15 @@ async function computePayrollRunSummaryData(
             const leaveStart = new Date(leave.startDate);
             const leaveEnd = new Date(leave.endDate);
             if (dateObj >= leaveStart && dateObj <= leaveEnd) {
+              if (typeof leave.isPaid === "boolean") {
+                return leave.isPaid;
+              }
               // Check if this leave type is paid
               if (leave.leaveType === "custom" && leave.customLeaveType) {
                 const leaveType = leaveTypes.find(
-                  (lt: any) => lt.name === leave.customLeaveType,
+                  (lt: any) =>
+                    lt.type === leave.customLeaveType ||
+                    lt.name === leave.customLeaveType,
                 );
                 return leaveType?.isPaid ?? false;
               }

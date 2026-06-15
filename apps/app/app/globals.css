@@ -8,6 +8,7 @@
   --gray-medium: rgb(133, 133, 133);
   --gray-light: rgb(107, 107, 107);
   --blue-dark: rgb(23, 43, 77);
+  --font-open-sans: "Avenir Next", ui-sans-serif, system-ui, sans-serif;
 }
 
 @theme {

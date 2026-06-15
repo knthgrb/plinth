@@ -20,6 +20,7 @@ type Calculations = {
 
 interface EmployeeSelfCreditsContentProps {
   leaveTrackerMode: "general" | "by_type";
+  leaveGuidelines?: string | null;
   employeeLeaveCredits: {
     enableAnniversaryLeave?: boolean;
     calculations?: Calculations;
@@ -36,6 +37,7 @@ interface EmployeeSelfCreditsContentProps {
 
 export function EmployeeSelfCreditsContent({
   leaveTrackerMode,
+  leaveGuidelines,
   employeeLeaveCredits,
 }: EmployeeSelfCreditsContentProps) {
   if (!employeeLeaveCredits) {
@@ -48,6 +50,21 @@ export function EmployeeSelfCreditsContent({
 
   return (
     <div className="space-y-6">
+      {leaveGuidelines?.trim() ? (
+        <Card className="border-[rgb(230,230,230)] shadow-sm">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold text-[rgb(64,64,64)]">
+              Leave memo / guidelines
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="whitespace-pre-wrap text-sm leading-6 text-[rgb(90,90,90)]">
+              {leaveGuidelines.trim()}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <p className="text-sm text-[rgb(90,90,90)] max-w-2xl leading-relaxed">
         See what you are entitled to, what is already on leave requests, and how
         many days you can still file. Filing a request uses your vacation

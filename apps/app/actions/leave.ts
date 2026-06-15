@@ -20,6 +20,7 @@ export async function createLeaveRequest(data: {
   filledFormContent?: string;
   signatureDataUrl?: string;
   supportingDocuments?: string[];
+  isPaid?: boolean;
 }) {
   return LeaveService.createLeaveRequest(data);
 }
