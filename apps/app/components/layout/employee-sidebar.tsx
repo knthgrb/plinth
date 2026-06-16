@@ -33,7 +33,7 @@ type NavItem = {
   name: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
-  badge?: string; // e.g. "Beta", "Soon"
+  badge?: string;
 };
 
 type NavCategory = {
@@ -55,7 +55,7 @@ const navigationCategories: NavCategory[] = [
       { name: "Calendar", href: "/calendar", icon: Calendar },
       { name: "Attendance", href: "/attendance", icon: Clock },
       { name: "Payslips", href: "/payslips", icon: Receipt },
-      { name: "Leave", href: "/leave", icon: Calendar, badge: "Beta" },
+      { name: "Leave", href: "/leave", icon: Calendar },
       { name: "Documents", href: "/documents", icon: FileText },
     ],
   },

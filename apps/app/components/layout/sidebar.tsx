@@ -49,7 +49,7 @@ type NavigationItem = {
   icon: React.ComponentType<{ className?: string }>;
   roles?: string[];
   subItems?: NavigationItem[];
-  badge?: string; // e.g. "Beta"
+  badge?: string;
 };
 
 type NavigationCategory = {
@@ -115,7 +115,6 @@ const navigationCategories: NavigationCategory[] = [
         name: "Leave",
         href: "/leave",
         icon: Calendar,
-        badge: "Beta",
         roles: rolesForPath("/leave"),
       },
       {
@@ -139,14 +138,12 @@ const navigationCategories: NavigationCategory[] = [
         name: "Payroll",
         href: "/payroll",
         icon: Receipt,
-        badge: "Beta",
         roles: rolesForPath("/payroll"),
       },
       {
         name: "Accounting",
         href: "/accounting",
         icon: Calculator,
-        badge: "Beta",
         roles: rolesForPath("/accounting"),
       },
     ],

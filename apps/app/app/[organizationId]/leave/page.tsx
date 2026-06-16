@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useEffect, Suspense, useCallback, useMemo } from "react";
+import {
+  useState,
+  useEffect,
+  Suspense,
+  useCallback,
+  useMemo,
+  useTransition,
+} from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "convex/react";
@@ -9,7 +16,7 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 import { getEmployeeLeaveCredits } from "@/actions/leave";
 import { useOrganization } from "@/hooks/organization-context";
 import { useEmployeeView } from "@/hooks/employee-view-context";
@@ -87,20 +94,49 @@ interface Column {
 
 const EMPLOYEE_TABS = ["credits", "history"] as const;
 const ADMIN_TABS = ["tracker", "requests", "history", "resigned"] as const;
+const EMPLOYEE_TAB_LABELS: Record<(typeof EMPLOYEE_TABS)[number], string> = {
+  credits: "leave credits",
+  history: "leave history",
+};
+const ADMIN_TAB_LABELS: Record<(typeof ADMIN_TABS)[number], string> = {
+  tracker: "tracker",
+  requests: "leave requests",
+  history: "leave history",
+  resigned: "resigned conversion",
+};
+
+function LeaveTabLoadingIndicator({ label }: { label: string }) {
+  return (
+    <div
+      className="mb-4 flex items-center gap-2 rounded-lg border border-[rgb(230,230,230)] bg-[rgb(250,250,250)] px-4 py-3 text-sm text-[rgb(89,89,89)]"
+      aria-live="polite"
+    >
+      <Loader2 className="h-4 w-4 animate-spin text-brand-purple" />
+      <span>Loading {label}...</span>
+    </div>
+  );
+}
 
 export default function LeavePage() {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { currentOrganizationId, currentOrganization } = useOrganization();
+  const [isRoutingTab, startTabTransition] = useTransition();
+  const [isTabChanging, setIsTabChanging] = useState(false);
 
   const setTabParam = useCallback(
     (tab: string) => {
       const params = new URLSearchParams(searchParams?.toString() ?? "");
       params.set("tab", tab);
-      router.replace(`${pathname}?${params.toString()}`);
+      if (searchParams?.get("tab") !== tab) {
+        setIsTabChanging(true);
+      }
+      startTabTransition(() => {
+        router.replace(`${pathname}?${params.toString()}`);
+      });
     },
-    [pathname, router, searchParams]
+    [pathname, router, searchParams, startTabTransition]
   );
   const user = useQuery((api as any).organizations.getCurrentUser, {
     organizationId: currentOrganizationId || undefined,
@@ -130,6 +166,28 @@ export default function LeavePage() {
     currentOrganization?.employeeId ??
     "";
   const canRequestLeave = isEmployee || (isAdminOrHr && userEmployeeId);
+  const tabParam = searchParams?.get("tab");
+  const activeEmployeeTab = EMPLOYEE_TABS.includes(
+    tabParam as (typeof EMPLOYEE_TABS)[number],
+  )
+    ? (tabParam as (typeof EMPLOYEE_TABS)[number])
+    : "credits";
+  const activeAdminTab = ADMIN_TABS.includes(
+    tabParam as (typeof ADMIN_TABS)[number],
+  )
+    ? (tabParam as (typeof ADMIN_TABS)[number])
+    : "tracker";
+  const isTabLoading = isRoutingTab || isTabChanging;
+
+  useEffect(() => {
+    if (!isTabChanging) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setIsTabChanging(false);
+    }, 350);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isTabChanging, tabParam]);
 
   // Only show records for active employees (requests, history, credits table)
   const activeEmployees = useMemo(() => {
@@ -448,13 +506,7 @@ export default function LeavePage() {
 
           {/* Underline tabs + separator */}
           <Tabs
-            value={
-              EMPLOYEE_TABS.includes(
-                searchParams?.get("tab") as (typeof EMPLOYEE_TABS)[number]
-              )
-                ? (searchParams?.get("tab") ?? "credits")
-                : "credits"
-            }
+            value={activeEmployeeTab}
             onValueChange={setTabParam}
             className="space-y-0"
           >
@@ -475,6 +527,11 @@ export default function LeavePage() {
               </TabsList>
             </div>
             <div className="mt-6" />
+            {isTabLoading ? (
+              <LeaveTabLoadingIndicator
+                label={EMPLOYEE_TAB_LABELS[activeEmployeeTab]}
+              />
+            ) : null}
 
             <TabsContent value="credits" className="mt-0">
               <EmployeeSelfCreditsContent
@@ -554,13 +611,7 @@ export default function LeavePage() {
 
         {/* Underline tabs + separator */}
         <Tabs
-          value={
-            ADMIN_TABS.includes(
-              searchParams?.get("tab") as (typeof ADMIN_TABS)[number]
-            )
-              ? (searchParams?.get("tab") ?? "tracker")
-              : "tracker"
-          }
+          value={activeAdminTab}
           onValueChange={setTabParam}
           className="space-y-0"
         >
@@ -593,6 +644,9 @@ export default function LeavePage() {
             </TabsList>
           </div>
           <div className="mt-6" />
+          {isTabLoading ? (
+            <LeaveTabLoadingIndicator label={ADMIN_TAB_LABELS[activeAdminTab]} />
+          ) : null}
 
           <TabsContent value="requests" className="mt-0">
             <Suspense

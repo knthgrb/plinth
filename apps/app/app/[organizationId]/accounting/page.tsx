@@ -97,6 +97,55 @@ const ACCEPTED_ATTACHMENT_EXTENSIONS = [
   ".xlsx",
   ".csv",
 ];
+const PAYROLL_GENERATED_COST_ITEMS = [
+  { type: "payroll", prefix: "Payroll - " },
+  { type: "sss", prefix: "SSS - " },
+  { type: "pagibig", prefix: "Pag-IBIG - " },
+  { type: "philhealth", prefix: "PhilHealth - " },
+  { type: "tax", prefix: "Tax Employee Deductions - " },
+] as const;
+type PayrollGeneratedCostType =
+  (typeof PAYROLL_GENERATED_COST_ITEMS)[number]["type"];
+
+function getPayrollGeneratedCostInfo(name?: string | null) {
+  if (!name) return null;
+  return (
+    PAYROLL_GENERATED_COST_ITEMS.find((item) => name.startsWith(item.prefix)) ??
+    null
+  );
+}
+
+function getPayrollGeneratedPeriodLabel(name?: string | null) {
+  const info = getPayrollGeneratedCostInfo(name);
+  if (!info || !name) return null;
+  return name.slice(info.prefix.length);
+}
+
+function formatCurrency(value: number | null | undefined) {
+  return `₱${Number(value ?? 0).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function formatPayrollRunDatePeriod(run: any) {
+  if (!run?.cutoffStart || !run?.cutoffEnd) return "Payroll run";
+
+  const startDate = new Date(run.cutoffStart);
+  const endDate = new Date(run.cutoffEnd);
+  return `${startDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  })} - ${endDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })}`;
+}
+
+function formatPayrollRunPeriod(run: any) {
+  return run?.period ? String(run.period) : formatPayrollRunDatePeriod(run);
+}
 
 export default function AccountingPage() {
   const router = useRouter();
@@ -110,6 +159,10 @@ export default function AccountingPage() {
   );
   const costItemsFromQuery = useQuery(
     api.accounting.getCostItems,
+    orgId ? { organizationId: orgId } : "skip",
+  );
+  const payrollRuns = useQuery(
+    api.payroll.getPayrollRuns,
     orgId ? { organizationId: orgId } : "skip",
   );
 
@@ -166,7 +219,9 @@ export default function AccountingPage() {
   const categories = REQUIRED_CATEGORIES;
   const costItems = costItemsFromQuery ?? [];
   const loading = costItemsFromQuery === undefined;
+  const payrollRunsLoading = payrollRuns === undefined;
   const dataLoading = user === undefined || loading;
+  const reconciliationLoading = dataLoading || payrollRunsLoading;
 
   // Redirect if no access
   useEffect(() => {
@@ -524,14 +579,122 @@ export default function AccountingPage() {
     setDetailAttachmentUrls([]);
   };
 
+  const payrollReconciliationRows = useMemo(() => {
+    type Row = {
+      key: string;
+      period: string;
+      runStatus?: string;
+      runType?: string;
+      missing: boolean;
+      amounts: Record<PayrollGeneratedCostType, number>;
+      paid: Record<PayrollGeneratedCostType, number>;
+      updatedAt: number;
+    };
+
+    const emptyAmounts = (): Record<PayrollGeneratedCostType, number> => ({
+      payroll: 0,
+      sss: 0,
+      pagibig: 0,
+      philhealth: 0,
+      tax: 0,
+    });
+    const groups = new Map<string, Row>();
+    const periodToKey = new Map<string, string>();
+
+    for (const item of costItems) {
+      const info = getPayrollGeneratedCostInfo(item.name);
+      if (!info) continue;
+
+      const period = getPayrollGeneratedPeriodLabel(item.name) ?? item.name;
+      const key = item.payrollRunId
+        ? `run:${String(item.payrollRunId)}`
+        : `period:${period}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          period,
+          missing: false,
+          amounts: emptyAmounts(),
+          paid: emptyAmounts(),
+          updatedAt: item.updatedAt ?? item.createdAt ?? 0,
+        });
+        periodToKey.set(period, key);
+      }
+
+      const row = groups.get(key)!;
+      row.amounts[info.type] += item.amount ?? 0;
+      row.paid[info.type] += item.amountPaid ?? 0;
+      row.updatedAt = Math.max(row.updatedAt, item.updatedAt ?? item.createdAt ?? 0);
+    }
+
+    for (const run of payrollRuns ?? []) {
+      if (!["finalized", "paid"].includes(run.status)) continue;
+
+      const period = formatPayrollRunPeriod(run);
+      const runKey = `run:${String(run._id)}`;
+      const periodCandidates = Array.from(
+        new Set([period, formatPayrollRunDatePeriod(run), run.period].filter(Boolean)),
+      );
+      const periodKey = periodCandidates
+        .map((candidate) => periodToKey.get(String(candidate)))
+        .find(Boolean);
+      const existing =
+        groups.get(runKey) ?? (periodKey ? groups.get(periodKey) : undefined);
+
+      if (existing) {
+        existing.runStatus = run.status;
+        existing.runType = run.runType ?? "regular";
+        continue;
+      }
+
+      groups.set(runKey, {
+        key: runKey,
+        period,
+        runStatus: run.status,
+        runType: run.runType ?? "regular",
+        missing: true,
+        amounts: emptyAmounts(),
+        paid: emptyAmounts(),
+        updatedAt: run.updatedAt ?? run.createdAt ?? 0,
+      });
+    }
+
+    return Array.from(groups.values())
+      .map((row) => {
+        const total =
+          row.amounts.payroll +
+          row.amounts.sss +
+          row.amounts.pagibig +
+          row.amounts.philhealth +
+          row.amounts.tax;
+        const paid =
+          row.paid.payroll +
+          row.paid.sss +
+          row.paid.pagibig +
+          row.paid.philhealth +
+          row.paid.tax;
+        const remaining = Math.max(0, total - paid);
+        const status = row.missing
+          ? "missing"
+          : remaining <= 0
+            ? "paid"
+            : paid > 0
+              ? "partial"
+              : "pending";
+
+        return {
+          ...row,
+          total,
+          paidTotal: paid,
+          remaining,
+          status,
+        };
+      })
+      .sort((left, right) => right.updatedAt - left.updatedAt);
+  }, [costItems, payrollRuns]);
+
   const isPayrollGeneratedCostItem = (item: any) =>
-    [
-      "Payroll - ",
-      "SSS - ",
-      "Pag-IBIG - ",
-      "PhilHealth - ",
-      "Tax Employee Deductions - ",
-    ].some((prefix) => item.name?.startsWith(prefix));
+    Boolean(getPayrollGeneratedCostInfo(item.name));
 
   const isEditingLockedCostItem =
     editingItem && isPayrollGeneratedCostItem(editingItem);
@@ -634,6 +797,117 @@ export default function AccountingPage() {
                   );
                 })}
           </div>
+
+          {(reconciliationLoading || payrollReconciliationRows.length > 0) && (
+            <div className="mt-6 rounded-lg border border-[rgb(230,230,230)] bg-white">
+              <div className="flex flex-col gap-1 border-b border-[rgb(230,230,230)] px-4 py-3 sm:px-6">
+                <h2 className="text-base font-semibold text-[rgb(64,64,64)]">
+                  Payroll reconciliation
+                </h2>
+                <p className="text-sm text-[rgb(133,133,133)]">
+                  Generated accounting records grouped by payroll period.
+                </p>
+              </div>
+              {reconciliationLoading ? (
+                <div className="overflow-x-auto p-4 sm:p-6">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {Array.from({ length: 10 }).map((_, index) => (
+                          <TableHead key={index}>
+                            <div className="h-4 w-20 animate-pulse rounded bg-[rgb(245,245,245)]" />
+                          </TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {Array.from({ length: 3 }).map((_, rowIndex) => (
+                        <TableRow key={rowIndex}>
+                          {Array.from({ length: 10 }).map((__, cellIndex) => (
+                            <TableCell key={cellIndex}>
+                              <div className="h-4 w-full max-w-[96px] animate-pulse rounded bg-[rgb(245,245,245)]" />
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : (
+                <div className="overflow-x-auto p-4 sm:p-6">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Payroll Period</TableHead>
+                        <TableHead className="text-right">Net Pay</TableHead>
+                        <TableHead className="text-right">SSS</TableHead>
+                        <TableHead className="text-right">Pag-IBIG</TableHead>
+                        <TableHead className="text-right">PhilHealth</TableHead>
+                        <TableHead className="text-right">Tax</TableHead>
+                        <TableHead className="text-right">Total</TableHead>
+                        <TableHead className="text-right">Paid</TableHead>
+                        <TableHead className="text-right">Remaining</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {payrollReconciliationRows.map((row) => (
+                        <TableRow key={row.key}>
+                          <TableCell className="font-medium">
+                            <div>{row.period}</div>
+                            {row.runType && row.runType !== "regular" ? (
+                              <div className="text-xs text-[rgb(133,133,133)]">
+                                {String(row.runType).replace("_", " ")}
+                              </div>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatCurrency(row.amounts.payroll)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatCurrency(row.amounts.sss)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatCurrency(row.amounts.pagibig)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatCurrency(row.amounts.philhealth)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatCurrency(row.amounts.tax)}
+                          </TableCell>
+                          <TableCell className="text-right font-semibold">
+                            {formatCurrency(row.total)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatCurrency(row.paidTotal)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatCurrency(row.remaining)}
+                          </TableCell>
+                          <TableCell>
+                            {row.status === "missing" ? (
+                              <Badge className="border border-red-200 bg-red-50 text-red-700 hover:bg-red-50">
+                                Missing records
+                              </Badge>
+                            ) : (
+                              <Badge
+                                className={getStatusBadgeClass(row.status)}
+                                style={getStatusBadgeStyle(row.status)}
+                              >
+                                {row.status.charAt(0).toUpperCase() +
+                                  row.status.slice(1)}
+                              </Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Expense Categories */}
           <div id="expenses" className="mt-6 space-y-6">

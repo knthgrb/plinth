@@ -10,6 +10,11 @@ import {
   calculateAnnualLeaveBase,
   calculateAnniversaryLeave as calculatePolicyAnniversaryLeave,
 } from "@/utils/leave-policy-calculations";
+import {
+  ACTIVE_LEAVE_REQUEST_STATUSES,
+  leaveDateRangesOverlap,
+  type ActiveLeaveRequestStatus,
+} from "@/utils/leave-request-conflicts";
 import { formatManilaNumericDate } from "@/lib/manila-date";
 import {
   getUserIdForEmployeeInOrg,
@@ -110,6 +115,57 @@ function calculateWorkingDays(startDate: number, endDate: number): number {
   }
 
   return days;
+}
+
+async function findOverlappingLeaveRequest(
+  ctx: any,
+  {
+    organizationId,
+    employeeId,
+    startDate,
+    endDate,
+    statuses,
+    excludeLeaveRequestId,
+  }: {
+    organizationId: any;
+    employeeId: any;
+    startDate: number;
+    endDate: number;
+    statuses: readonly ActiveLeaveRequestStatus[];
+    excludeLeaveRequestId?: any;
+  },
+) {
+  for (const status of statuses) {
+    const possibleConflicts = await (ctx.db.query("leaveRequests") as any)
+      .withIndex("by_employee_status_endDate", (q: any) =>
+        q
+          .eq("employeeId", employeeId)
+          .eq("status", status)
+          .gte("endDate", startDate),
+      )
+      .collect();
+    const conflict = possibleConflicts.find((request: any) => {
+      if (request.organizationId !== organizationId) return false;
+      if (excludeLeaveRequestId && request._id === excludeLeaveRequestId) {
+        return false;
+      }
+      return leaveDateRangesOverlap(
+        startDate,
+        endDate,
+        request.startDate,
+        request.endDate,
+      );
+    });
+
+    if (conflict) return conflict;
+  }
+
+  return null;
+}
+
+function formatLeaveConflictMessage(conflict: any) {
+  const period = `${formatManilaNumericDate(conflict.startDate)} - ${formatManilaNumericDate(conflict.endDate)}`;
+  return `This employee already has a ${conflict.status} leave request for ${period}.`;
 }
 
 // Resolve credit type key for non-vacation/sick: customLeaveType when leaveType is "custom", else leaveType (e.g. "emergency")
@@ -510,6 +566,9 @@ export const createLeaveRequest = mutation({
 
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
+    if (employee.organizationId !== args.organizationId) {
+      throw new Error("Employee is not in this organization");
+    }
 
     if (args.endDate < args.startDate) {
       throw new Error("End date must be on or after start date");
@@ -519,6 +578,17 @@ export const createLeaveRequest = mutation({
     const numberOfDays = calculateWorkingDays(args.startDate, args.endDate);
     if (numberOfDays <= 0) {
       throw new Error("Leave period must include at least one working day");
+    }
+
+    const overlappingRequest = await findOverlappingLeaveRequest(ctx, {
+      organizationId: args.organizationId,
+      employeeId: args.employeeId,
+      startDate: args.startDate,
+      endDate: args.endDate,
+      statuses: ACTIVE_LEAVE_REQUEST_STATUSES,
+    });
+    if (overlappingRequest) {
+      throw new Error(formatLeaveConflictMessage(overlappingRequest));
     }
 
     const settings = await (ctx.db.query("settings") as any)
@@ -664,6 +734,17 @@ export const createManualLeaveRequest = mutation({
       throw new Error("Leave days must be greater than zero");
     }
 
+    const overlappingRequest = await findOverlappingLeaveRequest(ctx, {
+      organizationId: args.organizationId,
+      employeeId: args.employeeId,
+      startDate: args.startDate,
+      endDate: args.endDate,
+      statuses: ACTIVE_LEAVE_REQUEST_STATUSES,
+    });
+    if (overlappingRequest) {
+      throw new Error(formatLeaveConflictMessage(overlappingRequest));
+    }
+
     const settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId),
@@ -771,6 +852,18 @@ export const approveLeaveRequest = mutation({
     // Check and update leave credits
     const employee = await ctx.db.get(request.employeeId);
     if (!employee) throw new Error("Employee not found");
+
+    const overlappingApprovedRequest = await findOverlappingLeaveRequest(ctx, {
+      organizationId: request.organizationId,
+      employeeId: request.employeeId,
+      startDate: request.startDate,
+      endDate: request.endDate,
+      statuses: ["approved"] as const,
+      excludeLeaveRequestId: args.leaveRequestId,
+    });
+    if (overlappingApprovedRequest) {
+      throw new Error(formatLeaveConflictMessage(overlappingApprovedRequest));
+    }
 
     const settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>

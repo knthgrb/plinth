@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   calculateLeaveTrackerAccrual,
+  getLeaveTrackerAccrualColumnLabel,
   getLeaveTrackerAccrualMonth,
 } from "@/utils/leave-tracker-calculations";
 
@@ -28,6 +29,7 @@ describe("leave tracker calculations", () => {
     });
 
     expect(firstHalf.accrued).toBe(4);
+    expect(firstHalf.periodAccrual).toBe(4);
     expect(secondHalf.accrued).toBe(8);
   });
 
@@ -39,6 +41,17 @@ describe("leave tracker calculations", () => {
     });
 
     expect(result.accrued).toBe(8);
+    expect(result.periodAccrual).toBe(8);
+  });
+
+  it("labels the visible accrual amount by the configured schedule", () => {
+    expect(getLeaveTrackerAccrualColumnLabel("monthly")).toBe(
+      "Monthly Accrual",
+    );
+    expect(getLeaveTrackerAccrualColumnLabel("semi_annual")).toBe(
+      "Semi-annual Grant",
+    );
+    expect(getLeaveTrackerAccrualColumnLabel("annual")).toBe("Annual Grant");
   });
 
   it("uses the actual current month for the selected current year", () => {

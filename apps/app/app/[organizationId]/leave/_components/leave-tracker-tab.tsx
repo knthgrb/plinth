@@ -25,6 +25,7 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import {
   calculateLeaveTrackerAccrual,
+  getLeaveTrackerAccrualColumnLabel,
   getLeaveTrackerAccrualMonth,
   getLeaveTrackerReferenceDate,
 } from "@/utils/leave-tracker-calculations";
@@ -82,6 +83,7 @@ type ComputedRow = {
   anniversaryLeave: number;
   total: number;
   monthlyAccrual: number;
+  periodAccrual: number;
   accrued: number;
   availedValue: number;
   defaultAvailed: number;
@@ -273,6 +275,7 @@ export function LeaveTrackerTab({
         anniversaryLeave,
         total: roundToTwo(annualSilValue + anniversaryLeave),
         monthlyAccrual: 0,
+        periodAccrual: 0,
         accrued: 0,
         availedValue,
         defaultAvailed,
@@ -335,6 +338,7 @@ export function LeaveTrackerTab({
         annualSil,
         total,
         monthlyAccrual: trackerAccrual.monthlyAccrual,
+        periodAccrual: trackerAccrual.periodAccrual,
         accrued,
         availed,
         balance: roundToTwo(accrued - availed),
@@ -449,6 +453,9 @@ export function LeaveTrackerTab({
     }
     return years;
   }, [currentYear]);
+  const accrualColumnLabel = getLeaveTrackerAccrualColumnLabel(
+    leaveAccrualFrequency,
+  );
 
   if (employeesLoading) {
     return (
@@ -561,7 +568,7 @@ export function LeaveTrackerTab({
                 <TableHead>Anniv Leave</TableHead>
               ) : null}
               <TableHead>Total</TableHead>
-              <TableHead>Monthly Accrual</TableHead>
+              <TableHead>{accrualColumnLabel}</TableHead>
               <TableHead>Accrued</TableHead>
               <TableHead className="min-w-[120px]">Availed</TableHead>
               <TableHead>Balance</TableHead>
@@ -605,7 +612,7 @@ export function LeaveTrackerTab({
                   {formatNumber(row.total)}
                 </TableCell>
                 <TableCell className="bg-[rgb(248,250,252)] text-right font-medium">
-                  {formatNumber(row.monthlyAccrual)}
+                  {formatNumber(row.periodAccrual)}
                 </TableCell>
                 <TableCell className="bg-[rgb(240,253,244)] text-right font-medium">
                   {formatNumber(row.accrued)}

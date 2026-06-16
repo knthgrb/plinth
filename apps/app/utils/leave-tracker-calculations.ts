@@ -48,20 +48,32 @@ export function calculateLeaveTrackerAccrual({
   accrualFrequency = "monthly",
 }: LeaveTrackerAccrualInput) {
   const cappedTotal = roundToTwo(Math.max(0, total));
-  const monthlyAccrualRaw = total / 12;
+  const monthlyAccrualRaw = cappedTotal / 12;
+  let periodAccrualRaw = monthlyAccrualRaw;
   const month = clampMonth(accrualMonth);
   let accruedRaw = monthlyAccrualRaw * month;
 
   if (accrualFrequency === "semi_annual") {
+    periodAccrualRaw = cappedTotal / 2;
     accruedRaw =
       month === 0 ? 0 : month <= 6 ? cappedTotal / 2 : cappedTotal;
   }
   if (accrualFrequency === "annual") {
+    periodAccrualRaw = cappedTotal;
     accruedRaw = month === 0 ? 0 : cappedTotal;
   }
 
   return {
     monthlyAccrual: roundToTwo(monthlyAccrualRaw),
+    periodAccrual: roundToTwo(periodAccrualRaw),
     accrued: Math.min(cappedTotal, roundToTwo(accruedRaw)),
   };
+}
+
+export function getLeaveTrackerAccrualColumnLabel(
+  accrualFrequency: LeaveAccrualFrequency = "monthly",
+) {
+  if (accrualFrequency === "semi_annual") return "Semi-annual Grant";
+  if (accrualFrequency === "annual") return "Annual Grant";
+  return "Monthly Accrual";
 }
