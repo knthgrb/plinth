@@ -234,8 +234,8 @@ describe("payroll calculations", () => {
   });
 
   it("categorizes late as Regular Holiday Late vs Late (regular day) with rate multiplier (image 2)", () => {
-    const holidayDate = localDate(2026, 1, 20); // Monday - regular holiday
-    const regularDate = localDate(2026, 1, 21); // Tuesday - regular day
+    const holidayDate = localDate(2026, 1, 20); // Friday - regular holiday
+    const regularDate = localDate(2026, 1, 23); // Monday - regular day
     const result = calculate({
       employee: createEmployee({
         compensation: {
@@ -368,7 +368,7 @@ describe("payroll calculations", () => {
 
   it("deducts special holiday late using 130% rate multiplier (image 3)", () => {
     const holidayDate = localDate(2026, 1, 20); // Special holiday
-    const regularDate = localDate(2026, 1, 21); // Regular day
+    const regularDate = localDate(2026, 1, 23); // Regular day
     const result = calculate({
       employee: createEmployee({
         compensation: {

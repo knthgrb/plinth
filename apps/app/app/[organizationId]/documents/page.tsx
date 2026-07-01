@@ -55,6 +55,12 @@ import { createDocument } from "@/actions/documents";
 import { useToast } from "@/components/ui/use-toast";
 import { isFileOnlyDocument, openInNewTab } from "@/lib/document-utils";
 
+type DocumentVisibilityScope =
+  | "admins_only"
+  | "all_employees"
+  | "payroll_visible"
+  | "alumni_visible";
+
 export default function DocumentsPage() {
   const router = useRouter();
   const { effectiveOrganizationId } = useOrganization();
@@ -135,6 +141,7 @@ export default function DocumentsPage() {
         | "other";
       storageId?: string;
       uploading: boolean;
+      visibilityScope: DocumentVisibilityScope;
     }>
   >([]);
   const directUploadInputRef = useRef<HTMLInputElement>(null);
@@ -289,6 +296,7 @@ export default function DocumentsPage() {
         category: "",
         type: detectedType,
         uploading: false,
+        visibilityScope: "admins_only" as DocumentVisibilityScope,
       };
     });
 
@@ -306,7 +314,7 @@ export default function DocumentsPage() {
 
     // Upload each file and create a document entry
     const uploadPromises = directUploadFiles.map(async (fileItem) => {
-      const { file, id, title, category, type } = fileItem;
+      const { file, id, title, category, type, visibilityScope } = fileItem;
       try {
         // Upload file
         const uploadUrl = await generateUploadUrl();
@@ -338,6 +346,7 @@ export default function DocumentsPage() {
           type: type,
           category: category || undefined,
           attachments: [storageId],
+          visibilityScope,
         });
 
         // Update state to mark as uploaded
@@ -1054,6 +1063,47 @@ export default function DocumentsPage() {
                                     placeholder="e.g., HR Policies, Contracts"
                                   />
                                 </div>
+                              </div>
+
+                              <div className="space-y-2">
+                                <Label htmlFor={`visibility-${item.id}`}>
+                                  Visibility
+                                </Label>
+                                <Select
+                                  value={item.visibilityScope}
+                                  onValueChange={(
+                                    value: DocumentVisibilityScope,
+                                  ) =>
+                                    setDirectUploadFiles((prev) =>
+                                      prev.map((file) =>
+                                        file.id === item.id
+                                          ? {
+                                              ...file,
+                                              visibilityScope: value,
+                                            }
+                                          : file,
+                                      ),
+                                    )
+                                  }
+                                >
+                                  <SelectTrigger id={`visibility-${item.id}`}>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="admins_only">
+                                      Admins only
+                                    </SelectItem>
+                                    <SelectItem value="all_employees">
+                                      All employees
+                                    </SelectItem>
+                                    <SelectItem value="payroll_visible">
+                                      Payroll-visible
+                                    </SelectItem>
+                                    <SelectItem value="alumni_visible">
+                                      Alumni-visible
+                                    </SelectItem>
+                                  </SelectContent>
+                                </Select>
                               </div>
                             </>
                           )}

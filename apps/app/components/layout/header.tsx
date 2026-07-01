@@ -82,11 +82,6 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
     user?.email?.[0].toUpperCase() ||
     "U";
 
-  // Helper function to get display role name
-  const getDisplayRole = (role: string | undefined) => {
-    if (role === "admin" || role === "owner") return "Owner";
-    return role ? role.charAt(0).toUpperCase() + role.slice(1) : "User";
-  };
   const isUserLoading = user === undefined || !effectiveOrganizationId;
 
   return (

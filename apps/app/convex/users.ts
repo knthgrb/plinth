@@ -13,6 +13,7 @@ export const syncUser = mutation({
         v.literal("admin"),
         v.literal("owner"),
         v.literal("hr"),
+        v.literal("manager"),
         v.literal("employee"),
         v.literal("accounting")
       )

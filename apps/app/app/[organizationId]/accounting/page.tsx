@@ -55,6 +55,7 @@ import {
   createCostItem,
   updateCostItem,
   deleteCostItem,
+  repairPayrollAccounting,
 } from "@/actions/accounting";
 import { generateUploadUrl, getFileUrl } from "@/actions/files";
 import { useToast } from "@/components/ui/use-toast";
@@ -165,6 +166,10 @@ export default function AccountingPage() {
     api.payroll.getPayrollRuns,
     orgId ? { organizationId: orgId } : "skip",
   );
+  const payrollAccountingDrift = useQuery(
+    api.accounting.findPayrollAccountingDrift,
+    orgId ? { organizationId: orgId } : "skip",
+  );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -192,6 +197,8 @@ export default function AccountingPage() {
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [categoryPage, setCategoryPage] = useState<Record<string, number>>({});
   const [dateRange, setDateRange] = useState<DateRangeOption>("7");
+  const [repairingPayrollAccounting, setRepairingPayrollAccounting] =
+    useState(false);
 
   const [itemFormData, setItemFormData] = useState({
     name: "",
@@ -538,6 +545,29 @@ export default function AccountingPage() {
     setDeleteItemId(null);
   };
 
+  const handleRepairPayrollAccounting = async () => {
+    if (!currentOrganizationId) return;
+
+    try {
+      setRepairingPayrollAccounting(true);
+      const result = await repairPayrollAccounting({
+        organizationId: currentOrganizationId,
+      });
+      toast({
+        title: "Payroll accounting repaired",
+        description: `${result.repairedRuns} run(s), ${result.created} created, ${result.updated} updated, ${result.deleted} removed.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to repair payroll accounting",
+        variant: "destructive",
+      });
+    } finally {
+      setRepairingPayrollAccounting(false);
+    }
+  };
+
   // Using centralized color system from utils/colors
 
   const formatDate = (timestamp?: number) => {
@@ -733,6 +763,25 @@ export default function AccountingPage() {
             compareLabel="Previous period"
             actions={
               <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleRepairPayrollAccounting}
+                  disabled={
+                    repairingPayrollAccounting ||
+                    !currentOrganizationId ||
+                    reconciliationLoading
+                  }
+                  className="h-9"
+                >
+                  <FileText className="mr-2 h-4 w-4" />
+                  Repair payroll accounting
+                  {payrollAccountingDrift?.driftCount ? (
+                    <span className="ml-2 rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
+                      {payrollAccountingDrift.driftCount}
+                    </span>
+                  ) : null}
+                </Button>
                 <span className="text-sm text-[rgb(133,133,133)]">Rows per page</span>
                 <Select
                   value={String(pageSize)}

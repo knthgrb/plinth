@@ -228,33 +228,8 @@ export default function SignupPage() {
     setIsProcessing(true);
 
     try {
-      // Get user email from session if not already set
-      let emailToUse = formData.email;
-      if (!emailToUse) {
-        try {
-          const session = await authClient.getSession();
-          emailToUse =
-            (session?.data as any)?.user?.email ||
-            (session?.data as any)?.session?.user?.email ||
-            "";
-        } catch (err) {
-          // If no session, user needs to sign up first
-          toast({
-            title: "Error",
-            description: "Please sign up first",
-            variant: "destructive",
-          });
-          setStep(1);
-          setIsProcessing(false);
-          setLoading(false);
-          return;
-        }
-      }
-
-      // Create organization (this will also create/update the user record)
       await createOrganization({
         name: formData.organizationName,
-        email: emailToUse,
       });
 
       toast({

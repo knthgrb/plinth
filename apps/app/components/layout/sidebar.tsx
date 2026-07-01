@@ -33,7 +33,7 @@ import {
   getOrganizationPath,
   removeOrganizationId,
 } from "@/utils/organization-routing";
-import { effectiveRole, rolesForPath } from "@/utils/role-access";
+import { canAccessRoute, effectiveRole, rolesForPath } from "@/utils/role-access";
 import { useEmployeeView } from "@/hooks/employee-view-context";
 import {
   Popover,
@@ -225,7 +225,11 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       if (!item.roles || item.roles.length === 0) return false; // Only show items with defined roles
       const role = effectiveRole(user?.role);
       if (!role) return false;
-      return item.roles.includes(role);
+      return canAccessRoute(
+        item.href,
+        role,
+        user?.accessStatus ?? currentOrganization?.accessStatus,
+      );
     });
   };
 

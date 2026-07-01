@@ -28,7 +28,10 @@ import {
   Send,
 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
-import { deleteAnnouncement } from "@/actions/announcements";
+import {
+  deleteAnnouncement,
+  sendAnnouncementAcknowledgementReminders,
+} from "@/actions/announcements";
 import { getAnnouncementAttachmentUrl } from "@/actions/files";
 import { useOrganization } from "@/hooks/organization-context";
 import { useEmployeeView } from "@/hooks/employee-view-context";
@@ -187,6 +190,7 @@ export function AnnouncementCard({
     type: string;
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [sendingReminder, setSendingReminder] = useState(false);
 
   const viewer = useQuery(
     (api as any).organizations.getCurrentUser,
@@ -301,6 +305,29 @@ export function AnnouncementCard({
         description: error.message || "Failed to acknowledge announcement",
         variant: "destructive",
       });
+    }
+  };
+
+  const handleSendReminder = async () => {
+    if (!currentOrganizationId) return;
+    setSendingReminder(true);
+    try {
+      const result = await sendAnnouncementAcknowledgementReminders({
+        announcementId: announcement._id,
+        organizationId: currentOrganizationId,
+      });
+      toast({
+        title: "Reminder queued",
+        description: `${result.reminderCount} employee(s) still need to acknowledge.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to send reminder",
+        variant: "destructive",
+      });
+    } finally {
+      setSendingReminder(false);
     }
   };
 
@@ -618,6 +645,17 @@ export function AnnouncementCard({
                   <Check className="h-4 w-4" />
                   <span>Acknowledged</span>
                 </div>
+              )}
+              {isStaffElevated && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleSendReminder}
+                  disabled={sendingReminder}
+                >
+                  <Send className="h-4 w-4 mr-1" />
+                  {sendingReminder ? "Sending..." : "Send reminder"}
+                </Button>
               )}
             </div>
           </div>

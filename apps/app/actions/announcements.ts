@@ -13,10 +13,14 @@ export async function createAnnouncement(data: {
   organizationId: string;
   title: string;
   content: string;
+  priority?: "normal" | "important" | "urgent";
   targetAudience: "all" | "department" | "specific-employees";
   departments?: string[];
   specificEmployees?: string[];
+  scheduledPublishDate?: number;
   expiryDate?: number;
+  isPinned?: boolean;
+  reminderCadenceDays?: number;
   attachments?: string[];
   attachmentContentTypes?: string[];
   acknowledgementRequired: boolean;
@@ -34,7 +38,10 @@ export async function updateAnnouncement(data: {
   targetAudience?: "all" | "department" | "specific-employees";
   departments?: string[];
   specificEmployees?: string[];
+  scheduledPublishDate?: number;
   expiryDate?: number;
+  isPinned?: boolean;
+  reminderCadenceDays?: number;
   attachments?: string[];
   attachmentContentTypes?: string[];
   acknowledgementRequired?: boolean;
@@ -63,4 +70,11 @@ export async function removeReaction(data: {
   organizationId: string;
 }) {
   return AnnouncementsService.removeReaction(data);
+}
+
+export async function sendAnnouncementAcknowledgementReminders(data: {
+  announcementId: string;
+  organizationId: string;
+}) {
+  return AnnouncementsService.sendAnnouncementAcknowledgementReminders(data);
 }

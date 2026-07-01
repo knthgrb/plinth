@@ -18,3 +18,19 @@ export function getActivePayrollEmployeeIds<T extends PayrollEmployeeLike>(
 ): string[] {
   return getActivePayrollEmployees(employees).map((employee) => employee._id);
 }
+
+export function getFinalPayEligibleEmployees<T extends PayrollEmployeeLike>(
+  employees: T[] | null | undefined,
+): T[] {
+  return (employees ?? []).filter((employee) =>
+    ["resigned", "terminated"].includes(employee.employment?.status ?? ""),
+  );
+}
+
+export function getFinalPayEligibleEmployeeIds<T extends PayrollEmployeeLike>(
+  employees: T[] | null | undefined,
+): string[] {
+  return getFinalPayEligibleEmployees(employees).map(
+    (employee) => employee._id,
+  );
+}

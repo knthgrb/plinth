@@ -21,6 +21,8 @@ import {
   getUserIdsForLeaveApprovers,
   insertInAppNotification,
 } from "./notificationHelpers";
+import { canUseFullOrganizationAccess } from "@/utils/org-membership-lifecycle";
+import { canUseEmployeeSelfService } from "@/utils/employee-lifecycle";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -71,10 +73,15 @@ async function checkAuth(
     userRole = userRecord.role;
   }
 
+  if (userOrg && !canUseFullOrganizationAccess(userOrg.accessStatus)) {
+    throw new Error("Organization access is limited or inactive");
+  }
+
   // Write operations (requiredRole set): admin, owner, or that role only
   if (
     requiredRole &&
     userRole !== requiredRole &&
+    !(requiredRole === "hr" && userRole === "manager") &&
     userRole !== "admin" &&
     userRole !== "owner"
   ) {
@@ -479,6 +486,21 @@ export const getLeaveRequestApprovalInfo = query({
     const employee = await ctx.db.get(request.employeeId);
     if (!employee) return { canApprove: false, blockReason: "Employee not found" };
 
+    const overlappingApprovedRequest = await findOverlappingLeaveRequest(ctx, {
+      organizationId: request.organizationId,
+      employeeId: request.employeeId,
+      startDate: request.startDate,
+      endDate: request.endDate,
+      statuses: ["approved"] as const,
+      excludeLeaveRequestId: args.leaveRequestId,
+    });
+    if (overlappingApprovedRequest) {
+      return {
+        canApprove: false,
+        blockReason: formatLeaveConflictMessage(overlappingApprovedRequest),
+      };
+    }
+
     const settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", request.organizationId),
@@ -568,6 +590,11 @@ export const createLeaveRequest = mutation({
     if (!employee) throw new Error("Employee not found");
     if (employee.organizationId !== args.organizationId) {
       throw new Error("Employee is not in this organization");
+    }
+    if (!canUseEmployeeSelfService((employee as any).employment?.status)) {
+      throw new Error(
+        "Separated or inactive employees cannot create new leave requests.",
+      );
     }
 
     if (args.endDate < args.startDate) {

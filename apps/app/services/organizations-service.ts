@@ -1,6 +1,17 @@
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
 import { getAuthedConvexClient } from "@/lib/convex-client";
+import type { OrganizationRole } from "@/utils/organization-roles";
+
+type DefaultRequirementPolicy = {
+  type: string;
+  isRequired?: boolean;
+  appliesToDepartments?: string[];
+  appliesToEmploymentTypes?: string[];
+  reminderDaysBeforeDue?: number;
+  requiresVerification?: boolean;
+  expiryDaysAfterSubmission?: number;
+};
 
 export class OrganizationsService {
   static async getDefaultRequirements(organizationId: string) {
@@ -15,7 +26,7 @@ export class OrganizationsService {
 
   static async updateDefaultRequirements(
     organizationId: string,
-    requirements: Array<{ type: string; isRequired?: boolean }>
+    requirements: DefaultRequirementPolicy[]
   ) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(
@@ -88,7 +99,7 @@ export class OrganizationsService {
   static async updateUserRoleInOrganization(data: {
     organizationId: string;
     userId: string;
-    role: "admin" | "hr" | "accounting" | "employee";
+    role: OrganizationRole;
   }) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(

@@ -18,12 +18,20 @@ const PUBLIC_ROUTE_SEGMENTS = [
   "api", "_next", "forbidden", "favicon.ico", "favicon", ".well-known", "invite",
 ] as const;
 
-type Role = "admin" | "owner" | "hr" | "employee" | "accounting";
+type Role = "admin" | "owner" | "hr" | "manager" | "employee" | "accounting";
 
 const ROLES_HR = ["hr", "admin", "owner"] as const;
+const ROLES_PEOPLE = ["manager", "hr", "admin", "owner"] as const;
 const ROLES_HR_AND_ACCOUNTING = ["hr", "admin", "owner", "accounting"] as const;
 const ROLES_ACCOUNTING_PAGE = ["accounting", "admin", "owner"] as const;
-const ROLES_ALL_AUTH = ["hr", "accounting", "employee", "admin", "owner"] as const;
+const ROLES_ALL_AUTH = [
+  "hr",
+  "manager",
+  "accounting",
+  "employee",
+  "admin",
+  "owner",
+] as const;
 
 /** Route access: list of path prefixes → allowed roles. First match wins. */
 const ROUTE_ROLES: { routes: readonly string[]; roles: readonly Role[] }[] = [
@@ -33,7 +41,8 @@ const ROUTE_ROLES: { routes: readonly string[]; roles: readonly Role[] }[] = [
   { routes: ["/payroll", "/assets"], roles: ROLES_HR_AND_ACCOUNTING },
   // Attendance: same as role-access (employee + accounting own records / view-as-employee, HR admin view)
   { routes: ["/attendance"], roles: ROLES_ALL_AUTH },
-  { routes: ["/dashboard", "/employees", "/recruitment", "/requirements"], roles: ROLES_HR },
+  { routes: ["/dashboard", "/employees", "/requirements"], roles: ROLES_PEOPLE },
+  { routes: ["/recruitment"], roles: ROLES_HR },
   { routes: ["/documents", "/chat", "/announcements", "/leave", "/evaluations"], roles: ROLES_ALL_AUTH },
 ];
 
@@ -105,7 +114,7 @@ function getDefaultRouteForRole(role: string | null): string {
 function normalizeRole(role: string | null): Role | null {
   if (!role) return null;
   const r = role.toLowerCase();
-  const valid: Role[] = ["admin", "owner", "hr", "employee", "accounting"];
+  const valid: Role[] = ["admin", "owner", "hr", "manager", "employee", "accounting"];
   return valid.includes(r as Role) ? (r as Role) : null;
 }
 
@@ -196,10 +205,10 @@ export async function proxy(request: NextRequest) {
 
   if (matchesRoute(cleanPathname, "/dashboard")) {
     if (!normalizedRole) return applyCookie(NextResponse.next());
-    // Employee and accounting default to announcements; admin/owner/hr stay on dashboard
+    // Employee and accounting default to announcements; admin/owner/hr/manager stay on dashboard
     if (normalizedRole === "employee" || normalizedRole === "accounting")
       return applyCookie(NextResponse.redirect(new URL(buildPathWithOrg(urlOrganizationId ?? cachedOrganizationId ?? null, "/announcements"), request.url)));
-    if (["admin", "owner", "hr"].includes(normalizedRole))
+    if (["admin", "owner", "hr", "manager"].includes(normalizedRole))
       return applyCookie(NextResponse.next());
     return redirectToForbidden();
   }

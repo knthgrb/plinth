@@ -159,7 +159,10 @@ export default function LeavePage() {
   const isEmployee = isEmployeeExperienceUI;
   const isAdminOrHr =
     !isEmployeeExperienceUI &&
-    (user?.role === "owner" || user?.role === "admin" || user?.role === "hr");
+    (user?.role === "owner" ||
+      user?.role === "admin" ||
+      user?.role === "hr" ||
+      user?.role === "manager");
   const userEmployeeId =
     effectiveSelfEmployeeId ??
     user?.employeeId ??

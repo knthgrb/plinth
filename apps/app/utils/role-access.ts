@@ -1,18 +1,30 @@
+import {
+  canUseAlumniPayslipAccess,
+  canUseFullOrganizationAccess,
+} from "@/utils/org-membership-lifecycle";
+
 /**
  * Role-based access for routes and sidebar.
  * - Employee: attendance (read-only), leave, requirements, announcements, notifications, chat, documents
  * - Accounting: payroll, accounting, attendance (e.g. own record / view-as-employee), announcements, chat, documents, assets
+ * - Manager: people, attendance, leave, requirements, payslips, announcements, notifications, chat, documents
  * - HR: everything except accounting
  * - Admin: all access
  */
 
-export type OrgRole = "admin" | "owner" | "hr" | "employee" | "accounting";
+export type OrgRole =
+  | "admin"
+  | "owner"
+  | "hr"
+  | "manager"
+  | "employee"
+  | "accounting";
 
 /** Normalize role for access checks. Case-insensitive; owner and admin both get full access. */
 export function effectiveRole(role: string | undefined | null): OrgRole | null {
   if (!role || typeof role !== "string") return null;
   const r = (role as string).toLowerCase();
-  if (["admin", "owner", "hr", "employee", "accounting"].includes(r)) return r as OrgRole;
+  if (["admin", "owner", "hr", "manager", "employee", "accounting"].includes(r)) return r as OrgRole;
   return null;
 }
 
@@ -21,22 +33,22 @@ const PATHS_ALL: string[] = ["/dashboard", "/announcements", "/chat", "/document
 
 /** Path -> roles that can access (admin and owner have full access everywhere) */
 const ROUTE_ACCESS: Record<string, OrgRole[]> = {
-  "/dashboard": ["admin", "owner", "hr", "employee", "accounting"],
-  "/calendar": ["admin", "owner", "hr", "employee", "accounting"],
-  "/employee": ["admin", "owner", "hr", "accounting", "employee"],
-  "/employees": ["admin", "owner", "hr"],
-  "/attendance": ["admin", "owner", "hr", "employee", "accounting"],
-  "/evaluations": ["admin", "owner", "hr"],
-  "/leave": ["admin", "owner", "hr", "employee"],
-  "/requirements": ["admin", "owner", "hr", "employee"],
+  "/dashboard": ["admin", "owner", "hr", "manager", "employee", "accounting"],
+  "/calendar": ["admin", "owner", "hr", "manager", "employee", "accounting"],
+  "/employee": ["admin", "owner", "hr", "manager", "accounting", "employee"],
+  "/employees": ["admin", "owner", "hr", "manager"],
+  "/attendance": ["admin", "owner", "hr", "manager", "employee", "accounting"],
+  "/evaluations": ["admin", "owner", "hr", "manager"],
+  "/leave": ["admin", "owner", "hr", "manager", "employee"],
+  "/requirements": ["admin", "owner", "hr", "manager", "employee"],
   "/recruitment": ["admin", "owner", "hr"],
   "/payroll": ["admin", "owner", "hr", "accounting"],
-  "/payslips": ["admin", "owner", "hr", "accounting", "employee"],
+  "/payslips": ["admin", "owner", "hr", "manager", "accounting", "employee"],
   "/accounting": ["admin", "owner", "accounting"],
-  "/announcements": ["admin", "owner", "hr", "accounting", "employee"],
-  "/notifications": ["admin", "owner", "hr", "accounting", "employee"],
-  "/chat": ["admin", "owner", "hr", "accounting", "employee"],
-  "/documents": ["admin", "owner", "hr", "accounting", "employee"],
+  "/announcements": ["admin", "owner", "hr", "manager", "accounting", "employee"],
+  "/notifications": ["admin", "owner", "hr", "manager", "accounting", "employee"],
+  "/chat": ["admin", "owner", "hr", "manager", "accounting", "employee"],
+  "/documents": ["admin", "owner", "hr", "manager", "accounting", "employee"],
   "/assets": ["admin", "owner", "hr", "accounting"],
 };
 
@@ -54,17 +66,26 @@ export function pathToBaseRoute(pathname: string): string {
  * Check if a role can access a route.
  * Use pathname without org prefix or with (will be stripped).
  */
-export function canAccessRoute(pathname: string, role: string | undefined | null): boolean {
+export function canAccessRoute(
+  pathname: string,
+  role: string | undefined | null,
+  accessStatus?: string | null,
+): boolean {
   const roleNorm = effectiveRole(role);
   if (!roleNorm) return false;
-  // Admin and owner have full access to all routes
-  if (roleNorm === "admin" || roleNorm === "owner") return true;
   let base = pathToBaseRoute(pathname);
   const segments = pathname.replace(/^\//, "").split("/").filter(Boolean);
   // If first segment is not a known route (e.g. it's organizationId), use second segment as base
   if (ROUTE_ACCESS[base] === undefined && segments.length >= 2) {
     base = "/" + segments[1];
   }
+
+  if (!canUseFullOrganizationAccess(accessStatus)) {
+    return base === "/payslips" && canUseAlumniPayslipAccess(accessStatus);
+  }
+
+  // Admin and owner have full access to all routes
+  if (roleNorm === "admin" || roleNorm === "owner") return true;
   const allowed = ROUTE_ACCESS[base];
   if (!allowed) return false;
   return allowed.includes(roleNorm);

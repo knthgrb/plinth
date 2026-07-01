@@ -83,7 +83,7 @@ export function PayrollFinalizeDialog({
     }
   };
 
-  const canFinalize = data?.runStatus === "draft";
+  const canFinalize = data?.canFinalize === true;
 
   return (
     <Dialog open={open} onOpenChange={() => {}}>
@@ -111,8 +111,8 @@ export function PayrollFinalizeDialog({
 
         {data && !canFinalize && (
           <p className="text-sm text-destructive">
-            This payroll run is not in draft status; it cannot be finalized from
-            here.
+            {data.finalizeBlockedReason ||
+              "This payroll run cannot be finalized from here."}
           </p>
         )}
 

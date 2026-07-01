@@ -28,6 +28,16 @@ export class EmployeesService {
       employmentType: "regular" | "probationary" | "contractual" | "part-time";
       hireDate: number;
       regularizationDate?: number;
+      separationDate?: number;
+      lastWorkingDay?: number;
+      separationReason?: string;
+      finalPayStatus?:
+        | "not_started"
+        | "pending"
+        | "processing"
+        | "paid"
+        | "not_applicable";
+      clearanceStatus?: "not_started" | "pending" | "cleared" | "waived";
       status: "active" | "inactive" | "resigned" | "terminated";
     };
     compensation: {
@@ -117,6 +127,16 @@ export class EmployeesService {
           | "part-time";
         hireDate?: number;
         regularizationDate?: number;
+        separationDate?: number;
+        lastWorkingDay?: number;
+        separationReason?: string;
+        finalPayStatus?:
+          | "not_started"
+          | "pending"
+          | "processing"
+          | "paid"
+          | "not_applicable";
+        clearanceStatus?: "not_started" | "pending" | "cleared" | "waived";
         status?: "active" | "inactive" | "resigned" | "terminated";
       };
       compensation?: {
@@ -192,6 +212,11 @@ export class EmployeesService {
       file?: string;
       submittedDate?: number;
       expiryDate?: number;
+      isRequired?: boolean;
+      appliesToDepartments?: string[];
+      appliesToEmploymentTypes?: string[];
+      reminderDaysBeforeDue?: number;
+      requiresVerification?: boolean;
     };
   }) {
     const convex = await getAuthedConvexClient();
@@ -211,6 +236,8 @@ export class EmployeesService {
     employeeId: string;
     requirementIndex: number;
     status: "pending" | "submitted" | "verified";
+    verificationNotes?: string;
+    rejectionReason?: string;
   }) {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(
@@ -219,6 +246,8 @@ export class EmployeesService {
         employeeId: data.employeeId as Id<"employees">,
         requirementIndex: data.requirementIndex,
         status: data.status,
+        verificationNotes: data.verificationNotes,
+        rejectionReason: data.rejectionReason,
       },
     );
   }

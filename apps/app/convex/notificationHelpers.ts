@@ -10,7 +10,7 @@ export async function getUserIdsForLeaveApprovers(
       q.eq("organizationId", organizationId),
     )
     .collect();
-  const approverRoles = new Set(["owner", "admin", "hr"]);
+  const approverRoles = new Set(["owner", "admin", "hr", "manager"]);
   const seen = new Set<string>();
   const out: Id<"users">[] = [];
   for (const r of rows) {

@@ -9,11 +9,19 @@ export default defineSchema({
     phone: v.optional(v.string()),
     email: v.optional(v.string()),
     taxId: v.optional(v.string()),
+    status: v.optional(v.union(v.literal("active"), v.literal("archived"))),
+    archivedAt: v.optional(v.number()),
+    archivedBy: v.optional(v.id("users")),
     defaultRequirements: v.optional(
       v.array(
         v.object({
           type: v.string(),
           isRequired: v.optional(v.boolean()),
+          appliesToDepartments: v.optional(v.array(v.string())),
+          appliesToEmploymentTypes: v.optional(v.array(v.string())),
+          reminderDaysBeforeDue: v.optional(v.number()),
+          requiresVerification: v.optional(v.boolean()),
+          expiryDaysAfterSubmission: v.optional(v.number()),
         }),
       ),
     ),
@@ -46,6 +54,7 @@ export default defineSchema({
         v.literal("admin"),
         v.literal("owner"),
         v.literal("hr"),
+        v.literal("manager"),
         v.literal("employee"),
         v.literal("accounting"),
       ),
@@ -68,9 +77,21 @@ export default defineSchema({
       v.literal("admin"),
       v.literal("owner"),
       v.literal("hr"),
+      v.literal("manager"),
       v.literal("employee"),
       v.literal("accounting"),
     ),
+    accessStatus: v.optional(
+      v.union(
+        v.literal("active"),
+        v.literal("suspended"),
+        v.literal("alumni"),
+        v.literal("disabled"),
+        v.literal("removed"),
+      ),
+    ),
+    accessUpdatedAt: v.optional(v.number()),
+    accessUpdatedBy: v.optional(v.id("users")),
     employeeId: v.optional(v.id("employees")), // If user is also an employee in this org
     joinedAt: v.number(),
     updatedAt: v.number(),
@@ -142,6 +163,26 @@ export default defineSchema({
       ),
       hireDate: v.number(),
       regularizationDate: v.optional(v.union(v.number(), v.null())),
+      separationDate: v.optional(v.number()),
+      lastWorkingDay: v.optional(v.number()),
+      separationReason: v.optional(v.string()),
+      finalPayStatus: v.optional(
+        v.union(
+          v.literal("not_started"),
+          v.literal("pending"),
+          v.literal("processing"),
+          v.literal("paid"),
+          v.literal("not_applicable"),
+        ),
+      ),
+      clearanceStatus: v.optional(
+        v.union(
+          v.literal("not_started"),
+          v.literal("pending"),
+          v.literal("cleared"),
+          v.literal("waived"),
+        ),
+      ),
       status: v.union(
         v.literal("active"),
         v.literal("inactive"),
@@ -265,6 +306,18 @@ export default defineSchema({
           file: v.optional(v.id("_storage")),
           submittedDate: v.optional(v.number()),
           expiryDate: v.optional(v.number()),
+          isRequired: v.optional(v.boolean()),
+          appliesToDepartments: v.optional(v.array(v.string())),
+          appliesToEmploymentTypes: v.optional(v.array(v.string())),
+          reminderDaysBeforeDue: v.optional(v.number()),
+          requiresVerification: v.optional(v.boolean()),
+          verifiedAt: v.optional(v.number()),
+          verifiedBy: v.optional(v.id("users")),
+          verificationNotes: v.optional(v.string()),
+          rejectedAt: v.optional(v.number()),
+          rejectedBy: v.optional(v.id("users")),
+          rejectionReason: v.optional(v.string()),
+          reminderSentAt: v.optional(v.number()),
           isDefault: v.optional(v.boolean()), // True if from organization defaults
           isCustom: v.optional(v.boolean()), // True if custom requirement for this employee
         }),
@@ -311,6 +364,8 @@ export default defineSchema({
     payslipPdfPassword: v.optional(v.string()),
     /** Optional shift (Morning, UK, Night). When set, schedule + lunch come from shift; null/absent = use defaultSchedule + org default lunch. */
     shiftId: v.optional(v.union(v.id("shifts"), v.null())),
+    archivedAt: v.optional(v.number()),
+    archivedBy: v.optional(v.id("users")),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -479,12 +534,13 @@ export default defineSchema({
     cutoffStart: v.number(),
     cutoffEnd: v.number(),
     period: v.string(), // "2025-01-01 to 2025-01-15" or "13th Month Pay 2025"
-    /** "regular" = standard payroll; "13th_month" = 13th month pay run; "leave_conversion" = leave to cash */
+    /** "regular" = standard payroll; "13th_month" = 13th month pay run; "leave_conversion" = leave to cash; "final_pay" = offboarding payroll */
     runType: v.optional(
       v.union(
         v.literal("regular"),
         v.literal("13th_month"),
         v.literal("leave_conversion"),
+        v.literal("final_pay"),
       ),
     ),
     /** For 13th month runs: the calendar year (e.g. 2025) */
@@ -783,16 +839,62 @@ export default defineSchema({
     .index("by_payroll_run_notified", ["payrollRunId", "notified"])
     .index("by_payslip", ["payslipId"]),
 
+  evaluationTemplates: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    reviewCycle: v.optional(v.string()),
+    sections: v.array(
+      v.object({
+        label: v.string(),
+        weight: v.optional(v.number()),
+      }),
+    ),
+    isActive: v.boolean(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
   // Evaluations table (employee performance evaluations)
   evaluations: defineTable({
     organizationId: v.id("organizations"),
     employeeId: v.id("employees"),
+    templateId: v.optional(v.id("evaluationTemplates")),
     evaluationDate: v.number(), // Unix timestamp
     label: v.string(), // e.g. "1st month", "6th month", "Annual"
+    reviewCycle: v.optional(v.string()),
     rating: v.optional(v.number()), // 1-5 rating for this evaluation
     frequencyMonths: v.optional(v.number()), // legacy/optional
     attachmentUrl: v.optional(v.string()), // link to external file (Drive, etc.)
     notes: v.optional(v.string()),
+    selfReview: v.optional(
+      v.object({
+        rating: v.optional(v.number()),
+        notes: v.optional(v.string()),
+        submittedAt: v.optional(v.number()),
+      }),
+    ),
+    managerReview: v.optional(
+      v.object({
+        rating: v.optional(v.number()),
+        notes: v.optional(v.string()),
+        submittedAt: v.optional(v.number()),
+        reviewerId: v.optional(v.id("users")),
+      }),
+    ),
+    assignedReviewerIds: v.optional(v.array(v.id("users"))),
+    lockedAt: v.optional(v.number()),
+    lockedBy: v.optional(v.id("users")),
+    history: v.optional(
+      v.array(
+        v.object({
+          action: v.string(),
+          at: v.number(),
+          by: v.id("users"),
+          summary: v.optional(v.string()),
+        }),
+      ),
+    ),
     createdBy: v.id("users"),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -902,6 +1004,8 @@ export default defineSchema({
     phone: v.string(),
     resume: v.id("_storage"),
     coverLetter: v.optional(v.string()),
+    source: v.optional(v.string()),
+    sourceDetails: v.optional(v.string()),
     status: v.union(
       v.literal("new"),
       v.literal("screening"),
@@ -912,6 +1016,16 @@ export default defineSchema({
       v.literal("rejected"),
     ),
     appliedDate: v.number(),
+    pipelineStageHistory: v.optional(
+      v.array(
+        v.object({
+          from: v.optional(v.string()),
+          to: v.string(),
+          changedAt: v.number(),
+          changedBy: v.optional(v.id("users")),
+        }),
+      ),
+    ),
     notes: v.optional(
       v.array(
         v.object({
@@ -927,10 +1041,44 @@ export default defineSchema({
           date: v.number(),
           type: v.string(),
           interviewer: v.id("users"),
+          interviewers: v.optional(v.array(v.id("users"))),
           remarks: v.optional(v.string()),
         }),
       ),
     ),
+    scorecards: v.optional(
+      v.array(
+        v.object({
+          reviewer: v.id("users"),
+          criteria: v.array(
+            v.object({
+              label: v.string(),
+              score: v.number(),
+              notes: v.optional(v.string()),
+            }),
+          ),
+          overallScore: v.number(),
+          recommendation: v.optional(v.string()),
+          submittedAt: v.number(),
+        }),
+      ),
+    ),
+    offerApproval: v.optional(
+      v.object({
+        status: v.union(
+          v.literal("not_requested"),
+          v.literal("pending"),
+          v.literal("approved"),
+          v.literal("rejected"),
+        ),
+        requestedBy: v.optional(v.id("users")),
+        requestedAt: v.optional(v.number()),
+        approvedBy: v.optional(v.id("users")),
+        approvedAt: v.optional(v.number()),
+        notes: v.optional(v.string()),
+      }),
+    ),
+    convertedEmployeeId: v.optional(v.id("employees")),
     rating: v.optional(v.number()),
     googleMeetLink: v.optional(v.string()),
     interviewVideoLink: v.optional(v.string()),
@@ -1008,7 +1156,18 @@ export default defineSchema({
     departments: v.optional(v.array(v.string())),
     specificEmployees: v.optional(v.array(v.id("employees"))),
     publishedDate: v.number(),
+    scheduledPublishDate: v.optional(v.number()),
     expiryDate: v.optional(v.number()),
+    isPinned: v.optional(v.boolean()),
+    reminderCadenceDays: v.optional(v.number()),
+    reminderLastSentAt: v.optional(v.number()),
+    reminderLastSentBy: v.optional(v.id("users")),
+    audienceSnapshot: v.optional(
+      v.object({
+        count: v.number(),
+        generatedAt: v.number(),
+      }),
+    ),
     reactions: v.optional(v.array(v.any())),
     attachments: v.optional(v.array(v.id("_storage"))),
     attachmentContentTypes: v.optional(v.array(v.string())), // MIME types, same length as attachments (image/*, video/*)
@@ -1073,6 +1232,44 @@ export default defineSchema({
         defaultLunchBreakMinutes: v.optional(v.number()), // e.g. 60 (used when no shift or shift has no lunch)
         defaultLunchStart: v.optional(v.string()), // HH:mm e.g. "12:00"
         defaultLunchEnd: v.optional(v.string()), // HH:mm e.g. "13:00"
+        graceMinutes: v.optional(v.number()),
+        roundingRule: v.optional(
+          v.union(
+            v.literal("none"),
+            v.literal("nearest_5"),
+            v.literal("nearest_15"),
+            v.literal("floor_15"),
+            v.literal("ceiling_15"),
+          ),
+        ),
+        flexibleShiftsEnabled: v.optional(v.boolean()),
+        overnightShiftCutoffHour: v.optional(v.number()),
+        restDayPolicy: v.optional(
+          v.union(
+            v.literal("fixed_weekly"),
+            v.literal("shift_based"),
+            v.literal("attendance_based"),
+          ),
+        ),
+        geofencePolicy: v.optional(
+          v.object({
+            enabled: v.boolean(),
+            allowedRadiusMeters: v.optional(v.number()),
+            requireForClockIn: v.optional(v.boolean()),
+          }),
+        ),
+        importPolicy: v.optional(
+          v.object({
+            allowCsvImport: v.optional(v.boolean()),
+            requireReviewBeforePosting: v.optional(v.boolean()),
+          }),
+        ),
+        payrollLockPolicy: v.optional(
+          v.object({
+            lockAttendanceAfterPayrollFinalized: v.optional(v.boolean()),
+            allowAdminCorrectionWithReason: v.optional(v.boolean()),
+          }),
+        ),
       }),
     ),
     // Payroll configurations
@@ -1225,6 +1422,9 @@ export default defineSchema({
               availed: v.optional(v.number()),
             }),
           ),
+          overrideReason: v.optional(v.string()),
+          updatedBy: v.optional(v.id("users")),
+          updatedAt: v.optional(v.number()),
         }),
       ),
     ),
@@ -1238,6 +1438,10 @@ export default defineSchema({
           v.object({
             name: v.string(),
             color: v.string(), // HEX color code
+            departmentHeadUserId: v.optional(v.id("users")),
+            costCenter: v.optional(v.string()),
+            location: v.optional(v.string()),
+            parentDepartmentName: v.optional(v.string()),
           }),
         ),
       ),
@@ -1322,6 +1526,18 @@ export default defineSchema({
         }),
       ),
     ),
+    settingsVersion: v.optional(v.number()),
+    settingsChangeLog: v.optional(
+      v.array(
+        v.object({
+          area: v.string(),
+          version: v.number(),
+          changedBy: v.id("users"),
+          changedAt: v.number(),
+          reason: v.optional(v.string()),
+        }),
+      ),
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),
@@ -1393,6 +1609,7 @@ export default defineSchema({
       v.literal("admin"),
       v.literal("owner"),
       v.literal("hr"),
+      v.literal("manager"),
       v.literal("employee"),
       v.literal("accounting"),
     ),
@@ -1433,6 +1650,18 @@ export default defineSchema({
     attachments: v.optional(v.array(v.id("_storage"))),
     isShared: v.optional(v.boolean()), // If shared with HR/Admin
     sharedWith: v.optional(v.array(v.id("users"))), // Users who can view this document
+    visibilityScope: v.optional(
+      v.union(
+        v.literal("admins_only"),
+        v.literal("all_employees"),
+        v.literal("department"),
+        v.literal("specific_employee"),
+        v.literal("alumni_visible"),
+        v.literal("payroll_visible"),
+      ),
+    ),
+    visibleDepartments: v.optional(v.array(v.string())),
+    visibleEmployeeIds: v.optional(v.array(v.id("employees"))),
     createdAt: v.number(),
     updatedAt: v.number(),
     /** Increments when body content is replaced; first version is 1. Used for version history. */
@@ -1459,6 +1688,9 @@ export default defineSchema({
   accountingCostItems: defineTable({
     organizationId: v.id("organizations"),
     payrollRunId: v.optional(v.id("payrollRuns")), // When set, this cost is tied to a payroll run (e.g. payroll/SSS expense)
+    sourceType: v.optional(v.union(v.literal("manual"), v.literal("payroll_run"))),
+    sourceKey: v.optional(v.string()),
+    sourceUpdatedAt: v.optional(v.number()),
     categoryName: v.optional(v.string()), // "Employee Related Cost" | "Operational Cost"
     name: v.string(), // e.g., "Payroll", "Rent", "Utilities"
     description: v.optional(v.string()),
@@ -1520,6 +1752,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_organization", ["organizationId"])
+    .index("by_source", ["organizationId", "sourceType", "sourceKey"])
     .index("by_categoryName", ["categoryName"])
     .index("by_status", ["status"])
     .index("by_due_date", ["dueDate"]),
@@ -1537,6 +1770,32 @@ export default defineSchema({
     supplier: v.optional(v.string()),
     serialNumber: v.optional(v.string()),
     location: v.optional(v.string()),
+    assignedEmployeeId: v.optional(v.id("employees")),
+    assignedAt: v.optional(v.number()),
+    assignedBy: v.optional(v.id("users")),
+    custodyAcknowledgedAt: v.optional(v.number()),
+    returnDueDate: v.optional(v.number()),
+    returnedAt: v.optional(v.number()),
+    condition: v.optional(
+      v.union(
+        v.literal("new"),
+        v.literal("good"),
+        v.literal("fair"),
+        v.literal("needs_repair"),
+        v.literal("damaged"),
+      ),
+    ),
+    maintenanceHistory: v.optional(
+      v.array(
+        v.object({
+          date: v.number(),
+          description: v.string(),
+          cost: v.optional(v.number()),
+          performedBy: v.optional(v.string()),
+          nextServiceDate: v.optional(v.number()),
+        }),
+      ),
+    ),
     status: v.optional(
       v.union(
         v.literal("active"),

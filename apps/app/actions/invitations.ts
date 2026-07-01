@@ -5,6 +5,7 @@ import { getConvexUserFacingMessage } from "@/lib/convex-user-facing-error";
 import { getAuthedConvexClient } from "@/lib/convex-client";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import type { OrganizationRole } from "@/utils/organization-roles";
 
 export type InviteRecipientPreview = {
   inviteEmail: string;
@@ -49,7 +50,7 @@ export type CreateInvitationResult =
 export async function createInvitation(data: {
   organizationId: string;
   email: string;
-  role: "admin" | "hr" | "accounting" | "employee";
+  role: OrganizationRole;
   employeeId?: string;
   confirmInviteToExistingPlinthUser?: boolean;
 }): Promise<CreateInvitationResult> {
@@ -77,7 +78,7 @@ export type BatchCreateInvitationsResult =
 
 export async function batchCreateInvitations(data: {
   organizationId: string;
-  role: "admin" | "hr" | "accounting" | "employee";
+  role: OrganizationRole;
   items: BatchCreateInvitationsItem[];
   confirmInviteToExistingPlinthUser?: boolean;
 }): Promise<BatchCreateInvitationsResult> {

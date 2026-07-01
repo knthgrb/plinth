@@ -3,12 +3,13 @@ import { Id } from "@/convex/_generated/dataModel";
 import { getAuthedConvexClient } from "@/lib/convex-client";
 import { sendEmail } from "@/lib/email";
 import { generateInvitationEmail } from "@/helpers/email-templates";
+import type { OrganizationRole } from "@/utils/organization-roles";
 
 export class InvitationsService {
   static async createInvitation(data: {
     organizationId: string;
     email: string;
-    role: "admin" | "hr" | "accounting" | "employee";
+    role: OrganizationRole;
     employeeId?: string;
     confirmInviteToExistingPlinthUser?: boolean;
   }) {
@@ -67,7 +68,7 @@ export class InvitationsService {
 
   static async batchCreateInvitations(data: {
     organizationId: string;
-    role: "admin" | "hr" | "accounting" | "employee";
+    role: OrganizationRole;
     confirmInviteToExistingPlinthUser?: boolean;
     items: { email: string; employeeId?: string }[];
   }): Promise<{

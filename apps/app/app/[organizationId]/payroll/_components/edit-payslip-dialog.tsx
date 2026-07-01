@@ -122,8 +122,8 @@ export function EditPayslipDialog({
           <DialogHeader>
             <DialogTitle>Edit payslip – {employeeName}</DialogTitle>
             <p className="text-sm text-muted-foreground text-left font-normal pt-1">
-              Basic pay and non‑taxable allowance are not edited here. Attendance
-              (late, absent, undertime) is under{" "}
+              Basic pay and non‑taxable allowance are not edited here.
+              Attendance (late, absent, undertime) is under{" "}
               <span className="font-medium">Deductions</span>.
             </p>
           </DialogHeader>
@@ -136,9 +136,9 @@ export function EditPayslipDialog({
                 Reason for correction
               </Label>
               <p className="text-xs text-muted-foreground">
-                This run is finalized or paid. If you change amounts, explain what
-                was wrong and what you fixed. Employees will see this when you send
-                the updated payslip in chat.
+                This run is finalized or paid. If you change amounts, explain
+                what was wrong and what you fixed. Employees will see this when
+                you send the updated payslip in chat.
               </p>
               <Textarea
                 id="payslip-correction-reason"
@@ -153,7 +153,9 @@ export function EditPayslipDialog({
           {showVariableEarnings && editEarnings && onUpdateEarning && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <Label className="text-base font-semibold">Earnings (variable)</Label>
+                <Label className="text-base font-semibold">
+                  Earnings (variable)
+                </Label>
                 <span className="text-xs text-muted-foreground text-right max-w-sm">
                   {earningsContext === "preview" ? (
                     <>
@@ -439,11 +441,7 @@ export function EditPayslipDialog({
             >
               Cancel
             </Button>
-            <Button
-              type="button"
-              onClick={onSave}
-              disabled={isSavingPayslip}
-            >
+            <Button type="button" onClick={onSave} disabled={isSavingPayslip}>
               {isSavingPayslip ? "Saving…" : "Save changes"}
             </Button>
           </DialogFooter>

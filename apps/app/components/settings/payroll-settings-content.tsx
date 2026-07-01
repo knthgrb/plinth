@@ -22,7 +22,6 @@ import {
 } from "@/components/ui/select";
 import { useOrganization } from "@/hooks/organization-context";
 import { useToast } from "@/components/ui/use-toast";
-import { DEFAULT_PAYROLL_TAB_PASSWORD } from "@/utils/payroll-access";
 
 function LabelWithHelp({
   id,
@@ -86,7 +85,6 @@ export function PayrollSettingsContent() {
     salaryPaymentFrequency: "bimonthly" as "monthly" | "bimonthly",
     firstPayDate: 15,
     secondPayDate: 30,
-    payrollTabPassword: DEFAULT_PAYROLL_TAB_PASSWORD,
     taxDeductionFrequency: "twice_per_month" as
       | "once_per_month"
       | "twice_per_month",
@@ -126,8 +124,6 @@ export function PayrollSettingsContent() {
             : "bimonthly",
         firstPayDate: organization?.firstPayDate ?? 15,
         secondPayDate: organization?.secondPayDate ?? 30,
-        payrollTabPassword:
-          ps.payrollTabPassword ?? DEFAULT_PAYROLL_TAB_PASSWORD,
         taxDeductionFrequency: taxFreq,
         taxDeductOnPay: taxPay,
         holidayNoWorkNoPay: ps.holidayNoWorkNoPay ?? false,
@@ -145,7 +141,6 @@ export function PayrollSettingsContent() {
             : "bimonthly",
         firstPayDate: organization?.firstPayDate ?? 15,
         secondPayDate: organization?.secondPayDate ?? 30,
-        payrollTabPassword: DEFAULT_PAYROLL_TAB_PASSWORD,
         taxDeductionFrequency: taxFreq,
         taxDeductOnPay: taxPay,
       }));
@@ -166,7 +161,6 @@ export function PayrollSettingsContent() {
           overtimeRestDayRate: 1 + formData.overtimeRestDayRate / 100,
           dailyRateIncludesAllowance: formData.dailyRateIncludesAllowance,
           dailyRateWorkingDaysPerYear: formData.dailyRateWorkingDaysPerYear,
-          payrollTabPassword: formData.payrollTabPassword,
           taxDeductionFrequency: formData.taxDeductionFrequency,
           taxDeductOnPay: formData.taxDeductOnPay,
           holidayNoWorkNoPay: formData.holidayNoWorkNoPay,
@@ -208,30 +202,6 @@ export function PayrollSettingsContent() {
         <CardTitle>Payroll Configuration</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="space-y-4 rounded-lg border p-4">
-          <div>
-            <h4 className="font-medium">Payroll access</h4>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Require an extra password before opening Payroll. Leave blank to
-              disable the extra prompt.
-            </p>
-          </div>
-          <div className="max-w-xs space-y-2">
-            <Label htmlFor="payrollTabPassword">Payroll tab password</Label>
-            <Input
-              id="payrollTabPassword"
-              type="password"
-              autoComplete="new-password"
-              value={formData.payrollTabPassword}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  payrollTabPassword: e.target.value,
-                })
-              }
-            />
-          </div>
-        </div>
         <div className="space-y-4">
           <h4 className="font-medium">BASE CONFIGS</h4>
           <p className="text-sm text-muted-foreground">

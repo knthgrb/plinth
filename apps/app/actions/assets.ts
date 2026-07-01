@@ -2,6 +2,16 @@
 
 import { AssetsService } from "@/services/assets-service";
 
+type AssetCondition = "new" | "good" | "fair" | "needs_repair" | "damaged";
+
+type AssetMaintenanceEntry = {
+  date: number;
+  description: string;
+  cost?: number;
+  performedBy?: string;
+  nextServiceDate?: number;
+};
+
 export async function getAssets(organizationId: string) {
   return AssetsService.getAssets(organizationId);
 }
@@ -22,6 +32,12 @@ export async function createAsset(data: {
   supplier?: string;
   serialNumber?: string;
   location?: string;
+  assignedEmployeeId?: string | null;
+  custodyAcknowledgedAt?: number | null;
+  returnDueDate?: number | null;
+  returnedAt?: number | null;
+  condition?: AssetCondition;
+  maintenanceHistory?: AssetMaintenanceEntry[];
   status?: "active" | "inactive" | "disposed" | "maintenance";
   notes?: string;
 }) {
@@ -41,6 +57,12 @@ export async function updateAsset(
     supplier?: string;
     serialNumber?: string;
     location?: string;
+    assignedEmployeeId?: string | null;
+    custodyAcknowledgedAt?: number | null;
+    returnDueDate?: number | null;
+    returnedAt?: number | null;
+    condition?: AssetCondition;
+    maintenanceHistory?: AssetMaintenanceEntry[];
     status?: "active" | "inactive" | "disposed" | "maintenance";
     notes?: string;
   }

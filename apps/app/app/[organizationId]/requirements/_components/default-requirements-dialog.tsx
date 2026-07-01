@@ -16,14 +16,20 @@ import { Label } from "@/components/ui/label";
 import { Plus, Trash2, Settings } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 
+type DefaultRequirementPolicy = {
+  type: string;
+  isRequired?: boolean;
+  appliesToDepartments?: string[];
+  appliesToEmploymentTypes?: string[];
+  reminderDaysBeforeDue?: number;
+  requiresVerification?: boolean;
+  expiryDaysAfterSubmission?: number;
+};
+
 interface DefaultRequirementsDialogProps {
-  defaultReqsList: Array<{ type: string; isRequired?: boolean }>;
-  onSave: (
-    requirements: Array<{ type: string; isRequired?: boolean }>
-  ) => Promise<void>;
-  onUpdateList: (
-    requirements: Array<{ type: string; isRequired?: boolean }>
-  ) => void;
+  defaultReqsList: DefaultRequirementPolicy[];
+  onSave: (requirements: DefaultRequirementPolicy[]) => Promise<void>;
+  onUpdateList: (requirements: DefaultRequirementPolicy[]) => void;
 }
 
 export function DefaultRequirementsDialog({
@@ -45,9 +51,33 @@ export function DefaultRequirementsDialog({
       });
       return;
     }
-    onUpdateList([...defaultReqsList, { type: newDefaultReq.trim() }]);
+    onUpdateList([
+      ...defaultReqsList,
+      {
+        type: newDefaultReq.trim(),
+        isRequired: true,
+        requiresVerification: true,
+      },
+    ]);
     setNewDefaultReq("");
   };
+
+  const handleUpdateRequirement = (
+    index: number,
+    updates: Partial<DefaultRequirementPolicy>,
+  ) => {
+    onUpdateList(
+      defaultReqsList.map((req, idx) =>
+        idx === index ? { ...req, ...updates } : req,
+      ),
+    );
+  };
+
+  const parseCsv = (value: string) =>
+    value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
 
   const handleRemoveDefaultRequirement = (index: number) => {
     onUpdateList(defaultReqsList.filter((_, i) => i !== index));
@@ -115,18 +145,107 @@ export function DefaultRequirementsDialog({
                 </p>
               ) : (
                 defaultReqsList.map((req, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between p-2 border rounded"
-                  >
-                    <span className="text-sm">{req.type}</span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleRemoveDefaultRequirement(idx)}
-                    >
-                      <Trash2 className="h-4 w-4 text-red-600" />
-                    </Button>
+                  <div key={idx} className="space-y-3 p-3 border rounded">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium">{req.type}</span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleRemoveDefaultRequirement(idx)}
+                      >
+                        <Trash2 className="h-4 w-4 text-red-600" />
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={req.isRequired ?? true}
+                          onChange={(event) =>
+                            handleUpdateRequirement(idx, {
+                              isRequired: event.target.checked,
+                            })
+                          }
+                        />
+                        Required
+                      </label>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={req.requiresVerification ?? true}
+                          onChange={(event) =>
+                            handleUpdateRequirement(idx, {
+                              requiresVerification: event.target.checked,
+                            })
+                          }
+                        />
+                        Verification required
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label>Reminder days before due</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={req.reminderDaysBeforeDue ?? ""}
+                          onChange={(event) =>
+                            handleUpdateRequirement(idx, {
+                              reminderDaysBeforeDue: event.target.value
+                                ? Number(event.target.value)
+                                : undefined,
+                            })
+                          }
+                          placeholder="e.g., 7"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Expiry days after submission</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={req.expiryDaysAfterSubmission ?? ""}
+                          onChange={(event) =>
+                            handleUpdateRequirement(idx, {
+                              expiryDaysAfterSubmission: event.target.value
+                                ? Number(event.target.value)
+                                : undefined,
+                            })
+                          }
+                          placeholder="e.g., 365"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label>Applies to departments</Label>
+                        <Input
+                          value={req.appliesToDepartments?.join(", ") ?? ""}
+                          onChange={(event) =>
+                            handleUpdateRequirement(idx, {
+                              appliesToDepartments: parseCsv(
+                                event.target.value,
+                              ),
+                            })
+                          }
+                          placeholder="Blank means all"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Applies to employment types</Label>
+                        <Input
+                          value={req.appliesToEmploymentTypes?.join(", ") ?? ""}
+                          onChange={(event) =>
+                            handleUpdateRequirement(idx, {
+                              appliesToEmploymentTypes: parseCsv(
+                                event.target.value,
+                              ),
+                            })
+                          }
+                          placeholder="regular, probationary"
+                        />
+                      </div>
+                    </div>
                   </div>
                 ))
               )}

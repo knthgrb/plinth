@@ -67,6 +67,23 @@ function isPayrollGeneratedCostItem(item: { name: string }) {
   ].some((prefix) => item.name.startsWith(prefix));
 }
 
+function round2(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function deriveAccountingCostItemStatus(
+  amount: number,
+  amountPaid: number,
+): "pending" | "partial" | "paid" {
+  if (amountPaid <= 0) return "pending";
+  if (amountPaid >= amount) return "paid";
+  return "partial";
+}
+
+function getPayrollAccountingSourceKey(payrollRun: any, type: string) {
+  return `${payrollRun._id}:${type}`;
+}
+
 function getDeductionAmountByNames(
   deductions: any[],
   names: string[],
@@ -96,6 +113,354 @@ function getPayrollPeriodFromCostItemName(name: string): string | null {
   }
 
   return null;
+}
+
+function formatPayrollAccountingPeriod(payrollRun: any) {
+  const startDate = new Date(payrollRun.cutoffStart);
+  const endDate = new Date(payrollRun.cutoffEnd);
+  return `${startDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  })} - ${endDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })}`;
+}
+
+async function getPayrollPayslipsWithNames(ctx: any, payrollRun: any) {
+  const payslipsRaw = await (ctx.db.query("payslips") as any)
+    .withIndex("by_payroll_run", (q: any) =>
+      q.eq("payrollRunId", payrollRun._id),
+    )
+    .collect();
+  const payslips = payslipsRaw.map((p: any) => decryptPayslipRowFromDb(p)!);
+
+  const employees = await Promise.all(
+    payslips.map((payslip: any) => ctx.db.get(payslip.employeeId)),
+  );
+  const employeeNameById = new Map<string, string>();
+  employees.forEach((employee: any) => {
+    if (!employee) return;
+    employeeNameById.set(
+      employee._id,
+      `${employee.personalInfo?.firstName ?? ""} ${employee.personalInfo?.lastName ?? ""}`.trim(),
+    );
+  });
+
+  return { payslips, employeeNameById };
+}
+
+async function buildExpectedPayrollAccountingItems(ctx: any, payrollRun: any) {
+  const { payslips, employeeNameById } = await getPayrollPayslipsWithNames(
+    ctx,
+    payrollRun,
+  );
+  if (payslips.length === 0) return [];
+
+  const payslipCount = payslips.length;
+  const periodStr = formatPayrollAccountingPeriod(payrollRun);
+  const baseNotes = `Auto-generated from payroll run ${payrollRun.period}. ${payslipCount} employee(s).`;
+  const items: any[] = [];
+
+  const totalNetPay = round2(
+    payslips.reduce((sum: number, p: any) => sum + (p.netPay ?? 0), 0),
+  );
+
+  if (totalNetPay > 0) {
+    items.push({
+      type: "payroll",
+      sourceKey: getPayrollAccountingSourceKey(payrollRun, "payroll"),
+      name: `Payroll - ${periodStr}`,
+      description: `Total net pay for cutoff period ${payrollRun.period} (${payslipCount} payslip${payslipCount > 1 ? "s" : ""})`,
+      amount: totalNetPay,
+      breakdown: {
+        kind: "payroll",
+        rows: payslips.map((payslip: any) => ({
+          employeeId: payslip.employeeId,
+          employeeName: employeeNameById.get(payslip.employeeId) || "Unknown",
+          grossPay: payslip.grossPay ?? 0,
+          nonTaxableAllowance: payslip.nonTaxableAllowance ?? 0,
+          totalIncentives: (payslip.incentives ?? []).reduce(
+            (sum: number, incentive: any) => sum + (incentive?.amount ?? 0),
+            0,
+          ),
+          totalDeductions: (payslip.deductions ?? []).reduce(
+            (sum: number, deduction: any) => sum + (deduction?.amount ?? 0),
+            0,
+          ),
+          incentiveItems: (payslip.incentives ?? []).map((incentive: any) => ({
+            name: incentive.name,
+            amount: incentive.amount ?? 0,
+            type: incentive.type,
+          })),
+          deductionItems: (payslip.deductions ?? []).map((deduction: any) => ({
+            name: deduction.name,
+            amount: deduction.amount ?? 0,
+            type: deduction.type,
+          })),
+          netPay: payslip.netPay ?? 0,
+        })),
+      },
+      notes: `Auto-generated from payroll run ${payrollRun.period}. Payslips: ${payslipCount}, Total net pay: ₱${totalNetPay.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+    });
+  }
+
+  let totalEmployeeSSS = 0;
+  let totalEmployeePagIbig = 0;
+  let totalEmployeePhilHealth = 0;
+  let totalEmployeeTax = 0;
+  let totalSSSEmployer = 0;
+  let totalPhilHealthEmployer = 0;
+  let totalPagIbigEmployer = 0;
+
+  for (const payslip of payslips) {
+    for (const deduction of payslip.deductions ?? []) {
+      const name = String(deduction.name ?? "").toLowerCase();
+      const amount = deduction.amount ?? 0;
+      if (name.includes("sss")) {
+        totalEmployeeSSS += amount;
+      } else if (name.includes("pag-ibig") || name.includes("pagibig")) {
+        totalEmployeePagIbig += amount;
+      } else if (name.includes("philhealth")) {
+        totalEmployeePhilHealth += amount;
+      } else if (name.includes("tax") || name.includes("withholding")) {
+        totalEmployeeTax += amount;
+      }
+    }
+    totalSSSEmployer += payslip.employerContributions?.sss ?? 0;
+    totalPhilHealthEmployer += payslip.employerContributions?.philhealth ?? 0;
+    totalPagIbigEmployer += payslip.employerContributions?.pagibig ?? 0;
+  }
+
+  const contributionRows = (
+    employeeNames: string[],
+    companyContribution: "sss" | "philhealth" | "pagibig",
+  ) =>
+    payslips.map((payslip: any) => ({
+      employeeId: payslip.employeeId,
+      employeeName: employeeNameById.get(payslip.employeeId) || "Unknown",
+      employeeAmount: getDeductionAmountByNames(
+        payslip.deductions ?? [],
+        employeeNames,
+      ),
+      companyAmount: payslip.employerContributions?.[companyContribution] ?? 0,
+    }));
+
+  if (totalEmployeeSSS > 0 || totalSSSEmployer > 0) {
+    items.push({
+      type: "sss",
+      sourceKey: getPayrollAccountingSourceKey(payrollRun, "sss"),
+      name: `SSS - ${periodStr}`,
+      description: `Total SSS for ${payslipCount} employee(s) in cutoff period ${payrollRun.period}`,
+      amount: round2(totalEmployeeSSS + totalSSSEmployer),
+      breakdown: {
+        kind: "contributions",
+        rows: contributionRows(["sss"], "sss"),
+      },
+      notes: baseNotes,
+    });
+  }
+
+  if (totalEmployeePagIbig > 0 || totalPagIbigEmployer > 0) {
+    items.push({
+      type: "pagibig",
+      sourceKey: getPayrollAccountingSourceKey(payrollRun, "pagibig"),
+      name: `Pag-IBIG - ${periodStr}`,
+      description: `Total Pag-IBIG for ${payslipCount} employee(s) in cutoff period ${payrollRun.period}`,
+      amount: round2(totalEmployeePagIbig + totalPagIbigEmployer),
+      breakdown: {
+        kind: "contributions",
+        rows: contributionRows(["pag-ibig", "pagibig"], "pagibig"),
+      },
+      notes: baseNotes,
+    });
+  }
+
+  if (totalEmployeePhilHealth > 0 || totalPhilHealthEmployer > 0) {
+    items.push({
+      type: "philhealth",
+      sourceKey: getPayrollAccountingSourceKey(payrollRun, "philhealth"),
+      name: `PhilHealth - ${periodStr}`,
+      description: `Total PhilHealth for ${payslipCount} employee(s) in cutoff period ${payrollRun.period}`,
+      amount: round2(totalEmployeePhilHealth + totalPhilHealthEmployer),
+      breakdown: {
+        kind: "contributions",
+        rows: contributionRows(["philhealth"], "philhealth"),
+      },
+      notes: baseNotes,
+    });
+  }
+
+  if (totalEmployeeTax > 0) {
+    items.push({
+      type: "tax",
+      sourceKey: getPayrollAccountingSourceKey(payrollRun, "tax"),
+      name: `Tax Employee Deductions - ${periodStr}`,
+      description: `Total Tax employee deductions for ${payslipCount} employee(s) in cutoff period ${payrollRun.period}`,
+      amount: round2(totalEmployeeTax),
+      breakdown: {
+        kind: "contributions",
+        rows: payslips.map((payslip: any) => ({
+          employeeId: payslip.employeeId,
+          employeeName: employeeNameById.get(payslip.employeeId) || "Unknown",
+          employeeAmount: getDeductionAmountByNames(payslip.deductions ?? [], [
+            "withholding tax",
+          ]),
+          companyAmount: 0,
+        })),
+      },
+      notes: baseNotes,
+    });
+  }
+
+  return items;
+}
+
+async function getPayrollAccountingRuns(ctx: any, organizationId: any) {
+  const runs = await (ctx.db.query("payrollRuns") as any)
+    .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
+    .collect();
+
+  return runs.filter((run: any) =>
+    ["finalized", "paid"].includes(run.status),
+  );
+}
+
+async function syncExpectedPayrollAccountingItems(
+  ctx: any,
+  payrollRun: any,
+) {
+  const expectedItems = await buildExpectedPayrollAccountingItems(ctx, payrollRun);
+  const now = Date.now();
+  const existingItems = await (ctx.db.query("accountingCostItems") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", payrollRun.organizationId),
+    )
+    .collect();
+
+  let created = 0;
+  let updated = 0;
+  let deleted = 0;
+  const activeSourceKeys = new Set(expectedItems.map((item) => item.sourceKey));
+  const activeNames = new Set(expectedItems.map((item) => item.name));
+
+  for (const expected of expectedItems) {
+    const existing = existingItems.find(
+      (item: any) =>
+        item.sourceKey === expected.sourceKey ||
+        (item.payrollRunId === payrollRun._id && item.name === expected.name) ||
+        item.name === expected.name,
+    );
+    const amountPaid =
+      payrollRun.status === "paid"
+        ? expected.amount
+        : Math.min(existing?.amountPaid ?? 0, expected.amount);
+    const payload = {
+      organizationId: payrollRun.organizationId,
+      payrollRunId: payrollRun._id,
+      sourceType: "payroll_run" as const,
+      sourceKey: expected.sourceKey,
+      sourceUpdatedAt: now,
+      categoryName: "Employee Related Cost",
+      name: expected.name,
+      description: expected.description,
+      amount: expected.amount,
+      amountPaid,
+      frequency: "one-time" as const,
+      status:
+        payrollRun.status === "paid"
+          ? ("paid" as const)
+          : deriveAccountingCostItemStatus(expected.amount, amountPaid),
+      dueDate: undefined,
+      breakdown: expected.breakdown,
+      notes: expected.notes,
+      receipts: existing?.receipts,
+      updatedAt: now,
+    };
+
+    if (existing) {
+      await ctx.db.patch(existing._id, payload);
+      updated += 1;
+      continue;
+    }
+
+    await ctx.db.insert("accountingCostItems", {
+      ...payload,
+      createdAt: now,
+    });
+    created += 1;
+  }
+
+  const staleItems = existingItems.filter((item: any) => {
+    const belongsToRun =
+      item.payrollRunId === payrollRun._id ||
+      (item.sourceType === "payroll_run" &&
+        String(item.sourceKey ?? "").startsWith(`${payrollRun._id}:`));
+    return (
+      belongsToRun &&
+      isPayrollGeneratedCostItem(item) &&
+      !activeSourceKeys.has(item.sourceKey) &&
+      !activeNames.has(item.name)
+    );
+  });
+
+  for (const item of staleItems) {
+    await ctx.db.delete(item._id);
+    deleted += 1;
+  }
+
+  return { created, updated, deleted };
+}
+
+async function getPayrollAccountingDriftRows(ctx: any, organizationId: any) {
+  const payrollRuns = await getPayrollAccountingRuns(ctx, organizationId);
+  const existingItems = await (ctx.db.query("accountingCostItems") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", organizationId),
+    )
+    .collect();
+  const rows: any[] = [];
+
+  for (const run of payrollRuns) {
+    const expectedItems = await buildExpectedPayrollAccountingItems(ctx, run);
+    for (const expected of expectedItems) {
+      const existing = existingItems.find(
+        (item: any) =>
+          item.sourceKey === expected.sourceKey ||
+          (item.payrollRunId === run._id && item.name === expected.name) ||
+          item.name === expected.name,
+      );
+      if (!existing) {
+        rows.push({
+          payrollRunId: run._id,
+          sourceKey: expected.sourceKey,
+          name: expected.name,
+          issue: "missing",
+          expectedAmount: expected.amount,
+          actualAmount: 0,
+        });
+        continue;
+      }
+
+      if (
+        existing.amount !== expected.amount ||
+        existing.sourceType !== "payroll_run" ||
+        existing.sourceKey !== expected.sourceKey
+      ) {
+        rows.push({
+          payrollRunId: run._id,
+          sourceKey: expected.sourceKey,
+          name: expected.name,
+          issue: "out_of_sync",
+          expectedAmount: expected.amount,
+          actualAmount: existing.amount,
+        });
+      }
+    }
+  }
+
+  return rows;
 }
 
 /** Parse "Feb 10 - Feb 24, 2026" to { startDay, endDay } (days since epoch) for matching payroll run cutoff dates */
@@ -364,6 +729,63 @@ export const getCostItems = query({
   },
 });
 
+export const findPayrollAccountingDrift = query({
+  args: {
+    organizationId: v.id("organizations"),
+  },
+  handler: async (ctx, args) => {
+    try {
+      await checkAuth(ctx, args.organizationId);
+    } catch {
+      return { driftCount: 0, rows: [] };
+    }
+
+    const rows = await getPayrollAccountingDriftRows(ctx, args.organizationId);
+    return {
+      driftCount: rows.length,
+      rows,
+    };
+  },
+});
+
+export const repairPayrollAccounting = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    payrollRunId: v.optional(v.id("payrollRuns")),
+  },
+  handler: async (ctx, args) => {
+    await checkAuth(ctx, args.organizationId, "accounting");
+
+    const payrollRuns = args.payrollRunId
+      ? [await ctx.db.get(args.payrollRunId)]
+      : await getPayrollAccountingRuns(ctx, args.organizationId);
+    const validRuns = payrollRuns.filter(
+      (run: any) =>
+        run &&
+        run.organizationId === args.organizationId &&
+        ["finalized", "paid"].includes(run.status),
+    );
+
+    let created = 0;
+    let updated = 0;
+    let deleted = 0;
+
+    for (const run of validRuns) {
+      const result = await syncExpectedPayrollAccountingItems(ctx, run);
+      created += result.created;
+      updated += result.updated;
+      deleted += result.deleted;
+    }
+
+    return {
+      repairedRuns: validRuns.length,
+      created,
+      updated,
+      deleted,
+    };
+  },
+});
+
 // Create cost item
 export const createCostItem = mutation({
   args: {
@@ -419,6 +841,9 @@ export const createCostItem = mutation({
 
     return await ctx.db.insert("accountingCostItems", {
       organizationId: args.organizationId,
+      sourceType: "manual",
+      sourceKey: `manual:${now}`,
+      sourceUpdatedAt: now,
       categoryName: args.categoryName,
       name: args.name,
       description: args.description,

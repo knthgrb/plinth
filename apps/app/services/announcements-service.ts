@@ -21,10 +21,14 @@ export class AnnouncementsService {
     organizationId: string;
     title: string;
     content: string;
+    priority?: "normal" | "important" | "urgent";
     targetAudience: "all" | "department" | "specific-employees";
     departments?: string[];
     specificEmployees?: string[];
+    scheduledPublishDate?: number;
     expiryDate?: number;
+    isPinned?: boolean;
+    reminderCadenceDays?: number;
     attachments?: string[];
     attachmentContentTypes?: string[];
     acknowledgementRequired: boolean;
@@ -37,12 +41,16 @@ export class AnnouncementsService {
         organizationId: data.organizationId as Id<"organizations">,
         title: data.title,
         content: data.content,
+        priority: data.priority,
         targetAudience: data.targetAudience,
         departments: data.departments,
         specificEmployees: data.specificEmployees as
           | Id<"employees">[]
           | undefined,
+        scheduledPublishDate: data.scheduledPublishDate,
         expiryDate: data.expiryDate,
+        isPinned: data.isPinned,
+        reminderCadenceDays: data.reminderCadenceDays,
         attachments: data.attachments as Id<"_storage">[] | undefined,
         attachmentContentTypes: data.attachmentContentTypes,
         acknowledgementRequired: data.acknowledgementRequired,
@@ -60,7 +68,10 @@ export class AnnouncementsService {
     targetAudience?: "all" | "department" | "specific-employees";
     departments?: string[];
     specificEmployees?: string[];
+    scheduledPublishDate?: number;
     expiryDate?: number;
+    isPinned?: boolean;
+    reminderCadenceDays?: number;
     attachments?: string[];
     attachmentContentTypes?: string[];
     acknowledgementRequired?: boolean;
@@ -80,7 +91,10 @@ export class AnnouncementsService {
         specificEmployees: data.specificEmployees as
           | Id<"employees">[]
           | undefined,
+        scheduledPublishDate: data.scheduledPublishDate,
         expiryDate: data.expiryDate,
+        isPinned: data.isPinned,
+        reminderCadenceDays: data.reminderCadenceDays,
         attachments: data.attachments as Id<"_storage">[] | undefined,
         attachmentContentTypes: data.attachmentContentTypes,
         acknowledgementRequired: data.acknowledgementRequired,
@@ -126,6 +140,20 @@ export class AnnouncementsService {
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(
       (api as any).announcements.removeReaction,
+      {
+        announcementId: data.announcementId as Id<"memos">,
+        organizationId: data.organizationId as Id<"organizations">,
+      }
+    );
+  }
+
+  static async sendAnnouncementAcknowledgementReminders(data: {
+    announcementId: string;
+    organizationId: string;
+  }) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.mutation as any)(
+      (api as any).announcements.sendAnnouncementAcknowledgementReminders,
       {
         announcementId: data.announcementId as Id<"memos">,
         organizationId: data.organizationId as Id<"organizations">,

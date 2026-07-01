@@ -7,6 +7,7 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { useOrganization } from "@/hooks/organization-context";
 import { useToast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -42,7 +43,11 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { format, startOfMonth, endOfMonth } from "date-fns";
-import { createEvaluation, updateEvaluation } from "@/actions/evaluations";
+import {
+  createEvaluation,
+  lockEvaluation,
+  updateEvaluation,
+} from "@/actions/evaluations";
 import { updateEvaluationColumns } from "@/actions/settings";
 import { cn } from "@/utils/utils";
 import { EvaluationColumnManagementModal } from "./evaluation-column-management-modal";
@@ -76,6 +81,16 @@ export function EvaluationsContent() {
           organizationId: currentOrganizationId,
         }
       : "skip",
+  );
+
+  const evaluationTemplates = useQuery(
+    (api as any).evaluations.getEvaluationTemplates,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
+
+  const organizationMembers = useQuery(
+    (api as any).organizations.getOrganizationMembers,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   const settings = useQuery(
@@ -130,6 +145,11 @@ export function EvaluationsContent() {
   const [textValue, setTextValue] = useState<string>("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
   const [notes, setNotes] = useState("");
+  const [templateId, setTemplateId] = useState("none");
+  const [reviewCycle, setReviewCycle] = useState("");
+  const [selfReviewNotes, setSelfReviewNotes] = useState("");
+  const [managerReviewNotes, setManagerReviewNotes] = useState("");
+  const [assignedReviewerIds, setAssignedReviewerIds] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [initializedFromUrl, setInitializedFromUrl] = useState(false);
 
@@ -189,6 +209,15 @@ export function EvaluationsContent() {
       (emp: any) => emp.employment?.department === departmentFilter,
     );
   }, [employees, employeeSearch, departmentFilter]);
+
+  const reviewerOptions = useMemo(() => {
+    const elevatedRoles = new Set(["owner", "admin", "hr", "manager"]);
+    return (organizationMembers || [])
+      .filter((member: any) => elevatedRoles.has(member.role))
+      .sort((a: any, b: any) =>
+        (a.name || a.email || "").localeCompare(b.name || b.email || ""),
+      );
+  }, [organizationMembers]);
   const [page, setPage] = useState(1);
   const pageSize = 20;
   const totalEmployees = displayedEmployees.length;
@@ -204,13 +233,15 @@ export function EvaluationsContent() {
     user?.role === "owner" ||
     user?.role === "admin" ||
     user?.role === "hr" ||
+    user?.role === "manager" ||
     user?.role === "accounting";
 
   const evaluationsDataLoading =
     user === undefined ||
     settings === undefined ||
     employees === undefined ||
-    evaluations === undefined;
+    evaluations === undefined ||
+    evaluationTemplates === undefined;
   useEffect(() => {
     if (initializedFromUrl) return;
     if (typeof window === "undefined") return;
@@ -328,6 +359,11 @@ export function EvaluationsContent() {
       setTextValue(existingEvaluation.notes || "");
       setAttachmentUrl(existingEvaluation.attachmentUrl || "");
       setNotes(existingEvaluation.notes || "");
+      setTemplateId(existingEvaluation.templateId || "none");
+      setReviewCycle(existingEvaluation.reviewCycle || "");
+      setSelfReviewNotes(existingEvaluation.selfReview?.notes || "");
+      setManagerReviewNotes(existingEvaluation.managerReview?.notes || "");
+      setAssignedReviewerIds(existingEvaluation.assignedReviewerIds || []);
     } else {
       setEvaluationDate("");
       setLabel(column.label);
@@ -335,6 +371,11 @@ export function EvaluationsContent() {
       setTextValue("");
       setAttachmentUrl("");
       setNotes("");
+      setTemplateId("none");
+      setReviewCycle("");
+      setSelfReviewNotes("");
+      setManagerReviewNotes("");
+      setAssignedReviewerIds([]);
     }
     setIsViewModalOpen(true);
   };
@@ -347,6 +388,7 @@ export function EvaluationsContent() {
   const handleSaveEvaluation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedEmployeeId || !editingCell) return;
+    if (editingCell.existingEvaluation?.lockedAt) return;
 
     // Date is required for date columns, optional for others
     const needsDate = editingCell.columnType === "date";
@@ -385,11 +427,38 @@ export function EvaluationsContent() {
       const evalDate = evaluationDate
         ? new Date(evaluationDate).getTime()
         : editingCell.existingEvaluation?.evaluationDate || Date.now();
+      const selectedTemplateId = templateId !== "none" ? templateId : undefined;
+      const trimmedReviewCycle = reviewCycle.trim() || undefined;
+      const trimmedSelfReview = selfReviewNotes.trim();
+      const trimmedManagerReview = managerReviewNotes.trim();
+      const workflowPayload = {
+        templateId: selectedTemplateId,
+        reviewCycle: trimmedReviewCycle,
+        selfReview: trimmedSelfReview
+          ? {
+              notes: trimmedSelfReview,
+              submittedAt:
+                editingCell.existingEvaluation?.selfReview?.submittedAt ||
+                Date.now(),
+            }
+          : undefined,
+        managerReview: trimmedManagerReview
+          ? {
+              notes: trimmedManagerReview,
+              submittedAt:
+                editingCell.existingEvaluation?.managerReview?.submittedAt ||
+                Date.now(),
+            }
+          : undefined,
+        assignedReviewerIds:
+          assignedReviewerIds.length > 0 ? assignedReviewerIds : undefined,
+      };
 
       if (editingCell.existingEvaluation) {
         // Update existing
         await updateEvaluation({
           evaluationId: editingCell.existingEvaluation._id,
+          ...workflowPayload,
           evaluationDate: evalDate,
           label: editingCell.columnLabel,
           rating: shouldSaveRating && rating ? Number(rating) : undefined,
@@ -406,6 +475,7 @@ export function EvaluationsContent() {
         await createEvaluation({
           organizationId: currentOrganizationId,
           employeeId: selectedEmployeeId,
+          ...workflowPayload,
           evaluationDate: evalDate,
           label: editingCell.columnLabel,
           rating: shouldSaveRating && rating ? Number(rating) : undefined,
@@ -427,6 +497,11 @@ export function EvaluationsContent() {
       setTextValue("");
       setAttachmentUrl("");
       setNotes("");
+      setTemplateId("none");
+      setReviewCycle("");
+      setSelfReviewNotes("");
+      setManagerReviewNotes("");
+      setAssignedReviewerIds([]);
     } catch (error: any) {
       console.error("Error saving evaluation", error);
       toast({
@@ -530,6 +605,38 @@ export function EvaluationsContent() {
     setUpcomingBannerDismissed(true);
     if (typeof window !== "undefined") {
       sessionStorage.setItem("evaluations-upcoming-banner-dismissed", "1");
+    }
+  };
+
+  const handleToggleReviewer = (reviewerId: string, checked: boolean) => {
+    setAssignedReviewerIds((current) =>
+      checked
+        ? Array.from(new Set([...current, reviewerId]))
+        : current.filter((id) => id !== reviewerId),
+    );
+  };
+
+  const handleLockEvaluation = async () => {
+    const evaluationId = editingCell?.existingEvaluation?._id;
+    if (!evaluationId) return;
+
+    try {
+      setIsSaving(true);
+      await lockEvaluation(evaluationId);
+      toast({
+        title: "Evaluation locked",
+        description: "This evaluation can no longer be edited.",
+      });
+      setIsViewModalOpen(false);
+      setEditingCell(null);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to lock evaluation",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -973,16 +1080,31 @@ export function EvaluationsContent() {
               {editingCell &&
                 selectedEmployeeId &&
                 editingCell.existingEvaluation && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleOpenEditFromView}
-                    className="shrink-0 rounded-lg border-[#DDDDDD] bg-white text-[rgb(64,64,64)] hover:bg-[rgb(250,250,250)] hover:border-[rgb(150,150,150)] [&_svg]:text-current"
-                    style={{ color: "rgb(64,64,64)" }}
-                  >
-                    <Pencil className="h-3.5 w-3.5 mr-1.5" />
-                    Edit
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {!editingCell.existingEvaluation.lockedAt && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleLockEvaluation}
+                        disabled={isSaving}
+                        className="shrink-0 rounded-lg border-[#DDDDDD] bg-white text-[rgb(64,64,64)] hover:bg-[rgb(250,250,250)] hover:border-[rgb(150,150,150)]"
+                      >
+                        Lock evaluation
+                      </Button>
+                    )}
+                    {!editingCell.existingEvaluation.lockedAt && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleOpenEditFromView}
+                        className="shrink-0 rounded-lg border-[#DDDDDD] bg-white text-[rgb(64,64,64)] hover:bg-[rgb(250,250,250)] hover:border-[rgb(150,150,150)] [&_svg]:text-current"
+                        style={{ color: "rgb(64,64,64)" }}
+                      >
+                        <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                        Edit
+                      </Button>
+                    )}
+                  </div>
                 )}
             </DialogHeader>
             <div className="space-y-4 pt-2">
@@ -999,6 +1121,9 @@ export function EvaluationsContent() {
                   const col = evaluationColumns.find(
                     (c) => c.id === editingCell.columnId,
                   );
+                  const template = evaluationTemplates?.find(
+                    (item: any) => item._id === ev?.templateId,
+                  );
                   return (
                     <>
                       <div>
@@ -1011,6 +1136,26 @@ export function EvaluationsContent() {
                       </div>
                       {ev ? (
                         <>
+                          {template && (
+                            <div>
+                              <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
+                                Template
+                              </p>
+                              <p className="mt-1 text-sm text-[rgb(64,64,64)]">
+                                {template.name}
+                              </p>
+                            </div>
+                          )}
+                          {ev.reviewCycle && (
+                            <div>
+                              <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
+                                Review cycle
+                              </p>
+                              <p className="mt-1 text-sm text-[rgb(64,64,64)]">
+                                {ev.reviewCycle}
+                              </p>
+                            </div>
+                          )}
                           {editingCell.columnType === "date" &&
                             ev.evaluationDate && (
                               <div>
@@ -1078,6 +1223,47 @@ export function EvaluationsContent() {
                               </a>
                             </div>
                           )}
+                          {ev.assignedReviewerIds?.length > 0 && (
+                            <div>
+                              <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
+                                Assigned reviewers
+                              </p>
+                              <p className="mt-1 text-sm text-[rgb(64,64,64)]">
+                                {ev.assignedReviewerIds.length} reviewer(s)
+                              </p>
+                            </div>
+                          )}
+                          {ev.selfReview?.notes && (
+                            <div>
+                              <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
+                                Self review
+                              </p>
+                              <p className="mt-1 text-sm text-[rgb(64,64,64)] whitespace-pre-wrap">
+                                {ev.selfReview.notes}
+                              </p>
+                            </div>
+                          )}
+                          {ev.managerReview?.notes && (
+                            <div>
+                              <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
+                                Manager review
+                              </p>
+                              <p className="mt-1 text-sm text-[rgb(64,64,64)] whitespace-pre-wrap">
+                                {ev.managerReview.notes}
+                              </p>
+                            </div>
+                          )}
+                          {ev.lockedAt && (
+                            <div>
+                              <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
+                                Status
+                              </p>
+                              <p className="mt-1 text-sm text-[rgb(64,64,64)]">
+                                Locked on{" "}
+                                {format(new Date(ev.lockedAt), "MMM d, yyyy")}
+                              </p>
+                            </div>
+                          )}
                         </>
                       ) : (
                         <div className="flex flex-col items-center gap-3 pt-2">
@@ -1113,7 +1299,7 @@ export function EvaluationsContent() {
 
         {/* Edit Evaluation Dialog – one form for date, rating, notes */}
         <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {editingCell?.existingEvaluation ? "Edit" : "Add"}{" "}
@@ -1149,6 +1335,45 @@ export function EvaluationsContent() {
                   </Select>
                 </div>
               )}
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Template</Label>
+                  <Select
+                    value={templateId}
+                    onValueChange={(value) => {
+                      setTemplateId(value);
+                      const selectedTemplate = evaluationTemplates?.find(
+                        (template: any) => template._id === value,
+                      );
+                      if (selectedTemplate?.reviewCycle && !reviewCycle) {
+                        setReviewCycle(selectedTemplate.reviewCycle);
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select template" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No template</SelectItem>
+                      {evaluationTemplates?.map((template: any) => (
+                        <SelectItem key={template._id} value={template._id}>
+                          {template.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Review cycle</Label>
+                  <Input
+                    value={reviewCycle}
+                    onChange={(e) => setReviewCycle(e.target.value)}
+                    placeholder="Annual, probationary, quarterly"
+                  />
+                </div>
+              </div>
 
               {/* Dynamic fields based on column type */}
               {editingCell?.columnType === "date" && (
@@ -1249,6 +1474,54 @@ export function EvaluationsContent() {
                   </div>
                 </>
               )}
+
+              <div className="space-y-2">
+                <Label>Assigned reviewers</Label>
+                <div className="max-h-32 space-y-2 overflow-y-auto rounded-lg border border-[#DDDDDD] p-3">
+                  {reviewerOptions.length > 0 ? (
+                    reviewerOptions.map((member: any) => (
+                      <label
+                        key={member._id}
+                        className="flex items-center gap-2 text-sm text-[rgb(64,64,64)]"
+                      >
+                        <Checkbox
+                          checked={assignedReviewerIds.includes(member._id)}
+                          onCheckedChange={(checked) =>
+                            handleToggleReviewer(member._id, checked === true)
+                          }
+                        />
+                        <span className="min-w-0 truncate">
+                          {member.name || member.email} ({member.role})
+                        </span>
+                      </label>
+                    ))
+                  ) : (
+                    <p className="text-sm text-[rgb(133,133,133)]">
+                      No eligible reviewers found.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Self review</Label>
+                <Textarea
+                  value={selfReviewNotes}
+                  onChange={(e) => setSelfReviewNotes(e.target.value)}
+                  placeholder="Employee self-review notes"
+                  rows={3}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Manager review</Label>
+                <Textarea
+                  value={managerReviewNotes}
+                  onChange={(e) => setManagerReviewNotes(e.target.value)}
+                  placeholder="Manager review notes and next steps"
+                  rows={3}
+                />
+              </div>
 
               <DialogFooter>
                 <Button

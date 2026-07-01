@@ -20,17 +20,9 @@ import {
 } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus, Loader2, Columns2, FileSpreadsheet } from "lucide-react";
-import {
-  createEmployee,
-  getUserByEmployeeId,
-  updateEmployee,
-  deleteEmployee,
-} from "@/actions/employees";
+import { createEmployee } from "@/actions/employees";
 import { useOrganization } from "@/hooks/organization-context";
 import { useRouter } from "next/navigation";
-import {
-  removeUserFromOrganization,
-} from "@/actions/organizations";
 import { sendMessageToEmployee } from "@/actions/chat";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
@@ -266,10 +258,6 @@ export default function EmployeesPage() {
   );
   const [messageContent, setMessageContent] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
-  const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
-  const [employeeToDelete, setEmployeeToDelete] = useState<any | null>(null);
-  const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
-  const [isDeletingEmployee, setIsDeletingEmployee] = useState(false);
   const defaultAddFormValues: EmployeeFormValues = {
     firstName: "",
     lastName: "",
@@ -280,6 +268,7 @@ export default function EmployeesPage() {
     position: "",
     department: "",
     employmentType: "probationary",
+    status: "active",
     hireDate: "",
     regularizationDate: "",
     basicSalary: "",
@@ -399,7 +388,10 @@ export default function EmployeesPage() {
 
   // Owner has all admin privileges - treat owner the same as admin
   const isAdmin =
-    user?.role === "admin" || user?.role === "hr" || user?.role === "owner";
+    user?.role === "admin" ||
+    user?.role === "hr" ||
+    user?.role === "manager" ||
+    user?.role === "owner";
 
   useEffect(() => {
     // Reset to first page when filters or search change
@@ -537,133 +529,6 @@ export default function EmployeesPage() {
       alert(error.message || "Failed to send message. Please try again.");
     } finally {
       setSendingMessage(false);
-    }
-  };
-
-  const handleRemoveFromOrganization = async (
-    employee: any,
-    e: React.MouseEvent,
-  ) => {
-    e.stopPropagation();
-    if (!currentOrganizationId || !isAdmin) return;
-
-    if (
-      !confirm(
-        `Remove ${employee.personalInfo.firstName} ${employee.personalInfo.lastName} from this organization? They will lose access and their employee record will be removed.`,
-      )
-    )
-      return;
-
-    try {
-      const employeeUser = await getUserByEmployeeId({
-        organizationId: currentOrganizationId,
-        employeeId: employee._id,
-      });
-
-      if (employeeUser) {
-        await removeUserFromOrganization(
-          currentOrganizationId,
-          employeeUser._id,
-        );
-        toast({
-          title: "Removed from organization",
-          description: `${employee.personalInfo.firstName} ${employee.personalInfo.lastName} has been removed from this organization.`,
-        });
-        router.refresh();
-      }
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to remove from organization",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleRemoveEmployee = async (employee: any, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!currentOrganizationId || !isAdmin) return;
-
-    if (
-      !confirm(
-        `Remove ${employee.personalInfo.firstName} ${employee.personalInfo.lastName} from this organization? This will delete their employee record.`,
-      )
-    )
-      return;
-
-    try {
-      await deleteEmployee(employee._id);
-      toast({
-        title: "Employee removed",
-        description: "The employee has been removed from this organization.",
-      });
-      router.refresh();
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to remove employee",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleDeleteEmployee = (employee: any, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!currentOrganizationId || !isAdmin) return;
-    setEmployeeToDelete(employee);
-    setDeleteConfirmInput("");
-  };
-
-  const confirmDeleteEmployee = async () => {
-    if (!employeeToDelete || !currentOrganizationId) return;
-    const hasLinkedAccount = employeesUserAccounts?.[employeeToDelete._id];
-    if (hasLinkedAccount && deleteConfirmInput !== "CONFIRM") return;
-
-    setIsDeletingEmployee(true);
-    try {
-      await deleteEmployee(employeeToDelete._id);
-      toast({
-        title: "Employee deleted",
-        description: hasLinkedAccount
-          ? "The employee and their user account have been permanently removed."
-          : "The employee has been permanently removed.",
-      });
-      setEmployeeToDelete(null);
-      setDeleteConfirmInput("");
-      router.refresh();
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to delete employee",
-        variant: "destructive",
-      });
-    } finally {
-      setIsDeletingEmployee(false);
-    }
-  };
-
-  const handleUpdateStatus = async (
-    employee: any,
-    newStatus: "active" | "inactive" | "resigned" | "terminated",
-    e: React.MouseEvent,
-  ) => {
-    e.stopPropagation();
-    if (!currentOrganizationId) return;
-
-    setUpdatingStatus(employee._id);
-    try {
-      await updateEmployee(employee._id, {
-        employment: {
-          ...employee.employment,
-          status: newStatus,
-        },
-      });
-      alert(`Employee status updated to ${newStatus} successfully`);
-      window.location.reload();
-    } catch (error: any) {
-      alert(error.message || "Failed to update status");
-    } finally {
-      setUpdatingStatus(null);
     }
   };
 
@@ -1520,8 +1385,6 @@ export default function EmployeesPage() {
               employees={filteredEmployees}
               isLoading={employees === undefined}
               isCreatingEmployee={isCreatingEmployee}
-              isAdmin={isAdmin}
-              updatingStatus={updatingStatus}
               onRowClick={(employeeId: string) => {
                 setSelectedEmployeeId(employeeId);
                 setPanelMode("view");
@@ -1533,105 +1396,16 @@ export default function EmployeesPage() {
                 setIsPanelOpen(true);
               }}
               onMessage={handleMessage}
-              onUpdateStatus={handleUpdateStatus}
-              onRemoveFromOrganization={handleRemoveFromOrganization}
-              onRemoveEmployee={handleRemoveEmployee}
               page={page}
               pageSize={pageSize}
               totalEmployees={totalEmployees}
               onPageChange={setPage}
-              employeesUserAccounts={employeesUserAccounts ?? {}}
               employeesInOrganization={employeesInOrganization ?? {}}
               visibleColumns={visibleColumns}
             />
           </CardContent>
         </Card>
       </div>
-
-      {/* Delete Employee Dialog */}
-      <Dialog
-        open={!!employeeToDelete}
-        onOpenChange={(open) => {
-          if (!open) {
-            setEmployeeToDelete(null);
-            setDeleteConfirmInput("");
-          }
-        }}
-      >
-        <DialogContent
-          className="max-w-sm"
-          hideCloseIcon={isDeletingEmployee}
-          onPointerDownOutside={(e) => isDeletingEmployee && e.preventDefault()}
-          onEscapeKeyDown={(e) => isDeletingEmployee && e.preventDefault()}
-        >
-          <DialogHeader>
-            <DialogTitle>Delete employee</DialogTitle>
-            <DialogDescription asChild>
-              <div className="space-y-2">
-                <p>
-                  {employeeToDelete
-                    ? `Are you sure you want to permanently delete ${employeeToDelete.personalInfo?.firstName} ${employeeToDelete.personalInfo?.lastName}? This action cannot be undone and will remove all employee records.`
-                    : ""}
-                </p>
-                {employeeToDelete &&
-                  employeesUserAccounts?.[employeeToDelete._id] && (
-                    <>
-                      <p className="font-medium text-amber-700">
-                        The linked user account will also be permanently
-                        deleted. They will no longer be able to sign in.
-                      </p>
-                      <div className="pt-2">
-                        <Label
-                          htmlFor="delete-confirm"
-                          className="text-foreground text-sm"
-                        >
-                          Type CONFIRM to proceed
-                        </Label>
-                        <Input
-                          id="delete-confirm"
-                          className="mt-1"
-                          value={deleteConfirmInput}
-                          onChange={(e) =>
-                            setDeleteConfirmInput(e.target.value)
-                          }
-                          placeholder="CONFIRM"
-                          disabled={isDeletingEmployee}
-                          autoComplete="off"
-                        />
-                      </div>
-                    </>
-                  )}
-              </div>
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setEmployeeToDelete(null);
-                setDeleteConfirmInput("");
-              }}
-              disabled={isDeletingEmployee}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={confirmDeleteEmployee}
-              disabled={
-                isDeletingEmployee ||
-                (!!(
-                  employeeToDelete &&
-                  employeesUserAccounts?.[employeeToDelete._id]
-                ) &&
-                  deleteConfirmInput !== "CONFIRM")
-              }
-            >
-              {isDeletingEmployee ? "Deleting..." : "Delete employee"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Quick Message Dialog */}
       <Dialog open={isMessageDialogOpen} onOpenChange={setIsMessageDialogOpen}>

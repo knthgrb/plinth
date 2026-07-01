@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { getAssignableOrganizationRoleOptions } from "@/utils/organization-roles";
 
 // Helper to get user record
 async function getUserRecord(ctx: any) {
@@ -35,6 +36,27 @@ async function findUserByEmailLoose(ctx: any, email: string) {
     if (u) return u;
   }
   return null;
+}
+
+function getActorOrganizationRole(
+  userRecord: any,
+  userOrg: any,
+  organizationId: any,
+): string | null {
+  return (
+    userOrg?.role ||
+    (userRecord.organizationId === organizationId ? userRecord.role : null) ||
+    null
+  );
+}
+
+function assertCanInviteRole(actorRole: string | null, nextRole: string) {
+  const canAssign = getAssignableOrganizationRoleOptions(actorRole).some(
+    (option) => option.value === nextRole,
+  );
+  if (!canAssign) {
+    throw new Error("Not authorized to assign this organization role");
+  }
 }
 
 /**
@@ -367,6 +389,7 @@ export const createInvitation = mutation({
       v.literal("admin"),
       v.literal("owner"),
       v.literal("hr"),
+      v.literal("manager"),
       v.literal("employee"),
       v.literal("accounting")
     ),
@@ -383,18 +406,19 @@ export const createInvitation = mutation({
       )
       .first();
 
+    const actorRole = getActorOrganizationRole(
+      userRecord,
+      userOrg,
+      args.organizationId,
+    );
+
     const isAuthorized =
-      userOrg?.role === "owner" ||
-      userOrg?.role === "admin" ||
-      userOrg?.role === "hr" ||
-      (userRecord.organizationId === args.organizationId &&
-        (userRecord.role === "admin" ||
-          userRecord.role === "hr" ||
-          userRecord.role === "owner"));
+      actorRole === "owner" || actorRole === "admin" || actorRole === "hr";
 
     if (!isAuthorized) {
       throw new Error("Not authorized to invite users to organization");
     }
+    assertCanInviteRole(actorRole, args.role);
 
     const existingInvitations = await (ctx.db.query("invitations") as any)
       .withIndex("by_organization", (q: any) =>
@@ -432,6 +456,7 @@ export const batchCreateInvitations = mutation({
       v.literal("admin"),
       v.literal("owner"),
       v.literal("hr"),
+      v.literal("manager"),
       v.literal("employee"),
       v.literal("accounting"),
     ),
@@ -452,18 +477,19 @@ export const batchCreateInvitations = mutation({
       )
       .first();
 
+    const actorRole = getActorOrganizationRole(
+      userRecord,
+      userOrg,
+      args.organizationId,
+    );
+
     const isAuthorized =
-      userOrg?.role === "owner" ||
-      userOrg?.role === "admin" ||
-      userOrg?.role === "hr" ||
-      (userRecord.organizationId === args.organizationId &&
-        (userRecord.role === "admin" ||
-          userRecord.role === "hr" ||
-          userRecord.role === "owner"));
+      actorRole === "owner" || actorRole === "admin" || actorRole === "hr";
 
     if (!isAuthorized) {
       throw new Error("Not authorized to invite users to organization");
     }
+    assertCanInviteRole(actorRole, args.role);
 
     const existingInvitations = await (ctx.db.query("invitations") as any)
       .withIndex("by_organization", (q: any) =>
@@ -765,6 +791,9 @@ export const acceptInvitation = mutation({
         organizationId: invitation.organizationId,
         role: invitation.role,
         employeeId: invitation.employeeId,
+        accessStatus: "active",
+        accessUpdatedAt: now,
+        accessUpdatedBy: userId,
         joinedAt: now,
         updatedAt: now,
       });
@@ -773,6 +802,9 @@ export const acceptInvitation = mutation({
       await ctx.db.patch(existingUserOrg._id, {
         role: invitation.role,
         employeeId: invitation.employeeId,
+        accessStatus: "active",
+        accessUpdatedAt: now,
+        accessUpdatedBy: userId,
         updatedAt: now,
       });
     }
@@ -876,6 +908,7 @@ export const createUserForEmployee = mutation({
       v.literal("admin"),
       v.literal("owner"),
       v.literal("hr"),
+      v.literal("manager"),
       v.literal("employee"),
       v.literal("accounting")
     ),
@@ -891,11 +924,11 @@ export const createUserForEmployee = mutation({
       )
       .first();
 
-    const userRole =
-      userOrg?.role ||
-      (userRecord.organizationId === args.organizationId
-        ? userRecord.role
-        : null);
+    const userRole = getActorOrganizationRole(
+      userRecord,
+      userOrg,
+      args.organizationId,
+    );
 
     // Owner has all admin privileges - treat owner the same as admin
     const isOwnerOrAdmin = userRole === "admin" || userRole === "owner";
@@ -904,6 +937,7 @@ export const createUserForEmployee = mutation({
     if (!isAuthorized) {
       throw new Error("Not authorized to create user accounts");
     }
+    assertCanInviteRole(userRole, args.role);
 
     // Get employee
     const employee = await ctx.db.get(args.employeeId);

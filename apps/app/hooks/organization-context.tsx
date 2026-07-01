@@ -10,7 +10,8 @@ import { authClient } from "@/lib/auth-client";
 type Organization = {
   _id: Id<"organizations">;
   name: string;
-  role: "admin" | "owner" | "hr" | "employee" | "accounting";
+  role: "admin" | "owner" | "hr" | "manager" | "employee" | "accounting";
+  accessStatus?: "active" | "suspended" | "alumni" | "disabled" | "removed";
   employeeId?: Id<"employees">;
   joinedAt: number;
   firstPayDate?: number;
@@ -41,7 +42,11 @@ const OrganizationContext = createContext<OrganizationContextType | undefined>(
 
 const STORAGE_KEY = "current_organization_id";
 
-function getDefaultRouteForRole(role: string | null | undefined): string {
+function getDefaultRouteForRole(
+  role: string | null | undefined,
+  accessStatus?: string | null,
+): string {
+  if (accessStatus === "alumni") return "/payslips";
   if (!role) return "/dashboard";
   const r = role.toLowerCase();
   // Only employee and accounting land on announcements; admin/owner/hr land on dashboard
@@ -155,7 +160,7 @@ export function OrganizationProvider({
       if (!urlOrganizationId && pathname && !isPublicOrInvite) {
         const selectedOrg = organizations.find((o) => o._id === orgIdToUse);
         const defaultPath = selectedOrg
-          ? getDefaultRouteForRole(selectedOrg.role)
+          ? getDefaultRouteForRole(selectedOrg.role, selectedOrg.accessStatus)
           : "/dashboard";
         const currentPath = pathname === "/" ? defaultPath : pathname;
         router.replace(`/${orgIdToUse}${currentPath}`);

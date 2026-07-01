@@ -18,14 +18,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Archive,
-  ArchiveRestore,
-  MessageSquare,
-  MoreVertical,
-  Pencil,
-  UserMinus,
-} from "lucide-react";
+import { MessageSquare, MoreVertical, Pencil } from "lucide-react";
+import { getEmployeeLifecycleImpact } from "@/utils/employee-lifecycle";
 
 type EmployeeColumnId =
   | "name"
@@ -40,23 +34,13 @@ interface EmployeesTableProps {
   employees: any[] | undefined;
   isLoading?: boolean;
   isCreatingEmployee: boolean;
-  isAdmin: boolean;
-  updatingStatus: string | null;
   onRowClick: (employeeId: string) => void;
   onEdit: (employeeId: string) => void;
   onMessage: (employeeId: string, e: MouseEvent) => void;
-  onUpdateStatus: (
-    employee: any,
-    newStatus: "active" | "inactive" | "resigned" | "terminated",
-    e: MouseEvent
-  ) => void;
-  onRemoveFromOrganization: (employee: any, e: MouseEvent) => void;
-  onRemoveEmployee: (employee: any, e: MouseEvent) => void;
   page: number;
   pageSize: number;
   totalEmployees: number;
   onPageChange: (page: number) => void;
-  employeesUserAccounts: Record<string, boolean>;
   /** Linked org membership via userOrganizations.employeeId — used for messaging. */
   employeesInOrganization: Record<string, boolean>;
   visibleColumns: EmployeeColumnId[];
@@ -66,19 +50,13 @@ export function EmployeesTable({
   employees,
   isLoading = false,
   isCreatingEmployee,
-  isAdmin,
-  updatingStatus,
   onRowClick,
   onEdit,
   onMessage,
-  onUpdateStatus,
-  onRemoveFromOrganization,
-  onRemoveEmployee,
   page,
   pageSize,
   totalEmployees,
   onPageChange,
-  employeesUserAccounts,
   employeesInOrganization,
   visibleColumns,
 }: EmployeesTableProps) {
@@ -255,7 +233,11 @@ export function EmployeesTable({
                                 : "bg-gray-100 text-gray-800 hover:bg-gray-100 border-gray-200 rounded-md focus:ring-0 focus:ring-offset-0 transition-none"
                             }
                           >
-                            {employee.employment.status}
+                            {
+                              getEmployeeLifecycleImpact(
+                                employee.employment.status,
+                              ).label
+                            }
                           </Badge>
                         </TableCell>
                       )}
@@ -284,80 +266,15 @@ export function EmployeesTable({
                                 <Pencil className="h-4 w-4 mr-2" />
                                 Edit Details
                               </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              {/* Only show Send Message if employee has a user account */}
                               {employeesInOrganization[employee._id] && (
-                                <DropdownMenuItem
-                                  onClick={(e) => onMessage(employee._id, e)}
-                                >
-                                  <MessageSquare className="h-4 w-4 mr-2" />
-                                  Send Message
-                                </DropdownMenuItem>
-                              )}
-                              <DropdownMenuSeparator />
-                              {employee.employment.status === "active" ? (
-                                <DropdownMenuItem
-                                  onClick={(e) =>
-                                    onUpdateStatus(employee, "inactive", e)
-                                  }
-                                  disabled={updatingStatus === employee._id}
-                                >
-                                  <Archive className="h-4 w-4 mr-2" />
-                                  Archive (Deactivate)
-                                </DropdownMenuItem>
-                              ) : (
-                                <DropdownMenuItem
-                                  onClick={(e) =>
-                                    onUpdateStatus(employee, "active", e)
-                                  }
-                                  disabled={updatingStatus === employee._id}
-                                >
-                                  <ArchiveRestore className="h-4 w-4 mr-2" />
-                                  Reactivate
-                                </DropdownMenuItem>
-                              )}
-                              <DropdownMenuItem
-                                onClick={(e) =>
-                                  onUpdateStatus(employee, "resigned", e)
-                                }
-                                disabled={updatingStatus === employee._id}
-                              >
-                                <Archive className="h-4 w-4 mr-2" />
-                                Mark as Resigned
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={(e) =>
-                                  onUpdateStatus(employee, "terminated", e)
-                                }
-                                disabled={updatingStatus === employee._id}
-                              >
-                                <Archive className="h-4 w-4 mr-2" />
-                                Mark as Terminated
-                              </DropdownMenuItem>
-                              {isAdmin && (
                                 <>
                                   <DropdownMenuSeparator />
-                                  {employeesUserAccounts[employee._id] ? (
-                                    <DropdownMenuItem
-                                      onClick={(e) =>
-                                        onRemoveFromOrganization(employee, e)
-                                      }
-                                      className="text-amber-600"
-                                    >
-                                      <UserMinus className="h-4 w-4 mr-2" />
-                                      Remove from Organization
-                                    </DropdownMenuItem>
-                                  ) : (
-                                    <DropdownMenuItem
-                                      onClick={(e) =>
-                                        onRemoveEmployee(employee, e)
-                                      }
-                                      className="text-amber-600"
-                                    >
-                                      <UserMinus className="h-4 w-4 mr-2" />
-                                      Remove employee
-                                    </DropdownMenuItem>
-                                  )}
+                                  <DropdownMenuItem
+                                    onClick={(e) => onMessage(employee._id, e)}
+                                  >
+                                    <MessageSquare className="h-4 w-4 mr-2" />
+                                    Send Message
+                                  </DropdownMenuItem>
                                 </>
                               )}
                             </DropdownMenuContent>

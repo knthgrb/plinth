@@ -8,7 +8,17 @@ export async function getSettings(organizationId: string) {
 
 export async function updateDepartments(data: {
   organizationId: string;
-  departments: Array<string | { name: string; color?: string }>;
+  departments: Array<
+    | string
+    | {
+        name: string;
+        color?: string;
+        departmentHeadUserId?: string;
+        costCenter?: string;
+        location?: string;
+        parentDepartmentName?: string;
+      }
+  >;
 }) {
   return SettingsService.updateDepartments(data);
 }

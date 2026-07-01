@@ -2,6 +2,14 @@
 
 import { DocumentsService } from "@/services/documents-service";
 
+type DocumentVisibilityScope =
+  | "admins_only"
+  | "all_employees"
+  | "department"
+  | "specific_employee"
+  | "alumni_visible"
+  | "payroll_visible";
+
 export async function createDocument(data: {
   organizationId: string;
   employeeId?: string;
@@ -18,6 +26,9 @@ export async function createDocument(data: {
   attachments?: string[];
   isShared?: boolean;
   sharedWith?: string[];
+  visibilityScope?: DocumentVisibilityScope;
+  visibleDepartments?: string[];
+  visibleEmployeeIds?: string[];
 }) {
   return DocumentsService.createDocument(data);
 }
@@ -38,6 +49,9 @@ export async function updateDocument(
     attachments?: string[];
     isShared?: boolean;
     sharedWith?: string[];
+    visibilityScope?: DocumentVisibilityScope;
+    visibleDepartments?: string[];
+    visibleEmployeeIds?: string[];
   }
 ) {
   return DocumentsService.updateDocument(documentId, data);

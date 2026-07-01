@@ -34,8 +34,13 @@ export type AnnouncementEditSnapshot = {
   title: string;
   content: string;
   targetAudience: "all" | "department" | "specific-employees";
+  priority?: "normal" | "important" | "urgent";
   departments?: string[];
   specificEmployees?: string[];
+  scheduledPublishDate?: number;
+  expiryDate?: number;
+  isPinned?: boolean;
+  reminderCadenceDays?: number;
   acknowledgementRequired: boolean;
   attachments?: string[];
   attachmentContentTypes?: string[];
@@ -120,6 +125,11 @@ export function CreateAnnouncementModal({
     targetAudience: "all" as "all" | "department" | "specific-employees",
     departments: [] as string[],
     specificEmployees: [] as string[],
+    priority: "normal" as "normal" | "important" | "urgent",
+    scheduledPublishDate: "",
+    expiryDate: "",
+    isPinned: false,
+    reminderCadenceDays: "",
     acknowledgementRequired: false,
   });
   const [files, setFiles] = useState<FileItem[]>([]);
@@ -143,6 +153,18 @@ export function CreateAnnouncementModal({
         specificEmployees: (editingAnnouncement.specificEmployees ?? []).map(
           String,
         ),
+        priority: editingAnnouncement.priority ?? "normal",
+        scheduledPublishDate: editingAnnouncement.scheduledPublishDate
+          ? new Date(editingAnnouncement.scheduledPublishDate)
+              .toISOString()
+              .slice(0, 16)
+          : "",
+        expiryDate: editingAnnouncement.expiryDate
+          ? new Date(editingAnnouncement.expiryDate).toISOString().slice(0, 10)
+          : "",
+        isPinned: Boolean(editingAnnouncement.isPinned),
+        reminderCadenceDays:
+          editingAnnouncement.reminderCadenceDays?.toString() ?? "",
         acknowledgementRequired: Boolean(
           editingAnnouncement.acknowledgementRequired,
         ),
@@ -170,6 +192,11 @@ export function CreateAnnouncementModal({
       targetAudience: "all",
       departments: [],
       specificEmployees: [],
+      priority: "normal",
+      scheduledPublishDate: "",
+      expiryDate: "",
+      isPinned: false,
+      reminderCadenceDays: "",
       acknowledgementRequired: false,
     });
     setExistingAttachments([]);
@@ -245,6 +272,27 @@ export function CreateAnnouncementModal({
       emp.personalInfo.email?.toLowerCase().includes(searchLower)
     );
   });
+
+  const audiencePreviewCount = (() => {
+    if (!Array.isArray(employees)) return 0;
+    if (formData.targetAudience === "all") return employees.length;
+    if (formData.targetAudience === "department") {
+      return employees.filter((employee: any) =>
+        formData.departments.includes(employee.employment?.department),
+      ).length;
+    }
+    return formData.specificEmployees.length;
+  })();
+
+  const scheduledPublishDate = formData.scheduledPublishDate
+    ? new Date(formData.scheduledPublishDate).getTime()
+    : undefined;
+  const expiryDate = formData.expiryDate
+    ? new Date(formData.expiryDate).getTime()
+    : undefined;
+  const reminderCadenceDays = formData.reminderCadenceDays
+    ? Number(formData.reminderCadenceDays)
+    : undefined;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -350,6 +398,7 @@ export function CreateAnnouncementModal({
           organizationId,
           title: formData.title,
           content: formData.content,
+          priority: formData.priority,
           targetAudience: formData.targetAudience,
           departments:
             formData.targetAudience === "department"
@@ -360,6 +409,10 @@ export function CreateAnnouncementModal({
               ? formData.specificEmployees
               : undefined,
           acknowledgementRequired: formData.acknowledgementRequired,
+          scheduledPublishDate,
+          expiryDate,
+          isPinned: formData.isPinned,
+          reminderCadenceDays,
           attachments: allAttachmentIds,
           attachmentContentTypes: allContentTypes,
           postAs: canChoosePostAs ? postAs : "admin",
@@ -373,6 +426,7 @@ export function CreateAnnouncementModal({
           organizationId,
           title: formData.title,
           content: formData.content,
+          priority: formData.priority,
           targetAudience: formData.targetAudience,
           departments:
             formData.targetAudience === "department"
@@ -383,6 +437,10 @@ export function CreateAnnouncementModal({
               ? formData.specificEmployees
               : undefined,
           acknowledgementRequired: formData.acknowledgementRequired,
+          scheduledPublishDate,
+          expiryDate,
+          isPinned: formData.isPinned,
+          reminderCadenceDays,
           attachments:
             uploadedFileIds.length > 0 ? uploadedFileIds : undefined,
           attachmentContentTypes:
@@ -404,6 +462,11 @@ export function CreateAnnouncementModal({
         targetAudience: "all",
         departments: [],
         specificEmployees: [],
+        priority: "normal",
+        scheduledPublishDate: "",
+        expiryDate: "",
+        isPinned: false,
+        reminderCadenceDays: "",
         acknowledgementRequired: false,
       });
       setFiles([]);
@@ -489,6 +552,90 @@ export function CreateAnnouncementModal({
                 </p>
               </div>
             )}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="priority">Priority</Label>
+                <Select
+                  value={formData.priority}
+                  onValueChange={(value: "normal" | "important" | "urgent") =>
+                    setFormData({ ...formData, priority: value })
+                  }
+                >
+                  <SelectTrigger id="priority">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="normal">Normal</SelectItem>
+                    <SelectItem value="important">Important</SelectItem>
+                    <SelectItem value="urgent">Urgent</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="scheduledPublishDate">
+                  Scheduled publish date
+                </Label>
+                <Input
+                  id="scheduledPublishDate"
+                  type="datetime-local"
+                  value={formData.scheduledPublishDate}
+                  onChange={(event) =>
+                    setFormData({
+                      ...formData,
+                      scheduledPublishDate: event.target.value,
+                    })
+                  }
+                />
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="expiryDate">Expiry date</Label>
+                <Input
+                  id="expiryDate"
+                  type="date"
+                  value={formData.expiryDate}
+                  onChange={(event) =>
+                    setFormData({
+                      ...formData,
+                      expiryDate: event.target.value,
+                    })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reminderCadenceDays">
+                  Reminder cadence days
+                </Label>
+                <Input
+                  id="reminderCadenceDays"
+                  type="number"
+                  min="1"
+                  value={formData.reminderCadenceDays}
+                  onChange={(event) =>
+                    setFormData({
+                      ...formData,
+                      reminderCadenceDays: event.target.value,
+                    })
+                  }
+                  placeholder="e.g. 3"
+                />
+              </div>
+            </div>
+            <label className="flex items-center gap-2 rounded-lg border p-3 text-sm">
+              <input
+                type="checkbox"
+                checked={formData.isPinned}
+                onChange={(event) =>
+                  setFormData({
+                    ...formData,
+                    isPinned: event.target.checked,
+                  })
+                }
+                className="h-4 w-4 accent-purple-600"
+              />
+              Pin announcement
+            </label>
             <div className="space-y-2">
               <Label htmlFor="targetAudience">
                 Target Audience <span className="text-red-500">*</span>
@@ -649,6 +796,17 @@ export function CreateAnnouncementModal({
                 )}
               </div>
             )}
+
+            <div className="rounded-lg border border-purple-100 bg-purple-50 p-3">
+              <p className="text-sm font-medium text-purple-900">
+                Audience preview
+              </p>
+              <p className="text-xs text-purple-700">
+                {audiencePreviewCount} employee
+                {audiencePreviewCount === 1 ? "" : "s"} will receive this
+                announcement.
+              </p>
+            </div>
 
             <div className="space-y-2">
               <Label htmlFor="content">

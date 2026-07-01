@@ -8,6 +8,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -49,6 +57,24 @@ export function AttendanceShiftsSettingsContent() {
 
   const [defaultLunchStart, setDefaultLunchStart] = useState("12:00");
   const [defaultLunchEnd, setDefaultLunchEnd] = useState("13:00");
+  const [graceMinutes, setGraceMinutes] = useState("5");
+  const [roundingRule, setRoundingRule] = useState("none");
+  const [flexibleShiftsEnabled, setFlexibleShiftsEnabled] = useState(false);
+  const [overnightShiftCutoffHour, setOvernightShiftCutoffHour] = useState("6");
+  const [restDayPolicy, setRestDayPolicy] = useState("shift_based");
+  const [geofenceEnabled, setGeofenceEnabled] = useState(false);
+  const [geofenceRadiusMeters, setGeofenceRadiusMeters] = useState("100");
+  const [requireGeofenceForClockIn, setRequireGeofenceForClockIn] =
+    useState(false);
+  const [allowCsvImport, setAllowCsvImport] = useState(true);
+  const [requireReviewBeforePosting, setRequireReviewBeforePosting] =
+    useState(true);
+  const [
+    lockAttendanceAfterPayrollFinalized,
+    setLockAttendanceAfterPayrollFinalized,
+  ] = useState(true);
+  const [allowAdminCorrectionWithReason, setAllowAdminCorrectionWithReason] =
+    useState(true);
   const [savingLunch, setSavingLunch] = useState(false);
 
   const [shiftDialogOpen, setShiftDialogOpen] = useState(false);
@@ -75,6 +101,28 @@ export function AttendanceShiftsSettingsContent() {
     if (att) {
       setDefaultLunchStart(att.defaultLunchStart ?? "12:00");
       setDefaultLunchEnd(att.defaultLunchEnd ?? "13:00");
+      setGraceMinutes(String(att.graceMinutes ?? 5));
+      setRoundingRule(att.roundingRule ?? "none");
+      setFlexibleShiftsEnabled(att.flexibleShiftsEnabled ?? false);
+      setOvernightShiftCutoffHour(String(att.overnightShiftCutoffHour ?? 6));
+      setRestDayPolicy(att.restDayPolicy ?? "shift_based");
+      setGeofenceEnabled(att.geofencePolicy?.enabled ?? false);
+      setGeofenceRadiusMeters(
+        String(att.geofencePolicy?.allowedRadiusMeters ?? 100),
+      );
+      setRequireGeofenceForClockIn(
+        att.geofencePolicy?.requireForClockIn ?? false,
+      );
+      setAllowCsvImport(att.importPolicy?.allowCsvImport ?? true);
+      setRequireReviewBeforePosting(
+        att.importPolicy?.requireReviewBeforePosting ?? true,
+      );
+      setLockAttendanceAfterPayrollFinalized(
+        att.payrollLockPolicy?.lockAttendanceAfterPayrollFinalized ?? true,
+      );
+      setAllowAdminCorrectionWithReason(
+        att.payrollLockPolicy?.allowAdminCorrectionWithReason ?? true,
+      );
     }
   }, [settings?.attendanceSettings]);
 
@@ -87,9 +135,27 @@ export function AttendanceShiftsSettingsContent() {
         attendanceSettings: {
           defaultLunchStart,
           defaultLunchEnd,
+          graceMinutes: Number(graceMinutes || 0),
+          roundingRule,
+          flexibleShiftsEnabled,
+          overnightShiftCutoffHour: Number(overnightShiftCutoffHour || 0),
+          restDayPolicy,
+          geofencePolicy: {
+            enabled: geofenceEnabled,
+            allowedRadiusMeters: Number(geofenceRadiusMeters || 0),
+            requireForClockIn: requireGeofenceForClockIn,
+          },
+          importPolicy: {
+            allowCsvImport,
+            requireReviewBeforePosting,
+          },
+          payrollLockPolicy: {
+            lockAttendanceAfterPayrollFinalized,
+            allowAdminCorrectionWithReason,
+          },
         },
       });
-      toast({ title: "Saved", description: "Default lunch settings updated." });
+      toast({ title: "Saved", description: "Attendance settings updated." });
     } catch (e: any) {
       toast({ title: "Error", description: e?.message ?? "Failed to save.", variant: "destructive" });
     } finally {
@@ -263,8 +329,150 @@ export function AttendanceShiftsSettingsContent() {
               />
             </div>
           </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Grace minutes</Label>
+              <Input
+                type="number"
+                min={0}
+                value={graceMinutes}
+                onChange={(e) => setGraceMinutes(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Rounding rule</Label>
+              <Select value={roundingRule} onValueChange={setRoundingRule}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select rounding rule" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No rounding</SelectItem>
+                  <SelectItem value="nearest_5">Nearest 5 minutes</SelectItem>
+                  <SelectItem value="nearest_15">Nearest 15 minutes</SelectItem>
+                  <SelectItem value="floor_15">Round down to 15</SelectItem>
+                  <SelectItem value="ceiling_15">Round up to 15</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <label className="flex items-center gap-2 rounded-lg border border-[rgb(230,230,230)] p-3">
+              <Checkbox
+                checked={flexibleShiftsEnabled}
+                onCheckedChange={(checked) =>
+                  setFlexibleShiftsEnabled(checked === true)
+                }
+              />
+              <span className="text-sm font-medium">Flexible shifts</span>
+            </label>
+            <div className="space-y-2">
+              <Label>Overnight cutoff</Label>
+              <Input
+                type="number"
+                min={0}
+                max={23}
+                value={overnightShiftCutoffHour}
+                onChange={(e) => setOvernightShiftCutoffHour(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Rest day policy</Label>
+              <Select value={restDayPolicy} onValueChange={setRestDayPolicy}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select rest day policy" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="fixed_weekly">Fixed weekly</SelectItem>
+                  <SelectItem value="shift_based">Shift based</SelectItem>
+                  <SelectItem value="attendance_based">
+                    Attendance based
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Geofence</Label>
+              <div className="space-y-3 rounded-lg border border-[rgb(230,230,230)] p-3">
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    checked={geofenceEnabled}
+                    onCheckedChange={(checked) =>
+                      setGeofenceEnabled(checked === true)
+                    }
+                  />
+                  <span className="text-sm">Enable geofence checks</span>
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={geofenceRadiusMeters}
+                  onChange={(e) => setGeofenceRadiusMeters(e.target.value)}
+                  placeholder="Allowed radius in meters"
+                />
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    checked={requireGeofenceForClockIn}
+                    onCheckedChange={(checked) =>
+                      setRequireGeofenceForClockIn(checked === true)
+                    }
+                  />
+                  <span className="text-sm">Require for clock in</span>
+                </label>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Import policy</Label>
+              <div className="space-y-3 rounded-lg border border-[rgb(230,230,230)] p-3">
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    checked={allowCsvImport}
+                    onCheckedChange={(checked) =>
+                      setAllowCsvImport(checked === true)
+                    }
+                  />
+                  <span className="text-sm">Allow CSV import</span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    checked={requireReviewBeforePosting}
+                    onCheckedChange={(checked) =>
+                      setRequireReviewBeforePosting(checked === true)
+                    }
+                  />
+                  <span className="text-sm">Review before posting</span>
+                </label>
+              </div>
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Payroll lock</Label>
+              <div className="grid gap-3 rounded-lg border border-[rgb(230,230,230)] p-3 md:grid-cols-2">
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    checked={lockAttendanceAfterPayrollFinalized}
+                    onCheckedChange={(checked) =>
+                      setLockAttendanceAfterPayrollFinalized(checked === true)
+                    }
+                  />
+                  <span className="text-sm">
+                    Lock attendance after payroll finalization
+                  </span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    checked={allowAdminCorrectionWithReason}
+                    onCheckedChange={(checked) =>
+                      setAllowAdminCorrectionWithReason(checked === true)
+                    }
+                  />
+                  <span className="text-sm">
+                    Allow corrections with reason
+                  </span>
+                </label>
+              </div>
+            </div>
+          </div>
+
           <Button onClick={handleSaveDefaultLunch} disabled={savingLunch}>
-            {savingLunch ? "Saving…" : "Save default lunch"}
+            {savingLunch ? "Saving…" : "Save attendance settings"}
           </Button>
         </CardContent>
       </Card>

@@ -54,6 +54,16 @@ interface Column {
   hidden?: boolean;
 }
 
+type DefaultRequirementPolicy = {
+  type: string;
+  isRequired?: boolean;
+  appliesToDepartments?: string[];
+  appliesToEmploymentTypes?: string[];
+  reminderDaysBeforeDue?: number;
+  requiresVerification?: boolean;
+  expiryDaysAfterSubmission?: number;
+};
+
 // Lazy load modal components
 const DefaultRequirementsDialog = dynamic(
   () =>
@@ -131,7 +141,10 @@ export default function RequirementsPage() {
   ) as () => Promise<string>;
 
   const isOwnerOrAdminOrHr =
-    user?.role === "owner" || user?.role === "admin" || user?.role === "hr";
+    user?.role === "owner" ||
+    user?.role === "admin" ||
+    user?.role === "hr" ||
+    user?.role === "manager";
   const isEmployee = user?.role === "employee";
   const userEmployeeId = user?.employeeId;
 
@@ -139,7 +152,7 @@ export default function RequirementsPage() {
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<any>(null);
   const [defaultReqsList, setDefaultReqsList] = useState<
-    Array<{ type: string; isRequired?: boolean }>
+    DefaultRequirementPolicy[]
   >([]);
   const [isColumnModalOpen, setIsColumnModalOpen] = useState(false);
   const [tableColumns, setTableColumns] = useState<Column[]>([]);
@@ -302,9 +315,13 @@ export default function RequirementsPage() {
 
       if (requirementIndex < 0) {
         // Requirement doesn't exist yet, add it first
+        const defaultReq = defaultRequirements?.find(
+          (req: any) => req.type === requirementType,
+        );
         await addRequirement({
           employeeId: currentEmployee._id,
           requirement: {
+            ...defaultReq,
             type: requirementType,
             status: "submitted",
             file: storageId,
@@ -376,7 +393,7 @@ export default function RequirementsPage() {
   };
 
   const handleSaveDefaultRequirements = async (
-    requirements: Array<{ type: string; isRequired?: boolean }>,
+    requirements: DefaultRequirementPolicy[],
   ) => {
     if (!effectiveOrganizationId) return;
     await updateDefaultRequirements(effectiveOrganizationId, requirements);

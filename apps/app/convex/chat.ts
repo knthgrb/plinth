@@ -18,7 +18,7 @@ import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
 async function checkAuth(
   ctx: any,
   organizationId: any,
-  requiredRole?: "owner" | "admin" | "hr" | "accounting" | "employee"
+  requiredRole?: "owner" | "admin" | "hr" | "manager" | "accounting" | "employee"
 ) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
@@ -57,7 +57,7 @@ async function checkAuth(
   }
 
   // Owner and admin have access to everything
-  // For chat, all authenticated roles can access (owner, admin, hr, accounting, employee)
+  // For chat, all authenticated roles can access (owner, admin, hr, manager, accounting, employee)
   if (requiredRole) {
     if (
       userRole !== requiredRole &&
@@ -75,7 +75,7 @@ async function checkAuth(
 async function checkAuthForQuery(
   ctx: any,
   organizationId: any,
-  requiredRole?: "owner" | "admin" | "hr" | "accounting" | "employee",
+  requiredRole?: "owner" | "admin" | "hr" | "manager" | "accounting" | "employee",
 ) {
   try {
     return await checkAuth(ctx, organizationId, requiredRole);

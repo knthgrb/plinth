@@ -48,6 +48,44 @@ async function checkAuth(ctx: any, organizationId: any) {
   return { ...userRecord, role: userRole, organizationId };
 }
 
+async function getAnnouncementAudienceEmployeeIds(ctx: any, announcement: any) {
+  const employees = await (ctx.db.query("employees") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", announcement.organizationId),
+    )
+    .collect();
+
+  if (announcement.targetAudience === "all") {
+    return employees
+      .filter((employee: any) => employee.employment?.status === "active")
+      .map((employee: any) => employee._id);
+  }
+
+  if (announcement.targetAudience === "department") {
+    const departments = new Set(announcement.departments ?? []);
+    return employees
+      .filter(
+        (employee: any) =>
+          employee.employment?.status === "active" &&
+          departments.has(employee.employment?.department),
+      )
+      .map((employee: any) => employee._id);
+  }
+
+  if (announcement.targetAudience === "specific-employees") {
+    return announcement.specificEmployees ?? [];
+  }
+
+  return [];
+}
+
+function sortAnnouncementsForDisplay(a: any, b: any) {
+  if (Boolean(a.isPinned) !== Boolean(b.isPinned)) {
+    return a.isPinned ? -1 : 1;
+  }
+  return b.publishedDate - a.publishedDate;
+}
+
 // Get a presigned URL for an announcement attachment. Only returns a URL if the user
 // is in the same org and the attachment belongs to that announcement (private to org).
 export const getAnnouncementAttachmentUrl = query({
@@ -97,8 +135,12 @@ export const getAnnouncements = query({
         )
         .collect();
 
+      const now = Date.now();
       announcements = announcements.filter(
-        (m: any) => m.type === "announcement" && m.isPublished === true,
+        (m: any) =>
+          m.type === "announcement" &&
+          m.publishedDate <= now &&
+          (!m.expiryDate || m.expiryDate >= now),
       );
 
       if (userRecord.role === "employee" && args.employeeId) {
@@ -119,7 +161,7 @@ export const getAnnouncements = query({
         }
       }
 
-      announcements.sort((a: any, b: any) => b.publishedDate - a.publishedDate);
+      announcements.sort(sortAnnouncementsForDisplay);
       return announcements;
     }, []);
   },
@@ -147,8 +189,12 @@ export const getUnreadAnnouncementsCount = query({
         )
         .collect();
 
+      const now = Date.now();
       announcements = announcements.filter(
-        (m: any) => m.type === "announcement" && m.isPublished === true,
+        (m: any) =>
+          m.type === "announcement" &&
+          m.publishedDate <= now &&
+          (!m.expiryDate || m.expiryDate >= now),
       );
 
       if (userRecord.role === "employee" && args.employeeId) {
@@ -224,7 +270,10 @@ export const createAnnouncement = mutation({
     ),
     departments: v.optional(v.array(v.string())),
     specificEmployees: v.optional(v.array(v.id("employees"))),
+    scheduledPublishDate: v.optional(v.number()),
     expiryDate: v.optional(v.number()),
+    isPinned: v.optional(v.boolean()),
+    reminderCadenceDays: v.optional(v.number()),
     attachments: v.optional(v.array(v.id("_storage"))),
     attachmentContentTypes: v.optional(v.array(v.string())),
     acknowledgementRequired: v.boolean(),
@@ -246,6 +295,13 @@ export const createAnnouncement = mutation({
     const authorDisplayName = wantsPersonalName ? undefined : "Admin";
 
     const now = Date.now();
+    const publishedDate = args.scheduledPublishDate ?? now;
+    const audienceEmployeeIds = await getAnnouncementAudienceEmployeeIds(ctx, {
+      organizationId: args.organizationId,
+      targetAudience: args.targetAudience,
+      departments: args.departments,
+      specificEmployees: args.specificEmployees,
+    });
     const announcementId = await ctx.db.insert("memos", {
       organizationId: args.organizationId,
       title: args.title,
@@ -257,8 +313,15 @@ export const createAnnouncement = mutation({
       targetAudience: args.targetAudience,
       departments: args.departments,
       specificEmployees: args.specificEmployees,
-      publishedDate: now,
+      publishedDate,
+      scheduledPublishDate: args.scheduledPublishDate,
       expiryDate: args.expiryDate,
+      isPinned: args.isPinned ?? false,
+      reminderCadenceDays: args.reminderCadenceDays,
+      audienceSnapshot: {
+        count: audienceEmployeeIds.length,
+        generatedAt: now,
+      },
       attachments: args.attachments,
       attachmentContentTypes: args.attachmentContentTypes,
       isPublished: true,
@@ -290,7 +353,10 @@ export const updateAnnouncement = mutation({
     ),
     departments: v.optional(v.array(v.string())),
     specificEmployees: v.optional(v.array(v.id("employees"))),
+    scheduledPublishDate: v.optional(v.number()),
     expiryDate: v.optional(v.number()),
+    isPinned: v.optional(v.boolean()),
+    reminderCadenceDays: v.optional(v.number()),
     attachments: v.optional(v.array(v.id("_storage"))),
     attachmentContentTypes: v.optional(v.array(v.string())),
     acknowledgementRequired: v.optional(v.boolean()),
@@ -330,13 +396,42 @@ export const updateAnnouncement = mutation({
       updateData.departments = args.departments;
     if (args.specificEmployees !== undefined)
       updateData.specificEmployees = args.specificEmployees;
+    if (args.scheduledPublishDate !== undefined) {
+      updateData.scheduledPublishDate = args.scheduledPublishDate;
+      updateData.publishedDate = args.scheduledPublishDate;
+    }
     if (args.expiryDate !== undefined) updateData.expiryDate = args.expiryDate;
+    if (args.isPinned !== undefined) updateData.isPinned = args.isPinned;
+    if (args.reminderCadenceDays !== undefined)
+      updateData.reminderCadenceDays = args.reminderCadenceDays;
     if (args.attachments !== undefined)
       updateData.attachments = args.attachments;
     if (args.attachmentContentTypes !== undefined)
       updateData.attachmentContentTypes = args.attachmentContentTypes;
     if (args.acknowledgementRequired !== undefined)
       updateData.acknowledgementRequired = args.acknowledgementRequired;
+
+    if (
+      args.targetAudience !== undefined ||
+      args.departments !== undefined ||
+      args.specificEmployees !== undefined
+    ) {
+      const nextAnnouncement = {
+        ...announcement,
+        targetAudience: args.targetAudience ?? announcement.targetAudience,
+        departments: args.departments ?? announcement.departments,
+        specificEmployees:
+          args.specificEmployees ?? announcement.specificEmployees,
+      };
+      const audienceEmployeeIds = await getAnnouncementAudienceEmployeeIds(
+        ctx,
+        nextAnnouncement,
+      );
+      updateData.audienceSnapshot = {
+        count: audienceEmployeeIds.length,
+        generatedAt: Date.now(),
+      };
+    }
 
     if (args.postAs !== undefined) {
       if (args.postAs === "user") {
@@ -380,6 +475,62 @@ export const deleteAnnouncement = mutation({
 
     await ctx.db.delete(args.announcementId);
     return args.announcementId;
+  },
+});
+
+export const sendAnnouncementAcknowledgementReminders = mutation({
+  args: {
+    announcementId: v.id("memos"),
+    organizationId: v.id("organizations"),
+  },
+  handler: async (ctx, args) => {
+    const userRecord = await checkAuth(ctx, args.organizationId);
+
+    if (
+      userRecord.role !== "admin" &&
+      userRecord.role !== "hr" &&
+      userRecord.role !== "owner"
+    ) {
+      throw new Error("Not authorized - admin, hr, or owner role required");
+    }
+
+    const announcement = await ctx.db.get(args.announcementId);
+    if (!announcement || announcement.organizationId !== args.organizationId) {
+      throw new Error("Announcement not found");
+    }
+    if (!announcement.acknowledgementRequired) {
+      throw new Error("This announcement does not require acknowledgement");
+    }
+
+    const audienceEmployeeIds = await getAnnouncementAudienceEmployeeIds(
+      ctx,
+      announcement,
+    );
+    const acknowledged = new Set(
+      (announcement.acknowledgedBy ?? []).map((entry: any) =>
+        String(entry.employeeId),
+      ),
+    );
+    const pendingEmployeeIds = audienceEmployeeIds.filter(
+      (employeeId: any) => !acknowledged.has(String(employeeId)),
+    );
+    const now = Date.now();
+
+    await ctx.db.patch(args.announcementId, {
+      reminderLastSentAt: now,
+      reminderLastSentBy: userRecord._id,
+      audienceSnapshot: {
+        count: audienceEmployeeIds.length,
+        generatedAt: now,
+      },
+      updatedAt: now,
+    });
+
+    return {
+      success: true,
+      reminderCount: pendingEmployeeIds.length,
+      pendingEmployeeIds,
+    };
   },
 });
 

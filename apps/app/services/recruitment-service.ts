@@ -82,6 +82,7 @@ export class RecruitmentService {
     date: number;
     type: string;
     interviewer: string;
+    interviewers?: string[];
     remarks?: string;
   }) {
     const convex = await getAuthedConvexClient();
@@ -91,6 +92,7 @@ export class RecruitmentService {
         ...data,
         applicantId: data.applicantId as Id<"applicants">,
         interviewer: data.interviewer as Id<"users">,
+        interviewers: data.interviewers as Id<"users">[] | undefined,
       }
     );
   }
@@ -133,6 +135,8 @@ export class RecruitmentService {
     phone?: string;
     resume: string; // storage ID
     coverLetter?: string;
+    source?: string;
+    sourceDetails?: string;
     googleMeetLink?: string;
     interviewVideoLink?: string;
     portfolioLink?: string;
@@ -158,6 +162,8 @@ export class RecruitmentService {
       phone?: string;
       resume?: string; // storage ID
       coverLetter?: string;
+      source?: string;
+      sourceDetails?: string;
       googleMeetLink?: string;
       interviewVideoLink?: string;
       portfolioLink?: string;
@@ -170,6 +176,52 @@ export class RecruitmentService {
         applicantId: applicantId as Id<"applicants">,
         ...data,
         resume: data.resume as Id<"_storage"> | undefined,
+      }
+    );
+  }
+
+  static async addApplicantScorecard(data: {
+    applicantId: string;
+    criteria: { label: string; score: number; notes?: string }[];
+    overallScore: number;
+    recommendation?: string;
+  }) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.mutation as any)(
+      (api as any).recruitment.addApplicantScorecard,
+      {
+        ...data,
+        applicantId: data.applicantId as Id<"applicants">,
+      }
+    );
+  }
+
+  static async requestOfferApproval(data: {
+    applicantId: string;
+    notes?: string;
+  }) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.mutation as any)(
+      (api as any).recruitment.requestOfferApproval,
+      {
+        applicantId: data.applicantId as Id<"applicants">,
+        notes: data.notes,
+      }
+    );
+  }
+
+  static async approveOffer(data: {
+    applicantId: string;
+    approved: boolean;
+    notes?: string;
+  }) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.mutation as any)(
+      (api as any).recruitment.approveOffer,
+      {
+        applicantId: data.applicantId as Id<"applicants">,
+        approved: data.approved,
+        notes: data.notes,
       }
     );
   }

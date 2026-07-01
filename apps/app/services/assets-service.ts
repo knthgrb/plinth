@@ -2,6 +2,16 @@ import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
 import { getAuthedConvexClient } from "@/lib/convex-client";
 
+type AssetCondition = "new" | "good" | "fair" | "needs_repair" | "damaged";
+
+type AssetMaintenanceEntry = {
+  date: number;
+  description: string;
+  cost?: number;
+  performedBy?: string;
+  nextServiceDate?: number;
+};
+
 export class AssetsService {
   static async getAssets(organizationId: string) {
     const convex = await getAuthedConvexClient();
@@ -29,6 +39,12 @@ export class AssetsService {
     supplier?: string;
     serialNumber?: string;
     location?: string;
+    assignedEmployeeId?: string | null;
+    custodyAcknowledgedAt?: number | null;
+    returnDueDate?: number | null;
+    returnedAt?: number | null;
+    condition?: AssetCondition;
+    maintenanceHistory?: AssetMaintenanceEntry[];
     status?: "active" | "inactive" | "disposed" | "maintenance";
     notes?: string;
   }) {
@@ -36,6 +52,10 @@ export class AssetsService {
     return await (convex.mutation as any)((api as any).assets.createAsset, {
       ...data,
       organizationId: data.organizationId as Id<"organizations">,
+      assignedEmployeeId: data.assignedEmployeeId as
+        | Id<"employees">
+        | null
+        | undefined,
     });
   }
 
@@ -52,6 +72,12 @@ export class AssetsService {
       supplier?: string;
       serialNumber?: string;
       location?: string;
+      assignedEmployeeId?: string | null;
+      custodyAcknowledgedAt?: number | null;
+      returnDueDate?: number | null;
+      returnedAt?: number | null;
+      condition?: AssetCondition;
+      maintenanceHistory?: AssetMaintenanceEntry[];
       status?: "active" | "inactive" | "disposed" | "maintenance";
       notes?: string;
     }
@@ -60,6 +86,10 @@ export class AssetsService {
     return await (convex.mutation as any)((api as any).assets.updateAsset, {
       assetId: assetId as Id<"assets">,
       ...data,
+      assignedEmployeeId: data.assignedEmployeeId as
+        | Id<"employees">
+        | null
+        | undefined,
     });
   }
 

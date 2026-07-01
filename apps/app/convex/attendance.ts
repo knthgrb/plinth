@@ -2,6 +2,8 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
+import { canUseFullOrganizationAccess } from "@/utils/org-membership-lifecycle";
+import { canUseEmployeeSelfService } from "@/utils/employee-lifecycle";
 import { holidayAppliesToEmployee } from "@/lib/payroll-calculations";
 import {
   calculateLate,
@@ -137,12 +139,20 @@ async function checkAuth(
     userRole = userRecord.role;
   }
 
+  if (userOrg && !canUseFullOrganizationAccess(userOrg.accessStatus)) {
+    throw new Error("Organization access is limited or inactive");
+  }
+
   // Owner has all admin privileges - treat owner the same as admin
   const isOwnerOrAdmin = userRole === "owner" || userRole === "admin";
 
   if (requiredRole) {
     // Write operations (create/update/delete): hr, admin, owner only - no accounting
-    if (userRole !== requiredRole && !isOwnerOrAdmin) {
+    if (
+      userRole !== requiredRole &&
+      !(requiredRole === "hr" && userRole === "manager") &&
+      !isOwnerOrAdmin
+    ) {
       throw new Error("Not authorized");
     }
   } else {
@@ -150,6 +160,7 @@ async function checkAuth(
     if (
       !isOwnerOrAdmin &&
       userRole !== "hr" &&
+      userRole !== "manager" &&
       userRole !== "employee" &&
       userRole !== "accounting"
     ) {
@@ -187,7 +198,7 @@ async function resolveSelfEmployeeIdForOrg(
 
   const fromLink = userOrg?.employeeId ?? userRecord.employeeId ?? null;
   const orgRole = (userOrg?.role ?? userRecord.role ?? "").toLowerCase();
-  const elevated = ["owner", "admin", "hr", "accounting"].includes(orgRole);
+  const elevated = ["owner", "admin", "hr", "manager", "accounting"].includes(orgRole);
 
   const findByEmail = async () => {
     const emailNorm = (userRecord.email || "").trim().toLowerCase();
@@ -809,6 +820,11 @@ export const punchSelfAttendance = mutation({
 
     const employee = await ctx.db.get(employeeId);
     if (!employee) throw new Error("Employee not found");
+    if (!canUseEmployeeSelfService((employee as any).employment?.status)) {
+      throw new Error(
+        "Separated or inactive employees cannot use self-service attendance.",
+      );
+    }
 
     const dateTs = getManilaTodayDateUtcMs();
     const timeStr = getManilaNowHHmm();

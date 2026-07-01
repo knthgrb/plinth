@@ -244,6 +244,8 @@ export default function JobDetailPage({
     lastName: "",
     email: "",
     phone: "",
+    source: "",
+    sourceDetails: "",
     googleMeetLink: "",
     interviewVideoLink: "",
     portfolioLink: "",
@@ -550,6 +552,8 @@ export default function JobDetailPage({
         lastName: applicantFormData.lastName,
         email: applicantFormData.email || undefined,
         phone: applicantFormData.phone || undefined,
+        source: applicantFormData.source || undefined,
+        sourceDetails: applicantFormData.sourceDetails || undefined,
         resume: storageId,
         googleMeetLink: applicantFormData.googleMeetLink || undefined,
         interviewVideoLink: applicantFormData.interviewVideoLink || undefined,
@@ -562,6 +566,8 @@ export default function JobDetailPage({
         lastName: "",
         email: "",
         phone: "",
+        source: "",
+        sourceDetails: "",
         googleMeetLink: "",
         interviewVideoLink: "",
         portfolioLink: "",
@@ -975,6 +981,38 @@ export default function JobDetailPage({
                                 setApplicantFormData({
                                   ...applicantFormData,
                                   phone: e.target.value,
+                                })
+                              }
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="source">Source</Label>
+                            <Input
+                              id="source"
+                              placeholder="Referral, LinkedIn, job board"
+                              value={applicantFormData.source}
+                              onChange={(e) =>
+                                setApplicantFormData({
+                                  ...applicantFormData,
+                                  source: e.target.value,
+                                })
+                              }
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="sourceDetails">
+                              Source details
+                            </Label>
+                            <Input
+                              id="sourceDetails"
+                              placeholder="Referrer or campaign"
+                              value={applicantFormData.sourceDetails}
+                              onChange={(e) =>
+                                setApplicantFormData({
+                                  ...applicantFormData,
+                                  sourceDetails: e.target.value,
                                 })
                               }
                             />
@@ -1465,10 +1503,93 @@ export default function JobDetailPage({
                     </Button>
                   </div>
                 )}
-              </div>
+               </div>
 
-              {/* Notes Section */}
-              <div>
+               <div>
+                 <h3 className="text-sm font-semibold text-gray-900 mb-3">
+                   Pipeline
+                 </h3>
+                 <div className="space-y-2 rounded-lg border p-3">
+                   <div>
+                     <p className="text-xs text-gray-500">Source</p>
+                     <p className="text-sm text-gray-900">
+                       {selectedApplicant.source || "Not specified"}
+                       {selectedApplicant.sourceDetails
+                         ? ` · ${selectedApplicant.sourceDetails}`
+                         : ""}
+                     </p>
+                   </div>
+                   {selectedApplicant.pipelineStageHistory?.length ? (
+                     selectedApplicant.pipelineStageHistory.map(
+                       (entry: any, idx: number) => (
+                         <p key={idx} className="text-xs text-gray-600">
+                           {entry.from ? `${entry.from} → ` : ""}
+                           {entry.to} on{" "}
+                           {format(new Date(entry.changedAt), "MMM dd, yyyy")}
+                         </p>
+                       ),
+                     )
+                   ) : (
+                     <p className="text-xs text-gray-500">
+                       No pipeline history yet.
+                     </p>
+                   )}
+                 </div>
+               </div>
+
+               <div>
+                 <h3 className="text-sm font-semibold text-gray-900 mb-3">
+                   Scorecards
+                 </h3>
+                 <div className="rounded-lg border p-3">
+                   {selectedApplicant.scorecards?.length ? (
+                     selectedApplicant.scorecards.map(
+                       (scorecard: any, idx: number) => (
+                         <p key={idx} className="text-sm text-gray-900">
+                           Overall score: {scorecard.overallScore}
+                         </p>
+                       ),
+                     )
+                   ) : (
+                     <p className="text-sm text-gray-500">
+                       No scorecards submitted.
+                     </p>
+                   )}
+                 </div>
+               </div>
+
+               <div>
+                 <h3 className="text-sm font-semibold text-gray-900 mb-3">
+                   Offer approval
+                 </h3>
+                 <div className="rounded-lg border p-3">
+                   <p className="text-sm text-gray-900">
+                     {selectedApplicant.offerApproval?.status ??
+                       "Not requested"}
+                   </p>
+                 </div>
+               </div>
+
+               <div>
+                 <h3 className="text-sm font-semibold text-gray-900 mb-3">
+                   Convert to employee
+                 </h3>
+                 <div className="rounded-lg border p-3">
+                   {selectedApplicant.convertedEmployeeId ? (
+                     <p className="text-sm text-green-700">
+                       Converted employee record linked.
+                     </p>
+                   ) : (
+                     <p className="text-sm text-gray-500">
+                       Convert after offer approval and hiring details are
+                       complete.
+                     </p>
+                   )}
+                 </div>
+               </div>
+
+               {/* Notes Section */}
+               <div>
                 <h3 className="text-sm font-semibold text-gray-900 mb-3">
                   Notes
                 </h3>

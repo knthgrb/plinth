@@ -55,6 +55,7 @@ const defaultFormData = {
   position: "",
   department: "",
   employmentType: "probationary" as EmploymentType,
+  status: "active" as const,
   hireDate: "",
   regularizationDate: "",
   basicSalary: "",

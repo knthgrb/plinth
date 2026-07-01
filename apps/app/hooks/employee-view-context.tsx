@@ -60,7 +60,7 @@ export function EmployeeViewProvider({
   const canUseEmployeeView = Boolean(
     user &&
       selfMatch?.employeeId &&
-      ["owner", "admin", "hr", "accounting"].includes(
+      ["owner", "admin", "hr", "manager", "accounting"].includes(
         (user.role || "").toLowerCase(),
       ),
   );

@@ -89,6 +89,53 @@ function resolveAttendanceHolidayForEmployee(args: {
   };
 }
 
+function normalizeHolidayScope(holiday: {
+  applyToAll?: boolean;
+  provinces?: string[];
+}) {
+  if (holiday.applyToAll !== false) return "all";
+  return [...(holiday.provinces ?? [])]
+    .map((province) => province.trim().toLowerCase())
+    .filter(Boolean)
+    .sort()
+    .join("|");
+}
+
+async function assertNoDuplicateHoliday(
+  ctx: any,
+  args: {
+    organizationId: any;
+    date: number;
+    type: "regular" | "special" | "special_working";
+    isRecurring: boolean;
+    applyToAll?: boolean;
+    provinces?: string[];
+    excludeHolidayId?: any;
+  },
+) {
+  const existing = await (ctx.db.query("holidays") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", args.organizationId),
+    )
+    .collect();
+  const nextScope = normalizeHolidayScope(args);
+  const duplicate = existing.find(
+    (holiday: any) =>
+      holiday._id !== args.excludeHolidayId &&
+      holiday.date === args.date &&
+      holiday.type === args.type &&
+      holiday.isRecurring === args.isRecurring &&
+      normalizeHolidayScope(holiday) === nextScope,
+  );
+
+  if (duplicate) {
+    throw new ConvexError({
+      code: "DUPLICATE_HOLIDAY",
+      message: "A holiday already exists for this date, type, and scope.",
+    });
+  }
+}
+
 // Get holidays for organization
 export const getHolidays = query({
   args: {
@@ -160,6 +207,15 @@ export const createHoliday = mutation({
   handler: async (ctx, args) => {
     await checkAuth(ctx, args.organizationId, "hr");
 
+    await assertNoDuplicateHoliday(ctx, {
+      organizationId: args.organizationId,
+      date: args.date,
+      type: args.type,
+      isRecurring: args.isRecurring,
+      applyToAll: args.applyToAll,
+      provinces: args.provinces,
+    });
+
     const now = Date.now();
     const dateObj = new Date(args.date);
     const effectiveYear =
@@ -227,8 +283,23 @@ export const updateHoliday = mutation({
 
       // Determine effective values after update for year/isRecurring/date consistency
       const nextDate = args.date ?? holiday.date;
+      const nextType = args.type ?? holiday.type;
       const nextIsRecurring =
         args.isRecurring !== undefined ? args.isRecurring : holiday.isRecurring;
+      const nextApplyToAll =
+        args.applyToAll !== undefined ? args.applyToAll : holiday.applyToAll;
+      const nextProvinces =
+        args.provinces !== undefined ? args.provinces : holiday.provinces;
+
+      await assertNoDuplicateHoliday(ctx, {
+        organizationId: holiday.organizationId,
+        date: nextDate,
+        type: nextType,
+        isRecurring: nextIsRecurring,
+        applyToAll: nextApplyToAll,
+        provinces: nextProvinces,
+        excludeHolidayId: args.holidayId,
+      });
 
       const dateObj = new Date(nextDate);
       const nextYear =

@@ -14,6 +14,8 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
   TableBody,
@@ -167,6 +169,7 @@ export function LeaveTrackerTab({
   const [selectedYear, setSelectedYear] = useState(currentYear);
   const [isSaving, setIsSaving] = useState(false);
   const [draftRows, setDraftRows] = useState<Record<string, DraftRow>>({});
+  const [overrideReason, setOverrideReason] = useState("");
 
   const referenceDate = useMemo(() => {
     return getLeaveTrackerReferenceDate(selectedYear, currentDate);
@@ -310,6 +313,10 @@ export function LeaveTrackerTab({
     setDraftRows(nextDraftRows);
   }, [computedRows]);
 
+  useEffect(() => {
+    setOverrideReason("");
+  }, [selectedYear]);
+
   const trackerRows = useMemo(() => {
     return computedRows.map((row) => {
       const draftRow = draftRows[row.employeeId];
@@ -418,6 +425,16 @@ export function LeaveTrackerTab({
   };
 
   const handleSave = async () => {
+    const trimmedOverrideReason = overrideReason.trim();
+    if (!trimmedOverrideReason) {
+      toast({
+        title: "Reason required",
+        description: "Add a reason before saving manual tracker overrides.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsSaving(true);
     try {
       await updateLeaveTracker({
@@ -428,12 +445,14 @@ export function LeaveTrackerTab({
           annualSilOverride: row.annualSilOverride,
           availed: row.availed,
         })),
+        overrideReason: trimmedOverrideReason,
       });
 
       toast({
         title: "Leave tracker updated",
         description: "Tracker values and formulas were saved successfully.",
       });
+      setOverrideReason("");
     } catch (error: unknown) {
       toast({
         title: "Failed to save tracker",
@@ -533,14 +552,30 @@ export function LeaveTrackerTab({
             </Select>
           </div>
         </div>
-        <Button
-          onClick={handleSave}
-          disabled={isSaving}
-          className="bg-brand-purple hover:bg-brand-purple-hover text-white"
-        >
-          <Save className="mr-2 h-4 w-4" />
-          {isSaving ? "Saving..." : "Save tracker"}
-        </Button>
+        <div className="flex w-full flex-col gap-2 sm:max-w-md">
+          <Label
+            htmlFor="leave-tracker-override-reason"
+            className="text-sm font-medium text-[rgb(64,64,64)]"
+          >
+            Reason for manual override
+          </Label>
+          <Textarea
+            id="leave-tracker-override-reason"
+            value={overrideReason}
+            onChange={(event) => setOverrideReason(event.target.value)}
+            placeholder="Example: corrected approved leave not captured by imported records"
+            rows={2}
+            className="min-h-[68px] resize-none border-[rgb(230,230,230)] bg-white text-sm"
+          />
+          <Button
+            onClick={handleSave}
+            disabled={isSaving || !overrideReason.trim()}
+            className="w-full bg-brand-purple text-white hover:bg-brand-purple-hover sm:w-fit sm:self-end"
+          >
+            <Save className="mr-2 h-4 w-4" />
+            {isSaving ? "Saving..." : "Save tracker"}
+          </Button>
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-[rgb(230,230,230)]">

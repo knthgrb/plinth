@@ -16,11 +16,22 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/utils/utils";
 
 interface Department {
   name: string;
   color: string;
+  departmentHeadUserId?: string;
+  costCenter?: string;
+  location?: string;
+  parentDepartmentName?: string;
 }
 
 const DEFAULT_COLOR = "#3B82F6"; // blue
@@ -42,6 +53,10 @@ export function DepartmentsSettingsContent() {
     (api as any).settings.getSettings,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
   );
+  const organizationMembers = useQuery(
+    (api as any).organizations.getOrganizationMembers,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
   const updateDepartments = useMutation(
     (api as any).settings.updateDepartments
   );
@@ -51,11 +66,19 @@ export function DepartmentsSettingsContent() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newDept, setNewDept] = useState("");
   const [newDeptColor, setNewDeptColor] = useState(DEFAULT_COLOR);
+  const [newDeptHeadUserId, setNewDeptHeadUserId] = useState("none");
+  const [newDeptCostCenter, setNewDeptCostCenter] = useState("");
+  const [newDeptLocation, setNewDeptLocation] = useState("");
+  const [newDeptParentName, setNewDeptParentName] = useState("none");
   const [isSaving, setIsSaving] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [editingDept, setEditingDept] = useState<Department | null>(null);
   const [editDeptName, setEditDeptName] = useState("");
   const [editDeptColor, setEditDeptColor] = useState("");
+  const [editDeptHeadUserId, setEditDeptHeadUserId] = useState("none");
+  const [editDeptCostCenter, setEditDeptCostCenter] = useState("");
+  const [editDeptLocation, setEditDeptLocation] = useState("");
+  const [editDeptParentName, setEditDeptParentName] = useState("none");
   const [showEditAdvancedColorPicker, setShowEditAdvancedColorPicker] = useState(false);
   const [showAdvancedColorPicker, setShowAdvancedColorPicker] = useState(false);
 
@@ -89,6 +112,15 @@ export function DepartmentsSettingsContent() {
     );
   }, [departments, searchQuery]);
 
+  const eligibleDepartmentHeads = useMemo(() => {
+    const roles = new Set(["owner", "admin", "hr", "manager"]);
+    return (organizationMembers || [])
+      .filter((member: any) => roles.has(member.role))
+      .sort((a: any, b: any) =>
+        (a.name || a.email || "").localeCompare(b.name || b.email || ""),
+      );
+  }, [organizationMembers]);
+
   const handleCreateDepartment = async () => {
     if (!currentOrganizationId || !newDept.trim()) return;
 
@@ -108,7 +140,16 @@ export function DepartmentsSettingsContent() {
     try {
       const updatedDepartments = [
         ...departments,
-        { name: trimmedName, color: newDeptColor },
+        {
+          name: trimmedName,
+          color: newDeptColor,
+          departmentHeadUserId:
+            newDeptHeadUserId !== "none" ? newDeptHeadUserId : undefined,
+          costCenter: newDeptCostCenter.trim() || undefined,
+          location: newDeptLocation.trim() || undefined,
+          parentDepartmentName:
+            newDeptParentName !== "none" ? newDeptParentName : undefined,
+        },
       ];
 
       await updateDepartments({
@@ -122,6 +163,10 @@ export function DepartmentsSettingsContent() {
       // Reset form
       setNewDept("");
       setNewDeptColor(DEFAULT_COLOR);
+      setNewDeptHeadUserId("none");
+      setNewDeptCostCenter("");
+      setNewDeptLocation("");
+      setNewDeptParentName("none");
       setShowCreateForm(false);
       setShowAdvancedColorPicker(false);
       
@@ -143,6 +188,10 @@ export function DepartmentsSettingsContent() {
   const handleCancelCreate = () => {
     setNewDept("");
     setNewDeptColor(DEFAULT_COLOR);
+    setNewDeptHeadUserId("none");
+    setNewDeptCostCenter("");
+    setNewDeptLocation("");
+    setNewDeptParentName("none");
     setShowCreateForm(false);
     setShowAdvancedColorPicker(false);
   };
@@ -151,6 +200,10 @@ export function DepartmentsSettingsContent() {
     setEditingDept(dept);
     setEditDeptName(dept.name);
     setEditDeptColor(dept.color);
+    setEditDeptHeadUserId(dept.departmentHeadUserId ?? "none");
+    setEditDeptCostCenter(dept.costCenter ?? "");
+    setEditDeptLocation(dept.location ?? "");
+    setEditDeptParentName(dept.parentDepartmentName ?? "none");
     setShowEditAdvancedColorPicker(false);
   };
 
@@ -161,7 +214,20 @@ export function DepartmentsSettingsContent() {
     try {
       const updatedDepartments = departments.map((d) =>
         d.name === editingDept.name
-          ? { name: editDeptName.trim(), color: editDeptColor }
+          ? {
+              name: editDeptName.trim(),
+              color: editDeptColor,
+              departmentHeadUserId:
+                editDeptHeadUserId !== "none"
+                  ? editDeptHeadUserId
+                  : undefined,
+              costCenter: editDeptCostCenter.trim() || undefined,
+              location: editDeptLocation.trim() || undefined,
+              parentDepartmentName:
+                editDeptParentName !== "none"
+                  ? editDeptParentName
+                  : undefined,
+            }
           : d
       );
       
@@ -176,6 +242,10 @@ export function DepartmentsSettingsContent() {
       setEditingDept(null);
       setEditDeptName("");
       setEditDeptColor("");
+      setEditDeptHeadUserId("none");
+      setEditDeptCostCenter("");
+      setEditDeptLocation("");
+      setEditDeptParentName("none");
       setShowEditAdvancedColorPicker(false);
       
       toast({
@@ -197,6 +267,10 @@ export function DepartmentsSettingsContent() {
     setEditingDept(null);
     setEditDeptName("");
     setEditDeptColor("");
+    setEditDeptHeadUserId("none");
+    setEditDeptCostCenter("");
+    setEditDeptLocation("");
+    setEditDeptParentName("none");
     setShowEditAdvancedColorPicker(false);
   };
 
@@ -316,6 +390,62 @@ export function DepartmentsSettingsContent() {
                     </Button>
                   </div>
                 </div>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Department head</Label>
+                    <Select
+                      value={newDeptHeadUserId}
+                      onValueChange={setNewDeptHeadUserId}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select department head" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No head assigned</SelectItem>
+                        {eligibleDepartmentHeads.map((member: any) => (
+                          <SelectItem key={member._id} value={member._id}>
+                            {member.name || member.email}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Reporting line</Label>
+                    <Select
+                      value={newDeptParentName}
+                      onValueChange={setNewDeptParentName}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select parent department" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No parent department</SelectItem>
+                        {departments.map((dept) => (
+                          <SelectItem key={dept.name} value={dept.name}>
+                            {dept.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Cost center</Label>
+                    <Input
+                      value={newDeptCostCenter}
+                      onChange={(e) => setNewDeptCostCenter(e.target.value)}
+                      placeholder="e.g. OPS-100"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Location</Label>
+                    <Input
+                      value={newDeptLocation}
+                      onChange={(e) => setNewDeptLocation(e.target.value)}
+                      placeholder="e.g. Cebu HQ"
+                    />
+                  </div>
+                </div>
               </div>
               
               {/* Default Colors Palette */}
@@ -378,6 +508,15 @@ export function DepartmentsSettingsContent() {
                 <span className="text-sm font-medium text-gray-900">
                   {dept.name}
                 </span>
+                {(dept.costCenter ||
+                  dept.location ||
+                  dept.parentDepartmentName) && (
+                  <span className="text-xs text-gray-500">
+                    {[dept.costCenter, dept.location, dept.parentDepartmentName]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <Button
@@ -405,7 +544,7 @@ export function DepartmentsSettingsContent() {
 
       {/* Edit Department Dialog */}
       <Dialog open={!!editingDept} onOpenChange={handleEditCancel}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {showEditAdvancedColorPicker ? "Edit Color" : "Edit Department"}
@@ -442,6 +581,65 @@ export function DepartmentsSettingsContent() {
                     }}
                     placeholder="Department name"
                     className="flex-1"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Department head</Label>
+                  <Select
+                    value={editDeptHeadUserId}
+                    onValueChange={setEditDeptHeadUserId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select department head" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No head assigned</SelectItem>
+                      {eligibleDepartmentHeads.map((member: any) => (
+                        <SelectItem key={member._id} value={member._id}>
+                          {member.name || member.email}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Reporting line</Label>
+                  <Select
+                    value={editDeptParentName}
+                    onValueChange={setEditDeptParentName}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select parent department" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No parent department</SelectItem>
+                      {departments
+                        .filter((dept) => dept.name !== editingDept?.name)
+                        .map((dept) => (
+                          <SelectItem key={dept.name} value={dept.name}>
+                            {dept.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Cost center</Label>
+                  <Input
+                    value={editDeptCostCenter}
+                    onChange={(e) => setEditDeptCostCenter(e.target.value)}
+                    placeholder="e.g. OPS-100"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Location</Label>
+                  <Input
+                    value={editDeptLocation}
+                    onChange={(e) => setEditDeptLocation(e.target.value)}
+                    placeholder="e.g. Cebu HQ"
                   />
                 </div>
               </div>

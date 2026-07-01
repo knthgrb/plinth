@@ -130,7 +130,10 @@ export function parseEmployeeCsv(csvText: string): ParsedEmployeeRow[] {
       phone: raw.phone ?? "",
       position: raw.position ?? "",
       department: raw.department ?? "",
-      employmentType: (raw.employmentType as EmployeeFormValues["employmentType"]) || "probationary",
+      employmentType:
+        (raw.employmentType as EmployeeFormValues["employmentType"]) ||
+        "probationary",
+      status: "active",
       hireDate: raw.hireDate ?? "",
       basicSalary: raw.basicSalary ?? "",
       allowance: raw.allowance ?? "",

@@ -63,6 +63,26 @@ async function checkAuth(
   return { ...userRecord, role: userRole, organizationId };
 }
 
+function buildDefaultRequirementsForConvertedEmployee(organization: any) {
+  const now = Date.now();
+  return (
+    organization?.defaultRequirements?.map((req: any) => ({
+      type: req.type,
+      status: "pending" as const,
+      isRequired: req.isRequired ?? true,
+      appliesToDepartments: req.appliesToDepartments,
+      appliesToEmploymentTypes: req.appliesToEmploymentTypes,
+      reminderDaysBeforeDue: req.reminderDaysBeforeDue,
+      requiresVerification: req.requiresVerification ?? true,
+      expiryDate: req.expiryDaysAfterSubmission
+        ? now + req.expiryDaysAfterSubmission * 24 * 60 * 60 * 1000
+        : undefined,
+      isDefault: true,
+      isCustom: false,
+    })) ?? []
+  );
+}
+
 // Get job postings
 export const getJobs = query({
   args: {
@@ -290,6 +310,8 @@ export const createApplicant = mutation({
     phone: v.string(),
     resume: v.id("_storage"),
     coverLetter: v.optional(v.string()),
+    source: v.optional(v.string()),
+    sourceDetails: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     // Public endpoint - no auth required for job applications
@@ -314,7 +336,10 @@ export const createApplicant = mutation({
       phone: args.phone,
       resume: args.resume,
       coverLetter: args.coverLetter,
+      source: args.source,
+      sourceDetails: args.sourceDetails,
       status: "new",
+      pipelineStageHistory: [{ to: "new", changedAt: now }],
       appliedDate: now,
       createdAt: now,
       updatedAt: now,
@@ -335,6 +360,8 @@ export const createApplicantByHR = mutation({
     phone: v.optional(v.string()),
     resume: v.id("_storage"),
     coverLetter: v.optional(v.string()),
+    source: v.optional(v.string()),
+    sourceDetails: v.optional(v.string()),
     googleMeetLink: v.optional(v.string()),
     interviewVideoLink: v.optional(v.string()),
     portfolioLink: v.optional(v.string()),
@@ -360,10 +387,15 @@ export const createApplicantByHR = mutation({
       phone: args.phone || "",
       resume: args.resume,
       coverLetter: args.coverLetter,
+      source: args.source,
+      sourceDetails: args.sourceDetails,
       googleMeetLink: args.googleMeetLink,
       interviewVideoLink: args.interviewVideoLink,
       portfolioLink: args.portfolioLink,
       status: "new",
+      pipelineStageHistory: [
+        { to: "new", changedAt: now, changedBy: userRecord._id },
+      ],
       appliedDate: now,
       createdAt: now,
       updatedAt: now,
@@ -383,6 +415,8 @@ export const updateApplicant = mutation({
     phone: v.optional(v.string()),
     resume: v.optional(v.id("_storage")),
     coverLetter: v.optional(v.string()),
+    source: v.optional(v.string()),
+    sourceDetails: v.optional(v.string()),
     googleMeetLink: v.optional(v.string()),
     interviewVideoLink: v.optional(v.string()),
     portfolioLink: v.optional(v.string()),
@@ -401,6 +435,9 @@ export const updateApplicant = mutation({
     if (args.phone !== undefined) updates.phone = args.phone;
     if (args.resume !== undefined) updates.resume = args.resume;
     if (args.coverLetter !== undefined) updates.coverLetter = args.coverLetter;
+    if (args.source !== undefined) updates.source = args.source;
+    if (args.sourceDetails !== undefined)
+      updates.sourceDetails = args.sourceDetails;
     if (args.googleMeetLink !== undefined)
       updates.googleMeetLink = args.googleMeetLink;
     if (args.interviewVideoLink !== undefined)
@@ -441,9 +478,19 @@ export const updateApplicantStatus = mutation({
 
     const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
 
+    const now = Date.now();
+    const pipelineStageHistory = applicant.pipelineStageHistory || [];
+    pipelineStageHistory.push({
+      from: applicant.status,
+      to: args.status,
+      changedAt: now,
+      changedBy: userRecord._id,
+    });
+
     await ctx.db.patch(args.applicantId, {
       status: args.status,
-      updatedAt: Date.now(),
+      pipelineStageHistory,
+      updatedAt: now,
     });
 
     return { success: true };
@@ -485,6 +532,7 @@ export const scheduleInterview = mutation({
     date: v.number(),
     type: v.string(),
     interviewer: v.id("users"),
+    interviewers: v.optional(v.array(v.id("users"))),
     remarks: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -498,6 +546,7 @@ export const scheduleInterview = mutation({
       date: args.date,
       type: args.type,
       interviewer: args.interviewer,
+      interviewers: args.interviewers,
       remarks: args.remarks,
     });
 
@@ -505,6 +554,97 @@ export const scheduleInterview = mutation({
       interviewSchedules: interviews,
       status: "interview",
       updatedAt: Date.now(),
+    });
+
+    return { success: true };
+  },
+});
+
+export const addApplicantScorecard = mutation({
+  args: {
+    applicantId: v.id("applicants"),
+    criteria: v.array(
+      v.object({
+        label: v.string(),
+        score: v.number(),
+        notes: v.optional(v.string()),
+      }),
+    ),
+    overallScore: v.number(),
+    recommendation: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const applicant = await ctx.db.get(args.applicantId);
+    if (!applicant) throw new Error("Applicant not found");
+
+    const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
+    const scorecards = applicant.scorecards || [];
+    const now = Date.now();
+    scorecards.push({
+      reviewer: userRecord._id,
+      criteria: args.criteria,
+      overallScore: args.overallScore,
+      recommendation: args.recommendation,
+      submittedAt: now,
+    });
+
+    await ctx.db.patch(args.applicantId, {
+      scorecards,
+      rating: args.overallScore,
+      updatedAt: now,
+    });
+
+    return { success: true };
+  },
+});
+
+export const requestOfferApproval = mutation({
+  args: {
+    applicantId: v.id("applicants"),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const applicant = await ctx.db.get(args.applicantId);
+    if (!applicant) throw new Error("Applicant not found");
+
+    const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
+    const now = Date.now();
+    await ctx.db.patch(args.applicantId, {
+      status: "offer",
+      offerApproval: {
+        status: "pending",
+        requestedBy: userRecord._id,
+        requestedAt: now,
+        notes: args.notes,
+      },
+      updatedAt: now,
+    });
+
+    return { success: true };
+  },
+});
+
+export const approveOffer = mutation({
+  args: {
+    applicantId: v.id("applicants"),
+    approved: v.boolean(),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const applicant = await ctx.db.get(args.applicantId);
+    if (!applicant) throw new Error("Applicant not found");
+
+    const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
+    const now = Date.now();
+    await ctx.db.patch(args.applicantId, {
+      offerApproval: {
+        ...(applicant.offerApproval || {}),
+        status: args.approved ? "approved" : "rejected",
+        approvedBy: userRecord._id,
+        approvedAt: now,
+        notes: args.notes ?? applicant.offerApproval?.notes,
+      },
+      updatedAt: now,
     });
 
     return { success: true };
@@ -558,6 +698,9 @@ export const convertApplicantToEmployee = mutation({
 
     // Create employee record
     const now = Date.now();
+    const organization = await ctx.db.get(applicant.organizationId);
+    const defaultRequirements =
+      buildDefaultRequirementsForConvertedEmployee(organization);
 
     const employeeId = await ctx.db.insert("employees", {
       organizationId: applicant.organizationId,
@@ -590,7 +733,7 @@ export const convertApplicantToEmployee = mutation({
           sunday: { in: "09:00", out: "18:00", isWorkday: false },
         },
       },
-      requirements: [],
+      requirements: defaultRequirements,
       deductions: [],
       incentives: [],
       createdAt: now,
@@ -600,6 +743,7 @@ export const convertApplicantToEmployee = mutation({
     // Update applicant status
     await ctx.db.patch(args.applicantId, {
       status: "hired",
+      convertedEmployeeId: employeeId,
       updatedAt: Date.now(),
     });
 

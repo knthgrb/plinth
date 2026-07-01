@@ -75,6 +75,7 @@ import {
 import { cn } from "@/utils/utils";
 import { recalculateEmployeeAttendance } from "@/actions/attendance";
 import { useToast } from "@/components/ui/use-toast";
+import { getEmployeeLifecycleImpact } from "@/utils/employee-lifecycle";
 
 // BASE CONFIGS: 5 rates as % additional (on top of regular). Stored as multiplier in DB; UI shows additional.
 const BASE_RATE_FIELD_CONFIG: Record<
@@ -142,6 +143,11 @@ export function EmployeeDetailModal({
     position: "",
     department: "",
     employmentType: "probationary",
+    status: "active",
+    separationDate: "",
+    separationReason: "",
+    finalPayStatus: "not_started",
+    clearanceStatus: "not_started",
     hireDate: "",
     regularizationDate: "",
     basicSalary: "",
@@ -165,6 +171,18 @@ export function EmployeeDetailModal({
     control,
     reset,
   } = editForm;
+  const lifecycleImpact = getEmployeeLifecycleImpact(editForm.watch("status"));
+  const lifecycleImpactRows = [
+    ["Login", lifecycleImpact.login],
+    ["Chat", lifecycleImpact.chat],
+    ["Leave", lifecycleImpact.leave],
+    ["Attendance", lifecycleImpact.attendance],
+    ["Payroll", lifecycleImpact.payroll],
+    ["Payslips", lifecycleImpact.payslips],
+    ["Assets", lifecycleImpact.assets],
+    ["Documents", lifecycleImpact.documents],
+    ["Final pay", lifecycleImpact.finalPay],
+  ] as const;
 
   const [scheduleType, setScheduleType] = useState<"one-time" | "regular">(
     "one-time",
@@ -411,9 +429,13 @@ export function EmployeeDetailModal({
 
     const hireDate = safeDate(employee.employment.hireDate);
     const regularizationDate = safeDate(employee.employment.regularizationDate);
+    const separationDate = safeDate(employee.employment.separationDate);
     const hireDateStr = hireDate ? hireDate.toISOString().slice(0, 10) : "";
     const regularizationDateStr = regularizationDate
       ? regularizationDate.toISOString().slice(0, 10)
+      : "";
+    const separationDateStr = separationDate
+      ? separationDate.toISOString().slice(0, 10)
       : "";
 
     reset({
@@ -426,6 +448,11 @@ export function EmployeeDetailModal({
       position: employee.employment.position,
       department: employee.employment.department,
       employmentType: employee.employment.employmentType,
+      status: employee.employment.status,
+      separationDate: separationDateStr,
+      separationReason: employee.employment.separationReason || "",
+      finalPayStatus: employee.employment.finalPayStatus || "not_started",
+      clearanceStatus: employee.employment.clearanceStatus || "not_started",
       hireDate: hireDateStr,
       regularizationDate: regularizationDateStr,
       basicSalary: employee.compensation.basicSalary.toString(),
@@ -614,6 +641,40 @@ export function EmployeeDetailModal({
               },
             };
 
+      const nextEmployment: any = {
+        ...employee.employment,
+        position: data.position,
+        department: data.department,
+        employmentType: data.employmentType as
+          | "regular"
+          | "probationary"
+          | "contractual"
+          | "part-time",
+        status: data.status as
+          | "active"
+          | "inactive"
+          | "resigned"
+          | "terminated",
+        hireDate: data.hireDate
+          ? new Date(data.hireDate).getTime()
+          : employee.employment.hireDate,
+        regularizationDate: data.regularizationDate
+          ? new Date(data.regularizationDate).getTime()
+          : null,
+        finalPayStatus: data.finalPayStatus || "not_started",
+        clearanceStatus: data.clearanceStatus || "not_started",
+      };
+      if (data.separationDate) {
+        nextEmployment.separationDate = new Date(data.separationDate).getTime();
+      } else {
+        delete nextEmployment.separationDate;
+      }
+      if (data.separationReason?.trim()) {
+        nextEmployment.separationReason = data.separationReason.trim();
+      } else {
+        delete nextEmployment.separationReason;
+      }
+
       await updateEmployee(employeeId, {
         personalInfo: {
           firstName: data.firstName,
@@ -623,22 +684,7 @@ export function EmployeeDetailModal({
           phone: data.phone || undefined,
           province: data.province || undefined,
         },
-        employment: {
-          ...employee.employment,
-          position: data.position,
-          department: data.department,
-          employmentType: data.employmentType as
-            | "regular"
-            | "probationary"
-            | "contractual"
-            | "part-time",
-          hireDate: data.hireDate
-            ? new Date(data.hireDate).getTime()
-            : employee.employment.hireDate,
-          regularizationDate: data.regularizationDate
-            ? new Date(data.regularizationDate).getTime()
-            : null,
-        },
+        employment: nextEmployment,
         compensation: {
           ...employee.compensation,
           basicSalary: parseFloat(data.basicSalary),
@@ -690,6 +736,8 @@ export function EmployeeDetailModal({
 
   const capitalize = (s: string) =>
     s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s;
+  const formatStatusLabel = (s: string | undefined | null) =>
+    s ? s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "—";
 
   // Don't render anything if dialog is closed
   if (!open) return null;
@@ -1162,6 +1210,82 @@ export function EmployeeDetailModal({
                         </div>
                       )}
                     </div>
+                    {(employee.employment.separationDate ||
+                      employee.employment.separationReason ||
+                      employee.employment.finalPayStatus ||
+                      employee.employment.clearanceStatus) && (
+                      <div className="grid gap-3 sm:grid-cols-2 pt-2 border-t border-gray-100">
+                        {employee.employment.separationDate && (
+                          <div className="flex gap-1.5 items-start min-w-0">
+                            <span
+                              className="w-2 shrink-0 flex justify-center pt-0.5"
+                              aria-hidden
+                            >
+                              <span className="h-1 w-1 rounded-full bg-muted-foreground" />
+                            </span>
+                            <div className="space-y-0.5 min-w-0 flex-1">
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                                Separation Date
+                              </p>
+                              <p className="text-sm">
+                                {(() => {
+                                  const d = safeDate(
+                                    employee.employment.separationDate,
+                                  );
+                                  return d ? format(d, "MMM dd, yyyy") : "—";
+                                })()}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                        {employee.employment.separationReason && (
+                          <div className="flex gap-1.5 items-start min-w-0">
+                            <span
+                              className="w-2 shrink-0 flex justify-center pt-0.5"
+                              aria-hidden
+                            >
+                              <span className="h-1 w-1 rounded-full bg-muted-foreground" />
+                            </span>
+                            <div className="space-y-0.5 min-w-0 flex-1">
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                                Separation Reason
+                              </p>
+                              <p className="text-sm">
+                                {employee.employment.separationReason}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                        <div className="flex gap-1.5 items-start min-w-0">
+                          <span className="w-2 shrink-0" aria-hidden />
+                          <div className="space-y-0.5 min-w-0 flex-1">
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                              Final Pay
+                            </p>
+                            <p className="text-sm">
+                              {formatStatusLabel(
+                                employee.employment.finalPayStatus ||
+                                  "not_started",
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex gap-1.5 items-start min-w-0">
+                          <span className="w-2 shrink-0" aria-hidden />
+                          <div className="space-y-0.5 min-w-0 flex-1">
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                              Clearance
+                            </p>
+                            <p className="text-sm">
+                              {formatStatusLabel(
+                                employee.employment.clearanceStatus ||
+                                  "not_started",
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               ) : (
@@ -1235,6 +1359,68 @@ export function EmployeeDetailModal({
                       )}
                     </div>
                     <div className="space-y-1.5">
+                      <Label htmlFor="edit-status" className="text-sm">
+                        Status
+                      </Label>
+                      <Controller
+                        name="status"
+                        control={control}
+                        render={({ field }) => (
+                          <Select
+                            value={field.value}
+                            onValueChange={field.onChange}
+                          >
+                            <SelectTrigger id="edit-status">
+                              <SelectValue placeholder="Select status" />
+                            </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="active">Active</SelectItem>
+                              <SelectItem value="inactive">
+                                Suspended
+                              </SelectItem>
+                              <SelectItem value="resigned">Resigned</SelectItem>
+                              <SelectItem value="terminated">
+                                Terminated
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
+                      />
+                      {errors.status?.message && (
+                        <p className="text-xs text-red-600">
+                          {errors.status.message}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-amber-200 bg-amber-50/60 p-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">
+                          Lifecycle impact
+                        </p>
+                        <p className="text-xs text-gray-600">
+                          {lifecycleImpact.label} changes this employee&apos;s
+                          org access and downstream workflows.
+                        </p>
+                      </div>
+                      <Badge className="w-fit bg-white text-amber-800 border-amber-200 hover:bg-white">
+                        {lifecycleImpact.accessLabel}
+                      </Badge>
+                    </div>
+                    <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {lifecycleImpactRows.map(([label, value]) => (
+                        <div key={label} className="text-xs">
+                          <dt className="font-medium text-gray-700">
+                            {label}
+                          </dt>
+                          <dd className="mt-0.5 text-gray-600">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
                       <Label htmlFor="edit-hireDate" className="text-sm">
                         Hire Date
                       </Label>
@@ -1277,6 +1463,93 @@ export function EmployeeDetailModal({
                         Optional. Affects leave proration when enabled in Leave
                         settings.
                       </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-separationDate" className="text-sm">
+                        Separation Date
+                      </Label>
+                      <Controller
+                        name="separationDate"
+                        control={control}
+                        render={({ field }) => (
+                          <DatePicker
+                            value={field.value}
+                            onValueChange={field.onChange}
+                            placeholder="Optional"
+                          />
+                        )}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-separationReason" className="text-sm">
+                        Separation Reason
+                      </Label>
+                      <Input
+                        id="edit-separationReason"
+                        {...register("separationReason")}
+                        placeholder="Optional"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-finalPayStatus" className="text-sm">
+                        Final Pay
+                      </Label>
+                      <Controller
+                        name="finalPayStatus"
+                        control={control}
+                        render={({ field }) => (
+                          <Select
+                            value={field.value || "not_started"}
+                            onValueChange={field.onChange}
+                          >
+                            <SelectTrigger id="edit-finalPayStatus">
+                              <SelectValue placeholder="Select final pay status" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="not_started">
+                                Not Started
+                              </SelectItem>
+                              <SelectItem value="pending">Pending</SelectItem>
+                              <SelectItem value="processing">
+                                Processing
+                              </SelectItem>
+                              <SelectItem value="paid">Paid</SelectItem>
+                              <SelectItem value="not_applicable">
+                                Not Applicable
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-clearanceStatus" className="text-sm">
+                        Clearance
+                      </Label>
+                      <Controller
+                        name="clearanceStatus"
+                        control={control}
+                        render={({ field }) => (
+                          <Select
+                            value={field.value || "not_started"}
+                            onValueChange={field.onChange}
+                          >
+                            <SelectTrigger id="edit-clearanceStatus">
+                              <SelectValue placeholder="Select clearance status" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="not_started">
+                                Not Started
+                              </SelectItem>
+                              <SelectItem value="pending">Pending</SelectItem>
+                              <SelectItem value="cleared">Cleared</SelectItem>
+                              <SelectItem value="waived">Waived</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
+                      />
                     </div>
                   </div>
                 </div>

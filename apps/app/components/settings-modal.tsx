@@ -7,7 +7,10 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   User,
   Building2,
@@ -16,19 +19,22 @@ import {
   Briefcase,
   LogOut,
   Mail,
-  Shield,
   Clock,
+  KeyRound,
 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
 import { useEmployeeView } from "@/hooks/employee-view-context";
 import type { Id } from "@/convex/_generated/dataModel";
+import { authClient } from "@/lib/auth-client";
 import { UserOrganizationsCard } from "@/components/user-organizations-card";
 import { OrganizationManagement } from "@/components/organization-management";
 import { PayrollSettingsContent } from "@/components/settings/payroll-settings-content";
 import dynamic from "next/dynamic";
 import { cn } from "@/utils/utils";
+import { validateChangePasswordInput } from "@/utils/account-settings";
+import { useToast } from "@/components/ui/use-toast";
 
 // Dynamically import settings content components to reduce initial bundle size
 const LeaveTypesSettingsContent = dynamic(
@@ -69,7 +75,13 @@ type SettingsSection =
   | "holidays"
   | "attendance-shifts";
 
-type OrganizationRole = "owner" | "admin" | "hr" | "accounting" | "employee";
+type OrganizationRole =
+  | "owner"
+  | "admin"
+  | "hr"
+  | "manager"
+  | "accounting"
+  | "employee";
 
 const ORG_ONLY_SETTINGS_SECTIONS = new Set<SettingsSection>([
   "organizations",
@@ -79,6 +91,20 @@ const ORG_ONLY_SETTINGS_SECTIONS = new Set<SettingsSection>([
   "holidays",
   "attendance-shifts",
 ]);
+
+type ChangePasswordForm = {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+  revokeOtherSessions: boolean;
+};
+
+const EMPTY_CHANGE_PASSWORD_FORM: ChangePasswordForm = {
+  currentPassword: "",
+  newPassword: "",
+  confirmPassword: "",
+  revokeOtherSessions: false,
+};
 
 interface SettingsModalProps {
   open: boolean;
@@ -92,11 +118,16 @@ export function SettingsModal({
   initialSection: propInitialSection,
 }: SettingsModalProps) {
   const router = useRouter();
+  const { toast } = useToast();
   const { currentOrganizationId, clearOrganization } = useOrganization();
   const { effectiveSelfEmployeeId, isEmployeeExperienceUI } = useEmployeeView();
   const [activeSection, setActiveSection] = useState<SettingsSection>(
     propInitialSection || "account",
   );
+  const [passwordForm, setPasswordForm] = useState<ChangePasswordForm>(
+    EMPTY_CHANGE_PASSWORD_FORM,
+  );
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   // Update active section when initialSection prop changes
   React.useEffect(() => {
@@ -114,6 +145,13 @@ export function SettingsModal({
       setActiveSection("account");
     }
   }, [open, isEmployeeExperienceUI, activeSection]);
+
+  React.useEffect(() => {
+    if (!open) {
+      setPasswordForm(EMPTY_CHANGE_PASSWORD_FORM);
+      setIsChangingPassword(false);
+    }
+  }, [open]);
 
   const user = useQuery(
     api.organizations.getCurrentUser,
@@ -149,12 +187,6 @@ export function SettingsModal({
       .slice(0, 2) ||
     user?.email?.[0].toUpperCase() ||
     "U";
-
-  // Helper function to get display role name
-  const getDisplayRole = (role: string | undefined) => {
-    if (role === "admin" || role === "owner") return "Owner";
-    return role ? role.charAt(0).toUpperCase() + role.slice(1) : "User";
-  };
 
   const userSettingsItems = [
     { id: "account" as SettingsSection, name: "Account Settings", icon: User },
@@ -199,6 +231,55 @@ export function SettingsModal({
     },
   ];
 
+  const updatePasswordForm = (
+    field: keyof ChangePasswordForm,
+    value: string,
+  ) => {
+    setPasswordForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const handleChangePassword = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (isChangingPassword) return;
+
+    const validation = validateChangePasswordInput(passwordForm);
+    if (!validation.ok) {
+      toast({
+        title: "Password not updated",
+        description: validation.error,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      const result = await authClient.changePassword({
+        currentPassword: validation.value.currentPassword,
+        newPassword: validation.value.newPassword,
+        revokeOtherSessions: passwordForm.revokeOtherSessions,
+      });
+
+      if (result.error) {
+        throw new Error(result.error.message || "Failed to change password.");
+      }
+
+      setPasswordForm(EMPTY_CHANGE_PASSWORD_FORM);
+      toast({
+        title: "Password updated",
+        description: "Your account password has been changed.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Password not updated",
+        description: error?.message || "Failed to change password.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
   const renderContent = () => {
     switch (activeSection) {
       case "account":
@@ -213,58 +294,135 @@ export function SettingsModal({
               </p>
             </div>
             <div className="grid gap-4 sm:gap-6 grid-cols-1 md:grid-cols-2">
-              <Card className="border-gray-200">
-                <CardHeader className="pb-3 sm:pb-4 px-4 sm:px-6 pt-4 sm:pt-6">
-                  <CardTitle className="text-base sm:text-lg">
-                    Account Information
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4 sm:space-y-5 px-4 sm:px-6 pb-4 sm:pb-6">
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 text-xs sm:text-sm font-medium text-gray-500">
-                      <User className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                      <span>Name</span>
-                    </div>
-                    <div className="text-sm sm:text-base font-medium text-gray-900 pl-5 sm:pl-6 break-words">
-                      {user?.name || user?.email || "-"}
-                    </div>
-                  </div>
-                  <div className="border-t border-gray-100 pt-3 sm:pt-4 space-y-1.5">
-                    <div className="flex items-center gap-2 text-xs sm:text-sm font-medium text-gray-500">
-                      <Mail className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                      <span>Email</span>
-                    </div>
-                    <div className="text-sm sm:text-base font-medium text-gray-900 pl-5 sm:pl-6 break-words">
-                      {user?.email || "-"}
-                    </div>
-                  </div>
-                  <div className="border-t border-gray-100 pt-3 sm:pt-4 space-y-1.5">
-                    <div className="flex items-center gap-2 text-xs sm:text-sm font-medium text-gray-500">
-                      <Shield className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                      <span>Role</span>
-                    </div>
-                    <div className="pl-5 sm:pl-6">
-                      <Badge
-                        variant="secondary"
-                        className="text-xs sm:text-sm font-medium"
-                      >
-                        {getDisplayRole(user?.role)}
-                      </Badge>
-                    </div>
-                  </div>
-                  {isEmployeeExperienceUI && (
-                    <div className="border-t border-gray-100 pt-3 sm:pt-4 space-y-1.5">
+              <div className="space-y-4 sm:space-y-6">
+                <Card className="border-gray-200">
+                  <CardHeader className="pb-3 sm:pb-4 px-4 sm:px-6 pt-4 sm:pt-6">
+                    <CardTitle className="text-base sm:text-lg">
+                      Account Information
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4 sm:space-y-5 px-4 sm:px-6 pb-4 sm:pb-6">
+                    <div className="space-y-1.5">
                       <div className="flex items-center gap-2 text-xs sm:text-sm font-medium text-gray-500">
-                        <Briefcase className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                        <span>Employee ID</span>
+                        <User className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                        <span>Name</span>
                       </div>
                       <div className="text-sm sm:text-base font-medium text-gray-900 pl-5 sm:pl-6 break-words">
-                        {companyEmployeeId || "-"}
+                        {user?.name || user?.email || "-"}
                       </div>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
+                    <div className="border-t border-gray-100 pt-3 sm:pt-4 space-y-1.5">
+                      <div className="flex items-center gap-2 text-xs sm:text-sm font-medium text-gray-500">
+                        <Mail className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                        <span>Email</span>
+                      </div>
+                      <div className="text-sm sm:text-base font-medium text-gray-900 pl-5 sm:pl-6 break-words">
+                        {user?.email || "-"}
+                      </div>
+                    </div>
+                    {isEmployeeExperienceUI && (
+                      <div className="border-t border-gray-100 pt-3 sm:pt-4 space-y-1.5">
+                        <div className="flex items-center gap-2 text-xs sm:text-sm font-medium text-gray-500">
+                          <Briefcase className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                          <span>Employee ID</span>
+                        </div>
+                        <div className="text-sm sm:text-base font-medium text-gray-900 pl-5 sm:pl-6 break-words">
+                          {companyEmployeeId || "-"}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+                <Card className="border-gray-200">
+                  <CardHeader className="pb-3 sm:pb-4 px-4 sm:px-6 pt-4 sm:pt-6">
+                    <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                      <KeyRound className="h-4 w-4 text-gray-500" />
+                      <span>Change Password</span>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-4 sm:px-6 pb-4 sm:pb-6">
+                    <form
+                      className="space-y-3 sm:space-y-4"
+                      onSubmit={handleChangePassword}
+                    >
+                      <div className="space-y-1.5">
+                        <Label htmlFor="current-password">
+                          Current password
+                        </Label>
+                        <Input
+                          id="current-password"
+                          type="password"
+                          autoComplete="current-password"
+                          value={passwordForm.currentPassword}
+                          onChange={(event) =>
+                            updatePasswordForm(
+                              "currentPassword",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="new-password">New password</Label>
+                        <Input
+                          id="new-password"
+                          type="password"
+                          autoComplete="new-password"
+                          value={passwordForm.newPassword}
+                          onChange={(event) =>
+                            updatePasswordForm(
+                              "newPassword",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="confirm-new-password">
+                          Confirm new password
+                        </Label>
+                        <Input
+                          id="confirm-new-password"
+                          type="password"
+                          autoComplete="new-password"
+                          value={passwordForm.confirmPassword}
+                          onChange={(event) =>
+                            updatePasswordForm(
+                              "confirmPassword",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <Checkbox
+                          id="revoke-other-sessions"
+                          checked={passwordForm.revokeOtherSessions}
+                          onCheckedChange={(checked) =>
+                            setPasswordForm((current) => ({
+                              ...current,
+                              revokeOtherSessions: checked === true,
+                            }))
+                          }
+                        />
+                        <Label
+                          htmlFor="revoke-other-sessions"
+                          className="cursor-pointer font-normal leading-5"
+                        >
+                          Sign out other sessions
+                        </Label>
+                      </div>
+                      <Button
+                        type="submit"
+                        disabled={isChangingPassword}
+                        className="w-full sm:w-auto"
+                      >
+                        {isChangingPassword ? "Updating..." : "Update Password"}
+                      </Button>
+                    </form>
+                  </CardContent>
+                </Card>
+              </div>
               <UserOrganizationsCard />
             </div>
           </div>
@@ -378,9 +536,6 @@ export function SettingsModal({
                 <div className="flex-1 min-w-0">
                   <p className="text-xs sm:text-sm font-medium truncate">
                     {user?.name || user?.email || "User"}
-                  </p>
-                  <p className="text-[10px] sm:text-xs text-gray-500 truncate">
-                    {getDisplayRole(user?.role)}
                   </p>
                 </div>
               </div>

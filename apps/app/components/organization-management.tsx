@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
@@ -55,6 +55,14 @@ import {
 import { CreateOrganizationDialog } from "@/components/create-organization-dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  canRemoveOrganizationMember,
+  canUpdateOrganizationMemberRole,
+  getAssignableOrganizationRoleOptions,
+  getDisplayOrganizationRole,
+  normalizeOrganizationRole,
+  type OrganizationRole,
+} from "@/utils/organization-roles";
 
 type InviteableEmployeeRow = {
   _id: string;
@@ -88,12 +96,10 @@ export function OrganizationManagement(): React.ReactElement {
     name: "",
     address: "",
     phone: "",
-    email: "",
     taxId: "",
   });
-  const [inviteRoleOnly, setInviteRoleOnly] = useState<
-    "admin" | "hr" | "accounting" | "employee"
-  >("employee");
+  const [inviteRoleOnly, setInviteRoleOnly] =
+    useState<OrganizationRole>("employee");
   const [manualInviteEmailDraft, setManualInviteEmailDraft] = useState("");
   const [manualInviteEmails, setManualInviteEmails] = useState<string[]>([]);
   const [selectedInviteEmployeeIds, setSelectedInviteEmployeeIds] = useState<
@@ -144,15 +150,7 @@ export function OrganizationManagement(): React.ReactElement {
   const currentUserId = (currentUser as any)?._id ?? null;
 
   const { toast } = useToast();
-  // API can return "owner"; context type may omit it
-  const role = currentOrganization?.role as
-    | "admin"
-    | "owner"
-    | "hr"
-    | "employee"
-    | "accounting"
-    | undefined;
-  const isAdmin = role === "admin";
+  const role = normalizeOrganizationRole(currentOrganization?.role);
   const isOwner = role === "owner";
   const isOwnerOrAdmin = role === "admin" || role === "owner";
   /** Only owner, admin, and HR can edit org info/settings */
@@ -161,11 +159,35 @@ export function OrganizationManagement(): React.ReactElement {
   /** Only owner, admin, and HR can edit other members' roles (never own role) */
   const canEditMemberRoles =
     role === "owner" || role === "admin" || role === "hr";
-  /** Owner, admin, HR, accounting can see members list */
+  /** Owner, admin, HR, manager, and accounting can see members list */
   const canViewMembers =
-    role === "admin" || role === "accounting" || role === "owner" || role === "hr";
+    role === "admin" ||
+    role === "accounting" ||
+    role === "owner" ||
+    role === "hr" ||
+    role === "manager";
   const canInviteUsers =
     role === "owner" || role === "admin" || role === "hr";
+  const assignableRoleOptions = useMemo(
+    () => getAssignableOrganizationRoleOptions(role),
+    [role],
+  );
+  const ownerCount = useMemo(
+    () =>
+      Array.isArray(members)
+        ? members.filter((member: any) => member.role === "owner").length
+        : 0,
+    [members],
+  );
+
+  useEffect(() => {
+    if (
+      assignableRoleOptions.length > 0 &&
+      !assignableRoleOptions.some((option) => option.value === inviteRoleOnly)
+    ) {
+      setInviteRoleOnly("employee");
+    }
+  }, [assignableRoleOptions, inviteRoleOnly]);
 
   const handleEditOrganization = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -176,7 +198,6 @@ export function OrganizationManagement(): React.ReactElement {
         name: editFormData.name || undefined,
         address: editFormData.address || undefined,
         phone: editFormData.phone || undefined,
-        email: editFormData.email || undefined,
         taxId: editFormData.taxId || undefined,
       });
       setIsEditDialogOpen(false);
@@ -184,7 +205,6 @@ export function OrganizationManagement(): React.ReactElement {
         name: "",
         address: "",
         phone: "",
-        email: "",
         taxId: "",
       });
       refreshOrganizations();
@@ -356,6 +376,21 @@ export function OrganizationManagement(): React.ReactElement {
 
   const handleRemoveUser = async (userId: string) => {
     if (!currentOrganizationId || !isOwnerOrAdmin) return;
+    const targetMember = members?.find((member: any) => member._id === userId);
+    const decision = canRemoveOrganizationMember({
+      actorRole: role,
+      targetRole: targetMember?.role,
+      isSelf: userId === currentUserId,
+      ownerCount,
+    });
+    if (!decision.allowed) {
+      toast({
+        title: "Could not remove user",
+        description: decision.reason,
+        variant: "destructive",
+      });
+      return;
+    }
     if (!confirm("Are you sure you want to remove this user?")) return;
 
     try {
@@ -371,10 +406,25 @@ export function OrganizationManagement(): React.ReactElement {
 
   const handleUpdateRole = async (
     userId: string,
-    newRole: "admin" | "hr" | "accounting" | "employee",
+    newRole: OrganizationRole,
   ) => {
     if (!currentOrganizationId || !canEditMemberRoles) return;
-    if (userId === currentUserId) return; // User cannot edit their own role
+    const targetMember = members?.find((member: any) => member._id === userId);
+    const decision = canUpdateOrganizationMemberRole({
+      actorRole: role,
+      targetRole: targetMember?.role,
+      nextRole: newRole,
+      isSelf: userId === currentUserId,
+      ownerCount,
+    });
+    if (!decision.allowed) {
+      toast({
+        title: "Could not update role",
+        description: decision.reason,
+        variant: "destructive",
+      });
+      return;
+    }
 
     try {
       await updateUserRoleInOrganization({
@@ -431,7 +481,6 @@ export function OrganizationManagement(): React.ReactElement {
         name: currentOrgDetails.name || "",
         address: (currentOrgDetails as any)?.address || "",
         phone: (currentOrgDetails as any)?.phone || "",
-        email: (currentOrgDetails as any)?.email || "",
         taxId: (currentOrgDetails as any)?.taxId || "",
       });
       setIsEditDialogOpen(true);
@@ -483,24 +532,18 @@ export function OrganizationManagement(): React.ReactElement {
               <div className="text-sm font-medium text-gray-500">Name</div>
               <div className="text-lg">{currentOrganization?.name || "-"}</div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="text-sm font-medium text-gray-500">Email</div>
-                <div className="text-lg">
-                  {(currentOrgDetails as any)?.email || "-"}
-                </div>
-              </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <div className="text-sm font-medium text-gray-500">Phone</div>
                 <div className="text-lg">
                   {(currentOrgDetails as any)?.phone || "-"}
                 </div>
               </div>
-            </div>
-            <div>
-              <div className="text-sm font-medium text-gray-500">Address</div>
-              <div className="text-lg">
-                {(currentOrgDetails as any)?.address || "-"}
+              <div>
+                <div className="text-sm font-medium text-gray-500">Address</div>
+                <div className="text-lg">
+                  {(currentOrgDetails as any)?.address || "-"}
+                </div>
               </div>
             </div>
           </CardContent>
@@ -534,8 +577,17 @@ export function OrganizationManagement(): React.ReactElement {
                 <TableBody>
                   {members?.map((member: any, index: number) => {
                     const isCurrentUser = member._id === currentUserId;
+                    const roleDecision = canUpdateOrganizationMemberRole({
+                      actorRole: role,
+                      targetRole: member.role,
+                      nextRole: member.role,
+                      isSelf: isCurrentUser,
+                      ownerCount,
+                    });
                     const canEditThisRole =
-                      canEditMemberRoles && !isCurrentUser;
+                      canEditMemberRoles &&
+                      (isOwner || !isCurrentUser) &&
+                      roleDecision.allowed;
                     return (
                       <TableRow
                         key={member._id ?? member.email ?? `member-${index}`}
@@ -543,12 +595,9 @@ export function OrganizationManagement(): React.ReactElement {
                         <TableCell>{member.name || "-"}</TableCell>
                         <TableCell>{member.email}</TableCell>
                         <TableCell>
-                          {isCurrentUser ? (
+                          {!canEditThisRole ? (
                             <span className="capitalize">
-                              {member.role === "owner"
-                                ? "Owner"
-                                : (member.role ?? "").charAt(0).toUpperCase() +
-                                  (member.role ?? "").slice(1)}
+                              {getDisplayOrganizationRole(member.role)}
                             </span>
                           ) : (
                             <Select
@@ -556,20 +605,19 @@ export function OrganizationManagement(): React.ReactElement {
                               onValueChange={(value: any) =>
                                 handleUpdateRole(member._id, value)
                               }
-                              disabled={!canEditThisRole}
                             >
                               <SelectTrigger className="w-32">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="admin">Admin</SelectItem>
-                                <SelectItem value="hr">HR</SelectItem>
-                                <SelectItem value="accounting">
-                                  Accounting
-                                </SelectItem>
-                                <SelectItem value="employee">
-                                  Employee
-                                </SelectItem>
+                                {assignableRoleOptions.map((option) => (
+                                  <SelectItem
+                                    key={option.value}
+                                    value={option.value}
+                                  >
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
                               </SelectContent>
                             </Select>
                           )}
@@ -699,17 +747,6 @@ export function OrganizationManagement(): React.ReactElement {
                     setEditFormData({ ...editFormData, name: e.target.value })
                   }
                   required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-email">Email</Label>
-                <Input
-                  id="edit-email"
-                  type="email"
-                  value={editFormData.email}
-                  onChange={(e) =>
-                    setEditFormData({ ...editFormData, email: e.target.value })
-                  }
                 />
               </div>
               <div className="space-y-2">
@@ -901,7 +938,7 @@ export function OrganizationManagement(): React.ReactElement {
                 </Label>
                 <Select
                   value={inviteRoleOnly}
-                  onValueChange={(value: "admin" | "hr" | "accounting" | "employee") =>
+                  onValueChange={(value: OrganizationRole) =>
                     setInviteRoleOnly(value)
                   }
                 >
@@ -909,10 +946,11 @@ export function OrganizationManagement(): React.ReactElement {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="admin">Admin</SelectItem>
-                    <SelectItem value="hr">HR</SelectItem>
-                    <SelectItem value="accounting">Accounting</SelectItem>
-                    <SelectItem value="employee">Employee</SelectItem>
+                    {assignableRoleOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

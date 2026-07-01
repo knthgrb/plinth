@@ -6,6 +6,7 @@ import { InvitationsService } from "@/services/invitations-service";
 import { getAuthedConvexClient } from "@/lib/convex-client";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
+import type { OrganizationRole } from "@/utils/organization-roles";
 
 export async function createEmployee(data: {
   organizationId: string;
@@ -32,6 +33,16 @@ export async function createEmployee(data: {
     employmentType: "regular" | "probationary" | "contractual" | "part-time";
     hireDate: number;
     regularizationDate?: number;
+    separationDate?: number;
+    lastWorkingDay?: number;
+    separationReason?: string;
+    finalPayStatus?:
+      | "not_started"
+      | "pending"
+      | "processing"
+      | "paid"
+      | "not_applicable";
+    clearanceStatus?: "not_started" | "pending" | "cleared" | "waived";
     status: "active" | "inactive" | "resigned" | "terminated";
   };
   compensation: {
@@ -100,6 +111,16 @@ export async function updateEmployee(
       employmentType?: "regular" | "probationary" | "contractual" | "part-time";
       hireDate?: number;
       regularizationDate?: number;
+      separationDate?: number;
+      lastWorkingDay?: number;
+      separationReason?: string;
+      finalPayStatus?:
+        | "not_started"
+        | "pending"
+        | "processing"
+        | "paid"
+        | "not_applicable";
+      clearanceStatus?: "not_started" | "pending" | "cleared" | "waived";
       status?: "active" | "inactive" | "resigned" | "terminated";
     };
     compensation?: {
@@ -174,7 +195,7 @@ export async function checkEmployeeHasUserAccount(data: {
 export async function createUserForEmployee(data: {
   organizationId: string;
   employeeId: string;
-  role: "admin" | "hr" | "accounting" | "employee";
+  role: OrganizationRole;
   confirmInviteToExistingPlinthUser?: boolean;
 }) {
   const convex = await getAuthedConvexClient();
@@ -246,6 +267,11 @@ export async function addRequirement(data: {
     file?: string;
     submittedDate?: number;
     expiryDate?: number;
+    isRequired?: boolean;
+    appliesToDepartments?: string[];
+    appliesToEmploymentTypes?: string[];
+    reminderDaysBeforeDue?: number;
+    requiresVerification?: boolean;
   };
 }) {
   return EmployeesService.addRequirement(data);
@@ -255,6 +281,8 @@ export async function updateRequirementStatus(data: {
   employeeId: string;
   requirementIndex: number;
   status: "pending" | "submitted" | "verified";
+  verificationNotes?: string;
+  rejectionReason?: string;
 }) {
   return EmployeesService.updateRequirementStatus(data);
 }

@@ -326,9 +326,15 @@ export default function DashboardPage() {
       : "skip",
   );
 
-  // Only query employees if user has HR/admin/accounting role
+  // Only query employees if user has a people/finance role
   // This prevents "Not authorized" errors for employees
-  const allowedRolesForEmployees = ["admin", "hr", "accounting", "owner"];
+  const allowedRolesForEmployees = [
+    "admin",
+    "hr",
+    "manager",
+    "accounting",
+    "owner",
+  ];
   const employees = useQuery(
     (api as any).employees.getEmployees,
     effectiveOrganizationId &&
@@ -342,6 +348,7 @@ export default function DashboardPage() {
   const canViewOrgLeaveQueue = (role: string | undefined) =>
     role === "admin" ||
     role === "hr" ||
+    role === "manager" ||
     role === "owner" ||
     role === "accounting";
 
@@ -377,6 +384,7 @@ export default function DashboardPage() {
   const canViewEvaluations = (role: string | undefined) =>
     role === "admin" ||
     role === "hr" ||
+    role === "manager" ||
     role === "owner" ||
     role === "accounting";
 

@@ -5,6 +5,10 @@ import {
   encryptCompensationForDb,
   decryptEmployeeFromDb,
 } from "./employeeCompensationCrypto";
+import {
+  canUseFullOrganizationAccess,
+  deriveAccessStatusForEmploymentStatus,
+} from "@/utils/org-membership-lifecycle";
 
 function assertHireDateIsNotFuture(hireDate: number) {
   const today = new Date();
@@ -17,6 +21,23 @@ function assertHireDateIsNotFuture(hireDate: number) {
   if (hireDate > todayStart) {
     throw new Error("Hire date cannot be in the future");
   }
+}
+
+function buildRequirementFromDefault(req: any, now = Date.now()) {
+  return {
+    type: req.type,
+    status: "pending" as const,
+    isRequired: req.isRequired ?? true,
+    appliesToDepartments: req.appliesToDepartments,
+    appliesToEmploymentTypes: req.appliesToEmploymentTypes,
+    reminderDaysBeforeDue: req.reminderDaysBeforeDue,
+    requiresVerification: req.requiresVerification ?? true,
+    expiryDate: req.expiryDaysAfterSubmission
+      ? now + req.expiryDaysAfterSubmission * 24 * 60 * 60 * 1000
+      : undefined,
+    isDefault: true,
+    isCustom: false,
+  };
 }
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -83,6 +104,10 @@ async function checkAuth(
     userRole = userRecord.role;
   }
 
+  if (userOrg && !canUseFullOrganizationAccess(userOrg.accessStatus)) {
+    throw new Error("Organization access is limited or inactive");
+  }
+
   // HR routes: no access for accounting role (employees list is HR-only)
   if (userRole === "accounting") {
     throw new Error(
@@ -94,12 +119,21 @@ async function checkAuth(
   const isOwnerOrAdmin = userRole === "admin" || userRole === "owner";
 
   if (requiredRole) {
-    if (userRole !== requiredRole && !isOwnerOrAdmin) {
+    if (
+      userRole !== requiredRole &&
+      !(requiredRole === "hr" && userRole === "manager") &&
+      !isOwnerOrAdmin
+    ) {
       throw new Error("Not authorized");
     }
   } else {
     // Read access: hr, admin, owner, employee (not accounting)
-    if (!isOwnerOrAdmin && userRole !== "hr" && userRole !== "employee") {
+    if (
+      !isOwnerOrAdmin &&
+      userRole !== "hr" &&
+      userRole !== "manager" &&
+      userRole !== "employee"
+    ) {
       throw new Error("Not authorized");
     }
   }
@@ -640,6 +674,26 @@ export const createEmployee = mutation({
       ),
       hireDate: v.number(),
       regularizationDate: v.optional(v.number()),
+      separationDate: v.optional(v.number()),
+      lastWorkingDay: v.optional(v.number()),
+      separationReason: v.optional(v.string()),
+      finalPayStatus: v.optional(
+        v.union(
+          v.literal("not_started"),
+          v.literal("pending"),
+          v.literal("processing"),
+          v.literal("paid"),
+          v.literal("not_applicable"),
+        ),
+      ),
+      clearanceStatus: v.optional(
+        v.union(
+          v.literal("not_started"),
+          v.literal("pending"),
+          v.literal("cleared"),
+          v.literal("waived"),
+        ),
+      ),
       status: v.union(
         v.literal("active"),
         v.literal("inactive"),
@@ -730,17 +784,14 @@ export const createEmployee = mutation({
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
     assertHireDateIsNotFuture(args.employment.hireDate);
 
+    const now = Date.now();
+
     // Get organization default requirements
     const organization = await ctx.db.get(args.organizationId);
     const defaultRequirements =
-      organization?.defaultRequirements?.map((req: any) => ({
-        type: req.type,
-        status: "pending" as const,
-        isDefault: true,
-        isCustom: false,
-      })) || [];
-
-    const now = Date.now();
+      organization?.defaultRequirements?.map((req: any) =>
+        buildRequirementFromDefault(req, now),
+      ) || [];
 
     const insertedId = await ctx.db.insert("employees", {
       organizationId: args.organizationId,
@@ -816,6 +867,26 @@ export const updateEmployee = mutation({
         ),
         hireDate: v.number(),
         regularizationDate: v.optional(v.union(v.number(), v.null())),
+        separationDate: v.optional(v.number()),
+        lastWorkingDay: v.optional(v.number()),
+        separationReason: v.optional(v.string()),
+        finalPayStatus: v.optional(
+          v.union(
+            v.literal("not_started"),
+            v.literal("pending"),
+            v.literal("processing"),
+            v.literal("paid"),
+            v.literal("not_applicable"),
+          ),
+        ),
+        clearanceStatus: v.optional(
+          v.union(
+            v.literal("not_started"),
+            v.literal("pending"),
+            v.literal("cleared"),
+            v.literal("waived"),
+          ),
+        ),
         status: v.union(
           v.literal("active"),
           v.literal("inactive"),
@@ -1001,28 +1072,25 @@ export const updateEmployee = mutation({
       }
     }
 
-    // When employment status changes, sync linked user account: non-active = account can't be used
+    // Employment status is org-scoped. It changes access to this organization,
+    // not the user's global Plinth account.
     if (args.employment?.status) {
       const newStatus = args.employment.status;
-      let linkedUser = await (ctx.db.query("users") as any)
-        .withIndex("by_employee", (q: any) =>
-          q.eq("employeeId", args.employeeId),
+      const linkedMemberships = await (ctx.db.query("userOrganizations") as any)
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", employee.organizationId),
         )
-        .first();
-      if (!linkedUser) {
-        const userOrg = await (ctx.db.query("userOrganizations") as any)
-          .withIndex("by_organization", (q: any) =>
-            q.eq("organizationId", employee.organizationId),
-          )
-          .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
-          .first();
-        if (userOrg) linkedUser = await ctx.db.get(userOrg.userId);
-      }
-      if (linkedUser) {
-        const isActive = newStatus === "active";
-        await ctx.db.patch(linkedUser._id, {
-          isActive,
-          updatedAt: Date.now(),
+        .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
+        .collect();
+      const accessStatus = deriveAccessStatusForEmploymentStatus(newStatus);
+      const now = Date.now();
+      for (const membership of linkedMemberships) {
+        if (membership.role === "owner") continue;
+        await ctx.db.patch(membership._id, {
+          accessStatus,
+          accessUpdatedAt: now,
+          accessUpdatedBy: userRecord._id,
+          updatedAt: now,
         });
       }
     }
@@ -1087,6 +1155,11 @@ export const addRequirement = mutation({
       file: v.optional(v.id("_storage")),
       submittedDate: v.optional(v.number()),
       expiryDate: v.optional(v.number()),
+      isRequired: v.optional(v.boolean()),
+      appliesToDepartments: v.optional(v.array(v.string())),
+      appliesToEmploymentTypes: v.optional(v.array(v.string())),
+      reminderDaysBeforeDue: v.optional(v.number()),
+      requiresVerification: v.optional(v.boolean()),
       isCustom: v.optional(v.boolean()),
     }),
   },
@@ -1151,6 +1224,8 @@ export const updateRequirementStatus = mutation({
       v.literal("submitted"),
       v.literal("verified"),
     ),
+    verificationNotes: v.optional(v.string()),
+    rejectionReason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const employee = await ctx.db.get(args.employeeId);
@@ -1159,13 +1234,31 @@ export const updateRequirementStatus = mutation({
     const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
 
     const requirements = employee.requirements || [];
+    const now = Date.now();
     if (requirements[args.requirementIndex]) {
-      requirements[args.requirementIndex].status = args.status;
+      const requirement = requirements[args.requirementIndex];
+      requirement.status = args.status;
       if (
         args.status === "submitted" &&
-        !requirements[args.requirementIndex].submittedDate
+        !requirement.submittedDate
       ) {
-        requirements[args.requirementIndex].submittedDate = Date.now();
+        requirement.submittedDate = now;
+      }
+      if (args.status === "verified") {
+        requirement.verifiedAt = now;
+        requirement.verifiedBy = userRecord._id;
+        requirement.verificationNotes = args.verificationNotes;
+        requirement.rejectedAt = undefined;
+        requirement.rejectedBy = undefined;
+        requirement.rejectionReason = undefined;
+      }
+      if (args.status === "pending" && requirement.file) {
+        requirement.rejectedAt = now;
+        requirement.rejectedBy = userRecord._id;
+        requirement.rejectionReason = args.rejectionReason;
+        requirement.verifiedAt = undefined;
+        requirement.verifiedBy = undefined;
+        requirement.verificationNotes = undefined;
       }
     }
 
@@ -1188,13 +1281,23 @@ export const setEmployeeRequirementsComplete = mutation({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    await checkAuth(ctx, employee.organizationId, "hr");
+    const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
 
     const requirements = employee.requirements || [];
     const newStatus: "pending" | "verified" = args.complete
       ? "verified"
       : "pending";
-    const updated = requirements.map((r) => ({ ...r, status: newStatus }));
+    const now = Date.now();
+    const updated = requirements.map((r) => ({
+      ...r,
+      status: newStatus,
+      verifiedAt: args.complete ? now : undefined,
+      verifiedBy: args.complete ? userRecord._id : undefined,
+      verificationNotes: args.complete ? r.verificationNotes : undefined,
+      rejectedAt: args.complete ? undefined : r.rejectedAt,
+      rejectedBy: args.complete ? undefined : r.rejectedBy,
+      rejectionReason: args.complete ? undefined : r.rejectionReason,
+    }));
 
     await ctx.db.patch(args.employeeId, {
       requirements: updated,
@@ -1236,6 +1339,12 @@ export const updateRequirementFile = mutation({
       if (requirements[args.requirementIndex].status === "pending") {
         requirements[args.requirementIndex].status = "submitted";
       }
+      requirements[args.requirementIndex].verifiedAt = undefined;
+      requirements[args.requirementIndex].verifiedBy = undefined;
+      requirements[args.requirementIndex].verificationNotes = undefined;
+      requirements[args.requirementIndex].rejectedAt = undefined;
+      requirements[args.requirementIndex].rejectedBy = undefined;
+      requirements[args.requirementIndex].rejectionReason = undefined;
     }
 
     await ctx.db.patch(args.employeeId, {
@@ -1318,7 +1427,7 @@ export const addIncentive = mutation({
   },
 });
 
-// Delete employee (and linked user account if any)
+// Archive employee and disable linked org access without deleting account/history.
 export const deleteEmployee = mutation({
   args: {
     employeeId: v.id("employees"),
@@ -1328,30 +1437,39 @@ export const deleteEmployee = mutation({
     if (!employee) throw new Error("Employee not found");
 
     const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
+    const now = Date.now();
 
-    // Find and delete linked user account so login becomes invalid
-    let linkedUser = await (ctx.db.query("users") as any)
-      .withIndex("by_employee", (q: any) => q.eq("employeeId", args.employeeId))
-      .first();
-    if (!linkedUser) {
-      const userOrg = await (ctx.db.query("userOrganizations") as any)
-        .withIndex("by_organization", (q: any) =>
-          q.eq("organizationId", employee.organizationId),
-        )
-        .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
-        .first();
-      if (userOrg) linkedUser = await ctx.db.get(userOrg.userId);
-    }
-    if (linkedUser) {
-      const userOrgs = await (ctx.db.query("userOrganizations") as any)
-        .withIndex("by_user", (q: any) => q.eq("userId", linkedUser._id))
-        .collect();
-      for (const uo of userOrgs) await ctx.db.delete(uo._id);
-      await ctx.db.delete(linkedUser._id);
-    }
+    const employment =
+      employee.employment.status === "active"
+        ? {
+            ...employee.employment,
+            status: "inactive" as const,
+          }
+        : employee.employment;
 
-    // Delete the employee record
-    await ctx.db.delete(args.employeeId);
+    await ctx.db.patch(args.employeeId, {
+      employment,
+      archivedAt: now,
+      archivedBy: userRecord._id,
+      updatedAt: now,
+    } as any);
+
+    const linkedMemberships = await (ctx.db.query("userOrganizations") as any)
+      .withIndex("by_organization", (q: any) =>
+        q.eq("organizationId", employee.organizationId),
+      )
+      .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
+      .collect();
+
+    for (const membership of linkedMemberships) {
+      if (membership.role === "owner") continue;
+      await ctx.db.patch(membership._id, {
+        accessStatus: "disabled",
+        accessUpdatedAt: now,
+        accessUpdatedBy: userRecord._id,
+        updatedAt: now,
+      });
+    }
 
     return { success: true };
   },

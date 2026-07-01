@@ -11,6 +11,30 @@ export class AccountingService {
     });
   }
 
+  static async findPayrollAccountingDrift(organizationId: string) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.query as any)(
+      (api as any).accounting.findPayrollAccountingDrift,
+      {
+        organizationId: organizationId as Id<"organizations">,
+      }
+    );
+  }
+
+  static async repairPayrollAccounting(data: {
+    organizationId: string;
+    payrollRunId?: string;
+  }) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.mutation as any)(
+      (api as any).accounting.repairPayrollAccounting,
+      {
+        organizationId: data.organizationId as Id<"organizations">,
+        payrollRunId: data.payrollRunId as Id<"payrollRuns"> | undefined,
+      }
+    );
+  }
+
   static async createCostItem(data: {
     organizationId: string;
     categoryName: string;

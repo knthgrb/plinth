@@ -54,6 +54,38 @@ async function checkAuth(
   return { ...userRecord, role: userRole, organizationId };
 }
 
+type SettingsChangeArea =
+  | "payroll"
+  | "leave"
+  | "attendance"
+  | "organization";
+
+function buildSettingsAuditPatch(
+  settings: any,
+  area: SettingsChangeArea,
+  userRecord: any,
+  now: number,
+  reason?: string,
+) {
+  const nextSettingsVersion = (settings?.settingsVersion ?? 0) + 1;
+  const existingLog = Array.isArray(settings?.settingsChangeLog)
+    ? settings.settingsChangeLog
+    : [];
+  return {
+    settingsVersion: nextSettingsVersion,
+    settingsChangeLog: [
+      ...existingLog.slice(-49),
+      {
+        area,
+        version: nextSettingsVersion,
+        changedBy: userRecord._id,
+        changedAt: now,
+        ...(reason ? { reason } : {}),
+      },
+    ],
+  };
+}
+
 // Get organization settings
 export const getSettings = query({
   args: {
@@ -137,7 +169,6 @@ export const getSettings = query({
           overtimeRestDayRate: 1.3, // REST_DAY_PREMIUM 130%; first 8h at 130%, excess at 169%; holiday OT +30%
           dailyRateIncludesAllowance: true,
           dailyRateWorkingDaysPerYear: 261,
-          payrollTabPassword: "1234",
           taxDeductionFrequency: "twice_per_month",
           taxDeductOnPay: "first",
           holidayNoWorkNoPay: false,
@@ -147,6 +178,24 @@ export const getSettings = query({
           defaultLunchBreakMinutes: 60,
           defaultLunchStart: "12:00",
           defaultLunchEnd: "13:00",
+          graceMinutes: 5,
+          roundingRule: "none",
+          flexibleShiftsEnabled: false,
+          overnightShiftCutoffHour: 6,
+          restDayPolicy: "shift_based",
+          geofencePolicy: {
+            enabled: false,
+            allowedRadiusMeters: 100,
+            requireForClockIn: false,
+          },
+          importPolicy: {
+            allowCsvImport: true,
+            requireReviewBeforePosting: true,
+          },
+          payrollLockPolicy: {
+            lockAttendanceAfterPayrollFinalized: true,
+            allowAdminCorrectionWithReason: true,
+          },
         },
       };
     }
@@ -181,16 +230,6 @@ export const getSettings = query({
         maxConvertibleLeaveDays: 5,
       };
     }
-    if (settings.payrollSettings?.payrollTabPassword === undefined) {
-      settings = {
-        ...settings,
-        payrollSettings: {
-          ...(settings.payrollSettings || {}),
-          payrollTabPassword: "1234",
-        },
-      };
-    }
-
     return settings;
   },
 });
@@ -214,7 +253,6 @@ export const updatePayrollSettings = mutation({
       specialHolidayOtRate: v.optional(v.number()),
       dailyRateIncludesAllowance: v.optional(v.boolean()),
       dailyRateWorkingDaysPerYear: v.optional(v.number()),
-      payrollTabPassword: v.optional(v.string()),
       taxDeductionFrequency: v.optional(
         v.union(v.literal("once_per_month"), v.literal("twice_per_month")),
       ),
@@ -241,6 +279,7 @@ export const updatePayrollSettings = mutation({
       await ctx.db.insert("settings", {
         organizationId: args.organizationId,
         payrollSettings: args.payrollSettings,
+        ...buildSettingsAuditPatch(settings, "payroll", userRecord, now),
         createdAt: now,
         updatedAt: now,
       });
@@ -251,6 +290,7 @@ export const updatePayrollSettings = mutation({
           ...(settings.payrollSettings || {}),
           ...args.payrollSettings,
         },
+        ...buildSettingsAuditPatch(settings, "payroll", userRecord, now),
         updatedAt: now,
       });
     }
@@ -267,10 +307,48 @@ export const updateAttendanceSettings = mutation({
       defaultLunchBreakMinutes: v.optional(v.number()),
       defaultLunchStart: v.optional(v.string()),
       defaultLunchEnd: v.optional(v.string()),
+      graceMinutes: v.optional(v.number()),
+      roundingRule: v.optional(
+        v.union(
+          v.literal("none"),
+          v.literal("nearest_5"),
+          v.literal("nearest_15"),
+          v.literal("floor_15"),
+          v.literal("ceiling_15"),
+        ),
+      ),
+      flexibleShiftsEnabled: v.optional(v.boolean()),
+      overnightShiftCutoffHour: v.optional(v.number()),
+      restDayPolicy: v.optional(
+        v.union(
+          v.literal("fixed_weekly"),
+          v.literal("shift_based"),
+          v.literal("attendance_based"),
+        ),
+      ),
+      geofencePolicy: v.optional(
+        v.object({
+          enabled: v.boolean(),
+          allowedRadiusMeters: v.optional(v.number()),
+          requireForClockIn: v.optional(v.boolean()),
+        }),
+      ),
+      importPolicy: v.optional(
+        v.object({
+          allowCsvImport: v.optional(v.boolean()),
+          requireReviewBeforePosting: v.optional(v.boolean()),
+        }),
+      ),
+      payrollLockPolicy: v.optional(
+        v.object({
+          lockAttendanceAfterPayrollFinalized: v.optional(v.boolean()),
+          allowAdminCorrectionWithReason: v.optional(v.boolean()),
+        }),
+      ),
     }),
   },
   handler: async (ctx, args) => {
-    await checkAuth(ctx, args.organizationId, "hr");
+    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
 
     let settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
@@ -283,6 +361,7 @@ export const updateAttendanceSettings = mutation({
       await ctx.db.insert("settings", {
         organizationId: args.organizationId,
         attendanceSettings: args.attendanceSettings,
+        ...buildSettingsAuditPatch(settings, "attendance", userRecord, now),
         createdAt: now,
         updatedAt: now,
       });
@@ -292,6 +371,7 @@ export const updateAttendanceSettings = mutation({
           ...(settings.attendanceSettings || {}),
           ...args.attendanceSettings,
         },
+        ...buildSettingsAuditPatch(settings, "attendance", userRecord, now),
         updatedAt: now,
       });
     }
@@ -448,11 +528,15 @@ export const updateLeaveTypes = mutation({
         leaveRequestPdfLayout: args.leaveRequestPdfLayout,
         maxConvertibleLeaveDays: args.maxConvertibleLeaveDays ?? 5,
         ...(args.leaveTypes !== undefined ? { leaveTypes: args.leaveTypes } : {}),
+        ...buildSettingsAuditPatch(settings, "leave", userRecord, now),
         createdAt: now,
         updatedAt: now,
       });
     } else {
-      await ctx.db.patch(settings._id, patch);
+      await ctx.db.patch(settings._id, {
+        ...patch,
+        ...buildSettingsAuditPatch(settings, "leave", userRecord, now),
+      });
     }
 
     return { success: true };
@@ -470,9 +554,14 @@ export const updateLeaveTracker = mutation({
         availed: v.optional(v.number()),
       }),
     ),
+    overrideReason: v.string(),
   },
   handler: async (ctx, args) => {
-    await checkAuth(ctx, args.organizationId, "hr");
+    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
+    const overrideReason = args.overrideReason.trim();
+    if (!overrideReason) {
+      throw new Error("Reason for manual leave tracker override is required.");
+    }
 
     const settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
@@ -485,7 +574,13 @@ export const updateLeaveTracker = mutation({
     const otherYears = byYear.filter((e: any) => e.year !== args.year);
     const newByYear = [
       ...otherYears,
-      { year: args.year, rows: args.rows },
+      {
+        year: args.year,
+        rows: args.rows,
+        overrideReason,
+        updatedBy: userRecord._id,
+        updatedAt: now,
+      },
     ].sort((a: any, b: any) => a.year - b.year);
 
     if (!settings) {
@@ -493,12 +588,14 @@ export const updateLeaveTracker = mutation({
         organizationId: args.organizationId,
         annualSil: 8,
         leaveTrackerByYear: newByYear,
+        ...buildSettingsAuditPatch(settings, "leave", userRecord, now, overrideReason),
         createdAt: now,
         updatedAt: now,
       });
     } else {
       await ctx.db.patch(settings._id, {
         leaveTrackerByYear: newByYear,
+        ...buildSettingsAuditPatch(settings, "leave", userRecord, now, overrideReason),
         updatedAt: now,
       });
     }
@@ -515,6 +612,10 @@ export const updateDepartments = mutation({
       v.object({
         name: v.string(),
         color: v.string(),
+        departmentHeadUserId: v.optional(v.id("users")),
+        costCenter: v.optional(v.string()),
+        location: v.optional(v.string()),
+        parentDepartmentName: v.optional(v.string()),
       }),
     ),
   },
@@ -532,6 +633,7 @@ export const updateDepartments = mutation({
       await ctx.db.insert("settings", {
         organizationId: args.organizationId,
         departments: args.departments,
+        ...buildSettingsAuditPatch(settings, "organization", userRecord, now),
         createdAt: now,
         updatedAt: now,
       });
@@ -548,6 +650,7 @@ export const updateDepartments = mutation({
 
       await ctx.db.patch(settings._id, {
         departments: departmentsToSave,
+        ...buildSettingsAuditPatch(settings, "organization", userRecord, now),
         updatedAt: now,
       });
     }

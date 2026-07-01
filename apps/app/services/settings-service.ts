@@ -60,13 +60,32 @@ export class SettingsService {
 
   static async updateDepartments(data: {
     organizationId: string;
-    departments: Array<string | { name: string; color?: string }>;
+    departments: Array<
+      | string
+      | {
+          name: string;
+          color?: string;
+          departmentHeadUserId?: string;
+          costCenter?: string;
+          location?: string;
+          parentDepartmentName?: string;
+        }
+    >;
   }) {
     const DEFAULT_COLOR = "#9CA3AF";
     const normalized = data.departments.map((d) =>
       typeof d === "string"
         ? { name: d, color: DEFAULT_COLOR }
-        : { name: d.name, color: d.color ?? DEFAULT_COLOR },
+        : {
+            name: d.name,
+            color: d.color ?? DEFAULT_COLOR,
+            departmentHeadUserId: d.departmentHeadUserId as
+              | Id<"users">
+              | undefined,
+            costCenter: d.costCenter,
+            location: d.location,
+            parentDepartmentName: d.parentDepartmentName,
+          },
     );
     const convex = await getAuthedConvexClient();
     return await (convex.mutation as any)(

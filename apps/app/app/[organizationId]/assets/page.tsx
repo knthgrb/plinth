@@ -25,6 +25,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -52,23 +53,10 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { format } from "date-fns";
 
-export default function AssetsPage() {
-  const { toast } = useToast();
-  const { currentOrganizationId } = useOrganization();
-  const user = useQuery((api as any).organizations.getCurrentUser, {
-    organizationId: currentOrganizationId || undefined,
-  });
+type AssetCondition = "new" | "good" | "fair" | "needs_repair" | "damaged";
 
-  const [assets, setAssets] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingAsset, setEditingAsset] = useState<any>(null);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [deleteAssetId, setDeleteAssetId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-
-  const [formData, setFormData] = useState({
+function getEmptyAssetFormData() {
+  return {
     name: "",
     description: "",
     category: "",
@@ -79,9 +67,58 @@ export default function AssetsPage() {
     supplier: "",
     serialNumber: "",
     location: "",
+    assignedEmployeeId: "unassigned",
+    condition: "good" as AssetCondition,
+    returnDueDate: "",
+    custodyAcknowledged: false,
+    maintenanceHistory: "",
     status: "active" as "active" | "inactive" | "disposed" | "maintenance",
     notes: "",
+  };
+}
+
+function formatMaintenanceHistory(history: any[] | undefined) {
+  if (!Array.isArray(history)) return "";
+  return history.map((item) => item.description).filter(Boolean).join("\n");
+}
+
+function buildMaintenanceHistory(notes: string) {
+  return notes
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((description) => ({
+      date: Date.now(),
+      description,
+    }));
+}
+
+export default function AssetsPage() {
+  const { toast } = useToast();
+  const { currentOrganizationId } = useOrganization();
+  const user = useQuery((api as any).organizations.getCurrentUser, {
+    organizationId: currentOrganizationId || undefined,
   });
+  const employees = useQuery(
+    (api as any).employees.getEmployees,
+    currentOrganizationId
+      ? {
+          organizationId: currentOrganizationId,
+          status: "all",
+        }
+      : "skip"
+  );
+
+  const [assets, setAssets] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingAsset, setEditingAsset] = useState<any>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteAssetId, setDeleteAssetId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const [formData, setFormData] = useState(getEmptyAssetFormData);
 
   // Load assets
   useEffect(() => {
@@ -122,25 +159,21 @@ export default function AssetsPage() {
         supplier: asset.supplier || "",
         serialNumber: asset.serialNumber || "",
         location: asset.location || "",
+        assignedEmployeeId: asset.assignedEmployeeId
+          ? String(asset.assignedEmployeeId)
+          : "unassigned",
+        condition: asset.condition || "good",
+        returnDueDate: asset.returnDueDate
+          ? format(new Date(asset.returnDueDate), "yyyy-MM-dd")
+          : "",
+        custodyAcknowledged: Boolean(asset.custodyAcknowledgedAt),
+        maintenanceHistory: formatMaintenanceHistory(asset.maintenanceHistory),
         status: asset.status || "active",
         notes: asset.notes || "",
       });
     } else {
       setEditingAsset(null);
-      setFormData({
-        name: "",
-        description: "",
-        category: "",
-        quantity: "",
-        unitPrice: "",
-        totalValue: "",
-        datePurchased: "",
-        supplier: "",
-        serialNumber: "",
-        location: "",
-        status: "active",
-        notes: "",
-      });
+      setFormData(getEmptyAssetFormData());
     }
     setIsDialogOpen(true);
   };
@@ -148,20 +181,7 @@ export default function AssetsPage() {
   const handleCloseDialog = () => {
     setIsDialogOpen(false);
     setEditingAsset(null);
-    setFormData({
-      name: "",
-      description: "",
-      category: "",
-      quantity: "",
-      unitPrice: "",
-      totalValue: "",
-      datePurchased: "",
-      supplier: "",
-      serialNumber: "",
-      location: "",
-      status: "active",
-      notes: "",
-    });
+    setFormData(getEmptyAssetFormData());
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -199,6 +219,20 @@ export default function AssetsPage() {
       const datePurchased = formData.datePurchased
         ? new Date(formData.datePurchased).getTime()
         : undefined;
+      const assignedEmployeeId =
+        formData.assignedEmployeeId === "unassigned"
+          ? null
+          : formData.assignedEmployeeId;
+      const returnDueDate = formData.returnDueDate
+        ? new Date(formData.returnDueDate).getTime()
+        : null;
+      const custodyAcknowledgedAt =
+        formData.custodyAcknowledged && assignedEmployeeId
+          ? editingAsset?.custodyAcknowledgedAt || Date.now()
+          : null;
+      const maintenanceHistory = buildMaintenanceHistory(
+        formData.maintenanceHistory,
+      );
 
       if (editingAsset) {
         await updateAsset(editingAsset._id, {
@@ -212,6 +246,11 @@ export default function AssetsPage() {
           supplier: formData.supplier || undefined,
           serialNumber: formData.serialNumber || undefined,
           location: formData.location || undefined,
+          assignedEmployeeId,
+          condition: formData.condition,
+          returnDueDate,
+          custodyAcknowledgedAt,
+          maintenanceHistory,
           status: formData.status,
           notes: formData.notes || undefined,
         });
@@ -232,6 +271,11 @@ export default function AssetsPage() {
           supplier: formData.supplier || undefined,
           serialNumber: formData.serialNumber || undefined,
           location: formData.location || undefined,
+          assignedEmployeeId,
+          condition: formData.condition,
+          returnDueDate,
+          custodyAcknowledgedAt,
+          maintenanceHistory,
           status: formData.status,
           notes: formData.notes || undefined,
         });
@@ -289,6 +333,19 @@ export default function AssetsPage() {
       default:
         return "outline";
     }
+  };
+
+  const getEmployeeName = (employeeId?: string) => {
+    if (!employeeId || !Array.isArray(employees)) return "-";
+    const employee = employees.find((item: any) => String(item._id) === employeeId);
+    if (!employee) return "-";
+    return [
+      employee.personalInfo?.firstName,
+      employee.personalInfo?.middleName,
+      employee.personalInfo?.lastName,
+    ]
+      .filter(Boolean)
+      .join(" ");
   };
 
   const formatDate = (timestamp?: number) => {
@@ -419,6 +476,9 @@ export default function AssetsPage() {
                         <TableHead>Total Value</TableHead>
                         <TableHead>Date Purchased</TableHead>
                         <TableHead>Location</TableHead>
+                        <TableHead>Assigned Employee</TableHead>
+                        <TableHead>Condition</TableHead>
+                        <TableHead>Return Due Date</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
@@ -426,7 +486,7 @@ export default function AssetsPage() {
                     <TableBody>
                       {Array.from({ length: 6 }).map((_, skelIdx) => (
                         <TableRow key={skelIdx}>
-                          {Array.from({ length: 9 }).map((__, cellIdx) => (
+                          {Array.from({ length: 12 }).map((__, cellIdx) => (
                             <TableCell key={cellIdx}>
                               <div className="h-4 w-full max-w-[90px] rounded bg-[rgb(245,245,245)] animate-pulse" />
                             </TableCell>
@@ -457,6 +517,9 @@ export default function AssetsPage() {
                         <TableHead>Total Value</TableHead>
                         <TableHead>Date Purchased</TableHead>
                         <TableHead>Location</TableHead>
+                        <TableHead>Assigned Employee</TableHead>
+                        <TableHead>Condition</TableHead>
+                        <TableHead>Return Due Date</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
@@ -509,6 +572,32 @@ export default function AssetsPage() {
                               <span className="text-gray-400">-</span>
                             )}
                           </TableCell>
+                          <TableCell>
+                            {asset.assignedEmployeeId ? (
+                              <div>
+                                <span className="text-sm">
+                                  {getEmployeeName(String(asset.assignedEmployeeId))}
+                                </span>
+                                {asset.custodyAcknowledgedAt && (
+                                  <p className="text-xs text-gray-500">
+                                    Custody acknowledged
+                                  </p>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">
+                              {(asset.condition || "good")
+                                .replace(/_/g, " ")
+                                .replace(/\b\w/g, (letter: string) =>
+                                  letter.toUpperCase(),
+                                )}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{formatDate(asset.returnDueDate)}</TableCell>
                           <TableCell>
                             <Badge variant={getStatusColor(asset.status)}>
                               {asset.status?.charAt(0).toUpperCase() +
@@ -729,6 +818,123 @@ export default function AssetsPage() {
                         setFormData({ ...formData, location: e.target.value })
                       }
                       placeholder="Where the asset is located"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="assignedEmployeeId">
+                        Assigned Employee
+                      </Label>
+                      <Select
+                        value={formData.assignedEmployeeId}
+                        onValueChange={(value) =>
+                          setFormData({
+                            ...formData,
+                            assignedEmployeeId: value,
+                            custodyAcknowledged:
+                              value === "unassigned"
+                                ? false
+                                : formData.custodyAcknowledged,
+                          })
+                        }
+                      >
+                        <SelectTrigger id="assignedEmployeeId">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="unassigned">Unassigned</SelectItem>
+                          {Array.isArray(employees) &&
+                            employees.map((employee: any) => (
+                              <SelectItem
+                                key={employee._id}
+                                value={String(employee._id)}
+                              >
+                                {[
+                                  employee.personalInfo?.firstName,
+                                  employee.personalInfo?.middleName,
+                                  employee.personalInfo?.lastName,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" ")}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="condition">Condition</Label>
+                      <Select
+                        value={formData.condition}
+                        onValueChange={(value: AssetCondition) =>
+                          setFormData({ ...formData, condition: value })
+                        }
+                      >
+                        <SelectTrigger id="condition">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="new">New</SelectItem>
+                          <SelectItem value="good">Good</SelectItem>
+                          <SelectItem value="fair">Fair</SelectItem>
+                          <SelectItem value="needs_repair">
+                            Needs repair
+                          </SelectItem>
+                          <SelectItem value="damaged">Damaged</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="returnDueDate">Return Due Date</Label>
+                      <Input
+                        id="returnDueDate"
+                        type="date"
+                        value={formData.returnDueDate}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            returnDueDate: e.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 pt-8">
+                      <Checkbox
+                        id="custodyAcknowledged"
+                        checked={formData.custodyAcknowledged}
+                        disabled={formData.assignedEmployeeId === "unassigned"}
+                        onCheckedChange={(checked) =>
+                          setFormData({
+                            ...formData,
+                            custodyAcknowledged: checked === true,
+                          })
+                        }
+                      />
+                      <Label htmlFor="custodyAcknowledged">
+                        Custody acknowledged
+                      </Label>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="maintenanceHistory">
+                      Maintenance History
+                    </Label>
+                    <Textarea
+                      id="maintenanceHistory"
+                      value={formData.maintenanceHistory}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          maintenanceHistory: e.target.value,
+                        })
+                      }
+                      placeholder="One maintenance note per line"
+                      rows={3}
                     />
                   </div>
 

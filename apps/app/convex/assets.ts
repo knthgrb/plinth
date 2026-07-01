@@ -3,6 +3,28 @@ import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import { runOrgQuery } from "./queryAuthGrace";
 
+const assetConditionValidator = v.optional(
+  v.union(
+    v.literal("new"),
+    v.literal("good"),
+    v.literal("fair"),
+    v.literal("needs_repair"),
+    v.literal("damaged")
+  )
+);
+
+const maintenanceHistoryValidator = v.optional(
+  v.array(
+    v.object({
+      date: v.number(),
+      description: v.string(),
+      cost: v.optional(v.number()),
+      performedBy: v.optional(v.string()),
+      nextServiceDate: v.optional(v.number()),
+    })
+  )
+);
+
 // Helper to check authorization with organization context
 async function checkAuth(
   ctx: any,
@@ -122,6 +144,12 @@ export const createAsset = mutation({
     supplier: v.optional(v.string()),
     serialNumber: v.optional(v.string()),
     location: v.optional(v.string()),
+    assignedEmployeeId: v.optional(v.union(v.id("employees"), v.null())),
+    custodyAcknowledgedAt: v.optional(v.union(v.number(), v.null())),
+    returnDueDate: v.optional(v.union(v.number(), v.null())),
+    returnedAt: v.optional(v.union(v.number(), v.null())),
+    condition: assetConditionValidator,
+    maintenanceHistory: maintenanceHistoryValidator,
     status: v.optional(
       v.union(
         v.literal("active"),
@@ -133,9 +161,10 @@ export const createAsset = mutation({
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await checkAuth(ctx, args.organizationId);
+    const userRecord = await checkAuth(ctx, args.organizationId);
 
     const now = Date.now();
+    const assignedEmployeeId = args.assignedEmployeeId ?? undefined;
     const assetId = await ctx.db.insert("assets", {
       organizationId: args.organizationId,
       name: args.name,
@@ -148,6 +177,14 @@ export const createAsset = mutation({
       supplier: args.supplier,
       serialNumber: args.serialNumber,
       location: args.location,
+      assignedEmployeeId,
+      assignedAt: assignedEmployeeId ? now : undefined,
+      assignedBy: assignedEmployeeId ? userRecord._id : undefined,
+      custodyAcknowledgedAt: args.custodyAcknowledgedAt ?? undefined,
+      returnDueDate: args.returnDueDate ?? undefined,
+      returnedAt: args.returnedAt ?? undefined,
+      condition: args.condition,
+      maintenanceHistory: args.maintenanceHistory,
       status: args.status || "active",
       notes: args.notes,
       createdAt: now,
@@ -172,6 +209,12 @@ export const updateAsset = mutation({
     supplier: v.optional(v.string()),
     serialNumber: v.optional(v.string()),
     location: v.optional(v.string()),
+    assignedEmployeeId: v.optional(v.union(v.id("employees"), v.null())),
+    custodyAcknowledgedAt: v.optional(v.union(v.number(), v.null())),
+    returnDueDate: v.optional(v.union(v.number(), v.null())),
+    returnedAt: v.optional(v.union(v.number(), v.null())),
+    condition: assetConditionValidator,
+    maintenanceHistory: maintenanceHistoryValidator,
     status: v.optional(
       v.union(
         v.literal("active"),
@@ -186,9 +229,10 @@ export const updateAsset = mutation({
     const asset = await ctx.db.get(args.assetId);
     if (!asset) throw new Error("Asset not found");
 
-    await checkAuth(ctx, asset.organizationId);
+    const userRecord = await checkAuth(ctx, asset.organizationId);
 
-    await ctx.db.patch(args.assetId, {
+    const now = Date.now();
+    const updates: any = {
       ...(args.name !== undefined && { name: args.name }),
       ...(args.description !== undefined && { description: args.description }),
       ...(args.category !== undefined && { category: args.category }),
@@ -203,10 +247,35 @@ export const updateAsset = mutation({
         serialNumber: args.serialNumber,
       }),
       ...(args.location !== undefined && { location: args.location }),
+      ...(args.custodyAcknowledgedAt !== undefined && {
+        custodyAcknowledgedAt: args.custodyAcknowledgedAt ?? undefined,
+      }),
+      ...(args.returnDueDate !== undefined && {
+        returnDueDate: args.returnDueDate ?? undefined,
+      }),
+      ...(args.returnedAt !== undefined && {
+        returnedAt: args.returnedAt ?? undefined,
+      }),
+      ...(args.condition !== undefined && { condition: args.condition }),
+      ...(args.maintenanceHistory !== undefined && {
+        maintenanceHistory: args.maintenanceHistory,
+      }),
       ...(args.status !== undefined && { status: args.status }),
       ...(args.notes !== undefined && { notes: args.notes }),
-      updatedAt: Date.now(),
-    });
+      updatedAt: now,
+    };
+
+    if (args.assignedEmployeeId !== undefined) {
+      const assignedEmployeeId = args.assignedEmployeeId ?? undefined;
+      updates.assignedEmployeeId = assignedEmployeeId;
+      updates.assignedAt = assignedEmployeeId ? now : undefined;
+      updates.assignedBy = assignedEmployeeId ? userRecord._id : undefined;
+      if (!assignedEmployeeId && args.custodyAcknowledgedAt === undefined) {
+        updates.custodyAcknowledgedAt = undefined;
+      }
+    }
+
+    await ctx.db.patch(args.assetId, updates);
 
     return { success: true };
   },

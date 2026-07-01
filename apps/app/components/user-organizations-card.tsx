@@ -7,16 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Building2 } from "lucide-react";
 import { CreateOrganizationDialog } from "@/components/create-organization-dialog";
+import { getDisplayOrganizationRole } from "@/utils/organization-roles";
 
 export function UserOrganizationsCard(): React.ReactElement {
   const { organizations, currentOrganizationId, switchOrganization } = useOrganization();
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-
-  // Helper function to get display role name
-  const getDisplayRole = (role: string | undefined) => {
-    if (role === "admin" || role === "owner") return "Owner";
-    return role ? role.charAt(0).toUpperCase() + role.slice(1) : "User";
-  };
 
   return (
     <>
@@ -56,7 +51,7 @@ export function UserOrganizationsCard(): React.ReactElement {
                         {org.name}
                       </div>
                       <div className="text-sm text-gray-500 mt-0.5">
-                        {getDisplayRole(org.role)}
+                        {getDisplayOrganizationRole(org.role)}
                       </div>
                     </div>
                   </div>

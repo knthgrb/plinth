@@ -30,7 +30,6 @@ export function CreateOrganizationDialog({
     name: "",
     address: "",
     phone: "",
-    email: "",
     taxId: "",
   });
   const [loading, setLoading] = useState(false);
@@ -47,7 +46,6 @@ export function CreateOrganizationDialog({
         name: formData.name,
         address: formData.address || undefined,
         phone: formData.phone || undefined,
-        email: formData.email || undefined,
         taxId: formData.taxId || undefined,
       });
 
@@ -56,7 +54,6 @@ export function CreateOrganizationDialog({
         name: "",
         address: "",
         phone: "",
-        email: "",
         taxId: "",
       });
 
@@ -92,18 +89,6 @@ export function CreateOrganizationDialog({
                 }
                 required
                 placeholder="Acme Corporation"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={formData.email}
-                onChange={(e) =>
-                  setFormData({ ...formData, email: e.target.value })
-                }
-                placeholder="contact@acme.com"
               />
             </div>
             <div className="space-y-2">

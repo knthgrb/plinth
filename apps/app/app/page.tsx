@@ -8,19 +8,35 @@ import { authClient } from "@/lib/auth-client";
 import { MainLoader } from "@/components/main-loader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Building2 } from "lucide-react";
+import { Building2, LogOut } from "lucide-react";
 
-function getDefaultRouteForRole(role: string | null | undefined): string {
+function getDefaultRouteForRole(
+  role: string | null | undefined,
+  accessStatus?: string | null,
+): string {
+  if (accessStatus === "alumni") return "/payslips";
   if (!role) return "/dashboard";
   const r = role.toLowerCase();
   if (r === "employee" || r === "accounting") return "/announcements";
   return "/dashboard";
 }
 
+async function clearRoleCacheCookie() {
+  try {
+    await fetch("/api/auth/clear-role-cache", {
+      method: "POST",
+      credentials: "include",
+    });
+  } catch {
+    // Non-fatal: login will refresh role from Convex on the next session.
+  }
+}
+
 export default function AppHomePage() {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
   const [hasSession, setHasSession] = useState<boolean | null>(null);
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   const organizations = useQuery(
     (api as any).organizations.getUserOrganizations,
@@ -45,13 +61,26 @@ export default function AppHomePage() {
     if (organizations && organizations.length > 0) {
       // Use last active organization (first in list) and its role for redirect
       const lastActiveOrg = organizations[0];
-      const path = getDefaultRouteForRole((lastActiveOrg as any).role);
+      const path = getDefaultRouteForRole(
+        (lastActiveOrg as any).role,
+        (lastActiveOrg as any).accessStatus,
+      );
       router.replace(`/${lastActiveOrg._id}${path}`);
       return;
     }
 
     // No organizations (e.g. removed from all orgs) — show create-org option, don't redirect
   }, [authChecked, hasSession, organizations, router]);
+
+  const handleLogout = async () => {
+    setIsSigningOut(true);
+    try {
+      await authClient.signOut();
+      await clearRoleCacheCookie();
+    } finally {
+      router.replace("/login");
+    }
+  };
 
   if (!authChecked || !hasSession || organizations === undefined) {
     return <MainLoader />;
@@ -79,6 +108,15 @@ export default function AppHomePage() {
             onClick={() => router.push("/signup?step=2")}
           >
             Create organization
+          </Button>
+          <Button
+            className="w-full"
+            variant="outline"
+            onClick={handleLogout}
+            disabled={isSigningOut}
+          >
+            <LogOut className="mr-2 h-4 w-4" />
+            {isSigningOut ? "Logging out..." : "Log out"}
           </Button>
         </CardContent>
       </Card>

@@ -58,6 +58,10 @@ import {
   calculateAnnualLeaveBase,
   calculateAnniversaryLeave,
 } from "@/utils/leave-policy-calculations";
+import {
+  canUseAlumniPayslipAccess,
+  canUseFullOrganizationAccess,
+} from "@/utils/org-membership-lifecycle";
 
 function buildDraftPayrollConfig(args: {
   employeeIds: any[];
@@ -261,6 +265,39 @@ async function assertDraftDependenciesFreshForFinalize(
   if (hasDraftDependenciesChanged(savedSnapshot, currentSnapshot)) {
     throw new Error(
       "This payroll run is out of date (attendance, holidays, leave, rates, or schedules changed after the last payslip calculation). Regenerate payslips from the payroll list, then finalize again.",
+    );
+  }
+}
+
+async function assertNoDuplicatePayrollRunForPeriod(
+  ctx: any,
+  args: {
+    organizationId: any;
+    cutoffStart: number;
+    cutoffEnd: number;
+    runType: string;
+    excludePayrollRunId?: any;
+  },
+) {
+  const runType = args.runType;
+  const existingRuns = await (ctx.db.query("payrollRuns") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", args.organizationId),
+    )
+    .collect();
+  const duplicate = existingRuns.find(
+    (existingRun: any) =>
+      existingRun._id !== args.excludePayrollRunId &&
+      existingRun.cutoffStart === args.cutoffStart &&
+      existingRun.cutoffEnd === args.cutoffEnd &&
+      (existingRun.runType ?? "regular") === runType &&
+      existingRun.status !== "cancelled" &&
+      existingRun.status !== "archived",
+  );
+
+  if (duplicate) {
+    throw new Error(
+      "A payroll run already exists for this cutoff period. Open the existing run, regenerate it, or cancel/archive it before creating another one.",
     );
   }
 }
@@ -688,13 +725,7 @@ function deriveAccountingCostItemStatus(
   return "partial";
 }
 
-// Helper to check authorization with organization context
-// Allows admin, hr, and accounting roles for payroll access
-async function checkAuth(
-  ctx: any,
-  organizationId: any,
-  requiredRole?: "owner" | "admin" | "hr" | "accounting",
-) {
+async function resolveOrganizationMembership(ctx: any, organizationId: any) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
 
@@ -731,13 +762,56 @@ async function checkAuth(
     userRole = userRecord.role;
   }
 
-  // For payroll: allow admin, hr, and accounting roles
+  return {
+    userRecord,
+    userOrg,
+    userRole,
+    employeeId: userOrg?.employeeId ?? userRecord.employeeId,
+  };
+}
+
+// Helper to check payroll staff authorization with organization context.
+async function checkAuth(
+  ctx: any,
+  organizationId: any,
+  requiredRole?: "owner" | "admin" | "hr" | "accounting",
+) {
+  const { userRecord, userOrg, userRole, employeeId } =
+    await resolveOrganizationMembership(ctx, organizationId);
+
+  if (userOrg && !canUseFullOrganizationAccess(userOrg.accessStatus)) {
+    throw new Error("Organization access is limited or inactive");
+  }
+
   const allowedRoles = ["owner", "admin", "hr", "accounting"];
-  if (requiredRole && !allowedRoles.includes(userRole || "")) {
+  if (!allowedRoles.includes(userRole || "")) {
     throw new Error("Not authorized");
   }
 
-  return { ...userRecord, role: userRole, organizationId };
+  return {
+    ...userRecord,
+    role: userRole,
+    organizationId,
+    employeeId,
+    accessStatus: userOrg?.accessStatus ?? "active",
+  };
+}
+
+async function checkPayslipViewerAuth(ctx: any, organizationId: any) {
+  const { userRecord, userOrg, userRole, employeeId } =
+    await resolveOrganizationMembership(ctx, organizationId);
+
+  if (userOrg && !canUseAlumniPayslipAccess(userOrg.accessStatus)) {
+    throw new Error("Organization access is limited or inactive");
+  }
+
+  return {
+    ...userRecord,
+    role: userRole,
+    organizationId,
+    employeeId,
+    accessStatus: userOrg?.accessStatus ?? "active",
+  };
 }
 
 async function checkAuthForQuery(
@@ -751,6 +825,22 @@ async function checkAuthForQuery(
     if (isOrgQueryAuthGraceError(e)) return null;
     throw e;
   }
+}
+
+async function checkPayslipViewerAuthForQuery(ctx: any, organizationId: any) {
+  try {
+    return await checkPayslipViewerAuth(ctx, organizationId);
+  } catch (e) {
+    if (isOrgQueryAuthGraceError(e)) return null;
+    throw e;
+  }
+}
+
+function canViewAllPayslips(userRecord: any): boolean {
+  return (
+    canUseFullOrganizationAccess(userRecord?.accessStatus) &&
+    ["owner", "admin", "hr", "accounting"].includes(userRecord?.role || "")
+  );
 }
 
 // Helper to calculate working days in the month for an employee based on their schedule
@@ -2472,18 +2562,49 @@ export const createPayrollRun = mutation({
         }),
       ),
     ),
+    runType: v.optional(v.union(v.literal("regular"), v.literal("final_pay"))),
     /** Run-level: enable government deductions for this run. When false, no SSS/PhilHealth/Pag-IBIG/Tax. Override per employee via governmentDeductionSettings. */
     deductionsEnabled: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
+    const runType = args.runType ?? "regular";
+
+    await assertNoDuplicatePayrollRunForPeriod(ctx, {
+      organizationId: args.organizationId,
+      cutoffStart: args.cutoffStart,
+      cutoffEnd: args.cutoffEnd,
+      runType,
+    });
 
     const organization = await ctx.db.get(args.organizationId);
     const payFrequency: PayFrequency =
       getOrganizationPayFrequency(organization);
 
     const now = Date.now();
-    const period = `${formatManilaNumericDate(args.cutoffStart)} to ${formatManilaNumericDate(args.cutoffEnd)}`;
+    const periodDateRange = `${formatManilaNumericDate(args.cutoffStart)} to ${formatManilaNumericDate(args.cutoffEnd)}`;
+    const period =
+      runType === "final_pay" ? `Final Pay ${periodDateRange}` : periodDateRange;
+
+    const employeeRows = await Promise.all(
+      args.employeeIds.map((employeeId) => ctx.db.get(employeeId)),
+    );
+    const employeeIdsForRun = args.employeeIds.filter((employeeId, index) => {
+      const employee = employeeRows[index] as any;
+      if (!employee || employee.organizationId !== args.organizationId) {
+        return false;
+      }
+      return runType === "final_pay"
+        ? isFinalPayEligibleEmployee(employee)
+        : isActivePayrollEmployee(employee);
+    });
+    if (employeeIdsForRun.length === 0) {
+      throw new Error(
+        runType === "final_pay"
+          ? "Select at least one separated employee."
+          : "Select at least one active employee.",
+      );
+    }
 
     const deductionsEnabled = args.deductionsEnabled ?? true;
     const payrollRunId = await ctx.db.insert("payrollRuns", {
@@ -2491,12 +2612,13 @@ export const createPayrollRun = mutation({
       cutoffStart: args.cutoffStart,
       cutoffEnd: args.cutoffEnd,
       period,
+      runType,
       status: "draft",
       processedBy: userRecord._id,
       deductionsEnabled,
       draftConfig: encryptDraftConfigForDb(
         buildDraftPayrollConfig({
-          employeeIds: args.employeeIds,
+          employeeIds: employeeIdsForRun,
           manualDeductions: args.manualDeductions,
           incentives: args.incentives,
           governmentDeductionSettings: args.governmentDeductionSettings,
@@ -2516,7 +2638,7 @@ export const createPayrollRun = mutation({
 
     // Backfill isHoliday/holidayType on attendance. Only set when holiday applies to this employee's province.
     const _cutRangeEnd = args.cutoffEnd + 24 * 60 * 60 * 1000 - 1;
-    for (const employeeId of args.employeeIds) {
+    for (const employeeId of employeeIdsForRun) {
       const employeeRow = await ctx.db.get(employeeId);
       const employee = employeeRow
         ? decryptEmployeeFromDb(employeeRow)
@@ -2572,7 +2694,7 @@ export const createPayrollRun = mutation({
     );
 
     // Compute and create payslips for each employee
-    for (const employeeId of args.employeeIds) {
+    for (const employeeId of employeeIdsForRun) {
       const employeeRow = await ctx.db.get(employeeId);
       if (!employeeRow || employeeRow.organizationId !== args.organizationId) {
         continue;
@@ -2711,7 +2833,7 @@ export const createPayrollRun = mutation({
       organizationId: args.organizationId,
       cutoffStart: args.cutoffStart,
       cutoffEnd: args.cutoffEnd,
-      employeeIds: args.employeeIds,
+      employeeIds: employeeIdsForRun,
     });
     await ctx.db.patch(payrollRunId, {
       processedAt: now,
@@ -2817,6 +2939,16 @@ export const updatePayrollRun = mutation({
     if (!allowedRoles.includes(userRecord.role)) {
       throw new Error("Not authorized to update payroll run");
     }
+
+    const nextCutoffStart = args.cutoffStart ?? payrollRun.cutoffStart;
+    const nextCutoffEnd = args.cutoffEnd ?? payrollRun.cutoffEnd;
+    await assertNoDuplicatePayrollRunForPeriod(ctx, {
+      organizationId: payrollRun.organizationId,
+      cutoffStart: nextCutoffStart,
+      cutoffEnd: nextCutoffEnd,
+      runType: payrollRun.runType ?? "regular",
+      excludePayrollRunId: args.payrollRunId,
+    });
 
     let period = payrollRun.period;
     if (args.cutoffStart || args.cutoffEnd) {
@@ -3424,6 +3556,41 @@ async function createPayslipReadyNotificationsForRun(
   }
 }
 
+async function syncFinalPayStatusForRun(
+  ctx: any,
+  payrollRunRaw: any,
+  nextRunStatus: string,
+) {
+  const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
+  if ((payrollRun.runType ?? "regular") !== "final_pay") return;
+
+  const nextFinalPayStatus =
+    nextRunStatus === "paid"
+      ? "paid"
+      : nextRunStatus === "finalized"
+        ? "processing"
+        : nextRunStatus === "cancelled"
+          ? "pending"
+          : undefined;
+  if (!nextFinalPayStatus) return;
+
+  const payslips = await (ctx.db.query("payslips") as any)
+    .withIndex("by_payroll_run", (q: any) => q.eq("payrollRunId", payrollRunRaw._id))
+    .collect();
+
+  for (const payslip of payslips) {
+    const employee = await ctx.db.get(payslip.employeeId);
+    if (!employee) continue;
+    await ctx.db.patch(payslip.employeeId, {
+      employment: {
+        ...employee.employment,
+        finalPayStatus: nextFinalPayStatus,
+      },
+      updatedAt: Date.now(),
+    });
+  }
+}
+
 // Update payroll run status
 export const updatePayrollRunStatus = mutation({
   args: {
@@ -3476,6 +3643,9 @@ export const updatePayrollRunStatus = mutation({
     }
 
     const updatedRun = await ctx.db.get(args.payrollRunId);
+    if (updatedRun) {
+      await syncFinalPayStatusForRun(ctx, updatedRun, args.status);
+    }
 
     if (args.status === "finalized" && updatedRun) {
       // Total to pay = sum of payslip netPay (same logic as generating payslips)
@@ -3794,6 +3964,7 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
     amount: number;
     breakdown?: any;
     notes: string;
+    sourceKey: string;
   }) => {
     const existingExpense = existingExpenses.find(
       (item: any) => item.name === expense.name,
@@ -3809,6 +3980,9 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
     const payload = {
       organizationId: payrollRun.organizationId,
       payrollRunId: payrollRun._id,
+      sourceType: "payroll_run" as const,
+      sourceKey: expense.sourceKey,
+      sourceUpdatedAt: now,
       categoryName: EMPLOYEE_CATEGORY_NAME,
       name: expense.name,
       description: expense.description,
@@ -3838,6 +4012,7 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
   if (totalNetPay > 0) {
     await syncExpenseItem({
       name: payrollExpenseName,
+      sourceKey: `${payrollRun._id}:payroll`,
       description: `Total net pay for cutoff period ${payrollRun.period} (${payslipCount} payslip${payslipCount > 1 ? "s" : ""})`,
       amount: totalNetPay,
       breakdown: {
@@ -3914,6 +4089,7 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
   if (totalEmployeeSSS > 0 || totalSSSEmployer > 0) {
     await syncExpenseItem({
       name: sssExpenseName,
+      sourceKey: `${payrollRun._id}:sss`,
       description: `Total SSS for ${payslipCount} employee(s) in cutoff period ${payrollRun.period}`,
       amount: totalSSSForAccounting,
       breakdown: {
@@ -3934,6 +4110,7 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
   if (totalEmployeePagIbig > 0 || totalPagIbigEmployer > 0) {
     await syncExpenseItem({
       name: pagibigExpenseName,
+      sourceKey: `${payrollRun._id}:pagibig`,
       description: `Total Pag-IBIG for ${payslipCount} employee(s) in cutoff period ${payrollRun.period}`,
       amount: totalPagIbigForAccounting,
       breakdown: {
@@ -3955,6 +4132,7 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
   if (totalEmployeePhilHealth > 0 || totalPhilHealthEmployer > 0) {
     await syncExpenseItem({
       name: philhealthExpenseName,
+      sourceKey: `${payrollRun._id}:philhealth`,
       description: `Total PhilHealth for ${payslipCount} employee(s) in cutoff period ${payrollRun.period}`,
       amount: totalPhilHealthForAccounting,
       breakdown: {
@@ -3975,6 +4153,7 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
   if (totalEmployeeTax > 0) {
     await syncExpenseItem({
       name: taxDeductionExpenseName,
+      sourceKey: `${payrollRun._id}:tax`,
       description: `Total Tax employee deductions for ${payslipCount} employee(s) in cutoff period ${payrollRun.period}`,
       amount: round2(totalEmployeeTax),
       breakdown: {
@@ -4013,8 +4192,15 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
 export const getPayrollRuns = query({
   args: {
     organizationId: v.id("organizations"),
-    /** Filter by run type. When "13th_month", returns only 13th month runs. */
-    runType: v.optional(v.union(v.literal("regular"), v.literal("13th_month"))),
+    /** Filter by run type. */
+    runType: v.optional(
+      v.union(
+        v.literal("regular"),
+        v.literal("13th_month"),
+        v.literal("leave_conversion"),
+        v.literal("final_pay"),
+      ),
+    ),
     /** For 13th month: filter by year (e.g. 2025) */
     year: v.optional(v.number()),
   },
@@ -4044,7 +4230,8 @@ export const getPayrollRuns = query({
         if (
           rt === "regular" ||
           rt === "13th_month" ||
-          rt === "leave_conversion"
+          rt === "leave_conversion" ||
+          rt === "final_pay"
         ) {
           const employeeIds = await resolveDraftEmployeeIdsForRun(ctx, run);
           const currentSnapshot = await captureDraftDependencySnapshot(ctx, {
@@ -4096,6 +4283,12 @@ function getBasicPayFromPayslip(p: any): number {
 
 function isActivePayrollEmployee(employee: any): boolean {
   return employee?.employment?.status === "active";
+}
+
+function isFinalPayEligibleEmployee(employee: any): boolean {
+  return ["resigned", "terminated"].includes(
+    employee?.employment?.status ?? "",
+  );
 }
 
 /** Compute 13th month amounts for employees. 13th month = total basic pay for year / 12. */
@@ -5134,6 +5327,23 @@ export const getPayrollFinalizePayslipRecipients = query({
       throw new Error("Not authorized");
     }
 
+    let canFinalize = false;
+    let finalizeBlockedReason: string | null = null;
+    if (payrollRun.status !== "draft") {
+      finalizeBlockedReason =
+        "This payroll run is not in draft status; it cannot be finalized from here.";
+    } else {
+      try {
+        await assertDraftDependenciesFreshForFinalize(ctx, payrollRun);
+        canFinalize = true;
+      } catch (error) {
+        finalizeBlockedReason =
+          error instanceof Error
+            ? error.message
+            : "This payroll run cannot be finalized yet.";
+      }
+    }
+
     const org = await ctx.db.get(payrollRun.organizationId);
     const organizationName = (org as any)?.name ?? "Organization";
 
@@ -5202,6 +5412,8 @@ export const getPayrollFinalizePayslipRecipients = query({
 
     return {
       runStatus: payrollRun.status,
+      canFinalize,
+      finalizeBlockedReason,
       organizationId: payrollRun.organizationId,
       organizationName,
       cutoffStart: payrollRun.cutoffStart,
@@ -5340,14 +5552,13 @@ export const getEmployeePayslips = query({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    const userRecord = await checkAuthForQuery(ctx, employee.organizationId);
+    const userRecord = await checkPayslipViewerAuthForQuery(
+      ctx,
+      employee.organizationId,
+    );
     if (!userRecord) return [];
 
-    // Check authorization
-    if (
-      userRecord.role === "employee" &&
-      userRecord.employeeId !== args.employeeId
-    ) {
+    if (!canViewAllPayslips(userRecord) && userRecord.employeeId !== args.employeeId) {
       throw new Error("Not authorized");
     }
 
@@ -5394,14 +5605,13 @@ export const getPayslip = query({
     if (!raw) throw new Error("Payslip not found");
     const payslip = decryptPayslipRowFromDb(raw)!;
 
-    const userRecord = await checkAuthForQuery(ctx, payslip.organizationId);
+    const userRecord = await checkPayslipViewerAuthForQuery(
+      ctx,
+      payslip.organizationId,
+    );
     if (!userRecord) return null;
 
-    // Check authorization
-    if (
-      userRecord.role === "employee" &&
-      userRecord.employeeId !== payslip.employeeId
-    ) {
+    if (!canViewAllPayslips(userRecord) && userRecord.employeeId !== payslip.employeeId) {
       throw new Error("Not authorized");
     }
 
@@ -6120,8 +6330,15 @@ export const getPayslipMessages = query({
     const payslip = await ctx.db.get(args.payslipId);
     if (!payslip) throw new Error("Payslip not found");
 
-    const userRecord = await checkAuthForQuery(ctx, payslip.organizationId);
+    const userRecord = await checkPayslipViewerAuthForQuery(
+      ctx,
+      payslip.organizationId,
+    );
     if (!userRecord) return [];
+
+    if (!canViewAllPayslips(userRecord) && userRecord.employeeId !== payslip.employeeId) {
+      throw new Error("Not authorized");
+    }
 
     // Get all messages linked to this payslip
     const messages = await (ctx.db.query("messages") as any)

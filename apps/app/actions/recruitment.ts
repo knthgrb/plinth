@@ -59,6 +59,7 @@ export async function scheduleInterview(data: {
   date: number;
   type: string;
   interviewer: string;
+  interviewers?: string[];
   remarks?: string;
 }) {
   return RecruitmentService.scheduleInterview(data);
@@ -92,6 +93,8 @@ export async function createApplicant(data: {
   phone?: string;
   resume: string; // storage ID
   coverLetter?: string;
+  source?: string;
+  sourceDetails?: string;
   googleMeetLink?: string;
   interviewVideoLink?: string;
   portfolioLink?: string;
@@ -108,6 +111,8 @@ export async function updateApplicant(
     phone?: string;
     resume?: string; // storage ID
     coverLetter?: string;
+    source?: string;
+    sourceDetails?: string;
     googleMeetLink?: string;
     interviewVideoLink?: string;
     portfolioLink?: string;
@@ -126,4 +131,28 @@ export async function archiveJob(jobId: string) {
 
 export async function deleteApplicant(applicantId: string) {
   return RecruitmentService.deleteApplicant(applicantId);
+}
+
+export async function addApplicantScorecard(data: {
+  applicantId: string;
+  criteria: { label: string; score: number; notes?: string }[];
+  overallScore: number;
+  recommendation?: string;
+}) {
+  return RecruitmentService.addApplicantScorecard(data);
+}
+
+export async function requestOfferApproval(data: {
+  applicantId: string;
+  notes?: string;
+}) {
+  return RecruitmentService.requestOfferApproval(data);
+}
+
+export async function approveOffer(data: {
+  applicantId: string;
+  approved: boolean;
+  notes?: string;
+}) {
+  return RecruitmentService.approveOffer(data);
 }

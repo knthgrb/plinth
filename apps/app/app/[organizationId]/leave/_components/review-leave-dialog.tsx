@@ -111,7 +111,8 @@ export function ReviewLeaveDialog({
       ? { leaveRequestId: request._id }
       : "skip",
   );
-  const canApprove = approvalInfo?.canApprove !== false;
+  const approvalInfoReady = approvalInfo !== undefined;
+  const canApprove = approvalInfoReady && approvalInfo?.canApprove !== false;
   const blockReason = approvalInfo?.blockReason;
   const approvalFormComplete =
     Boolean(reviewedByName.trim()) && Boolean(approverSignatureDataUrl.trim());
@@ -606,7 +607,7 @@ export function ReviewLeaveDialog({
               </Button>
               <Button
                 onClick={handleApprove}
-                disabled={!canApprove || !approvalFormComplete}
+                disabled={!approvalInfoReady || !canApprove || !approvalFormComplete}
               >
                 <Check className="mr-2 h-4 w-4" />
                 Approve

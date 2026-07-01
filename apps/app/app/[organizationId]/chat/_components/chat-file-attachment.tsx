@@ -4,16 +4,27 @@ import { useEffect, useState, useRef } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
-import { Download, FileText } from "lucide-react";
+import { Download, ExternalLink, FileText } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { chatCache } from "@/services/chat-cache-service";
 
-function isPreviewableMedia(
+export type AttachmentPreviewMode = "image" | "video" | "pdf" | "file";
+
+export function getAttachmentPreviewMode(
   contentType: string | null,
-): "image" | "video" | false {
-  if (!contentType) return false;
+): AttachmentPreviewMode {
+  if (!contentType) return "file";
   if (contentType.startsWith("image/")) return "image";
   if (contentType.startsWith("video/")) return "video";
-  return false;
+  if (contentType === "application/pdf") return "pdf";
+  return "file";
 }
 
 type CachedFileAttachmentProps = {
@@ -21,6 +32,72 @@ type CachedFileAttachmentProps = {
   isOwnMessage: boolean;
   organizationId: string;
 };
+
+type AttachmentPreviewDialogProps = {
+  url: string;
+  mode: AttachmentPreviewMode;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+};
+
+function AttachmentPreviewDialog({
+  url,
+  mode,
+  open,
+  onOpenChange,
+}: AttachmentPreviewDialogProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[90vh] w-[92vw] max-w-5xl flex-col">
+        <DialogHeader>
+          <DialogTitle>Attachment preview</DialogTitle>
+        </DialogHeader>
+        <div className="flex min-h-[280px] flex-1 items-center justify-center overflow-auto rounded-lg bg-gray-50">
+          {mode === "image" ? (
+            <img
+              src={url}
+              alt="Attachment preview"
+              className="max-h-[72vh] max-w-full object-contain"
+            />
+          ) : mode === "video" ? (
+            <video
+              src={url}
+              controls
+              className="max-h-[72vh] max-w-full rounded-lg"
+            />
+          ) : mode === "pdf" ? (
+            <iframe
+              src={url}
+              title="Attachment preview"
+              className="h-[72vh] w-full rounded-lg border bg-white"
+            />
+          ) : (
+            <div className="flex min-h-[320px] flex-col items-center justify-center p-8 text-center">
+              <FileText className="mb-3 h-12 w-12 text-gray-400" />
+              <p className="text-sm text-gray-600">
+                Preview is not available for this file type.
+              </p>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button asChild variant="outline">
+            <a href={url} target="_blank" rel="noreferrer">
+              <ExternalLink className="h-4 w-4" />
+              Open in New Tab
+            </a>
+          </Button>
+          <Button asChild variant="outline">
+            <a href={url} download>
+              <Download className="h-4 w-4" />
+              Download
+            </a>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 /**
  * Loads chat file URLs from Convex when online; decrypts from IndexedDB when cached
@@ -33,6 +110,7 @@ export function CachedFileAttachment({
 }: CachedFileAttachmentProps) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [contentType, setContentType] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const blobUrlRef = useRef<string | null>(null);
 
   const fileData = useQuery(
@@ -108,74 +186,97 @@ export function CachedFileAttachment({
     };
   }, [fileData?.url, fileData?.contentType, organizationId, storageId]);
 
-  const previewType = isPreviewableMedia(contentType);
+  const previewMode = getAttachmentPreviewMode(contentType);
   const downloadClass = isOwnMessage
     ? "bg-purple-500/20 text-white hover:bg-purple-500/30"
     : "bg-gray-100 text-gray-700 hover:bg-gray-200";
+  const previewDialog = blobUrl ? (
+    <AttachmentPreviewDialog
+      url={blobUrl}
+      mode={previewMode}
+      open={previewOpen}
+      onOpenChange={setPreviewOpen}
+    />
+  ) : null;
 
-  if (blobUrl && previewType === "image") {
+  if (blobUrl && previewMode === "image") {
     return (
       <div className="space-y-1">
         <div className="rounded-lg overflow-hidden bg-white max-w-[280px] max-h-[320px]">
-          <a
-            href={blobUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block"
+          <button
+            type="button"
+            onClick={() => setPreviewOpen(true)}
+            className="block cursor-zoom-in"
+            aria-label="Preview attachment"
           >
             <img
               src={blobUrl}
               alt="Attachment"
               className="w-full h-auto object-contain max-h-[320px]"
             />
-          </a>
+          </button>
         </div>
         <a
           href={blobUrl}
           download
-          target="_blank"
-          rel="noopener noreferrer"
           className={`inline-flex items-center gap-1.5 text-xs p-1.5 rounded transition-all ${downloadClass}`}
         >
           <Download className="h-3 w-3 shrink-0" />
           <span>Download</span>
         </a>
+        {previewDialog}
       </div>
     );
   }
 
-  if (blobUrl && previewType === "video") {
+  if (blobUrl && previewMode === "video") {
     return (
       <div className="space-y-1">
         <div className="rounded-lg overflow-hidden bg-white max-w-[280px] max-h-[320px]">
           <video src={blobUrl} controls className="w-full h-auto max-h-[320px]" />
         </div>
+        <button
+          type="button"
+          onClick={() => setPreviewOpen(true)}
+          className={`inline-flex items-center gap-1.5 text-xs p-1.5 rounded transition-all ${downloadClass}`}
+        >
+          <FileText className="h-3 w-3 shrink-0" />
+          <span>Preview</span>
+        </button>
         <a
           href={blobUrl}
           download
-          target="_blank"
-          rel="noopener noreferrer"
           className={`inline-flex items-center gap-1.5 text-xs p-1.5 rounded transition-all ${downloadClass}`}
         >
           <Download className="h-3 w-3 shrink-0" />
           <span>Download</span>
         </a>
+        {previewDialog}
       </div>
     );
   }
 
   if (blobUrl) {
     return (
-      <a
-        href={blobUrl}
-        download
-        target="_blank"
-        rel="noopener noreferrer"
-        className={`inline-flex items-center gap-2 text-xs p-2 rounded transition-all ${downloadClass}`}
-      >
-        <FileText className="h-4 w-4 shrink-0" />
-        <span>Download file</span>
-      </a>
+      <div className="space-y-1">
+        <button
+          type="button"
+          onClick={() => setPreviewOpen(true)}
+          className={`inline-flex items-center gap-2 text-xs p-2 rounded transition-all ${downloadClass}`}
+        >
+          <FileText className="h-4 w-4 shrink-0" />
+          <span>Preview file</span>
+        </button>
+        <a
+          href={blobUrl}
+          download
+          className={`inline-flex items-center gap-1.5 text-xs p-1.5 rounded transition-all ${downloadClass}`}
+        >
+          <Download className="h-3 w-3 shrink-0" />
+          <span>Download</span>
+        </a>
+        {previewDialog}
+      </div>
     );
   }
 

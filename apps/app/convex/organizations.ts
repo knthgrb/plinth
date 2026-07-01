@@ -2,6 +2,60 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import { runOrgQuery } from "./queryAuthGrace";
+import {
+  canRemoveOrganizationMember,
+  canUpdateOrganizationMemberRole,
+  getAssignableOrganizationRoleOptions,
+} from "@/utils/organization-roles";
+import {
+  canUseAlumniPayslipAccess,
+  canUseFullOrganizationAccess,
+  normalizeOrgMembershipAccessStatus,
+} from "@/utils/org-membership-lifecycle";
+
+const defaultRequirementValidator = v.object({
+  type: v.string(),
+  isRequired: v.optional(v.boolean()),
+  appliesToDepartments: v.optional(v.array(v.string())),
+  appliesToEmploymentTypes: v.optional(v.array(v.string())),
+  reminderDaysBeforeDue: v.optional(v.number()),
+  requiresVerification: v.optional(v.boolean()),
+  expiryDaysAfterSubmission: v.optional(v.number()),
+});
+
+function buildEmployeeRequirementFromDefault(req: any) {
+  return {
+    type: req.type,
+    status: "pending" as const,
+    isRequired: req.isRequired ?? true,
+    appliesToDepartments: req.appliesToDepartments,
+    appliesToEmploymentTypes: req.appliesToEmploymentTypes,
+    reminderDaysBeforeDue: req.reminderDaysBeforeDue,
+    requiresVerification: req.requiresVerification ?? true,
+    expiryDate: req.expiryDaysAfterSubmission
+      ? Date.now() + req.expiryDaysAfterSubmission * 24 * 60 * 60 * 1000
+      : undefined,
+    isDefault: true,
+    isCustom: false,
+  };
+}
+
+function mergeDefaultRequirementPolicy(existing: any, defaultReq: any) {
+  return {
+    ...existing,
+    isRequired: defaultReq.isRequired ?? existing.isRequired ?? true,
+    appliesToDepartments: defaultReq.appliesToDepartments,
+    appliesToEmploymentTypes: defaultReq.appliesToEmploymentTypes,
+    reminderDaysBeforeDue: defaultReq.reminderDaysBeforeDue,
+    requiresVerification:
+      defaultReq.requiresVerification ?? existing.requiresVerification ?? true,
+    expiryDate:
+      existing.expiryDate ??
+      (defaultReq.expiryDaysAfterSubmission
+        ? Date.now() + defaultReq.expiryDaysAfterSubmission * 24 * 60 * 60 * 1000
+        : undefined),
+  };
+}
 
 // Mutation to ensure user record exists (can be called after signup/signin)
 export const ensureUserRecord = mutation({
@@ -126,6 +180,10 @@ async function checkAuth(
     userRole = userRecord.role;
   }
 
+  if (userOrg && !canUseFullOrganizationAccess((userOrg as any).accessStatus)) {
+    throw new Error("Organization access is limited or inactive");
+  }
+
   // Owner has all admin privileges
   const isOwnerOrAdmin = userRole === "owner" || userRole === "admin";
   if (requiredRole && userRole !== requiredRole && !isOwnerOrAdmin) {
@@ -133,6 +191,31 @@ async function checkAuth(
   }
 
   return { ...userRecord, role: userRole, organizationId };
+}
+
+async function countOrganizationOwners(ctx: any, organizationId: any) {
+  const userOrgs = await (ctx.db.query("userOrganizations") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", organizationId),
+    )
+    .collect();
+
+  return userOrgs.filter(
+    (userOrg: any) =>
+      userOrg.role === "owner" &&
+      canUseFullOrganizationAccess(userOrg.accessStatus),
+  ).length;
+}
+
+function isVisibleMembership(userOrg: any): boolean {
+  const status = normalizeOrgMembershipAccessStatus(userOrg?.accessStatus);
+  return status === "active" || status === "alumni";
+}
+
+function canAssignRole(actorRole: string | null | undefined, nextRole: string) {
+  return getAssignableOrganizationRoleOptions(actorRole).some(
+    (option) => option.value === nextRole,
+  );
 }
 
 // Get all organizations for current user (never throws in prod — returns [] on any error so signup never shows "Server Error")
@@ -151,11 +234,16 @@ export const getUserOrganizations = query({
       // Fetch organization details
       const organizations = await Promise.all(
         userOrgs.map(async (userOrg: any) => {
+          if (!isVisibleMembership(userOrg)) return null;
           const org = await ctx.db.get(userOrg.organizationId);
           if (!org) return null;
+          if ((org as any).status === "archived") return null;
           return {
             ...org,
             role: userOrg.role,
+            accessStatus: normalizeOrgMembershipAccessStatus(
+              userOrg.accessStatus,
+            ),
             employeeId: userOrg.employeeId,
             joinedAt: userOrg.joinedAt,
           };
@@ -176,6 +264,7 @@ export const getUserOrganizations = query({
                 (userRecord.role as
                   | "admin"
                   | "hr"
+                  | "manager"
                   | "employee"
                   | "accounting") ||
                 "owner" ||
@@ -242,6 +331,7 @@ export const getCurrentUser = query({
           userOrg = {
             role: userRecord.role || "admin", // Default to admin for legacy users
             employeeId: userRecord.employeeId,
+            accessStatus: "active",
           };
         }
       }
@@ -252,14 +342,25 @@ export const getCurrentUser = query({
         userOrg = {
           role: userRecord.role || "admin", // Default to admin for legacy users
           employeeId: userRecord.employeeId,
+          accessStatus: "active",
         };
       }
+    }
+
+    if (
+      userOrg &&
+      !canUseAlumniPayslipAccess((userOrg as any).accessStatus)
+    ) {
+      return null;
     }
 
     return {
       ...userRecord,
       organization: currentOrg,
       role: userOrg?.role || userRecord.role || "admin", // Fallback chain
+      accessStatus: normalizeOrgMembershipAccessStatus(
+        (userOrg as any)?.accessStatus,
+      ),
       employeeId: userOrg?.employeeId || userRecord.employeeId,
     };
   },
@@ -358,6 +459,7 @@ export const createOrganization = mutation({
       phone: args.phone,
       email: args.email,
       taxId: args.taxId,
+      status: "active",
       firstPayDate: 15, // Default: 15th of the month
       secondPayDate: 30, // Default: 30th of the month
       createdAt: now,
@@ -369,6 +471,9 @@ export const createOrganization = mutation({
       userId: userRecord._id,
       organizationId,
       role: "owner",
+      accessStatus: "active",
+      accessUpdatedAt: now,
+      accessUpdatedBy: userRecord._id,
       joinedAt: now,
       updatedAt: now,
     });
@@ -474,7 +579,8 @@ export const deleteOrganization = mutation({
       throw new Error("Organization not found");
     }
 
-    // Delete all user-organization relationships
+    // Archive memberships so the org disappears from switchers without
+    // destroying account or employee history.
     const userOrgs = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId),
@@ -482,15 +588,20 @@ export const deleteOrganization = mutation({
       .collect();
 
     for (const userOrg of userOrgs) {
-      await ctx.db.delete(userOrg._id);
+      await ctx.db.patch(userOrg._id, {
+        accessStatus: "removed",
+        accessUpdatedAt: Date.now(),
+        accessUpdatedBy: userRecord._id,
+        updatedAt: Date.now(),
+      });
     }
 
-    // Note: We don't delete employees, payroll, etc. as they might be needed for records
-    // The organization record itself will be deleted, but related data remains
-    // This is a soft delete approach - you may want to add a "deleted" flag instead
-
-    // Delete the organization
-    await ctx.db.delete(args.organizationId);
+    await ctx.db.patch(args.organizationId, {
+      status: "archived",
+      archivedAt: Date.now(),
+      archivedBy: userRecord._id,
+      updatedAt: Date.now(),
+    });
 
     return { success: true };
   },
@@ -516,7 +627,8 @@ export const getOrganization = query({
       .first();
 
     const hasAccess =
-      userOrg || userRecord.organizationId === args.organizationId;
+      (userOrg && canUseAlumniPayslipAccess((userOrg as any).accessStatus)) ||
+      userRecord.organizationId === args.organizationId;
 
     if (!hasAccess) {
       return null;
@@ -524,6 +636,9 @@ export const getOrganization = query({
 
     const organization = await ctx.db.get(args.organizationId);
     if (!organization) {
+      return null;
+    }
+    if ((organization as any).status === "archived") {
       return null;
     }
 
@@ -549,7 +664,8 @@ export const getOrganizationMembers = query({
       .first();
 
     const hasAccess =
-      userOrg || userRecord.organizationId === args.organizationId;
+      (userOrg && canUseFullOrganizationAccess((userOrg as any).accessStatus)) ||
+      userRecord.organizationId === args.organizationId;
 
     if (!hasAccess) {
       throw new Error("Not authorized");
@@ -565,17 +681,23 @@ export const getOrganizationMembers = query({
     // Fetch user details
     const members = await Promise.all(
       userOrgs.map(async (userOrg: any) => {
+        if (normalizeOrgMembershipAccessStatus(userOrg.accessStatus) === "removed") {
+          return null;
+        }
         const user = await ctx.db.get(userOrg.userId);
         return {
           ...user,
           role: userOrg.role,
+          accessStatus: normalizeOrgMembershipAccessStatus(
+            userOrg.accessStatus,
+          ),
           employeeId: userOrg.employeeId,
           joinedAt: userOrg.joinedAt,
         };
       }),
     );
 
-    return members;
+    return members.filter(Boolean);
   },
 });
 
@@ -588,6 +710,7 @@ export const addUserToOrganization = mutation({
       v.literal("admin"),
       v.literal("owner"),
       v.literal("hr"),
+      v.literal("manager"),
       v.literal("employee"),
       v.literal("accounting"),
     ),
@@ -605,18 +728,20 @@ export const addUserToOrganization = mutation({
       )
       .first();
 
-    // Owner has all admin privileges
+    const actorRole =
+      userOrg?.role ||
+      (userRecord.organizationId === args.organizationId
+        ? userRecord.role
+        : null);
+
     const isAuthorized =
-      userOrg?.role === "admin" ||
-      userOrg?.role === "owner" ||
-      userOrg?.role === "hr" ||
-      (userRecord.organizationId === args.organizationId &&
-        (userRecord.role === "admin" ||
-          userRecord.role === "owner" ||
-          userRecord.role === "hr"));
+      actorRole === "admin" || actorRole === "owner" || actorRole === "hr";
 
     if (!isAuthorized) {
       throw new Error("Not authorized to add users to organization");
+    }
+    if (!canAssignRole(actorRole, args.role)) {
+      throw new Error("Not authorized to assign this organization role");
     }
 
     // Find or create user
@@ -650,6 +775,9 @@ export const addUserToOrganization = mutation({
       await ctx.db.patch(existingUserOrg._id, {
         role: args.role,
         employeeId: args.employeeId,
+        accessStatus: "active",
+        accessUpdatedAt: now,
+        accessUpdatedBy: userRecord._id,
         updatedAt: now,
       });
     } else {
@@ -659,6 +787,9 @@ export const addUserToOrganization = mutation({
         organizationId: args.organizationId,
         role: args.role,
         employeeId: args.employeeId,
+        accessStatus: "active",
+        accessUpdatedAt: now,
+        accessUpdatedBy: userRecord._id,
         joinedAt: now,
         updatedAt: now,
       });
@@ -686,12 +817,13 @@ export const removeUserFromOrganization = mutation({
       )
       .first();
 
-    // Owner has all admin privileges
-    const isOwnerOrAdmin =
-      userOrg?.role === "admin" ||
-      userOrg?.role === "owner" ||
-      (userRecord.organizationId === args.organizationId &&
-        (userRecord.role === "admin" || userRecord.role === "owner"));
+    const actorRole =
+      userOrg?.role ||
+      (userRecord.organizationId === args.organizationId
+        ? userRecord.role
+        : null);
+
+    const isOwnerOrAdmin = actorRole === "admin" || actorRole === "owner";
 
     if (!isOwnerOrAdmin) {
       throw new Error(
@@ -704,28 +836,34 @@ export const removeUserFromOrganization = mutation({
       throw new Error("Cannot remove yourself from organization");
     }
 
-    // Remove user-organization relationship and linked employee record
+    // Remove organization access without deleting the account or employee record.
     const targetUserOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
         q.eq("userId", args.userId).eq("organizationId", args.organizationId),
       )
       .first();
 
-    if (targetUserOrg) {
-      // If this user was linked to an employee in this org, delete the employee record too
-      const employeeId = (targetUserOrg as any).employeeId;
-      if (employeeId) {
-        const employee = await ctx.db.get(employeeId);
-        if (
-          employee &&
-          "organizationId" in employee &&
-          employee.organizationId === args.organizationId
-        ) {
-          await ctx.db.delete(employeeId);
-        }
-      }
-      await ctx.db.delete(targetUserOrg._id);
+    if (!targetUserOrg) {
+      throw new Error("User is not a member of this organization");
     }
+
+    const ownerCount = await countOrganizationOwners(ctx, args.organizationId);
+    const removalDecision = canRemoveOrganizationMember({
+      actorRole,
+      targetRole: targetUserOrg.role,
+      isSelf: args.userId === userRecord._id,
+      ownerCount,
+    });
+    if (!removalDecision.allowed) {
+      throw new Error(removalDecision.reason);
+    }
+
+    await ctx.db.patch(targetUserOrg._id, {
+      accessStatus: "removed",
+      accessUpdatedAt: Date.now(),
+      accessUpdatedBy: userRecord._id,
+      updatedAt: Date.now(),
+    });
 
     return { success: true };
   },
@@ -740,6 +878,7 @@ export const updateUserRoleInOrganization = mutation({
       v.literal("admin"),
       v.literal("owner"),
       v.literal("hr"),
+      v.literal("manager"),
       v.literal("employee"),
       v.literal("accounting"),
     ),
@@ -756,24 +895,19 @@ export const updateUserRoleInOrganization = mutation({
       )
       .first();
 
-    // Owner, admin, and HR can update member roles
+    const actorRole =
+      userOrg?.role ||
+      (userRecord.organizationId === args.organizationId
+        ? userRecord.role
+        : null);
+
     const canUpdateRoles =
-      userOrg?.role === "admin" ||
-      userOrg?.role === "owner" ||
-      userOrg?.role === "hr" ||
-      (userRecord.organizationId === args.organizationId &&
-        (userRecord.role === "admin" ||
-          userRecord.role === "owner" ||
-          userRecord.role === "hr"));
+      actorRole === "admin" || actorRole === "owner" || actorRole === "hr";
 
     if (!canUpdateRoles) {
       throw new Error(
         "Only organization owners, admins, or HR can update user roles",
       );
-    }
-
-    if (userRecord._id === args.userId) {
-      throw new Error("You cannot change your own role");
     }
 
     // Update user-organization relationship
@@ -783,14 +917,31 @@ export const updateUserRoleInOrganization = mutation({
       )
       .first();
 
-    if (targetUserOrg) {
-      await ctx.db.patch(targetUserOrg._id, {
-        role: args.role,
-        updatedAt: Date.now(),
-      });
-    } else {
+    if (!targetUserOrg) {
       throw new Error("User is not a member of this organization");
     }
+
+    const ownerCount = await countOrganizationOwners(ctx, args.organizationId);
+    const roleDecision = canUpdateOrganizationMemberRole({
+      actorRole,
+      targetRole: targetUserOrg.role,
+      nextRole: args.role,
+      isSelf: userRecord._id === args.userId,
+      ownerCount,
+    });
+    if (!roleDecision.allowed) {
+      throw new Error(roleDecision.reason);
+    }
+
+    await ctx.db.patch(targetUserOrg._id, {
+      role: args.role,
+      accessStatus:
+        normalizeOrgMembershipAccessStatus((targetUserOrg as any).accessStatus) ===
+        "removed"
+          ? "active"
+          : (targetUserOrg as any).accessStatus,
+      updatedAt: Date.now(),
+    });
 
     return { success: true };
   },
@@ -816,12 +967,7 @@ export const getDefaultRequirements = query({
 export const updateDefaultRequirements = mutation({
   args: {
     organizationId: v.id("organizations"),
-    requirements: v.array(
-      v.object({
-        type: v.string(),
-        isRequired: v.optional(v.boolean()),
-      }),
-    ),
+    requirements: v.array(defaultRequirementValidator),
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
@@ -855,19 +1001,22 @@ export const updateDefaultRequirements = mutation({
               existingReq.type === defaultReq.type && existingReq.isDefault,
           );
         })
-        .map((req: any) => ({
-          type: req.type,
-          status: "pending" as const,
-          isDefault: true,
-          isCustom: false,
-        }));
+        .map(buildEmployeeRequirementFromDefault);
 
       // Remove default requirements that are no longer in the defaults list
       const updatedDefaults = currentRequirements
         .filter((r: any) => r.isDefault)
         .filter((r: any) =>
           args.requirements.some((dr: any) => dr.type === r.type),
-        );
+        )
+        .map((existing: any) => {
+          const defaultReq = args.requirements.find(
+            (dr: any) => dr.type === existing.type,
+          );
+          return defaultReq
+            ? mergeDefaultRequirementPolicy(existing, defaultReq)
+            : existing;
+        });
 
       // Combine: keep existing defaults (with their status/files), add new defaults, keep custom
       const updatedRequirements = [
@@ -905,7 +1054,7 @@ export const getEmployeeSelfMatchForElevatedRole = query({
     const role = (userOrg?.role ?? userRecord.role ?? "").toLowerCase();
     if (role === "employee") return null;
 
-    const elevated = ["owner", "admin", "hr", "accounting"].includes(role);
+    const elevated = ["owner", "admin", "hr", "manager", "accounting"].includes(role);
     if (!elevated) return null;
 
     const employees = await (ctx.db.query("employees") as any)
@@ -946,7 +1095,7 @@ export const getEmployeeIdForPayslips = query({
     let employeeId = userOrg?.employeeId ?? userRecord.employeeId ?? null;
 
     const orgRole = (userOrg?.role ?? userRecord.role ?? "").toLowerCase();
-    const elevated = ["owner", "admin", "hr", "accounting"].includes(orgRole);
+    const elevated = ["owner", "admin", "hr", "manager", "accounting"].includes(orgRole);
 
     if (
       !employeeId &&
@@ -1009,6 +1158,7 @@ export const inviteUser = mutation({
       v.literal("admin"),
       v.literal("owner"),
       v.literal("hr"),
+      v.literal("manager"),
       v.literal("employee"),
     ),
     employeeId: v.optional(v.id("employees")),
@@ -1080,6 +1230,9 @@ export const inviteUser = mutation({
       await ctx.db.patch(existingUserOrg._id, {
         role: args.role,
         employeeId: args.employeeId,
+        accessStatus: "active",
+        accessUpdatedAt: now,
+        accessUpdatedBy: userRecord._id,
         updatedAt: now,
       });
     } else {
@@ -1088,6 +1241,9 @@ export const inviteUser = mutation({
         organizationId: organizationId,
         role: args.role,
         employeeId: args.employeeId,
+        accessStatus: "active",
+        accessUpdatedAt: now,
+        accessUpdatedBy: userRecord._id,
         joinedAt: now,
         updatedAt: now,
       });
