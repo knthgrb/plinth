@@ -6,9 +6,10 @@
 
 import { getSSSContribution } from "@/utils/sss";
 import { getManilaDateParts } from "@/lib/manila-date";
-
-const PHILHEALTH_EMPLOYEE_MONTHLY = 500;
-const PAGIBIG_EMPLOYEE_MONTHLY = 200;
+import {
+  getPagibigContribution,
+  getPhilHealthContribution,
+} from "@/utils/ph-statutory-contributions";
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
@@ -58,6 +59,10 @@ export function getTaxDeductionAmount(
     return isFirstPay ? monthlyTax : 0;
   }
   return isFirstPay ? 0 : monthlyTax;
+}
+
+function getCutoffsPerYear(payFrequency: PayFrequency): number {
+  return payFrequency === "bimonthly" ? 24 : 12;
 }
 
 /** Match `convex/payroll` getDailyRateForEmployee (monthly path) for tax basis. */
@@ -118,6 +123,7 @@ export function getWithholdingTaxCutoffForEmployee(
     payFrequency: PayFrequency;
     taxDeductionFrequency: "once_per_month" | "twice_per_month";
     taxDeductOnPay: "first" | "second";
+    taxableGrossForCutoff?: number;
   },
 ): number {
   const monthlyBasicForTax = getMonthlyBasicForTax(
@@ -125,13 +131,19 @@ export function getWithholdingTaxCutoffForEmployee(
     options.workingDaysPerYear,
   );
   const sssContribution = getSSSContribution(monthlyBasicForTax);
-  const annualBasic = monthlyBasicForTax * 12;
+  const philhealthContribution = getPhilHealthContribution(monthlyBasicForTax);
+  const pagibigContribution = getPagibigContribution(monthlyBasicForTax);
+  const annualizedTaxableGross =
+    options.taxableGrossForCutoff !== undefined
+      ? round2(options.taxableGrossForCutoff) *
+        getCutoffsPerYear(options.payFrequency)
+      : monthlyBasicForTax * 12;
   const annualSSS = sssContribution.employeeShare * 12;
-  const annualPhilhealth = PHILHEALTH_EMPLOYEE_MONTHLY * 12;
-  const annualPagibig = PAGIBIG_EMPLOYEE_MONTHLY * 12;
+  const annualPhilhealth = philhealthContribution.employeeShare * 12;
+  const annualPagibig = pagibigContribution.employeeShare * 12;
   const annualTaxableIncome = Math.max(
     0,
-    annualBasic - annualSSS - annualPhilhealth - annualPagibig,
+    annualizedTaxableGross - annualSSS - annualPhilhealth - annualPagibig,
   );
   const annualTax = computeAnnualTaxFromBasic(annualTaxableIncome);
   const monthlyTax = round2(annualTax / 12);

@@ -732,6 +732,114 @@ export default defineSchema({
       "year",
     ]),
 
+  finalSettlements: defineTable({
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("in_review"),
+      v.literal("ready_for_payroll"),
+      v.literal("payroll_generated"),
+      v.literal("released"),
+      v.literal("void"),
+    ),
+    separationType: v.optional(
+      v.union(v.literal("resigned"), v.literal("terminated")),
+    ),
+    separationDate: v.optional(v.number()),
+    lastWorkingDay: v.optional(v.number()),
+    separationReason: v.optional(v.string()),
+    clearanceItems: v.array(
+      v.object({
+        id: v.string(),
+        label: v.string(),
+        ownerRole: v.optional(v.string()),
+        required: v.boolean(),
+        status: v.union(
+          v.literal("pending"),
+          v.literal("completed"),
+          v.literal("waived"),
+        ),
+        completedBy: v.optional(v.id("users")),
+        completedAt: v.optional(v.number()),
+        waivedBy: v.optional(v.id("users")),
+        waivedAt: v.optional(v.number()),
+        notes: v.optional(v.string()),
+      }),
+    ),
+    loanPayoffs: v.array(
+      v.object({
+        id: v.string(),
+        deductionId: v.optional(v.string()),
+        name: v.string(),
+        scheduledAmount: v.optional(v.number()),
+        payoffAmount: v.number(),
+        rule: v.union(
+          v.literal("deduct_full_balance"),
+          v.literal("deduct_scheduled_amount"),
+          v.literal("waive"),
+          v.literal("custom_amount"),
+        ),
+        status: v.union(
+          v.literal("pending"),
+          v.literal("approved"),
+          v.literal("waived"),
+        ),
+        notes: v.optional(v.string()),
+      }),
+    ),
+    customDeductions: v.array(
+      v.object({
+        id: v.string(),
+        name: v.string(),
+        amount: v.number(),
+        type: v.union(
+          v.literal("loan"),
+          v.literal("company_property"),
+          v.literal("cash_advance"),
+          v.literal("training_bond"),
+          v.literal("other"),
+        ),
+        taxable: v.optional(v.boolean()),
+        notes: v.optional(v.string()),
+      }),
+    ),
+    payrollRunId: v.optional(v.id("payrollRuns")),
+    payslipId: v.optional(v.id("payslips")),
+    bir2316: v.object({
+      status: v.union(
+        v.literal("not_started"),
+        v.literal("data_ready"),
+        v.literal("document_generated"),
+        v.literal("released"),
+      ),
+      documentId: v.optional(v.id("documents")),
+      generatedAt: v.optional(v.number()),
+      releasedAt: v.optional(v.number()),
+      releasedBy: v.optional(v.id("users")),
+      notes: v.optional(v.string()),
+    }),
+    finalTaxRelease: v.object({
+      status: v.union(
+        v.literal("pending"),
+        v.literal("reviewed"),
+        v.literal("released"),
+      ),
+      reviewedBy: v.optional(v.id("users")),
+      reviewedAt: v.optional(v.number()),
+      releasedBy: v.optional(v.id("users")),
+      releasedAt: v.optional(v.number()),
+      notes: v.optional(v.string()),
+    }),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_status", ["organizationId", "status"])
+    .index("by_employee", ["employeeId"])
+    .index("by_payroll_run", ["payrollRunId"]),
+
   // Payslips table
   payslips: defineTable({
     organizationId: v.id("organizations"),
@@ -899,6 +1007,18 @@ export default defineSchema({
     payrollRunId: v.id("payrollRuns"),
     payslipId: v.id("payslips"),
     reason: v.string(),
+    oldGrossPay: v.optional(v.number()),
+    newGrossPay: v.optional(v.number()),
+    oldNetPay: v.optional(v.number()),
+    newNetPay: v.optional(v.number()),
+    deltaNetPay: v.optional(v.number()),
+    oldTotalDeductions: v.optional(v.number()),
+    newTotalDeductions: v.optional(v.number()),
+    oldTotalAdditions: v.optional(v.number()),
+    newTotalAdditions: v.optional(v.number()),
+    oldNonTaxableAllowance: v.optional(v.number()),
+    newNonTaxableAllowance: v.optional(v.number()),
+    changeSummary: v.optional(v.array(v.string())),
     createdBy: v.id("users"),
     createdAt: v.number(),
     notified: v.boolean(),

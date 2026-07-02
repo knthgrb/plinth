@@ -24,6 +24,7 @@ import type * as employeeCompensationCrypto from "../employeeCompensationCrypto.
 import type * as employees from "../employees.js";
 import type * as evaluations from "../evaluations.js";
 import type * as fieldEncryption from "../fieldEncryption.js";
+import type * as finalSettlements from "../finalSettlements.js";
 import type * as files from "../files.js";
 import type * as holidays from "../holidays.js";
 import type * as http from "../http.js";
@@ -72,6 +73,7 @@ declare const fullApi: ApiFromModules<{
   employees: typeof employees;
   evaluations: typeof evaluations;
   fieldEncryption: typeof fieldEncryption;
+  finalSettlements: typeof finalSettlements;
   files: typeof files;
   holidays: typeof holidays;
   http: typeof http;

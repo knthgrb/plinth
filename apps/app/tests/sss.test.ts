@@ -22,4 +22,21 @@ describe("sss contributions", () => {
     expect(contribution.employerShare).toBe(1830);
     expect(contribution.total).toBe(2730);
   });
+
+  it("uses the 2025 maximum MSC bracket for high-salary employees", () => {
+    const contribution = getSSSContribution(80_000);
+
+    expect(contribution.employeeShare).toBe(1_750);
+    expect(contribution.employerShare).toBe(3_530);
+    expect(contribution.total).toBe(5_280);
+    expect(contribution.monthlySalaryCredit).toBe(35_000);
+  });
+
+  it("maps maximum employee deduction back to the 2025 employer share", () => {
+    const contribution = getSSSContributionByEmployeeDeduction(1_750);
+
+    expect(contribution.employeeShare).toBe(1_750);
+    expect(contribution.employerShare).toBe(3_530);
+    expect(contribution.total).toBe(5_280);
+  });
 });

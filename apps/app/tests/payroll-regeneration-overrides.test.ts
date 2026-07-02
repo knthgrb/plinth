@@ -67,6 +67,26 @@ describe("payroll regeneration override handling", () => {
     expect(pageSource).not.toContain("Rebuild from payroll draft only");
   });
 
+  it("shows a post-regeneration review dialog when payslip edits are kept", () => {
+    const pageSource = readSource("../app/[organizationId]/payroll/payroll-page-client.tsx");
+
+    expect(pageSource).toContain("regenerationReviewDialogOpen");
+    expect(pageSource).toContain("Regeneration review");
+    expect(pageSource).toContain("Open View Payslips");
+    expect(pageSource).toContain("handleOpenRegeneratedPayslips");
+  });
+
+  it("keeps the payroll run summary dialog read-only", () => {
+    const summaryDialogSource = readSource(
+      "../app/[organizationId]/payroll/_components/payroll-summary-dialog.tsx",
+    );
+
+    expect(summaryDialogSource).not.toContain("Save as draft");
+    expect(summaryDialogSource).not.toContain("Finalize payroll");
+    expect(summaryDialogSource).not.toContain("onSaveDraft");
+    expect(summaryDialogSource).not.toContain("onFinalize");
+  });
+
   it("returns handled errors from payroll run regeneration actions", () => {
     const actionsSource = readSource("../actions/payroll.ts");
     const pageSource = readSource("../app/[organizationId]/payroll/payroll-page-client.tsx");

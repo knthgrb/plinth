@@ -48,20 +48,30 @@ import {
   type VariableEarnings,
 } from "./payrollVariableEarningsMath";
 import {
-  computeAnnualTaxFromBasic,
   getMonthlyBasicForTax,
-  getTaxDeductionAmount,
   getWithholdingTaxCutoffForEmployee,
   mergeWithholdingTaxDeductionLine,
 } from "@/lib/ph-withholding-tax";
+import {
+  computeSupplementalWithholdingTaxForSpecialBenefit,
+  splitTrainNinetyThousandBenefit,
+} from "@/lib/ph-special-benefits";
 import {
   calculateAnnualLeaveBase,
   calculateAnniversaryLeave,
 } from "@/utils/leave-policy-calculations";
 import {
+  getPagibigContribution,
+  getPhilHealthContribution,
+} from "@/utils/ph-statutory-contributions";
+import {
   canUseAlumniPayslipAccess,
   canUseFullOrganizationAccess,
 } from "@/utils/org-membership-lifecycle";
+import {
+  buildFinalSettlementPayrollDeductions,
+  isFinalSettlementReadyForPayroll,
+} from "@/utils/final-settlement";
 
 function getPayrollErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message?.trim()) {
@@ -1034,12 +1044,6 @@ function getDailyRateForEmployee(
   return basicSalary / 22;
 }
 
-// Government contributions (monthly amounts).
-const PHILHEALTH_EMPLOYEE_MONTHLY = 500;
-const PHILHEALTH_EMPLOYER_MONTHLY = 500;
-const PAGIBIG_EMPLOYEE_MONTHLY = 200;
-const PAGIBIG_EMPLOYER_MONTHLY = 200;
-
 type PayFrequency = "monthly" | "bimonthly";
 type DeductionFrequency = "full" | "half";
 type HolidayType = "regular" | "special" | "special_working";
@@ -1063,13 +1067,15 @@ function getPerCutoffAmount(
   return effective === "half" ? monthlyAmount / 2 : monthlyAmount;
 }
 
-/** Government deductions (SSS, PhilHealth, Pag-IBIG) are taken once per month (full monthly amount). For semi-monthly, apply only on the first cutoff of the month. */
+/** Full gov deductions are taken on the first semi-monthly cutoff; half splits across both cutoffs. */
 function getGovDeductionAmount(
   monthlyAmount: number,
   cutoffStart: number,
   payFrequency: PayFrequency,
+  perEmployeeFrequency?: DeductionFrequency,
 ): number {
   if (payFrequency === "monthly") return monthlyAmount;
+  if (perEmployeeFrequency === "half") return round2(monthlyAmount / 2);
   const dayOfMonth = getManilaDateParts(cutoffStart).day;
   return dayOfMonth <= 15 ? monthlyAmount : 0;
 }
@@ -1900,6 +1906,48 @@ function getEmployerContributionsFromDeductions(deductions: PayrollLine[]) {
     : undefined;
 }
 
+function buildPayslipCorrectionAuditSummary(args: {
+  previousPayslip: any;
+  nextGrossPay: number;
+  nextNetPay: number;
+  nextDeductions: Array<{ amount: number }>;
+  nextIncentives: Array<{ amount: number }>;
+  nextNonTaxableAllowance: number;
+  changeDetails: string[];
+}) {
+  const oldTotalDeductions = round2(
+    sumLineAmounts(args.previousPayslip.deductions ?? []),
+  );
+  const newTotalDeductions = round2(
+    args.nextDeductions.reduce((sum, line) => sum + (line.amount || 0), 0),
+  );
+  const oldTotalAdditions = round2(
+    sumLineAmounts(args.previousPayslip.incentives ?? []),
+  );
+  const newTotalAdditions = round2(
+    args.nextIncentives.reduce((sum, line) => sum + (line.amount || 0), 0),
+  );
+  const oldNetPay = round2(Number(args.previousPayslip.netPay || 0));
+  const newNetPay = round2(args.nextNetPay);
+
+  return {
+    oldGrossPay: round2(Number(args.previousPayslip.grossPay || 0)),
+    newGrossPay: round2(args.nextGrossPay),
+    oldNetPay,
+    newNetPay,
+    deltaNetPay: round2(newNetPay - oldNetPay),
+    oldTotalDeductions,
+    newTotalDeductions,
+    oldTotalAdditions,
+    newTotalAdditions,
+    oldNonTaxableAllowance: round2(
+      Number(args.previousPayslip.nonTaxableAllowance || 0),
+    ),
+    newNonTaxableAllowance: round2(args.nextNonTaxableAllowance),
+    changeSummary: args.changeDetails,
+  };
+}
+
 function countPayslipOverrideFields(overrides: DraftPayslipOverride[] | undefined): number {
   return (overrides ?? []).reduce((count, override) => {
     let next = count;
@@ -2125,12 +2173,10 @@ const GOV_DEDUCTION_NAMES = new Set([
 
 function applyGovSettingAmount(
   enabled: boolean | undefined,
-  frequency: "full" | "half" | undefined,
   amount: number,
 ): number {
   if (!amount || amount <= 0) return 0;
   if (enabled === false) return 0;
-  if (frequency === "half") return round2(amount / 2);
   return round2(amount);
 }
 
@@ -2268,6 +2314,425 @@ async function getYtdNonTaxableIncentiveTotalForTrainCap(
   return round2(sum);
 }
 
+async function getYtdTaxBasisForSpecialBenefit(
+  ctx: any,
+  args: {
+    employeeId: any;
+    calendarYear: number;
+    beforePeriodStart: number;
+    excludePayrollRunId?: any;
+  },
+): Promise<{
+  taxableGross: number;
+  mandatoryContributions: number;
+  withholdingTax: number;
+}> {
+  const startOfYear = new Date(args.calendarYear, 0, 1).getTime();
+  const endOfYear = new Date(
+    args.calendarYear,
+    11,
+    31,
+    23,
+    59,
+    59,
+    999,
+  ).getTime();
+  const rows = await (ctx.db.query("payslips") as any)
+    .withIndex("by_employee", (q: any) => q.eq("employeeId", args.employeeId))
+    .collect();
+
+  let taxableGross = 0;
+  let mandatoryContributions = 0;
+  let withholdingTax = 0;
+
+  for (const raw of rows) {
+    const p = decryptPayslipRowFromDb(raw);
+    if (!p) continue;
+    if (
+      args.excludePayrollRunId &&
+      p.payrollRunId === args.excludePayrollRunId
+    ) {
+      continue;
+    }
+    const end = p.periodEnd;
+    if (end == null) continue;
+    if (end < startOfYear || end > endOfYear) continue;
+    if (end >= args.beforePeriodStart) continue;
+
+    const run = await ctx.db.get(p.payrollRunId);
+    if (!run || (run.status !== "finalized" && run.status !== "paid")) {
+      continue;
+    }
+
+    taxableGross += Number(p.grossPay) || 0;
+    const deductions = p.deductions ?? [];
+    mandatoryContributions += getDeductionAmountByNames(deductions, ["sss"]);
+    mandatoryContributions += getDeductionAmountByNames(deductions, [
+      "philhealth",
+    ]);
+    mandatoryContributions += getDeductionAmountByNames(deductions, [
+      "pag-ibig",
+      "pagibig",
+    ]);
+    withholdingTax += getDeductionAmountByNames(deductions, [
+      "withholding tax",
+    ]);
+  }
+
+  return {
+    taxableGross: round2(taxableGross),
+    mandatoryContributions: round2(mandatoryContributions),
+    withholdingTax: round2(withholdingTax),
+  };
+}
+
+async function buildSpecialBenefitPayslipParts(
+  ctx: any,
+  args: {
+    employeeId: any;
+    calendarYear: number;
+    periodStart: number;
+    amount: number;
+    label: string;
+    excludePayrollRunId?: any;
+  },
+): Promise<{
+  taxableAmount: number;
+  nonTaxableAmount: number;
+  deductions: PayrollLine[];
+  incentives: PayrollLine[] | undefined;
+  netPay: number;
+}> {
+  const amount = round2(Math.max(0, args.amount));
+  const ytdNonTaxable = await getYtdNonTaxableIncentiveTotalForTrainCap(ctx, {
+    employeeId: args.employeeId,
+    calendarYear: args.calendarYear,
+    beforePeriodStart: args.periodStart,
+    excludePayrollRunId: args.excludePayrollRunId,
+  });
+  const split = splitTrainNinetyThousandBenefit(amount, ytdNonTaxable);
+  const ytdTax = await getYtdTaxBasisForSpecialBenefit(ctx, {
+    employeeId: args.employeeId,
+    calendarYear: args.calendarYear,
+    beforePeriodStart: args.periodStart,
+    excludePayrollRunId: args.excludePayrollRunId,
+  });
+  const withholdingTax =
+    split.taxable > 0
+      ? computeSupplementalWithholdingTaxForSpecialBenefit({
+          ytdTaxableGross: ytdTax.taxableGross,
+          ytdMandatoryContributions: ytdTax.mandatoryContributions,
+          ytdWithholdingTax: ytdTax.withholdingTax,
+          taxableBenefit: split.taxable,
+        })
+      : 0;
+  const deductions =
+    withholdingTax > 0
+      ? [
+          {
+            name: "Withholding Tax",
+            amount: withholdingTax,
+            type: "government",
+          },
+        ]
+      : [];
+  const incentives: PayrollLine[] = [];
+  if (split.taxable > 0) {
+    incentives.push({
+      name: `${args.label} (taxable excess over PHP 90,000)`,
+      amount: split.taxable,
+      type: "incentive",
+      taxable: true,
+    });
+  }
+  if (split.exempt > 0) {
+    incentives.push({
+      name: `${args.label} (non-taxable)`,
+      amount: split.exempt,
+      type: "incentive",
+      taxable: false,
+    });
+  }
+
+  return {
+    taxableAmount: split.taxable,
+    nonTaxableAmount: split.exempt,
+    deductions,
+    incentives: incentives.length > 0 ? incentives : undefined,
+    netPay: round2(amount - withholdingTax),
+  };
+}
+
+async function getPaidBenefitTotalForYear(
+  ctx: any,
+  args: {
+    employeeId: any;
+    calendarYear: number;
+    beforePeriodStart: number;
+    benefitNameIncludes: string;
+  },
+): Promise<number> {
+  const startOfYear = new Date(args.calendarYear, 0, 1).getTime();
+  const endOfYear = new Date(
+    args.calendarYear,
+    11,
+    31,
+    23,
+    59,
+    59,
+    999,
+  ).getTime();
+  const rows = await (ctx.db.query("payslips") as any)
+    .withIndex("by_employee", (q: any) => q.eq("employeeId", args.employeeId))
+    .collect();
+  let total = 0;
+  const needle = args.benefitNameIncludes.toLowerCase();
+
+  for (const raw of rows) {
+    const p = decryptPayslipRowFromDb(raw);
+    if (!p) continue;
+    const end = p.periodEnd;
+    if (end == null) continue;
+    if (end < startOfYear || end > endOfYear) continue;
+    if (end >= args.beforePeriodStart) continue;
+    const run = await ctx.db.get(p.payrollRunId);
+    if (!run || (run.status !== "finalized" && run.status !== "paid")) {
+      continue;
+    }
+    const decryptedRun = decryptPayrollRunFromDb(run);
+    if ((decryptedRun.runType ?? "regular") === "13th_month") {
+      total += Number(p.grossPay) || 0;
+      for (const line of p.incentives ?? []) {
+        total += Number(line.amount) || 0;
+      }
+      continue;
+    }
+    for (const line of p.incentives ?? []) {
+      if ((line.name || "").toLowerCase().includes(needle)) {
+        total += Number(line.amount) || 0;
+      }
+    }
+  }
+
+  return round2(total);
+}
+
+async function getYtdBasicPayForThirteenthMonth(
+  ctx: any,
+  args: {
+    employeeId: any;
+    calendarYear: number;
+    beforePeriodStart: number;
+  },
+): Promise<number> {
+  const startOfYear = new Date(args.calendarYear, 0, 1).getTime();
+  const endOfYear = new Date(
+    args.calendarYear,
+    11,
+    31,
+    23,
+    59,
+    59,
+    999,
+  ).getTime();
+  const rows = await (ctx.db.query("payslips") as any)
+    .withIndex("by_employee", (q: any) => q.eq("employeeId", args.employeeId))
+    .collect();
+  let total = 0;
+
+  for (const raw of rows) {
+    const p = decryptPayslipRowFromDb(raw);
+    if (!p) continue;
+    const end = p.periodEnd;
+    if (end == null) continue;
+    if (end < startOfYear || end > endOfYear) continue;
+    if (end >= args.beforePeriodStart) continue;
+    const run = await ctx.db.get(p.payrollRunId);
+    if (!run || (run.status !== "finalized" && run.status !== "paid")) {
+      continue;
+    }
+    const decryptedRun = decryptPayrollRunFromDb(run);
+    if ((decryptedRun.runType ?? "regular") !== "regular") continue;
+    total += Number(p.basicPay) || 0;
+  }
+
+  return round2(total);
+}
+
+async function buildFinalPayAutomaticIncentives(
+  ctx: any,
+  args: {
+    organizationId: any;
+    employeeId: any;
+    employee: any;
+    cutoffStart: number;
+    payrollBase: PayrollBaseResult;
+  },
+): Promise<PayrollLine[]> {
+  const calendarYear = new Date(args.cutoffStart).getFullYear();
+  const ytdBasicPay = await getYtdBasicPayForThirteenthMonth(ctx, {
+    employeeId: args.employeeId,
+    calendarYear,
+    beforePeriodStart: args.cutoffStart,
+  });
+  const alreadyPaid13th = await getPaidBenefitTotalForYear(ctx, {
+    employeeId: args.employeeId,
+    calendarYear,
+    beforePeriodStart: args.cutoffStart,
+    benefitNameIncludes: "13th month",
+  });
+  const thirteenthMonthAccrual = round2(
+    Math.max(
+      0,
+      (ytdBasicPay + round2(args.payrollBase.basicPay || 0)) / 12 -
+        alreadyPaid13th,
+    ),
+  );
+
+  const settings = await (ctx.db.query("settings") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", args.organizationId),
+    )
+    .first();
+  const maxConvertibleLeaveDays = settings?.maxConvertibleLeaveDays ?? 5;
+  const vacationBalance = Number(args.employee?.leaveCredits?.vacation?.balance) || 0;
+  const sickBalance = Number(args.employee?.leaveCredits?.sick?.balance) || 0;
+  const convertibleLeaveDays = Math.min(
+    maxConvertibleLeaveDays,
+    Math.max(0, round2(vacationBalance + sickBalance)),
+  );
+  const leaveConversionAmount = round2(
+    convertibleLeaveDays * round2(args.payrollBase.dailyRate || 0),
+  );
+
+  const lines: PayrollLine[] = [];
+  if (thirteenthMonthAccrual > 0) {
+    lines.push({
+      name: "13th Month Accrual",
+      amount: thirteenthMonthAccrual,
+      type: "incentive",
+      taxable: false,
+    });
+  }
+  if (leaveConversionAmount > 0) {
+    lines.push({
+      name: "Unused Leave Conversion",
+      amount: leaveConversionAmount,
+      type: "incentive",
+      taxable: false,
+    });
+  }
+
+  return lines;
+}
+
+function getEmployeeDisplayName(employee: any): string {
+  return [employee?.personalInfo?.firstName, employee?.personalInfo?.lastName]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
+async function loadFinalSettlementForPayroll(
+  ctx: any,
+  organizationId: any,
+  employeeId: any,
+) {
+  const settlement = await (ctx.db.query("finalSettlements") as any)
+    .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
+    .first();
+  if (!settlement || settlement.organizationId !== organizationId) return null;
+  return settlement;
+}
+
+function mergeFinalSettlementDeductions(
+  manualDeductionEntry:
+    | { employeeId: any; deductions: PayrollLine[] }
+    | undefined,
+  settlement: any,
+): { employeeId: any; deductions: PayrollLine[] } | undefined {
+  const settlementDeductions =
+    buildFinalSettlementPayrollDeductions(settlement);
+  if (settlementDeductions.length === 0) return manualDeductionEntry;
+
+  return {
+    employeeId: settlement.employeeId,
+    deductions: [
+      ...settlementDeductions,
+      ...(manualDeductionEntry?.deductions ?? []),
+    ],
+  };
+}
+
+async function assertFinalSettlementReadyForPayroll(
+  ctx: any,
+  args: {
+    organizationId: any;
+    employeeId: any;
+    employee: any;
+  },
+) {
+  const settlement = await loadFinalSettlementForPayroll(
+    ctx,
+    args.organizationId,
+    args.employeeId,
+  );
+  const label =
+    getEmployeeDisplayName(args.employee) ||
+    args.employee?.employment?.employeeId ||
+    String(args.employeeId);
+
+  if (!settlement) {
+    throw new Error(
+      `Final settlement must be ready for payroll before generating final pay for ${label}.`,
+    );
+  }
+  if (!isFinalSettlementReadyForPayroll(settlement)) {
+    throw new Error(
+      `Final settlement must be ready for payroll before generating final pay for ${label}.`,
+    );
+  }
+
+  return settlement;
+}
+
+async function loadFinalSettlementsForPayroll(
+  ctx: any,
+  args: {
+    organizationId: any;
+    employeeIds: any[];
+    employeeRowsById: Map<string, any>;
+  },
+) {
+  const settlementsByEmployeeId = new Map<string, any>();
+  for (const employeeId of args.employeeIds) {
+    const employee = args.employeeRowsById.get(String(employeeId));
+    const settlement = await assertFinalSettlementReadyForPayroll(ctx, {
+      organizationId: args.organizationId,
+      employeeId,
+      employee,
+    });
+    settlementsByEmployeeId.set(String(employeeId), settlement);
+  }
+  return settlementsByEmployeeId;
+}
+
+async function syncFinalSettlementForGeneratedPayslip(
+  ctx: any,
+  args: {
+    settlement: any;
+    payrollRunId: any;
+    payslipId: any;
+  },
+) {
+  await ctx.db.patch(args.settlement._id, {
+    status: "payroll_generated",
+    payrollRunId: args.payrollRunId,
+    payslipId: args.payslipId,
+    updatedAt: Date.now(),
+  });
+}
+
 function applyTrainNinetyThousandCapToIncentiveLines(
   lines: PayrollLine[],
   ytdNonTaxableUsed: number,
@@ -2382,6 +2847,7 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
   incentiveEntry?: { employeeId: any; incentives: PayrollLine[] };
   excludePayrollRunId?: any;
   nonTaxableAllowanceOverride?: number;
+  suppressRecurringEmployeeLoanDeductions?: boolean;
 }) {
   const employee = args.employee;
   const payrollBase = args.payrollBase;
@@ -2394,150 +2860,8 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
     payrollBase.payrollRates.dailyRateWorkingDaysPerYear,
   );
   const sssContribution = getSSSContribution(monthlyBasicForTax);
-  const annualBasic = monthlyBasicForTax * 12;
-  const annualSSS = sssContribution.employeeShare * 12;
-  const annualPhilhealth = PHILHEALTH_EMPLOYEE_MONTHLY * 12;
-  const annualPagibig = PAGIBIG_EMPLOYEE_MONTHLY * 12;
-  const annualTaxableIncome = Math.max(
-    0,
-    annualBasic - annualSSS - annualPhilhealth - annualPagibig,
-  );
-  const annualTax = computeAnnualTaxFromBasic(annualTaxableIncome);
-  const monthlyTax = round2(annualTax / 12);
-
-  const baseGovAmounts = {
-    sss: getGovDeductionAmount(
-      sssContribution.employeeShare,
-      args.cutoffStart,
-      args.payFrequency,
-    ),
-    philhealth: getGovDeductionAmount(
-      PHILHEALTH_EMPLOYEE_MONTHLY,
-      args.cutoffStart,
-      args.payFrequency,
-    ),
-    pagibig: getGovDeductionAmount(
-      PAGIBIG_EMPLOYEE_MONTHLY,
-      args.cutoffStart,
-      args.payFrequency,
-    ),
-    tax: getTaxDeductionAmount(
-      monthlyTax,
-      args.cutoffStart,
-      args.payFrequency,
-      args.taxSettings.taxDeductionFrequency,
-      args.taxSettings.taxDeductOnPay,
-    ),
-  };
-
-  let deductions: PayrollLine[] = [];
-  const manualDeductionLines = args.manualDeductionEntry?.deductions ?? [];
-  const governmentOverrideByName = new Map(
-    manualDeductionLines
-      .filter(
-        (line) =>
-          isGovernmentDeductionName(line.name) && round2(line.amount || 0) > 0,
-      )
-      .map((line) => [
-        governmentDeductionKey(line.name),
-        { ...line, amount: round2(line.amount || 0) },
-      ]),
-  );
-  const removedGovernmentLineNames = new Set(
-    manualDeductionLines
-      .filter(
-        (line) =>
-          isGovernmentDeductionName(line.name) &&
-          round2(line.amount || 0) <= 0,
-      )
-      .map((line) => governmentDeductionKey(line.name)),
-  );
-  const attendanceOverrideLines = manualDeductionLines.filter(
-    isAttendanceDeductionEntry,
-  );
-  const addGovernmentDeduction = (
-    key: "sss" | "philhealth" | "pagibig" | "tax",
-    name: string,
-    amount: number,
-  ) => {
-    if (removedGovernmentLineNames.has(key)) return;
-    const override = governmentOverrideByName.get(key);
-    const nextAmount = override ? round2(override.amount || 0) : round2(amount);
-    if (nextAmount <= 0) return;
-    deductions.push({
-      name,
-      amount: nextAmount,
-      type: override?.type || "government",
-    });
-  };
-
-  if (args.deductionsEnabled) {
-    const sssAmount = applyGovSettingAmount(
-      args.govSettings?.sss.enabled,
-      args.govSettings?.sss.frequency,
-      baseGovAmounts.sss,
-    );
-    const philhealthAmount = applyGovSettingAmount(
-      args.govSettings?.philhealth.enabled,
-      args.govSettings?.philhealth.frequency,
-      baseGovAmounts.philhealth,
-    );
-    const pagibigAmount = applyGovSettingAmount(
-      args.govSettings?.pagibig.enabled,
-      args.govSettings?.pagibig.frequency,
-      baseGovAmounts.pagibig,
-    );
-
-    addGovernmentDeduction("sss", "SSS", sssAmount);
-    addGovernmentDeduction("philhealth", "PhilHealth", philhealthAmount);
-    addGovernmentDeduction("pagibig", "Pag-IBIG", pagibigAmount);
-  }
-
-  const taxEnabled = !args.govSettings
-    ? baseGovAmounts.tax > 0
-    : args.govSettings.tax.enabled && baseGovAmounts.tax > 0;
-  if (taxEnabled) {
-    addGovernmentDeduction("tax", "Withholding Tax", baseGovAmounts.tax);
-  }
-
-  for (const line of manualDeductionLines.filter(
-    (entry) =>
-      !isAttendanceDeductionEntry(entry) &&
-      !isGovernmentDeductionName(entry.name) &&
-      round2(entry.amount || 0) > 0,
-  )) {
-    deductions.push({
-      name: line.name,
-      amount: round2(line.amount || 0),
-      type: line.type,
-    });
-  }
-
-  if (employee.deductions) {
-    for (const deduction of employee.deductions) {
-      if (!deduction.isActive) continue;
-      if (isAttendanceDeductionName(deduction.name || "")) continue;
-      if (
-        deduction.startDate > now ||
-        (deduction.endDate && deduction.endDate < now)
-      ) {
-        continue;
-      }
-      deductions.push({
-        name: deduction.name,
-        amount: round2(
-          deduction.frequency === "monthly"
-            ? getPerCutoffAmount(deduction.amount, args.payFrequency)
-            : deduction.amount,
-        ),
-        type: deduction.type,
-      });
-    }
-  }
-
-  deductions.push(
-    ...applyDeductionOverrideLines(attendanceDeductions, attendanceOverrideLines),
-  );
+  const philhealthContribution = getPhilHealthContribution(monthlyBasicForTax);
+  const pagibigContribution = getPagibigContribution(monthlyBasicForTax);
 
   const orgId = employee.organizationId;
   const trainCapEnabled = await getTrainNinetyThousandCapOnAdditions(
@@ -2584,6 +2908,149 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
       payrollBase.holidayPay +
       payrollBase.nightDiffPay +
       totalTaxableIncentives,
+  );
+
+  const taxCutoffAmount = getWithholdingTaxCutoffForEmployee(employee, {
+    workingDaysPerYear: payrollBase.payrollRates.dailyRateWorkingDaysPerYear,
+    cutoffStart: args.cutoffStart,
+    payFrequency: args.payFrequency,
+    taxDeductionFrequency: args.taxSettings.taxDeductionFrequency,
+    taxDeductOnPay: args.taxSettings.taxDeductOnPay,
+    taxableGrossForCutoff: grossPay,
+  });
+
+  const baseGovAmounts = {
+    sss: getGovDeductionAmount(
+      sssContribution.employeeShare,
+      args.cutoffStart,
+      args.payFrequency,
+      args.govSettings?.sss.frequency,
+    ),
+    philhealth: getGovDeductionAmount(
+      philhealthContribution.employeeShare,
+      args.cutoffStart,
+      args.payFrequency,
+      args.govSettings?.philhealth.frequency,
+    ),
+    pagibig: getGovDeductionAmount(
+      pagibigContribution.employeeShare,
+      args.cutoffStart,
+      args.payFrequency,
+      args.govSettings?.pagibig.frequency,
+    ),
+    tax: taxCutoffAmount,
+  };
+
+  let deductions: PayrollLine[] = [];
+  const manualDeductionLines = args.manualDeductionEntry?.deductions ?? [];
+  const governmentOverrideByName = new Map(
+    manualDeductionLines
+      .filter(
+        (line) =>
+          isGovernmentDeductionName(line.name) && round2(line.amount || 0) > 0,
+      )
+      .map((line) => [
+        governmentDeductionKey(line.name),
+        { ...line, amount: round2(line.amount || 0) },
+      ]),
+  );
+  const removedGovernmentLineNames = new Set(
+    manualDeductionLines
+      .filter(
+        (line) =>
+          isGovernmentDeductionName(line.name) &&
+          round2(line.amount || 0) <= 0,
+      )
+      .map((line) => governmentDeductionKey(line.name)),
+  );
+  const attendanceOverrideLines = manualDeductionLines.filter(
+    isAttendanceDeductionEntry,
+  );
+  const addGovernmentDeduction = (
+    key: "sss" | "philhealth" | "pagibig" | "tax",
+    name: string,
+    amount: number,
+  ) => {
+    if (removedGovernmentLineNames.has(key)) return;
+    const override = governmentOverrideByName.get(key);
+    const nextAmount = override ? round2(override.amount || 0) : round2(amount);
+    if (nextAmount <= 0) return;
+    deductions.push({
+      name,
+      amount: nextAmount,
+      type: override?.type || "government",
+    });
+  };
+
+  if (args.deductionsEnabled) {
+    const sssAmount = applyGovSettingAmount(
+      args.govSettings?.sss.enabled,
+      baseGovAmounts.sss,
+    );
+    const philhealthAmount = applyGovSettingAmount(
+      args.govSettings?.philhealth.enabled,
+      baseGovAmounts.philhealth,
+    );
+    const pagibigAmount = applyGovSettingAmount(
+      args.govSettings?.pagibig.enabled,
+      baseGovAmounts.pagibig,
+    );
+
+    addGovernmentDeduction("sss", "SSS", sssAmount);
+    addGovernmentDeduction("philhealth", "PhilHealth", philhealthAmount);
+    addGovernmentDeduction("pagibig", "Pag-IBIG", pagibigAmount);
+  }
+
+  const taxEnabled = !args.govSettings
+    ? baseGovAmounts.tax > 0
+    : args.govSettings.tax.enabled && baseGovAmounts.tax > 0;
+  if (taxEnabled) {
+    addGovernmentDeduction("tax", "Withholding Tax", baseGovAmounts.tax);
+  }
+
+  for (const line of manualDeductionLines.filter(
+    (entry) =>
+      !isAttendanceDeductionEntry(entry) &&
+      !isGovernmentDeductionName(entry.name) &&
+      round2(entry.amount || 0) > 0,
+  )) {
+    deductions.push({
+      name: line.name,
+      amount: round2(line.amount || 0),
+      type: line.type,
+    });
+  }
+
+  if (employee.deductions) {
+    for (const deduction of employee.deductions) {
+      if (!deduction.isActive) continue;
+      if (
+        args.suppressRecurringEmployeeLoanDeductions &&
+        deduction.type === "loan"
+      ) {
+        continue;
+      }
+      if (isAttendanceDeductionName(deduction.name || "")) continue;
+      if (
+        deduction.startDate > now ||
+        (deduction.endDate && deduction.endDate < now)
+      ) {
+        continue;
+      }
+      deductions.push({
+        name: deduction.name,
+        amount: round2(
+          deduction.frequency === "monthly"
+            ? getPerCutoffAmount(deduction.amount, args.payFrequency)
+            : deduction.amount,
+        ),
+        type: deduction.type,
+      });
+    }
+  }
+
+  deductions.push(
+    ...applyDeductionOverrideLines(attendanceDeductions, attendanceOverrideLines),
   );
 
   const qualifiesForFirstCutoffTax =
@@ -2682,21 +3149,59 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
     "pag-ibig",
     "pagibig",
   ]);
+  const expectedEmployerContributions = {
+    sss: applyGovSettingAmount(
+      args.govSettings?.sss.enabled,
+      getGovDeductionAmount(
+        sssContribution.employerShare,
+        args.cutoffStart,
+        args.payFrequency,
+        args.govSettings?.sss.frequency,
+      ),
+    ),
+    philhealth: applyGovSettingAmount(
+      args.govSettings?.philhealth.enabled,
+      getGovDeductionAmount(
+        philhealthContribution.employerShare,
+        args.cutoffStart,
+        args.payFrequency,
+        args.govSettings?.philhealth.frequency,
+      ),
+    ),
+    pagibig: applyGovSettingAmount(
+      args.govSettings?.pagibig.enabled,
+      getGovDeductionAmount(
+        pagibigContribution.employerShare,
+        args.cutoffStart,
+        args.payFrequency,
+        args.govSettings?.pagibig.frequency,
+      ),
+    ),
+  };
   const employerContributions: {
     sss?: number;
     philhealth?: number;
     pagibig?: number;
   } = {};
   if (employeeSSSAmount > 0) {
-    employerContributions.sss = round2(
-      getSSSContributionByEmployeeDeduction(employeeSSSAmount).employerShare,
-    );
+    employerContributions.sss = governmentOverrideByName.has("sss")
+      ? round2(
+          getSSSContributionByEmployeeDeduction(employeeSSSAmount)
+            .employerShare,
+        )
+      : expectedEmployerContributions.sss;
   }
   if (employeePhilhealthAmount > 0) {
-    employerContributions.philhealth = round2(employeePhilhealthAmount);
+    employerContributions.philhealth = governmentOverrideByName.has(
+      "philhealth",
+    )
+      ? round2(employeePhilhealthAmount)
+      : expectedEmployerContributions.philhealth;
   }
   if (employeePagibigAmount > 0) {
-    employerContributions.pagibig = round2(employeePagibigAmount);
+    employerContributions.pagibig = governmentOverrideByName.has("pagibig")
+      ? round2(employeePagibigAmount)
+      : expectedEmployerContributions.pagibig;
   }
 
   return {
@@ -3052,6 +3557,12 @@ export const createPayrollRun = mutation({
     const employeeRows = await Promise.all(
       args.employeeIds.map((employeeId) => ctx.db.get(employeeId)),
     );
+    const employeeRowsById = new Map<string, any>(
+      args.employeeIds.map((employeeId, index) => [
+        String(employeeId),
+        employeeRows[index],
+      ]),
+    );
     const employeeIdsForRun = args.employeeIds.filter((employeeId, index) => {
       const employee = employeeRows[index] as any;
       if (!employee || employee.organizationId !== args.organizationId) {
@@ -3068,6 +3579,14 @@ export const createPayrollRun = mutation({
           : "Select at least one active employee.",
       );
     }
+    const finalSettlementsByEmployeeId =
+      runType === "final_pay"
+        ? await loadFinalSettlementsForPayroll(ctx, {
+            organizationId: args.organizationId,
+            employeeIds: employeeIdsForRun,
+            employeeRowsById,
+          })
+        : new Map<string, any>();
 
     const deductionsEnabled = args.deductionsEnabled ?? true;
     const payrollRunId = await ctx.db.insert("payrollRuns", {
@@ -3183,9 +3702,35 @@ export const createPayrollRun = mutation({
       const manualDeductionEntry = args.manualDeductions?.find(
         (md) => md.employeeId === employeeId,
       );
+      const finalSettlement = finalSettlementsByEmployeeId.get(
+        String(employeeId),
+      );
+      const effectiveManualDeductionEntry = finalSettlement
+        ? mergeFinalSettlementDeductions(manualDeductionEntry, finalSettlement)
+        : manualDeductionEntry;
       const incentiveEntry = args.incentives?.find(
         (inc) => inc.employeeId === employeeId,
       );
+      const finalPayIncentives =
+        runType === "final_pay"
+          ? await buildFinalPayAutomaticIncentives(ctx, {
+              organizationId: args.organizationId,
+              employeeId,
+              employee,
+              cutoffStart: args.cutoffStart,
+              payrollBase,
+            })
+          : [];
+      const effectiveIncentiveEntry =
+        finalPayIncentives.length > 0
+          ? {
+              employeeId,
+              incentives: [
+                ...finalPayIncentives,
+                ...(incentiveEntry?.incentives ?? []),
+              ],
+            }
+          : incentiveEntry;
       const canonical = await buildCanonicalPayrollResult(ctx, {
         employeeId,
         employee,
@@ -3196,10 +3741,11 @@ export const createPayrollRun = mutation({
         deductionsEnabled,
         taxSettings,
         govSettings,
-        manualDeductionEntry,
-        incentiveEntry,
+        manualDeductionEntry: effectiveManualDeductionEntry,
+        incentiveEntry: effectiveIncentiveEntry,
+        suppressRecurringEmployeeLoanDeductions: !!finalSettlement,
       });
-      await ctx.db.insert(
+      const payslipId = await ctx.db.insert(
         "payslips",
         encryptPayslipRowForDb({
           organizationId: args.organizationId,
@@ -3288,6 +3834,13 @@ export const createPayrollRun = mutation({
           createdAt: now,
         }) as any,
       );
+      if (finalSettlement) {
+        await syncFinalSettlementForGeneratedPayslip(ctx, {
+          settlement: finalSettlement,
+          payrollRunId,
+          payslipId,
+        });
+      }
     }
 
     // Keep status as "draft" - user can review and finalize later
@@ -3544,15 +4097,33 @@ export const updatePayrollRun = mutation({
         (p: any) => p.employeeId,
       );
 
-      for (const payslip of existingPayslips) {
-        await ctx.db.delete(payslip._id);
-      }
-
       const employeeIds =
         args.employeeIds ??
         (existingEmployeeIds.length > 0
           ? existingEmployeeIds
           : (previousDraftConfig.employeeIds ?? []));
+      const employeeRows = await Promise.all(
+        employeeIds.map((employeeId: any) => ctx.db.get(employeeId)),
+      );
+      const employeeRowsById = new Map<string, any>(
+        employeeIds.map((employeeId: any, index: number) => [
+          String(employeeId),
+          employeeRows[index],
+        ]),
+      );
+      const finalSettlementsByEmployeeId =
+        (payrollRun.runType ?? "regular") === "final_pay"
+          ? await loadFinalSettlementsForPayroll(ctx, {
+              organizationId: payrollRun.organizationId,
+              employeeIds,
+              employeeRowsById,
+            })
+          : new Map<string, any>();
+
+      for (const payslip of existingPayslips) {
+        await ctx.db.delete(payslip._id);
+      }
+
       const cutoffStart = args.cutoffStart ?? payrollRun.cutoffStart;
       const cutoffEnd = args.cutoffEnd ?? payrollRun.cutoffEnd;
       regeneratedEmployeeCount = employeeIds.length;
@@ -3665,12 +4236,38 @@ export const updatePayrollRun = mutation({
         const manualDeductionEntry = mergedManualDeductions.find(
           (md) => md.employeeId === employeeId,
         );
+        const finalSettlement = finalSettlementsByEmployeeId.get(
+          String(employeeId),
+        );
+        const effectiveManualDeductionEntry = finalSettlement
+          ? mergeFinalSettlementDeductions(manualDeductionEntry, finalSettlement)
+          : manualDeductionEntry;
         const allowanceOverrideEntry = mergedNonTaxableAllowanceOverrides.find(
           (entry: { employeeId: any }) => entry.employeeId === employeeId,
         );
         const incentiveEntry = mergedIncentives.find(
           (entry) => entry.employeeId === employeeId,
         );
+        const finalPayIncentives =
+          (payrollRun.runType ?? "regular") === "final_pay"
+            ? await buildFinalPayAutomaticIncentives(ctx, {
+                organizationId: payrollRun.organizationId,
+                employeeId,
+                employee,
+                cutoffStart,
+                payrollBase,
+              })
+            : [];
+        const effectiveIncentiveEntry =
+          finalPayIncentives.length > 0
+            ? {
+                employeeId,
+                incentives: [
+                  ...finalPayIncentives,
+                  ...(incentiveEntry?.incentives ?? []),
+                ],
+              }
+            : incentiveEntry;
         const canonical = await buildCanonicalPayrollResult(ctx, {
           employeeId,
           employee,
@@ -3681,10 +4278,11 @@ export const updatePayrollRun = mutation({
           deductionsEnabled: runDeductionsEnabled,
           taxSettings: taxSettingsUpdate,
           govSettings,
-          manualDeductionEntry,
-          incentiveEntry,
+          manualDeductionEntry: effectiveManualDeductionEntry,
+          incentiveEntry: effectiveIncentiveEntry,
           excludePayrollRunId: args.payrollRunId,
           nonTaxableAllowanceOverride: allowanceOverrideEntry?.amount,
+          suppressRecurringEmployeeLoanDeductions: !!finalSettlement,
         });
 
         const generatedPayslip = await applyPayslipOverrideToGeneratedPayslip(
@@ -3701,7 +4299,7 @@ export const updatePayrollRun = mutation({
           },
         );
 
-        await ctx.db
+        const payslipId = await ctx.db
           .insert(
             "payslips",
             encryptPayslipRowForDb({
@@ -3763,6 +4361,13 @@ export const updatePayrollRun = mutation({
           .catch((error: unknown) => {
             throwPayrollRunUpdateError(error);
           });
+        if (finalSettlement) {
+          await syncFinalSettlementForGeneratedPayslip(ctx, {
+            settlement: finalSettlement,
+            payrollRunId: args.payrollRunId,
+            payslipId,
+          });
+        }
       }
 
       const refreshedSnapshot = await captureDraftDependencySnapshot(ctx, {
@@ -3864,6 +4469,173 @@ async function syncFinalPayStatusForRun(
   }
 }
 
+async function assertFinalPayClearanceReadyForRelease(
+  ctx: any,
+  payrollRunRaw: any,
+) {
+  const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
+  if ((payrollRun.runType ?? "regular") !== "final_pay") return;
+
+  const payslips = await (ctx.db.query("payslips") as any)
+    .withIndex("by_payroll_run", (q: any) =>
+      q.eq("payrollRunId", payrollRunRaw._id),
+    )
+    .collect();
+  const blocked: string[] = [];
+
+  for (const payslip of payslips) {
+    const employee = await ctx.db.get(payslip.employeeId);
+    if (!employee) continue;
+    const settlement = await loadFinalSettlementForPayroll(
+      ctx,
+      payrollRun.organizationId,
+      payslip.employeeId,
+    );
+    if (settlement) {
+      if (isFinalSettlementReadyForPayroll(settlement)) continue;
+      const name = [
+        employee.personalInfo?.firstName,
+        employee.personalInfo?.lastName,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+      blocked.push(
+        name || employee.employment?.employeeId || String(employee._id),
+      );
+      continue;
+    }
+    const clearanceStatus = employee.employment?.clearanceStatus;
+    if (clearanceStatus === "cleared" || clearanceStatus === "waived") {
+      continue;
+    }
+    const name = [
+      employee.personalInfo?.firstName,
+      employee.personalInfo?.lastName,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    blocked.push(name || employee.employment?.employeeId || String(employee._id));
+  }
+
+  if (blocked.length > 0) {
+    throw new Error(
+      `Final pay cannot be released until clearance is cleared or waived for: ${blocked.join(", ")}.`,
+    );
+  }
+}
+
+function isBir2316DataReadyForFinalPay(settlement: any): boolean {
+  return (
+    settlement?.bir2316?.status === "data_ready" ||
+    settlement?.bir2316?.status === "document_generated" ||
+    settlement?.bir2316?.status === "released"
+  );
+}
+
+function isFinalTaxReviewedForFinalPay(settlement: any): boolean {
+  return (
+    settlement?.finalTaxRelease?.status === "reviewed" ||
+    settlement?.finalTaxRelease?.status === "released"
+  );
+}
+
+async function assertFinalSettlementReadyForPaid(
+  ctx: any,
+  payrollRunRaw: any,
+) {
+  const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
+  if ((payrollRun.runType ?? "regular") !== "final_pay") return;
+
+  const payslips = await (ctx.db.query("payslips") as any)
+    .withIndex("by_payroll_run", (q: any) =>
+      q.eq("payrollRunId", payrollRunRaw._id),
+    )
+    .collect();
+  const blocked: string[] = [];
+
+  for (const payslip of payslips) {
+    const settlement = await loadFinalSettlementForPayroll(
+      ctx,
+      payrollRun.organizationId,
+      payslip.employeeId,
+    );
+    if (
+      settlement &&
+      isFinalTaxReviewedForFinalPay(settlement) &&
+      isBir2316DataReadyForFinalPay(settlement)
+    ) {
+      continue;
+    }
+    const employee = await ctx.db.get(payslip.employeeId);
+    blocked.push(
+      getEmployeeDisplayName(employee) ||
+        employee?.employment?.employeeId ||
+        String(payslip.employeeId),
+    );
+  }
+
+  if (blocked.length > 0) {
+    throw new Error(
+      `Final pay cannot be marked paid until final tax is reviewed and BIR 2316 data is ready for: ${blocked.join(", ")}.`,
+    );
+  }
+}
+
+async function syncFinalSettlementStatusForRun(
+  ctx: any,
+  payrollRunRaw: any,
+  nextRunStatus: string,
+  changedBy?: any,
+) {
+  const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
+  if ((payrollRun.runType ?? "regular") !== "final_pay") return;
+
+  const payslips = await (ctx.db.query("payslips") as any)
+    .withIndex("by_payroll_run", (q: any) =>
+      q.eq("payrollRunId", payrollRunRaw._id),
+    )
+    .collect();
+  const now = Date.now();
+
+  for (const payslip of payslips) {
+    const settlement = await loadFinalSettlementForPayroll(
+      ctx,
+      payrollRun.organizationId,
+      payslip.employeeId,
+    );
+    if (!settlement) continue;
+
+    if (nextRunStatus === "paid") {
+      await ctx.db.patch(settlement._id, {
+        status: "released",
+        payrollRunId: payrollRunRaw._id,
+        payslipId: payslip._id,
+        finalTaxRelease: {
+          ...settlement.finalTaxRelease,
+          status: "released",
+          releasedBy: changedBy,
+          releasedAt: now,
+        },
+        updatedAt: now,
+      });
+    } else if (nextRunStatus === "finalized") {
+      await ctx.db.patch(settlement._id, {
+        status: "payroll_generated",
+        payrollRunId: payrollRunRaw._id,
+        payslipId: payslip._id,
+        updatedAt: now,
+      });
+    } else if (nextRunStatus === "cancelled") {
+      await ctx.db.patch(settlement._id, {
+        status: "ready_for_payroll",
+        updatedAt: now,
+      });
+    }
+  }
+}
+
 // Update payroll run status
 export const updatePayrollRunStatus = mutation({
   args: {
@@ -3897,6 +4669,13 @@ export const updatePayrollRunStatus = mutation({
       assertDraftOverrideReviewCompleteForFinalize(payrollRun);
     }
 
+    if (args.status === "finalized" || args.status === "paid") {
+      await assertFinalPayClearanceReadyForRelease(ctx, payrollRun);
+    }
+    if (args.status === "paid") {
+      await assertFinalSettlementReadyForPaid(ctx, payrollRun);
+    }
+
     // Remove cost items if archiving after finalize/paid
     if (
       (payrollRun.status === "finalized" || payrollRun.status === "paid") &&
@@ -3919,6 +4698,12 @@ export const updatePayrollRunStatus = mutation({
     const updatedRun = await ctx.db.get(args.payrollRunId);
     if (updatedRun) {
       await syncFinalPayStatusForRun(ctx, updatedRun, args.status);
+      await syncFinalSettlementStatusForRun(
+        ctx,
+        updatedRun,
+        args.status,
+        userRecord._id,
+      );
     }
 
     if (args.status === "finalized" && updatedRun) {
@@ -4791,7 +5576,7 @@ async function compute13thMonthAmountsInternal(
   return results;
 }
 
-/** Create a 13th month payroll run. No gov deductions for 13th month (tax exempt up to 90k). */
+/** Create a 13th month payroll run with WHT only on taxable excess over the annual benefits cap. */
 export const create13thMonthRun = mutation({
   args: {
     organizationId: v.id("organizations"),
@@ -4841,6 +5626,13 @@ export const create13thMonthRun = mutation({
       if (amt <= 0) continue;
       const employeeRow = await ctx.db.get(employeeId);
       const employee = employeeRow ? decryptEmployeeFromDb(employeeRow as any) : null;
+      const specialBenefit = await buildSpecialBenefitPayslipParts(ctx, {
+        employeeId,
+        calendarYear: args.year,
+        periodStart: yearStart,
+        amount: amt,
+        label: "13th Month Pay",
+      });
 
       await ctx.db.insert(
         "payslips",
@@ -4852,10 +5644,11 @@ export const create13thMonthRun = mutation({
           period,
           periodStart: yearStart,
           periodEnd: yearEnd,
-          grossPay: amt,
-          basicPay: amt,
-          deductions: [],
-          netPay: amt,
+          grossPay: specialBenefit.taxableAmount,
+          basicPay: 0,
+          deductions: specialBenefit.deductions,
+          incentives: specialBenefit.incentives,
+          netPay: specialBenefit.netPay,
           daysWorked: 0,
           absences: 0,
           lateHours: 0,
@@ -4942,7 +5735,9 @@ async function computeLeaveConversionAmountsInternal(
     employeeIds: scopedEmployeeIds,
   });
 
-  const workingDaysPerYear = 261;
+  const workingDaysPerYear =
+    settings?.payrollSettings?.dailyRateWorkingDaysPerYear ??
+    DEFAULT_DAILY_RATE_WORKING_DAYS_PER_YEAR;
   const results: Array<{
     employeeId: any;
     employee: any;
@@ -5042,7 +5837,7 @@ export const computeLeaveConversionAmounts = query({
   },
 });
 
-/** Create a leave conversion payroll run. No gov deductions. */
+/** Create a leave conversion payroll run with WHT only on taxable excess over the annual benefits cap. */
 export const createLeaveConversionRun = mutation({
   args: {
     organizationId: v.id("organizations"),
@@ -5092,6 +5887,13 @@ export const createLeaveConversionRun = mutation({
       if (amt <= 0) continue;
       const employeeRow = await ctx.db.get(employeeId);
       const employee = employeeRow ? decryptEmployeeFromDb(employeeRow as any) : null;
+      const specialBenefit = await buildSpecialBenefitPayslipParts(ctx, {
+        employeeId,
+        calendarYear: args.year,
+        periodStart: yearStart,
+        amount: amt,
+        label: "Leave Conversion",
+      });
 
       await ctx.db.insert(
         "payslips",
@@ -5103,10 +5905,11 @@ export const createLeaveConversionRun = mutation({
           period,
           periodStart: yearStart,
           periodEnd: yearEnd,
-          grossPay: amt,
-          basicPay: amt,
-          deductions: [],
-          netPay: amt,
+          grossPay: specialBenefit.taxableAmount,
+          basicPay: 0,
+          deductions: specialBenefit.deductions,
+          incentives: specialBenefit.incentives,
+          netPay: specialBenefit.netPay,
           daysWorked: 0,
           absences: 0,
           lateHours: 0,
@@ -6031,6 +6834,7 @@ async function recalcWithholdingTaxAfterVariableEarningsEdit(
     payFrequency,
     taxDeductionFrequency: taxSettings.taxDeductionFrequency,
     taxDeductOnPay: taxSettings.taxDeductOnPay,
+    taxableGrossForCutoff: args.recalculatedGross,
   });
   const employeeRates = getEmployeePayrollRates(employee, rates.base);
   const payrollBase = await buildEmployeePayrollBase(ctx, {
@@ -6513,6 +7317,18 @@ export const updatePayslip = mutation({
         );
       }
     }
+    const correctionAuditSummary =
+      changes.length > 0 && isFinalizedOrPaid
+        ? buildPayslipCorrectionAuditSummary({
+            previousPayslip: payslip,
+            nextGrossPay: recalculatedGross,
+            nextNetPay: recalculatedNet,
+            nextDeductions: finalDeductions,
+            nextIncentives: newIncentives,
+            nextNonTaxableAllowance: newNonTaxableAllowance,
+            changeDetails: changes.flatMap((change) => change.details ?? []),
+          })
+        : null;
 
     await ctx.db.patch(
       args.payslipId,
@@ -6570,6 +7386,7 @@ export const updatePayslip = mutation({
           payrollRunId: payslip.payrollRunId,
           payslipId: args.payslipId,
           reason,
+          ...(correctionAuditSummary ?? {}),
           createdBy: userRecord._id,
           createdAt: Date.now(),
           notified: false,

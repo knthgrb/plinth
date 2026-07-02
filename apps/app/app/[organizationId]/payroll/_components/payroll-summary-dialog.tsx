@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Download, FileSpreadsheet, Loader2 } from "lucide-react";
+import { Download, FileSpreadsheet } from "lucide-react";
 import { format } from "date-fns";
 import {
   Popover,
@@ -24,13 +24,8 @@ interface PayrollSummaryDialogProps {
   summaryData: any;
   isLoadingSummary: boolean;
   selectedPayrollRun: any;
-  isAdminOrAccounting: boolean;
-  isSavingDraft?: boolean;
-  isFinalizing?: boolean;
   onExportExcel: () => void;
   onExportPDF: () => void;
-  onSaveDraft: () => Promise<void> | void;
-  onFinalize: () => Promise<void> | void;
 }
 
 const EMP_COL = "min-w-[11rem] w-[11rem] max-w-[11rem]";
@@ -126,13 +121,8 @@ export function PayrollSummaryDialog({
   summaryData,
   isLoadingSummary,
   selectedPayrollRun,
-  isAdminOrAccounting,
-  isSavingDraft = false,
-  isFinalizing = false,
   onExportExcel,
   onExportPDF,
-  onSaveDraft,
-  onFinalize,
 }: PayrollSummaryDialogProps) {
   const formatCurrency = (amount: number) =>
     `P${amount.toLocaleString("en-US", {
@@ -195,41 +185,6 @@ export function PayrollSummaryDialog({
                   Export PDF
                 </Button>
               </div>
-              {selectedPayrollRun?.status === "draft" &&
-                isAdminOrAccounting && (
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={onSaveDraft}
-                      disabled={isSavingDraft || isFinalizing}
-                    >
-                      {isSavingDraft ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Saving…
-                        </>
-                      ) : (
-                        "Save as draft"
-                      )}
-                    </Button>
-                    <Button
-                      size="sm"
-                      className="bg-[#695eff] hover:bg-[#5547e8] text-white"
-                      onClick={onFinalize}
-                      disabled={isSavingDraft || isFinalizing}
-                    >
-                      {isFinalizing ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Finalizing…
-                        </>
-                      ) : (
-                        "Finalize payroll"
-                      )}
-                    </Button>
-                  </div>
-                )}
             </div>
 
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">

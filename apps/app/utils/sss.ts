@@ -86,7 +86,17 @@ const SSS_TABLE_2025: SSSBracket[] = [
   { min: 28250, max: 28749.99, employeeShare: 1425, employerShare: 2880, total: 4305, monthlySalaryCredit: 28500 },
   { min: 28750, max: 29249.99, employeeShare: 1450, employerShare: 2930, total: 4380, monthlySalaryCredit: 29000 },
   { min: 29250, max: 29749.99, employeeShare: 1475, employerShare: 2980, total: 4455, monthlySalaryCredit: 29500 },
-  { min: 29750, max: null, employeeShare: 1500, employerShare: 3030, total: 4530, monthlySalaryCredit: 30000 },
+  { min: 29750, max: 30249.99, employeeShare: 1500, employerShare: 3030, total: 4530, monthlySalaryCredit: 30000 },
+  { min: 30250, max: 30749.99, employeeShare: 1525, employerShare: 3080, total: 4605, monthlySalaryCredit: 30500 },
+  { min: 30750, max: 31249.99, employeeShare: 1550, employerShare: 3130, total: 4680, monthlySalaryCredit: 31000 },
+  { min: 31250, max: 31749.99, employeeShare: 1575, employerShare: 3180, total: 4755, monthlySalaryCredit: 31500 },
+  { min: 31750, max: 32249.99, employeeShare: 1600, employerShare: 3230, total: 4830, monthlySalaryCredit: 32000 },
+  { min: 32250, max: 32749.99, employeeShare: 1625, employerShare: 3280, total: 4905, monthlySalaryCredit: 32500 },
+  { min: 32750, max: 33249.99, employeeShare: 1650, employerShare: 3330, total: 4980, monthlySalaryCredit: 33000 },
+  { min: 33250, max: 33749.99, employeeShare: 1675, employerShare: 3380, total: 5055, monthlySalaryCredit: 33500 },
+  { min: 33750, max: 34249.99, employeeShare: 1700, employerShare: 3430, total: 5130, monthlySalaryCredit: 34000 },
+  { min: 34250, max: 34749.99, employeeShare: 1725, employerShare: 3480, total: 5205, monthlySalaryCredit: 34500 },
+  { min: 34750, max: null, employeeShare: 1750, employerShare: 3530, total: 5280, monthlySalaryCredit: 35000 },
 ];
 
 /**

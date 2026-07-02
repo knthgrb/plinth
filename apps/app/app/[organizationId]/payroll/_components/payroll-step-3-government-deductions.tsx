@@ -89,9 +89,10 @@ export function PayrollStep3GovernmentDeductions({
           </Label>
         </div>
         <p className="text-sm text-gray-500">
-          When enabled, full monthly SSS, PhilHealth, and Pag-IBIG are applied.
-          Withholding tax follows org settings independently (see note below).
-          Use the per-employee checkboxes to override.
+          When enabled, SSS, PhilHealth, and Pag-IBIG follow each employee&apos;s
+          full or half setting. Full applies on the first semi-monthly cutoff;
+          half splits across both. Withholding tax follows org settings
+          independently.
         </p>
         {!deductionsEnabled && (
           <p className="text-sm text-amber-600 font-medium">

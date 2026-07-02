@@ -51,6 +51,7 @@ import { format } from "date-fns";
 import { PayrollRunsTable } from "./_components/payroll-runs-table";
 import { ThirteenthMonthTab } from "./_components/13th-month-tab";
 import { LeaveConversionTab } from "./_components/leave-conversion-tab";
+import { FinalSettlementsTab } from "./_components/final-settlements-tab";
 
 // Lazy load step components
 const PayrollStep1Dates = dynamic(
@@ -251,6 +252,12 @@ type PayrollRegenerationSummary = {
   staleReasons?: string[];
 };
 
+type PayrollRegenerationReviewResult = {
+  payrollRun: any;
+  mode: RegenerateMode;
+  summary?: PayrollRegenerationSummary;
+};
+
 function formatPayrollStaleReason(reason: string): string {
   const labels: Record<string, string> = {
     attendance: "attendance",
@@ -264,6 +271,16 @@ function formatPayrollStaleReason(reason: string): string {
     missing_snapshot: "missing calculation snapshot",
   };
   return labels[reason] ?? reason.replaceAll("_", " ");
+}
+
+function formatPayrollOverrideReviewField(field: string): string {
+  const labels: Record<string, string> = {
+    deductions: "deductions",
+    additions: "additions",
+    non_taxable_allowance: "non-taxable allowance",
+    variable_earnings: "holiday, night diff, rest day, or overtime earnings",
+  };
+  return labels[field] ?? field.replaceAll("_", " ");
 }
 
 function buildRegenerationSummaryMessage(
@@ -552,6 +569,10 @@ export default function PayrollPageClient() {
   const [regenerateMode, setRegenerateMode] =
     useState<RegenerateMode>("preserve_edits");
   const [regenerateTargetRun, setRegenerateTargetRun] = useState<any>(null);
+  const [regenerationReviewDialogOpen, setRegenerationReviewDialogOpen] =
+    useState(false);
+  const [regenerationReviewResult, setRegenerationReviewResult] =
+    useState<PayrollRegenerationReviewResult | null>(null);
   const [payslipConcerns, setPayslipConcerns] = useState<Record<string, any[]>>(
     {},
   );
@@ -567,7 +588,6 @@ export default function PayrollPageClient() {
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [summaryData, setSummaryData] = useState<any>(null);
   const [isLoadingSummary, setIsLoadingSummary] = useState(false);
-  const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [finalizeDialogOpen, setFinalizeDialogOpen] = useState(false);
   const [finalizePayrollRunId, setFinalizePayrollRunId] = useState<
     string | null
@@ -609,7 +629,7 @@ export default function PayrollPageClient() {
   const [isDeletingPayrollRun, setIsDeletingPayrollRun] = useState(false);
   const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<
-    "regular" | "13th_month" | "leave_conversion"
+    "regular" | "13th_month" | "leave_conversion" | "final_settlements"
   >("regular");
 
   const closeFinalizeDialog = useCallback(() => {
@@ -1158,6 +1178,12 @@ export default function PayrollPageClient() {
       if (isSummaryOpen && selectedPayrollRun?._id === payrollRun._id) {
         await handleViewSummary(refreshedRun);
       }
+      setRegenerationReviewResult({
+        payrollRun: refreshedRun,
+        mode,
+        summary: result.data.regenerationSummary,
+      });
+      setRegenerationReviewDialogOpen(true);
       toast({
         title:
           mode === "clean_rebuild"
@@ -1232,6 +1258,19 @@ export default function PayrollPageClient() {
     const targetRun = regenerateTargetRun;
     closeRegenerateDialog();
     await handleRegeneratePayslips(targetRun, regenerateMode);
+  };
+
+  const closeRegenerationReviewDialog = () => {
+    setRegenerationReviewDialogOpen(false);
+    setRegenerationReviewResult(null);
+  };
+
+  const handleOpenRegeneratedPayslips = async () => {
+    const payrollRun = regenerationReviewResult?.payrollRun;
+    if (!payrollRun) return;
+    setRegenerationReviewDialogOpen(false);
+    setRegenerationReviewResult(null);
+    await handleViewPayslips(payrollRun);
   };
 
   const handleEditPayslip = (payslip: any) => {
@@ -2840,6 +2879,37 @@ export default function PayrollPageClient() {
     );
   }
 
+  const regenerationReviewSummary = regenerationReviewResult?.summary;
+  const regenerationReviewMode =
+    regenerationReviewResult?.mode ?? "preserve_edits";
+  const regenerationReviewOverrideEmployees = Array.isArray(
+    regenerationReviewResult?.payrollRun?.draftConfig?.overrideReview
+      ?.employees,
+  )
+    ? regenerationReviewResult.payrollRun.draftConfig.overrideReview.employees
+    : [];
+  const regenerationReviewFields = regenerationReviewOverrideEmployees.flatMap(
+    (row: any): string[] =>
+      Array.isArray(row.fields)
+        ? row.fields.filter((field: unknown): field is string => {
+            return typeof field === "string";
+          })
+        : [],
+  );
+  const regenerationReviewFieldLabels = Array.from(
+    new Set<string>(regenerationReviewFields),
+  ).map(formatPayrollOverrideReviewField);
+  const regenerationNeedsOverrideReview =
+    regenerationReviewResult?.payrollRun?.draftConfig?.overrideReview
+      ?.status === "needs_review";
+  const regenerationManualOverrideCount =
+    regenerationReviewSummary?.manualOverridesPreserved ?? 0;
+  const regenerationEmployeeCount =
+    regenerationReviewSummary?.employeesProcessed ?? 0;
+  const regenerationStaleReasonLabels = (
+    regenerationReviewSummary?.staleReasons ?? []
+  ).map(formatPayrollStaleReason);
+
   return (
     <MainLayout>
       <div className="p-8">
@@ -3170,11 +3240,13 @@ export default function PayrollPageClient() {
                 ? "13th_month"
                 : v === "leave_conversion"
                   ? "leave_conversion"
-                  : "regular",
+                  : v === "final_settlements"
+                    ? "final_settlements"
+                    : "regular",
             )
           }
         >
-          <TabsList className="mb-4 h-8 p-1">
+          <TabsList className="mb-4 h-auto flex-wrap p-1">
             <TabsTrigger value="regular" className="px-2.5 py-1 text-xs">
               Regular Payroll
             </TabsTrigger>
@@ -3186,6 +3258,12 @@ export default function PayrollPageClient() {
               className="px-2.5 py-1 text-xs"
             >
               Leave Conversion
+            </TabsTrigger>
+            <TabsTrigger
+              value="final_settlements"
+              className="px-2.5 py-1 text-xs"
+            >
+              Final Settlements
             </TabsTrigger>
           </TabsList>
           <TabsContent value="regular">
@@ -3331,6 +3409,120 @@ export default function PayrollPageClient() {
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
+                <Dialog
+                  open={regenerationReviewDialogOpen}
+                  onOpenChange={(open) => {
+                    if (open) {
+                      setRegenerationReviewDialogOpen(true);
+                      return;
+                    }
+                    closeRegenerationReviewDialog();
+                  }}
+                >
+                  <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                      <DialogTitle>Regeneration review</DialogTitle>
+                      <DialogDescription>
+                        Payslips were recalculated. Check what was kept before
+                        continuing with this draft.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 text-sm">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="rounded-md border border-gray-200 p-3">
+                          <div className="text-xs font-medium uppercase text-gray-500">
+                            Employees
+                          </div>
+                          <div className="mt-1 text-lg font-semibold text-gray-900">
+                            {regenerationEmployeeCount}
+                          </div>
+                        </div>
+                        <div className="rounded-md border border-gray-200 p-3">
+                          <div className="text-xs font-medium uppercase text-gray-500">
+                            Manual edits kept
+                          </div>
+                          <div className="mt-1 text-lg font-semibold text-gray-900">
+                            {regenerationReviewMode === "preserve_edits"
+                              ? regenerationManualOverrideCount
+                              : 0}
+                          </div>
+                        </div>
+                      </div>
+
+                      {regenerationReviewMode === "preserve_edits" ? (
+                        regenerationManualOverrideCount > 0 ? (
+                          <div className="rounded-md border border-orange-200 bg-orange-50 p-3 text-orange-900">
+                            <div className="font-medium">
+                              Manual payslip edits were kept and reapplied.
+                            </div>
+                            <div className="mt-1 text-orange-800">
+                              Review the preserved override lines before
+                              finalizing this payroll run.
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="rounded-md border border-gray-200 bg-gray-50 p-3 text-gray-700">
+                            No manual payslip edits were found to reapply.
+                          </div>
+                        )
+                      ) : (
+                        <div className="rounded-md border border-gray-200 bg-gray-50 p-3 text-gray-700">
+                          Current per-payslip manual edits were ignored for this
+                          rebuild. Saved run setup and run-level entries were
+                          used.
+                        </div>
+                      )}
+
+                      {regenerationNeedsOverrideReview && (
+                        <div className="rounded-md border border-orange-200 p-3">
+                          <div className="font-medium text-orange-900">
+                            Needs review
+                          </div>
+                          <div className="mt-1 text-orange-800">
+                            {regenerationReviewOverrideEmployees.length}{" "}
+                            employee
+                            {regenerationReviewOverrideEmployees.length === 1
+                              ? ""
+                              : "s"}{" "}
+                            have auto-reapplied overrides.
+                          </div>
+                          {regenerationReviewFieldLabels.length > 0 && (
+                            <div className="mt-2 text-gray-700">
+                              Fields:{" "}
+                              {regenerationReviewFieldLabels.join(", ")}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {regenerationStaleReasonLabels.length > 0 && (
+                        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                          <div className="font-medium">
+                            Recalculation included updated records
+                          </div>
+                          <div className="mt-1">
+                            {regenerationStaleReasonLabels.join(", ")}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={closeRegenerationReviewDialog}
+                      >
+                        Close
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => void handleOpenRegeneratedPayslips()}
+                      >
+                        Open View Payslips
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
                 {filteredPayrollRuns.length > payrollRunsPageSize && (
                   <div className="flex items-center justify-between gap-4 border-t pt-4 mt-4">
                     <p className="text-sm text-muted-foreground">
@@ -3403,6 +3595,14 @@ export default function PayrollPageClient() {
               />
             )}
           </TabsContent>
+          <TabsContent value="final_settlements">
+            {effectiveOrganizationId && (
+              <FinalSettlementsTab
+                organizationId={effectiveOrganizationId}
+                onLoadPayrollRuns={loadPayrollRuns}
+              />
+            )}
+          </TabsContent>
         </Tabs>
 
         {/* View Payslips Dialog - lazy loaded */}
@@ -3470,41 +3670,8 @@ export default function PayrollPageClient() {
               summaryData={summaryData}
               isLoadingSummary={isLoadingSummary}
               selectedPayrollRun={selectedPayrollRun}
-              isAdminOrAccounting={isAdminOrAccounting}
               onExportExcel={handleExportExcel}
               onExportPDF={handleExportPDF}
-              isSavingDraft={isSavingDraft}
-              isFinalizing={finalizeFlowBusy}
-              onSaveDraft={async () => {
-                setIsSavingDraft(true);
-                try {
-                  await loadPayrollRuns();
-                  toast({
-                    title: "Saved",
-                    description: "Payroll run saved as draft successfully.",
-                  });
-                  setIsSummaryOpen(false);
-                } catch (error: any) {
-                  toast({
-                    title: "Error",
-                    description: error.message || "Failed to save payroll run",
-                    variant: "destructive",
-                  });
-                } finally {
-                  setIsSavingDraft(false);
-                }
-              }}
-              onFinalize={async () => {
-                if (!selectedPayrollRun) return;
-                openPayrollFinalizeFlow(
-                  selectedPayrollRun._id,
-                  async () => {
-                    await loadPayrollRuns();
-                    setIsSummaryOpen(false);
-                  },
-                  async () => {},
-                );
-              }}
             />
           </Suspense>
         )}
