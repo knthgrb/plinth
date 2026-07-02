@@ -73,6 +73,8 @@ describe("payroll regeneration override handling", () => {
 
     expect(actionsSource).toContain("UpdatePayrollRunResult");
     expect(actionsSource).toContain("getConvexUserFacingMessage");
+    expect(actionsSource).toContain("console.error(");
+    expect(actionsSource).toContain("[payroll.updatePayrollRun]");
     expect(pageSource).toContain("if (!result.ok)");
   });
 

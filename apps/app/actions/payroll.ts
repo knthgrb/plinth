@@ -274,7 +274,16 @@ export async function updatePayrollRun(data: {
     const result = await PayrollService.updatePayrollRun(data);
     return { ok: true, data: result };
   } catch (e: unknown) {
-    return { ok: false, error: getConvexUserFacingMessage(e) };
+    const error = getConvexUserFacingMessage(e);
+    console.error(
+      "[payroll.updatePayrollRun]",
+      {
+        payrollRunId: data.payrollRunId,
+        error,
+      },
+      e,
+    );
+    return { ok: false, error };
   }
 }
 
