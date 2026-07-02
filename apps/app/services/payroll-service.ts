@@ -467,6 +467,16 @@ export class PayrollService {
     );
   }
 
+  static async markPayrollRunOverrideReviewComplete(payrollRunId: string) {
+    const convex = await getAuthedConvexClient();
+    return await (convex.mutation as any)(
+      (api as any).payroll.markPayrollRunOverrideReviewComplete,
+      {
+        payrollRunId: payrollRunId as Id<"payrollRuns">,
+      },
+    );
+  }
+
   /**
    * After a run is finalized: send password-protected PDF payslips in chat (1:1 with
    * the finalizing user as sender) for employees with a Plinth org account.

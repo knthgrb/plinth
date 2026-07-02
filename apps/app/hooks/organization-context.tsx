@@ -6,6 +6,11 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
 import { authClient } from "@/lib/auth-client";
+import {
+  hasActiveOrganizationAccess,
+  selectPreferredOrganizationForEntry,
+} from "@/utils/org-membership-lifecycle";
+import { canAccessRoute } from "@/utils/role-access";
 
 type Organization = {
   _id: Id<"organizations">;
@@ -129,18 +134,25 @@ export function OrganizationProvider({
     if (!orgIdToUse) {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
-        const isValidOrg = organizations.some((org) => org._id === stored);
-        if (isValidOrg) {
+        const storedOrg = organizations.find((org) => org._id === stored);
+        const preferredOrg = selectPreferredOrganizationForEntry(organizations);
+        if (
+          storedOrg &&
+          (hasActiveOrganizationAccess(storedOrg.accessStatus) ||
+            preferredOrg?._id === storedOrg._id)
+        ) {
           orgIdToUse = stored as Id<"organizations">;
-        } else {
+        } else if (!storedOrg) {
           localStorage.removeItem(STORAGE_KEY);
         }
       }
     }
 
-    // Priority 3: First organization (which is already sorted by lastActiveOrganizationId)
+    // Priority 3: Prefer an active organization; use alumni only when no active org exists.
     if (!orgIdToUse && organizations.length > 0) {
-      orgIdToUse = organizations[0]._id;
+      orgIdToUse =
+        selectPreferredOrganizationForEntry(organizations)?._id ??
+        organizations[0]._id;
     }
 
     if (orgIdToUse) {
@@ -218,8 +230,19 @@ export function OrganizationProvider({
       urlOrganizationId !== currentOrganizationId &&
       !pathnameStartsWithCurrentOrg
     ) {
+      const selectedOrg = organizations.find(
+        (org) => org._id === currentOrganizationId,
+      );
       const currentPath = pathname.replace(/^\/[^/]+/, "") || "/dashboard";
-      router.replace(`/${currentOrganizationId}${currentPath}`);
+      const defaultPath = selectedOrg
+        ? getDefaultRouteForRole(selectedOrg.role, selectedOrg.accessStatus)
+        : "/dashboard";
+      const nextPath =
+        selectedOrg &&
+        canAccessRoute(currentPath, selectedOrg.role, selectedOrg.accessStatus)
+          ? currentPath
+          : defaultPath;
+      router.replace(`/${currentOrganizationId}${nextPath}`);
     }
 
     // Update last active organization in database
@@ -245,6 +268,7 @@ export function OrganizationProvider({
     isInitialized,
     updateLastActive,
     switchingToOrganizationId,
+    organizations,
   ]);
 
   // Clear currentOrganizationId if it's not in the user's organizations
@@ -281,8 +305,17 @@ export function OrganizationProvider({
     if (typeof window !== "undefined") {
       localStorage.setItem(STORAGE_KEY, organizationId);
 
+      const selectedOrg = organizations.find((org) => org._id === organizationId);
       const currentPath = pathname?.replace(/^\/[^/]+/, "") || "/dashboard";
-      router.push(`/${organizationId}${currentPath}`);
+      const defaultPath = selectedOrg
+        ? getDefaultRouteForRole(selectedOrg.role, selectedOrg.accessStatus)
+        : "/dashboard";
+      const nextPath =
+        selectedOrg &&
+        canAccessRoute(currentPath, selectedOrg.role, selectedOrg.accessStatus)
+          ? currentPath
+          : defaultPath;
+      router.push(`/${organizationId}${nextPath}`);
 
       updateLastActive({ organizationId }).catch((err) => {
         console.error("Failed to update last active organization:", err);

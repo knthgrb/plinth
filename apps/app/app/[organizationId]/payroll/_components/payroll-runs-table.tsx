@@ -155,6 +155,9 @@ export function PayrollRunsTable({
           payrollRuns?.map((run) => {
             const is13thMonth = (run.runType ?? "regular") === "13th_month";
             const hasCutoffs = run.cutoffStart && run.cutoffEnd;
+            const needsOverrideReview =
+              run.status === "draft" &&
+              run.draftConfig?.overrideReview?.status === "needs_review";
             const periodDisplay = is13thMonth
               ? run.period || `13th Month Pay ${run.year ?? ""}`
               : hasCutoffs
@@ -205,6 +208,14 @@ export function PayrollRunsTable({
                         className="bg-amber-100 text-amber-700 border border-amber-200"
                       >
                         Outdated
+                      </Badge>
+                    )}
+                    {needsOverrideReview && (
+                      <Badge
+                        variant="secondary"
+                        className="bg-orange-100 text-orange-700 border border-orange-200"
+                      >
+                        Needs override review
                       </Badge>
                     )}
                   </div>
@@ -259,12 +270,14 @@ export function PayrollRunsTable({
                               </>
                             )}
                             <DropdownMenuItem
-                              disabled={run.isDraftOutdated}
+                              disabled={run.isDraftOutdated || needsOverrideReview}
                               onClick={() => onStatusChange(run, "finalized")}
                             >
                               <CheckCircle className="h-4 w-4 mr-2" />
                               {run.isDraftOutdated
                                 ? "Finalize (regenerate required)"
+                                : needsOverrideReview
+                                  ? "Finalize (review overrides first)"
                                 : "Finalize"}
                             </DropdownMenuItem>
                           </>

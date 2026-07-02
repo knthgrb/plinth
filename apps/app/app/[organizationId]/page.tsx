@@ -5,7 +5,11 @@ import { useEffect } from "react";
 import { useOrganization } from "@/hooks/organization-context";
 import { MainLoader } from "@/components/main-loader";
 
-function getDefaultRouteForRole(role: string | null | undefined): string {
+function getDefaultRouteForRole(
+  role: string | null | undefined,
+  accessStatus?: string | null,
+): string {
+  if (accessStatus === "alumni") return "/payslips";
   if (!role) return "/dashboard";
   const r = role.toLowerCase();
   if (r === "employee" || r === "accounting") return "/announcements";
@@ -25,7 +29,9 @@ export default function OrganizationIndexPage() {
       currentOrganization?._id === organizationId
         ? currentOrganization
         : organizations?.find((o) => o._id === organizationId);
-    const path = org ? getDefaultRouteForRole(org.role) : "/dashboard";
+    const path = org
+      ? getDefaultRouteForRole(org.role, org.accessStatus)
+      : "/dashboard";
     router.replace(`/${organizationId}${path}`);
   }, [organizationId, currentOrganization, organizations, router]);
 

@@ -180,6 +180,7 @@ import {
   updatePayslip,
   updatePayrollRunStatus,
   updatePayrollRun,
+  markPayrollRunOverrideReviewComplete,
   deletePayrollRun,
   deletePayrollRuns,
   sendPendingPayslipCorrectionsInChat,
@@ -242,6 +243,47 @@ type PreviewPayslipEdits = {
 };
 
 type RegenerateMode = "preserve_edits" | "clean_rebuild";
+
+type PayrollRegenerationSummary = {
+  mode?: RegenerateMode;
+  employeesProcessed?: number;
+  manualOverridesPreserved?: number;
+  staleReasons?: string[];
+};
+
+function formatPayrollStaleReason(reason: string): string {
+  const labels: Record<string, string> = {
+    attendance: "attendance",
+    holidays: "holidays",
+    payroll_settings: "payroll settings",
+    leave_types: "leave types",
+    leave_requests: "leave requests",
+    shifts: "shifts",
+    employees: "employee records",
+    organization: "organization payroll settings",
+    missing_snapshot: "missing calculation snapshot",
+  };
+  return labels[reason] ?? reason.replaceAll("_", " ");
+}
+
+function buildRegenerationSummaryMessage(
+  regenerationSummary: PayrollRegenerationSummary | undefined,
+  mode: RegenerateMode,
+): string {
+  const employees = regenerationSummary?.employeesProcessed ?? 0;
+  const manualOverrides = regenerationSummary?.manualOverridesPreserved ?? 0;
+  const staleReasons = regenerationSummary?.staleReasons ?? [];
+  const staleReasonText =
+    staleReasons.length > 0
+      ? ` stale reason${staleReasons.length === 1 ? "" : "s"}: ${staleReasons
+          .map(formatPayrollStaleReason)
+          .join(", ")}.`
+      : "";
+  if (mode === "clean_rebuild") {
+    return `Recalculated ${employees} employee${employees === 1 ? "" : "s"} from payroll draft settings. Per-payslip manual overrides were discarded.${staleReasonText}`;
+  }
+  return `Recalculated ${employees} employee${employees === 1 ? "" : "s"} and reapplied ${manualOverrides} manual override${manualOverrides === 1 ? "" : "s"}. Review preserved overrides before finalizing.${staleReasonText}`;
+}
 
 type GovernmentDeductionSettings = {
   employeeId: string;
@@ -437,6 +479,9 @@ export default function PayrollPageClient() {
   const [regeneratingPayrollRunId, setRegeneratingPayrollRunId] = useState<
     string | null
   >(null);
+  const [markingOverrideReviewRunId, setMarkingOverrideReviewRunId] = useState<
+    string | null
+  >(null);
   const [regenerateDialogOpen, setRegenerateDialogOpen] = useState(false);
   const [regenerateMode, setRegenerateMode] =
     useState<RegenerateMode>("preserve_edits");
@@ -526,7 +571,7 @@ export default function PayrollPageClient() {
 
   const loadPayrollRuns = useCallback(
     async (opts?: { isInitialHydration?: boolean }) => {
-      if (!effectiveOrganizationId) return;
+      if (!effectiveOrganizationId) return [];
       if (opts?.isInitialHydration) {
         setPayrollRuns([]);
         setPayrollRunsInitialReady(false);
@@ -534,8 +579,10 @@ export default function PayrollPageClient() {
       try {
         const runs = await getPayrollRuns(effectiveOrganizationId);
         setPayrollRuns(runs);
+        return runs;
       } catch (error) {
         console.error("Error loading payroll runs:", error);
+        return [];
       } finally {
         if (opts?.isInitialHydration) setPayrollRunsInitialReady(true);
       }
@@ -1019,7 +1066,7 @@ export default function PayrollPageClient() {
     try {
       const draftConfig = payrollRun.draftConfig ?? {};
       const employeeIds = draftConfig.employeeIds ?? [];
-      await updatePayrollRun({
+      const result = await updatePayrollRun({
         payrollRunId: payrollRun._id,
         cutoffStart: payrollRun.cutoffStart,
         cutoffEnd: payrollRun.cutoffEnd,
@@ -1027,22 +1074,25 @@ export default function PayrollPageClient() {
         deductionsEnabled: payrollRun.deductionsEnabled,
         preserveExistingPayslipEdits: mode === "preserve_edits",
       });
-      await loadPayrollRuns();
+      const refreshedRuns = await loadPayrollRuns();
+      const refreshedRun =
+        refreshedRuns.find((run: any) => run._id === payrollRun._id) ??
+        payrollRun;
       if (selectedPayrollRun?._id === payrollRun._id) {
-        await handleViewPayslips(payrollRun);
+        await handleViewPayslips(refreshedRun);
       }
       if (isSummaryOpen && selectedPayrollRun?._id === payrollRun._id) {
-        await handleViewSummary(payrollRun);
+        await handleViewSummary(refreshedRun);
       }
       toast({
         title:
           mode === "clean_rebuild"
             ? "Payroll run rebuilt from draft"
             : "Payslips regenerated",
-        description:
-          mode === "clean_rebuild"
-            ? "Per-payslip manual edits were discarded and the run was recalculated from the payroll draft."
-            : "Attendance-driven amounts were refreshed while keeping current payslip edits.",
+        description: buildRegenerationSummaryMessage(
+          result?.regenerationSummary,
+          mode,
+        ),
       });
     } catch (error: any) {
       toast({
@@ -1052,6 +1102,42 @@ export default function PayrollPageClient() {
       });
     } finally {
       setRegeneratingPayrollRunId(null);
+    }
+  };
+
+  const handleMarkOverrideReviewComplete = async (payrollRun: any) => {
+    if (!payrollRun?._id) return;
+    setMarkingOverrideReviewRunId(payrollRun._id);
+    try {
+      const result = await markPayrollRunOverrideReviewComplete(payrollRun._id);
+      if (!result.ok) {
+        toast({
+          title: "Review not saved",
+          description: result.error,
+          variant: "destructive",
+        });
+        return;
+      }
+      const refreshedRuns = await loadPayrollRuns();
+      const refreshedRun =
+        refreshedRuns.find((run: any) => run._id === payrollRun._id) ??
+        payrollRun;
+      if (selectedPayrollRun?._id === payrollRun._id) {
+        await handleViewPayslips(refreshedRun);
+      }
+      toast({
+        title: "Override review complete",
+        description:
+          "Auto-reapplied manual overrides were marked reviewed. This draft can now be finalized if it is otherwise current.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Review not saved",
+        description: error.message || "Failed to mark override review complete",
+        variant: "destructive",
+      });
+    } finally {
+      setMarkingOverrideReviewRunId(null);
     }
   };
 
@@ -2263,31 +2349,11 @@ export default function PayrollPageClient() {
         return acc;
       }, {});
 
-      // Use preview data (including "Edit deductions" overrides) when available so saved amounts match what user saw
-      let manualDeductions: {
-        employeeId: string;
-        deductions: { name: string; amount: number; type: string }[];
-      }[];
-      if (previewData.length > 0 && selectedEmployees.length > 0) {
-        manualDeductions = selectedEmployees.map((employeeId: string) => {
-          const p = previewData.find(
-            (x: any) => x.employee?._id === employeeId,
-          );
-          if (!p) return { employeeId, deductions: [] };
-          const deductions = (p.deductions || []).map((d: any) => ({
-            name: d.name,
-            amount: d.amount,
-            type: d.type || "government",
-          }));
-          return { employeeId, deductions };
-        });
-      } else {
-        manualDeductions = buildAuthoritativeManualDeductionsPayload(
-          selectedEmployees,
-          employeeDeductions,
-          step4RestoreReferencePreview,
-        );
-      }
+      const manualDeductions = buildAuthoritativeManualDeductionsPayload(
+        selectedEmployees,
+        employeeDeductions,
+        step4RestoreReferencePreview,
+      );
 
       const incentives = employeeIncentives.filter(
         (ei) => ei.incentives.length > 0,
@@ -2592,26 +2658,11 @@ export default function PayrollPageClient() {
         return acc;
       }, {});
 
-      const manualDeductions =
-        editPreviewData.length > 0 && editSelectedEmployees.length > 0
-          ? editSelectedEmployees.map((employeeId: string) => {
-              const row = editPreviewData.find(
-                (entry: any) => entry.employee?._id === employeeId,
-              );
-              return {
-                employeeId,
-                deductions: (row?.deductions || []).map((d: any) => ({
-                  name: d.name,
-                  amount: d.amount,
-                  type: d.type || "government",
-                })),
-              };
-            })
-          : buildAuthoritativeManualDeductionsPayload(
-              editSelectedEmployees,
-              editEmployeeDeductions,
-              editStep4RestoreReferencePreview,
-            );
+      const manualDeductions = buildAuthoritativeManualDeductionsPayload(
+        editSelectedEmployees,
+        editEmployeeDeductions,
+        editStep4RestoreReferencePreview,
+      );
       const incentives = editEmployeeIncentives.filter(
         (ei) => ei.incentives.length > 0,
       );
@@ -3148,8 +3199,8 @@ export default function PayrollPageClient() {
                     <DialogHeader>
                       <DialogTitle>Regenerate Payslips</DialogTitle>
                       <DialogDescription>
-                        Choose whether to keep current payslip edits or rebuild
-                        this payroll run from the draft settings only.
+                        Choose whether to reapply explicit manual overrides or
+                        rebuild this payroll run from the draft settings only.
                       </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
@@ -3166,9 +3217,10 @@ export default function PayrollPageClient() {
                           Keep current payslip edits
                         </div>
                         <div className="mt-1 text-sm text-gray-600">
-                          Refresh attendance-based values while preserving
-                          existing payslip edits like added or removed
-                          deductions, additions, and edited earnings.
+                          Recalculate from current attendance, holidays, and
+                          settings, then automatically reapply explicit manual
+                          overrides. Review the preserved manual override lines
+                          before finalizing.
                         </div>
                       </button>
                       <button
@@ -3184,8 +3236,8 @@ export default function PayrollPageClient() {
                           Rebuild from payroll draft only
                         </div>
                         <div className="mt-1 text-sm text-gray-600">
-                          Discard per-payslip manual edits and regenerate using
-                          the payroll run configuration.
+                          Discard per-payslip manual overrides and regenerate
+                          using only the payroll run configuration.
                         </div>
                       </button>
                     </div>
@@ -3297,6 +3349,8 @@ export default function PayrollPageClient() {
               isAdminOrAccounting={isAdminOrAccounting}
               onTogglePayslip={handleOpenPayslipDetails}
               onEditPayslip={handleEditPayslip}
+              onMarkOverrideReviewComplete={handleMarkOverrideReviewComplete}
+              markingOverrideReviewRunId={markingOverrideReviewRunId}
             />
           </Suspense>
         )}

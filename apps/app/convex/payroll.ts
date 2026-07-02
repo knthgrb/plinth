@@ -73,6 +73,10 @@ function buildDraftPayrollConfig(args: {
     employeeId: any;
     amount: number;
   }>;
+  /** Explicit per-payslip edits layered on regeneration; discarded by clean rebuild. */
+  payslipOverrides?: DraftPayslipOverride[];
+  /** Review state after explicit per-payslip edits are auto-reapplied by regeneration. */
+  overrideReview?: DraftOverrideReview;
 }) {
   return {
     employeeIds: args.employeeIds,
@@ -80,6 +84,8 @@ function buildDraftPayrollConfig(args: {
     incentives: args.incentives,
     governmentDeductionSettings: args.governmentDeductionSettings,
     nonTaxableAllowanceOverrides: args.nonTaxableAllowanceOverrides,
+    payslipOverrides: args.payslipOverrides,
+    overrideReview: args.overrideReview,
   };
 }
 
@@ -95,6 +101,29 @@ type DraftDependencySnapshot = {
   holidayRowCount: number;
   shiftRowCount: number;
   leaveTypeRowCount: number;
+  attendanceRowCount: number;
+  leaveRequestRowCount: number;
+};
+
+type DraftPayslipOverride = {
+  employeeId: any;
+  deductions?: PayrollLine[];
+  incentives?: PayrollLine[];
+  nonTaxableAllowance?: number;
+  variableEarnings?: VariableEarnings;
+};
+
+type DraftOverrideReview = {
+  status: "needs_review" | "reviewed";
+  generatedAt: number;
+  reviewedAt?: number;
+  reviewedBy?: any;
+  employees: Array<{
+    employeeId: any;
+    fields: string[];
+    deductionOverrideCount?: number;
+    incentiveOverrideCount?: number;
+  }>;
 };
 
 function maxTs(current: number, next: any): number {
@@ -125,6 +154,7 @@ async function captureDraftDependencySnapshot(ctx: any, args: {
 }): Promise<DraftDependencySnapshot> {
   let attendance = 0;
   let employees = 0;
+  let attendanceRowCount = 0;
   const _rangeEnd = args.cutoffEnd + 24 * 60 * 60 * 1000 - 1;
   for (const employeeId of args.employeeIds) {
     const emp = await ctx.db.get(employeeId);
@@ -137,6 +167,7 @@ async function captureDraftDependencySnapshot(ctx: any, args: {
           .lte("date", _rangeEnd),
       )
       .collect();
+    attendanceRowCount += rows.length;
     for (const row of rows) {
       attendance = maxTs(attendance, row);
     }
@@ -169,6 +200,7 @@ async function captureDraftDependencySnapshot(ctx: any, args: {
   const payrollSettings = maxTs(0, settingsRow);
 
   let leaveRequests = 0;
+  let leaveRequestRowCount = 0;
   for (const employeeId of args.employeeIds) {
     const leaves = await getApprovedLeaveRequestsForPayrollPeriod(
       ctx,
@@ -176,6 +208,7 @@ async function captureDraftDependencySnapshot(ctx: any, args: {
       args.cutoffStart,
       args.cutoffEnd,
     );
+    leaveRequestRowCount += leaves.length;
     for (const row of leaves) {
       leaveRequests = maxTs(leaveRequests, row);
     }
@@ -196,6 +229,8 @@ async function captureDraftDependencySnapshot(ctx: any, args: {
     holidayRowCount,
     shiftRowCount,
     leaveTypeRowCount,
+    attendanceRowCount,
+    leaveRequestRowCount,
   };
 }
 
@@ -203,49 +238,76 @@ function hasDraftDependenciesChanged(
   snapshot: Partial<DraftDependencySnapshot> | undefined,
   current: DraftDependencySnapshot,
 ): boolean {
-  if (!snapshot) return true;
+  return getDraftDependencyChangeReasons(snapshot, current).length > 0;
+}
+
+function getDraftDependencyChangeReasons(
+  snapshot: Partial<DraftDependencySnapshot> | undefined,
+  current: DraftDependencySnapshot,
+): string[] {
+  if (!snapshot) return ["missing_snapshot"];
+  const reasons: string[] = [];
+  if (current.attendance > (snapshot.attendance ?? 0)) {
+    reasons.push("attendance");
+  }
   if (
-    current.attendance > (snapshot.attendance ?? 0) ||
-    current.holidays > (snapshot.holidays ?? 0) ||
-    current.payrollSettings > (snapshot.payrollSettings ?? 0) ||
-    current.leaveTypes > (snapshot.leaveTypes ?? 0) ||
-    current.shifts > (snapshot.shifts ?? 0) ||
-    current.employees > (snapshot.employees ?? 0)
+    snapshot.attendanceRowCount != null &&
+    current.attendanceRowCount !== snapshot.attendanceRowCount
   ) {
-    return true;
+    reasons.push("attendance");
+  }
+  if (current.holidays > (snapshot.holidays ?? 0)) {
+    reasons.push("holidays");
+  }
+  if (current.payrollSettings > (snapshot.payrollSettings ?? 0)) {
+    reasons.push("payroll_settings");
+  }
+  if (current.leaveTypes > (snapshot.leaveTypes ?? 0)) {
+    reasons.push("leave_types");
+  }
+  if (current.shifts > (snapshot.shifts ?? 0)) {
+    reasons.push("shifts");
+  }
+  if (current.employees > (snapshot.employees ?? 0)) {
+    reasons.push("employees");
   }
   if (
     snapshot.leaveRequests != null &&
     current.leaveRequests > snapshot.leaveRequests
   ) {
-    return true;
+    reasons.push("leave_requests");
+  }
+  if (
+    snapshot.leaveRequestRowCount != null &&
+    current.leaveRequestRowCount !== snapshot.leaveRequestRowCount
+  ) {
+    reasons.push("leave_requests");
   }
   if (
     snapshot.organization != null &&
     current.organization > snapshot.organization
   ) {
-    return true;
+    reasons.push("organization");
   }
-  // Row counts: catches deletes and inserts when snapshot was captured with counts (post-upgrade regenerates).
   if (
     snapshot.holidayRowCount != null &&
     current.holidayRowCount !== snapshot.holidayRowCount
   ) {
-    return true;
+    reasons.push("holidays");
   }
   if (
     snapshot.shiftRowCount != null &&
     current.shiftRowCount !== snapshot.shiftRowCount
   ) {
-    return true;
+    reasons.push("shifts");
   }
   if (
     snapshot.leaveTypeRowCount != null &&
     current.leaveTypeRowCount !== snapshot.leaveTypeRowCount
   ) {
-    return true;
+    reasons.push("leave_types");
   }
-  return false;
+  return Array.from(new Set(reasons));
 }
 
 async function assertDraftDependenciesFreshForFinalize(
@@ -262,7 +324,8 @@ async function assertDraftDependenciesFreshForFinalize(
   const savedSnapshot = payrollRun.draftDependencySnapshot as
     | Partial<DraftDependencySnapshot>
     | undefined;
-  if (hasDraftDependenciesChanged(savedSnapshot, currentSnapshot)) {
+  const reasons = getDraftDependencyChangeReasons(savedSnapshot, currentSnapshot);
+  if (reasons.length > 0) {
     throw new Error(
       "This payroll run is out of date (attendance, holidays, leave, rates, or schedules changed after the last payslip calculation). Regenerate payslips from the payroll list, then finalize again.",
     );
@@ -440,24 +503,6 @@ function getPayslipEmployeeFromSnapshot(payslip: any): any {
         : undefined,
   };
 }
-
-function hasManualVariableEarningsEdit(payslip: any): boolean {
-  return Array.isArray(payslip?.editHistory)
-    ? payslip.editHistory.some((entry: any) =>
-        Array.isArray(entry?.changes)
-          ? entry.changes.some(
-              (change: any) => change?.field === "variableEarnings",
-            )
-          : false,
-      )
-    : false;
-}
-
-type PersistedVariableEarningsOverride = VariableEarnings & {
-  holidayPayType?: "regular" | "special";
-  regularHolidayPay?: number;
-  specialHolidayPay?: number;
-};
 
 function splitHolidayPayForPersistence(args: {
   payslipLike: {
@@ -841,6 +886,31 @@ function canViewAllPayslips(userRecord: any): boolean {
     canUseFullOrganizationAccess(userRecord?.accessStatus) &&
     ["owner", "admin", "hr", "accounting"].includes(userRecord?.role || "")
   );
+}
+
+function getVisiblePayslipRunStatusesForViewer(userRecord: any): string[] | null {
+  return canViewAllPayslips(userRecord) ? null : ["finalized", "paid"];
+}
+
+async function assertPayslipVisibleToViewer(
+  ctx: any,
+  userRecord: any,
+  payslip: any,
+) {
+  if (canViewAllPayslips(userRecord)) return;
+  if (String(userRecord.employeeId) !== String(payslip.employeeId)) {
+    throw new Error("Not authorized");
+  }
+  const allowedStatuses = getVisiblePayslipRunStatusesForViewer(userRecord);
+  if (!allowedStatuses) return;
+  if (!payslip.payrollRunId) {
+    throw new Error("Not authorized");
+  }
+  const run = await ctx.db.get(payslip.payrollRunId);
+  const status = (run as any)?.status;
+  if (status !== "finalized" && status !== "paid") {
+    throw new Error("Not authorized");
+  }
 }
 
 // Helper to calculate working days in the month for an employee based on their schedule
@@ -1573,49 +1643,6 @@ function recalculatePersistedPayslipTotals(args: {
   };
 }
 
-function getExpectedCutoffAllowanceForEmployee(
-  employee: any,
-  payFrequency: PayFrequency,
-): number {
-  return round2(
-    getPerCutoffAmount(employee?.compensation?.allowance || 0, payFrequency),
-  );
-}
-
-function shouldTreatZeroAllowanceAsExplicitOverride(args: {
-  employee: any;
-  cutoffStart: number;
-  cutoffEnd: number;
-  actualAllowance: number;
-}): boolean {
-  if (args.actualAllowance > 0) return false;
-  const hireDateRaw =
-    typeof args.employee?.employment?.hireDate === "number"
-      ? args.employee.employment.hireDate
-      : null;
-  if (hireDateRaw == null) return false;
-  const hireDate = new Date(hireDateRaw);
-  const cutoffStartDate = new Date(args.cutoffStart);
-  const cutoffEndDate = new Date(args.cutoffEnd);
-  const hireDay = new Date(
-    hireDate.getFullYear(),
-    hireDate.getMonth(),
-    hireDate.getDate(),
-  ).getTime();
-  const cutoffStartDay = new Date(
-    cutoffStartDate.getFullYear(),
-    cutoffStartDate.getMonth(),
-    cutoffStartDate.getDate(),
-  ).getTime();
-  const cutoffEndDay = new Date(
-    cutoffEndDate.getFullYear(),
-    cutoffEndDate.getMonth(),
-    cutoffEndDate.getDate(),
-  ).getTime();
-
-  return hireDay >= cutoffStartDay && hireDay <= cutoffEndDay;
-}
-
 type EmployeeGovSettings = {
   employeeId: any;
   sss: { enabled: boolean; frequency: "full" | "half" };
@@ -1630,14 +1657,366 @@ type EmployeeLineSet = {
   incentives?: PayrollLine[];
 };
 
+function normalizePayrollLine(line: PayrollLine): PayrollLine {
+  return {
+    name: (line.name || "").trim(),
+    amount: round2(Number(line.amount || 0)),
+    type: (line.type || "custom").trim() || "custom",
+    taxable: line.taxable === false ? false : line.taxable === true ? true : undefined,
+  };
+}
+
+function payrollLineKey(line: { name?: string; type?: string }): string {
+  return `${(line.name || "").trim().toLowerCase()}|${(line.type || "").trim().toLowerCase()}`;
+}
+
+function payrollLineAmountKey(line: PayrollLine): string {
+  const normalized = normalizePayrollLine(line);
+  return `${payrollLineKey(normalized)}|${normalized.amount.toFixed(2)}|${normalized.taxable === false ? "nt" : "tx"}`;
+}
+
+function buildDeductionOverrideLinesFromEdit(
+  previousRaw: PayrollLine[] | undefined,
+  nextRaw: PayrollLine[] | undefined,
+): PayrollLine[] {
+  const previous = (previousRaw ?? []).map(normalizePayrollLine);
+  const next = (nextRaw ?? []).map(normalizePayrollLine);
+  const previousByKey = new Map(previous.map((line) => [payrollLineKey(line), line]));
+  const nextByKey = new Map(next.map((line) => [payrollLineKey(line), line]));
+  const overrides: PayrollLine[] = [];
+
+  for (const line of next) {
+    const key = payrollLineKey(line);
+    const old = previousByKey.get(key);
+    if (!old || payrollLineAmountKey(old) !== payrollLineAmountKey(line)) {
+      overrides.push(line);
+    }
+  }
+
+  for (const old of previous) {
+    if (!nextByKey.has(payrollLineKey(old))) {
+      overrides.push({
+        name: old.name,
+        amount: 0,
+        type: old.type,
+      });
+    }
+  }
+
+  return overrides;
+}
+
+function hasDraftPayslipOverrideContent(override: DraftPayslipOverride): boolean {
+  return (
+    (override.deductions?.length ?? 0) > 0 ||
+    (override.incentives?.length ?? 0) > 0 ||
+    override.nonTaxableAllowance !== undefined ||
+    override.variableEarnings !== undefined
+  );
+}
+
+function mergeDraftPayslipOverride(
+  current: DraftPayslipOverride[] | undefined,
+  next: DraftPayslipOverride,
+): DraftPayslipOverride[] | undefined {
+  const existing = Array.isArray(current) ? [...current] : [];
+  const index = existing.findIndex(
+    (entry) => String(entry.employeeId) === String(next.employeeId),
+  );
+  const merged =
+    index >= 0
+      ? { ...existing[index], ...next, employeeId: existing[index].employeeId }
+      : next;
+
+  if (index >= 0) {
+    if (hasDraftPayslipOverrideContent(merged)) {
+      existing[index] = merged;
+    } else {
+      existing.splice(index, 1);
+    }
+  } else if (hasDraftPayslipOverrideContent(merged)) {
+    existing.push(merged);
+  }
+
+  return existing.length > 0 ? existing : undefined;
+}
+
+function applyDeductionOverrideLines(
+  baseLines: PayrollLine[],
+  overrideLines: PayrollLine[] | undefined,
+): PayrollLine[] {
+  const next = baseLines.map(normalizePayrollLine);
+  for (const rawOverride of overrideLines ?? []) {
+    const override = normalizePayrollLine(rawOverride);
+    const key = payrollLineKey(override);
+    const index = next.findIndex((line) => payrollLineKey(line) === key);
+    if (override.amount <= 0) {
+      if (index >= 0) next.splice(index, 1);
+      continue;
+    }
+    if (index >= 0) {
+      next[index] = override;
+    } else {
+      next.push(override);
+    }
+  }
+  return next.filter((line) => line.amount > 0);
+}
+
+function getEmployerContributionsFromDeductions(deductions: PayrollLine[]) {
+  const editedEmployeeSSSAmount = getDeductionAmountByNames(deductions, [
+    "sss",
+  ]);
+  const editedEmployeePhilhealthAmount = getDeductionAmountByNames(
+    deductions,
+    ["philhealth"],
+  );
+  const editedEmployeePagibigAmount = getDeductionAmountByNames(deductions, [
+    "pag-ibig",
+    "pagibig",
+  ]);
+  const updatedEmployerContributions: {
+    sss?: number;
+    philhealth?: number;
+    pagibig?: number;
+  } = {};
+  if (editedEmployeeSSSAmount > 0) {
+    updatedEmployerContributions.sss = round2(
+      getSSSContributionByEmployeeDeduction(editedEmployeeSSSAmount)
+        .employerShare,
+    );
+  }
+  if (editedEmployeePhilhealthAmount > 0) {
+    updatedEmployerContributions.philhealth = round2(
+      editedEmployeePhilhealthAmount,
+    );
+  }
+  if (editedEmployeePagibigAmount > 0) {
+    updatedEmployerContributions.pagibig = round2(editedEmployeePagibigAmount);
+  }
+  return Object.keys(updatedEmployerContributions).length > 0
+    ? updatedEmployerContributions
+    : undefined;
+}
+
+function countPayslipOverrideFields(overrides: DraftPayslipOverride[] | undefined): number {
+  return (overrides ?? []).reduce((count, override) => {
+    let next = count;
+    if ((override.deductions?.length ?? 0) > 0) next += 1;
+    if ((override.incentives?.length ?? 0) > 0) next += 1;
+    if (override.nonTaxableAllowance !== undefined) next += 1;
+    if (override.variableEarnings !== undefined) next += 1;
+    return next;
+  }, 0);
+}
+
+function buildOverrideReviewFromPayslipOverrides(
+  overrides: DraftPayslipOverride[] | undefined,
+): DraftOverrideReview | undefined {
+  const employees = (overrides ?? [])
+    .map((override) => {
+      const fields: string[] = [];
+      const deductionOverrideCount = override.deductions?.length ?? 0;
+      const incentiveOverrideCount = override.incentives?.length ?? 0;
+      if (deductionOverrideCount > 0) fields.push("deductions");
+      if (incentiveOverrideCount > 0) fields.push("additions");
+      if (override.nonTaxableAllowance !== undefined) {
+        fields.push("non_taxable_allowance");
+      }
+      if (override.variableEarnings !== undefined) {
+        fields.push("variable_earnings");
+      }
+      return {
+        employeeId: override.employeeId,
+        fields,
+        deductionOverrideCount:
+          deductionOverrideCount > 0 ? deductionOverrideCount : undefined,
+        incentiveOverrideCount:
+          incentiveOverrideCount > 0 ? incentiveOverrideCount : undefined,
+      };
+    })
+    .filter((row) => row.fields.length > 0);
+
+  if (employees.length === 0) return undefined;
+  return {
+    status: "needs_review",
+    generatedAt: Date.now(),
+    employees,
+  };
+}
+
+function assertDraftOverrideReviewCompleteForFinalize(payrollRun: any) {
+  const cfg = decryptDraftConfigFromDb(payrollRun.draftConfig);
+  if (cfg?.overrideReview?.status !== "needs_review") return;
+  throw new Error(
+    "This payroll run has auto-reapplied manual overrides that need review before finalizing. Open View Payslips, review the Auto reapplied items, then mark them reviewed.",
+  );
+}
+
+function buildLegacyPayslipOverrideFromEditHistory(
+  payslip: any,
+): DraftPayslipOverride | null {
+  const changedFields = new Set<string>();
+  for (const entry of payslip.editHistory ?? []) {
+    for (const change of entry?.changes ?? []) {
+      if (typeof change?.field === "string") {
+        changedFields.add(change.field);
+      }
+    }
+  }
+  if (changedFields.size === 0) return null;
+
+  const override: DraftPayslipOverride = { employeeId: payslip.employeeId };
+  if (changedFields.has("deductions")) {
+    override.deductions = (payslip.deductions ?? []).map(normalizePayrollLine);
+  }
+  if (changedFields.has("additions")) {
+    override.incentives = (payslip.incentives ?? []).map(normalizePayrollLine);
+  }
+  if (changedFields.has("nonTaxableAllowance")) {
+    override.nonTaxableAllowance = round2(payslip.nonTaxableAllowance || 0);
+  }
+  if (changedFields.has("variableEarnings")) {
+    override.variableEarnings = getVariableEarningsFromPayslip(
+      payslip as Record<string, unknown>,
+    );
+  }
+  return hasDraftPayslipOverrideContent(override) ? override : null;
+}
+
+async function applyPayslipOverrideToGeneratedPayslip(ctx: any, args: {
+  payrollRunId: any;
+  organizationId: any;
+  employeeId: any;
+  cutoffStart: number;
+  cutoffEnd: number;
+  payrollBase: PayrollBaseResult;
+  canonical: Awaited<ReturnType<typeof buildCanonicalPayrollResult>>;
+  override?: DraftPayslipOverride;
+}) {
+  const payrollBase = args.payrollBase;
+  const computedEarnings: VariableEarnings = {
+    holidayPay: round2(payrollBase.holidayPay || 0),
+    nightDiffPay: round2(payrollBase.nightDiffPay || 0),
+    restDayPay: round2(payrollBase.restDayPremiumPay || 0),
+    overtimeRegular: round2(payrollBase.overtimeRegular || 0),
+    overtimeRestDay: round2(payrollBase.overtimeRestDay || 0),
+    overtimeRestDayExcess: round2(payrollBase.overtimeRestDayExcess || 0),
+    overtimeSpecialHoliday: round2(payrollBase.overtimeSpecialHoliday || 0),
+    overtimeSpecialHolidayExcess: round2(
+      payrollBase.overtimeSpecialHolidayExcess || 0,
+    ),
+    overtimeLegalHoliday: round2(payrollBase.overtimeLegalHoliday || 0),
+    overtimeLegalHolidayExcess: round2(
+      payrollBase.overtimeLegalHolidayExcess || 0,
+    ),
+  };
+  const nextE = args.override?.variableEarnings ?? computedEarnings;
+  const incentives = args.override?.incentives
+    ? args.override.incentives.map(normalizePayrollLine)
+    : args.canonical.incentives;
+  const grossAndBasic = recomputeGrossAndBasicFromVariableEarnings(
+    {
+      grossPay: args.canonical.grossPay,
+      basicPay: args.canonical.basicPay,
+    },
+    computedEarnings,
+    nextE,
+    sumTaxableIncentiveAmounts(args.canonical.incentives),
+    sumTaxableIncentiveAmounts(incentives),
+  );
+
+  let deductions = args.canonical.deductions;
+  if (
+    JSON.stringify(computedEarnings) !== JSON.stringify(nextE) ||
+    incentives !== args.canonical.incentives
+  ) {
+    deductions = await recalcWithholdingTaxAfterVariableEarningsEdit(ctx, {
+      payslip: {
+        payrollRunId: args.payrollRunId,
+        periodStart: args.cutoffStart,
+        periodEnd: args.cutoffEnd,
+      },
+      employeeId: args.employeeId,
+      organizationId: args.organizationId,
+      newDeductions: deductions,
+      recalculatedGross: grossAndBasic.grossPay,
+      atOpen: computedEarnings,
+      nextE,
+    });
+  }
+  deductions = applyDeductionOverrideLines(deductions, args.override?.deductions);
+
+  const nonTaxableAllowance =
+    args.override?.nonTaxableAllowance !== undefined
+      ? round2(args.override.nonTaxableAllowance)
+      : args.canonical.nonTaxableAllowance;
+  const netTotals = recomputeNetFromEarningsAndLines(
+    grossAndBasic.grossPay,
+    nonTaxableAllowance ?? 0,
+    incentives,
+    deductions,
+  );
+  const holidaySplit = splitHolidayPayForPersistence({
+    payslipLike: {
+      holidayPay: computedEarnings.holidayPay,
+      holidayPayType: payrollBase.holidayPayType,
+      regularHolidayPay: payrollBase.regularHolidayPay,
+      specialHolidayPay: payrollBase.specialHolidayPay,
+    },
+    nextHolidayPay: nextE.holidayPay,
+    computedRegularHolidayPay: payrollBase.regularHolidayPay,
+    computedSpecialHolidayPay: payrollBase.specialHolidayPay,
+  });
+
+  return {
+    deductions,
+    incentives,
+    nonTaxableAllowance,
+    grossPay: grossAndBasic.grossPay,
+    basicPay: round2(grossAndBasic.basicPay),
+    netPay: netTotals.netPay,
+    holidayPay: nextE.holidayPay > 0 ? round2(nextE.holidayPay) : undefined,
+    regularHolidayPay: holidaySplit.regularHolidayPay,
+    specialHolidayPay: holidaySplit.specialHolidayPay,
+    holidayPayType: holidaySplit.holidayPayType,
+    nightDiffPay:
+      nextE.nightDiffPay > 0 ? round2(nextE.nightDiffPay) : undefined,
+    restDayPay: nextE.restDayPay > 0 ? round2(nextE.restDayPay) : undefined,
+    overtimeRegular:
+      nextE.overtimeRegular > 0 ? round2(nextE.overtimeRegular) : undefined,
+    overtimeRestDay:
+      nextE.overtimeRestDay > 0 ? round2(nextE.overtimeRestDay) : undefined,
+    overtimeRestDayExcess:
+      nextE.overtimeRestDayExcess > 0
+        ? round2(nextE.overtimeRestDayExcess)
+        : undefined,
+    overtimeSpecialHoliday:
+      nextE.overtimeSpecialHoliday > 0
+        ? round2(nextE.overtimeSpecialHoliday)
+        : undefined,
+    overtimeSpecialHolidayExcess:
+      nextE.overtimeSpecialHolidayExcess > 0
+        ? round2(nextE.overtimeSpecialHolidayExcess)
+        : undefined,
+    overtimeLegalHoliday:
+      nextE.overtimeLegalHoliday > 0
+        ? round2(nextE.overtimeLegalHoliday)
+        : undefined,
+    overtimeLegalHolidayExcess:
+      nextE.overtimeLegalHolidayExcess > 0
+        ? round2(nextE.overtimeLegalHolidayExcess)
+        : undefined,
+    employerContributions: getEmployerContributionsFromDeductions(deductions),
+  };
+}
+
 const GOV_DEDUCTION_NAMES = new Set([
   "SSS",
   "PhilHealth",
   "Pag-IBIG",
   "Withholding Tax",
 ]);
-
-const GOV_DEDUCTIONS_EXCEPT_TAX = new Set(["SSS", "PhilHealth", "Pag-IBIG"]);
 
 function applyGovSettingAmount(
   enabled: boolean | undefined,
@@ -1652,6 +2031,15 @@ function applyGovSettingAmount(
 
 function isGovernmentDeductionName(name: string): boolean {
   return GOV_DEDUCTION_NAMES.has((name || "").trim());
+}
+
+function governmentDeductionKey(name: string): string {
+  const n = (name || "").trim().toLowerCase();
+  if (n === "pagibig" || n === "pag-ibig") return "pagibig";
+  if (n === "philhealth") return "philhealth";
+  if (n === "withholding tax") return "tax";
+  if (n === "sss") return "sss";
+  return n;
 }
 
 function buildAttendanceDeductionLines(
@@ -1939,141 +2327,111 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
 
   let deductions: PayrollLine[] = [];
   const manualDeductionLines = args.manualDeductionEntry?.deductions ?? [];
-  const hasOverrideSystemDeductions = manualDeductionLines.some(
-    (line) =>
-      isGovernmentDeductionName(line.name) || isAttendanceDeductionEntry(line),
-  );
-  const removedAttendanceLineNames = new Set(
+  const governmentOverrideByName = new Map(
     manualDeductionLines
       .filter(
         (line) =>
-          isAttendanceDeductionEntry(line) && round2(line.amount || 0) <= 0,
+          isGovernmentDeductionName(line.name) && round2(line.amount || 0) > 0,
       )
-      .map((line) => (line.name || "").trim()),
+      .map((line) => [
+        governmentDeductionKey(line.name),
+        { ...line, amount: round2(line.amount || 0) },
+      ]),
   );
+  const removedGovernmentLineNames = new Set(
+    manualDeductionLines
+      .filter(
+        (line) =>
+          isGovernmentDeductionName(line.name) &&
+          round2(line.amount || 0) <= 0,
+      )
+      .map((line) => governmentDeductionKey(line.name)),
+  );
+  const attendanceOverrideLines = manualDeductionLines.filter(
+    isAttendanceDeductionEntry,
+  );
+  const addGovernmentDeduction = (
+    key: "sss" | "philhealth" | "pagibig" | "tax",
+    name: string,
+    amount: number,
+  ) => {
+    if (removedGovernmentLineNames.has(key)) return;
+    const override = governmentOverrideByName.get(key);
+    const nextAmount = override ? round2(override.amount || 0) : round2(amount);
+    if (nextAmount <= 0) return;
+    deductions.push({
+      name,
+      amount: nextAmount,
+      type: override?.type || "government",
+    });
+  };
 
-  if (hasOverrideSystemDeductions) {
-    let nonAttendanceOverrideLines = manualDeductionLines.filter(
-      (line) => !isAttendanceDeductionEntry(line),
+  if (args.deductionsEnabled) {
+    const sssAmount = applyGovSettingAmount(
+      args.govSettings?.sss.enabled,
+      args.govSettings?.sss.frequency,
+      baseGovAmounts.sss,
     );
-    // When Step 4 / payslip already lists government lines, that list is authoritative
-    // for *which* lines exist—do not re-inject Withholding Tax if the user removed it.
-    // Still honor Step 3 toggles by dropping disabled government rows.
-    if (args.govSettings) {
-      if (args.deductionsEnabled !== false) {
-        if (!args.govSettings.sss.enabled) {
-          nonAttendanceOverrideLines = nonAttendanceOverrideLines.filter(
-            (line) => line.name !== "SSS",
-          );
-        }
-        if (!args.govSettings.philhealth.enabled) {
-          nonAttendanceOverrideLines = nonAttendanceOverrideLines.filter(
-            (line) => line.name !== "PhilHealth",
-          );
-        }
-        if (!args.govSettings.pagibig.enabled) {
-          nonAttendanceOverrideLines = nonAttendanceOverrideLines.filter(
-            (line) => line.name !== "Pag-IBIG",
-          );
-        }
-      }
-      if (!args.govSettings.tax.enabled) {
-        nonAttendanceOverrideLines = nonAttendanceOverrideLines.filter(
-          (line) => line.name !== "Withholding Tax",
-        );
-      }
-    }
-    deductions =
-      args.deductionsEnabled === false
-        ? nonAttendanceOverrideLines.filter(
-            (line) => !GOV_DEDUCTIONS_EXCEPT_TAX.has(line.name),
-          )
-        : [...nonAttendanceOverrideLines];
-  } else {
-    if (args.deductionsEnabled) {
-      const sssAmount = applyGovSettingAmount(
-        args.govSettings?.sss.enabled,
-        args.govSettings?.sss.frequency,
-        baseGovAmounts.sss,
-      );
-      const philhealthAmount = applyGovSettingAmount(
-        args.govSettings?.philhealth.enabled,
-        args.govSettings?.philhealth.frequency,
-        baseGovAmounts.philhealth,
-      );
-      const pagibigAmount = applyGovSettingAmount(
-        args.govSettings?.pagibig.enabled,
-        args.govSettings?.pagibig.frequency,
-        baseGovAmounts.pagibig,
-      );
+    const philhealthAmount = applyGovSettingAmount(
+      args.govSettings?.philhealth.enabled,
+      args.govSettings?.philhealth.frequency,
+      baseGovAmounts.philhealth,
+    );
+    const pagibigAmount = applyGovSettingAmount(
+      args.govSettings?.pagibig.enabled,
+      args.govSettings?.pagibig.frequency,
+      baseGovAmounts.pagibig,
+    );
 
-      if (sssAmount > 0) {
-        deductions.push({ name: "SSS", amount: sssAmount, type: "government" });
-      }
-      if (philhealthAmount > 0) {
-        deductions.push({
-          name: "PhilHealth",
-          amount: philhealthAmount,
-          type: "government",
-        });
-      }
-      if (pagibigAmount > 0) {
-        deductions.push({
-          name: "Pag-IBIG",
-          amount: pagibigAmount,
-          type: "government",
-        });
-      }
-    }
+    addGovernmentDeduction("sss", "SSS", sssAmount);
+    addGovernmentDeduction("philhealth", "PhilHealth", philhealthAmount);
+    addGovernmentDeduction("pagibig", "Pag-IBIG", pagibigAmount);
+  }
 
-    const taxEnabled = !args.govSettings
-      ? baseGovAmounts.tax > 0
-      : args.govSettings.tax.enabled && baseGovAmounts.tax > 0;
-    if (taxEnabled) {
+  const taxEnabled = !args.govSettings
+    ? baseGovAmounts.tax > 0
+    : args.govSettings.tax.enabled && baseGovAmounts.tax > 0;
+  if (taxEnabled) {
+    addGovernmentDeduction("tax", "Withholding Tax", baseGovAmounts.tax);
+  }
+
+  for (const line of manualDeductionLines.filter(
+    (entry) =>
+      !isAttendanceDeductionEntry(entry) &&
+      !isGovernmentDeductionName(entry.name) &&
+      round2(entry.amount || 0) > 0,
+  )) {
+    deductions.push({
+      name: line.name,
+      amount: round2(line.amount || 0),
+      type: line.type,
+    });
+  }
+
+  if (employee.deductions) {
+    for (const deduction of employee.deductions) {
+      if (!deduction.isActive) continue;
+      if (isAttendanceDeductionName(deduction.name || "")) continue;
+      if (
+        deduction.startDate > now ||
+        (deduction.endDate && deduction.endDate < now)
+      ) {
+        continue;
+      }
       deductions.push({
-        name: "Withholding Tax",
-        amount: round2(baseGovAmounts.tax),
-        type: "government",
+        name: deduction.name,
+        amount: round2(
+          deduction.frequency === "monthly"
+            ? getPerCutoffAmount(deduction.amount, args.payFrequency)
+            : deduction.amount,
+        ),
+        type: deduction.type,
       });
-    }
-
-    for (const line of manualDeductionLines.filter(
-      (entry) => !isAttendanceDeductionEntry(entry),
-    )) {
-      deductions.push({
-        name: line.name,
-        amount: round2(line.amount || 0),
-        type: line.type,
-      });
-    }
-
-    if (employee.deductions) {
-      for (const deduction of employee.deductions) {
-        if (!deduction.isActive) continue;
-        if (isAttendanceDeductionName(deduction.name || "")) continue;
-        if (
-          deduction.startDate > now ||
-          (deduction.endDate && deduction.endDate < now)
-        ) {
-          continue;
-        }
-        deductions.push({
-          name: deduction.name,
-          amount: round2(
-            deduction.frequency === "monthly"
-              ? getPerCutoffAmount(deduction.amount, args.payFrequency)
-              : deduction.amount,
-          ),
-          type: deduction.type,
-        });
-      }
     }
   }
 
   deductions.push(
-    ...attendanceDeductions.filter(
-      (line) => !removedAttendanceLineNames.has((line.name || "").trim()),
-    ),
+    ...applyDeductionOverrideLines(attendanceDeductions, attendanceOverrideLines),
   );
 
   const orgId = employee.organizationId;
@@ -3000,48 +3358,19 @@ export const updatePayrollRun = mutation({
     }> = Array.isArray(previousDraftConfig.nonTaxableAllowanceOverrides)
       ? [...previousDraftConfig.nonTaxableAllowanceOverrides]
       : [];
+    let mergedPayslipOverrides: DraftPayslipOverride[] = preserveExistingPayslipEdits &&
+      Array.isArray(previousDraftConfig.payslipOverrides)
+      ? [...previousDraftConfig.payslipOverrides]
+      : [];
     const preservedEditHistoryByEmployee = new Map<string, any[]>();
-    const preservedVariableEarningsByEmployee = new Map<
-      string,
-      PersistedVariableEarningsOverride
-    >();
 
     if (
       preserveExistingPayslipEdits &&
       existingPayslipsBeforeRegenerate.length > 0
     ) {
-      // When the client sends `manualDeductions` / `incentives`, those arrays are
-      // authoritative (e.g. Step 4 save) and we do not copy non-attendance lines
-      // from existing payslips. When the keys are **omitted** (e.g. regenerate
-      // after dependency drift), we merge from current payslips so per-payslip
-      // edits (government amounts, custom deductions, additions) are kept.
-      const explicitManual = args.manualDeductions !== undefined;
-      const explicitIncentives = args.incentives !== undefined;
-      const organizationForAllowance = await ctx.db.get(
-        payrollRun.organizationId,
+      const overrideEmployeeIds = new Set(
+        mergedPayslipOverrides.map((entry) => String(entry.employeeId)),
       );
-      const payFrequencyForAllowance: PayFrequency =
-        getOrganizationPayFrequency(organizationForAllowance);
-
-      const manualByEmp = new Map<string, ManualDeductionEntry>();
-      for (const m of resolvedManualDeductions) {
-        manualByEmp.set(String(m.employeeId), {
-          employeeId: m.employeeId,
-          deductions: [...(m.deductions || [])],
-        });
-      }
-      const incByEmp = new Map<string, IncentiveEntry>();
-      for (const i of resolvedIncentives) {
-        incByEmp.set(String(i.employeeId), {
-          employeeId: i.employeeId,
-          incentives: [...(i.incentives || [])],
-        });
-      }
-      const allowanceOverridesByEmp = new Map<string, number>();
-      for (const o of mergedNonTaxableAllowanceOverrides) {
-        allowanceOverridesByEmp.set(String(o.employeeId), o.amount);
-      }
-
       for (const raw of existingPayslipsBeforeRegenerate) {
         const p = decryptPayslipRowFromDb(raw);
         if (!p) continue;
@@ -3049,80 +3378,22 @@ export const updatePayrollRun = mutation({
         if (Array.isArray(p.editHistory) && p.editHistory.length > 0) {
           preservedEditHistoryByEmployee.set(String(empId), [...p.editHistory]);
         }
-        if (hasManualVariableEarningsEdit(p)) {
-          preservedVariableEarningsByEmployee.set(String(empId), {
-            ...getVariableEarningsFromPayslip(
-              p as unknown as Record<string, unknown>,
-            ),
-            holidayPayType: p.holidayPayType,
-            regularHolidayPay: p.regularHolidayPay,
-            specialHolidayPay: p.specialHolidayPay,
-          });
-        }
-        if (!explicitManual) {
-          const preservedDeductions = (p.deductions || []).filter(
-            (d: { name?: string; type?: string }) =>
-              !isAttendanceDeductionEntry(d) &&
-              (d.name || "") !== PENDING_PREVIOUS_CUTOFF_DEDUCTION_NAME,
-          );
-          manualByEmp.set(String(empId), {
-            employeeId: empId,
-            deductions: preservedDeductions,
-          });
-        }
-        if (!explicitIncentives) {
-          incByEmp.set(String(empId), {
-            employeeId: empId,
-            incentives: p.incentives ? [...p.incentives] : [],
-          });
-        }
-
-        const empRow = await ctx.db.get(empId);
-        if (empRow) {
-          const employee = decryptEmployeeFromDb(empRow as any);
-          const defaultAllow = getExpectedCutoffAllowanceForEmployee(
-            employee,
-            payFrequencyForAllowance,
-          );
-          const actualAllow = p.nonTaxableAllowance ?? 0;
-          const monthlyAllowance = round2(employee.compensation.allowance || 0);
-          const maxReasonableAllowance = Math.max(defaultAllow, monthlyAllowance);
-          if (actualAllow > maxReasonableAllowance) {
-            allowanceOverridesByEmp.delete(String(empId));
-            continue;
-          }
-          if (
-            actualAllow <= 0 &&
-            defaultAllow > 0 &&
-            !shouldTreatZeroAllowanceAsExplicitOverride({
-              employee,
-              cutoffStart: args.cutoffStart ?? payrollRun.cutoffStart,
-              cutoffEnd: args.cutoffEnd ?? payrollRun.cutoffEnd,
-              actualAllowance: actualAllow,
-            })
-          ) {
-            allowanceOverridesByEmp.delete(String(empId));
-            continue;
-          }
-          if (
-            Math.abs(round2(actualAllow) - round2(defaultAllow)) > 0.001
-          ) {
-            allowanceOverridesByEmp.set(String(empId), round2(actualAllow));
-          } else {
-            allowanceOverridesByEmp.delete(String(empId));
+        if (!overrideEmployeeIds.has(String(empId))) {
+          const legacyOverride = buildLegacyPayslipOverrideFromEditHistory(p);
+          if (legacyOverride) {
+            mergedPayslipOverrides = mergeDraftPayslipOverride(
+              mergedPayslipOverrides,
+              legacyOverride,
+            ) ?? [];
+            overrideEmployeeIds.add(String(empId));
           }
         }
       }
-
-      mergedManualDeductions = Array.from(manualByEmp.values());
-      mergedIncentives = Array.from(incByEmp.values());
-      mergedNonTaxableAllowanceOverrides = Array.from(
-        allowanceOverridesByEmp.entries(),
-      ).map(([employeeId, amount]) => ({
-        employeeId: employeeId as any,
-        amount,
-      }));
     }
+
+    const overrideReview = preserveExistingPayslipEdits
+      ? buildOverrideReviewFromPayslipOverrides(mergedPayslipOverrides)
+      : undefined;
 
     await ctx.db.patch(args.payrollRunId, {
       cutoffStart: args.cutoffStart ?? payrollRun.cutoffStart,
@@ -3139,10 +3410,18 @@ export const updatePayrollRun = mutation({
             mergedNonTaxableAllowanceOverrides.length > 0
               ? mergedNonTaxableAllowanceOverrides
               : undefined,
+          payslipOverrides:
+            preserveExistingPayslipEdits && mergedPayslipOverrides.length > 0
+              ? mergedPayslipOverrides
+              : undefined,
+          overrideReview,
         }),
       ),
       updatedAt: Date.now(),
     });
+
+    let staleReasonsBeforeRegenerate: string[] = [];
+    let regeneratedEmployeeCount = 0;
 
     // Always regenerate payslips for draft runs so late categorization (Regular Holiday Late vs Late) stays correct
     {
@@ -3162,6 +3441,18 @@ export const updatePayrollRun = mutation({
           : (previousDraftConfig.employeeIds ?? []));
       const cutoffStart = args.cutoffStart ?? payrollRun.cutoffStart;
       const cutoffEnd = args.cutoffEnd ?? payrollRun.cutoffEnd;
+      regeneratedEmployeeCount = employeeIds.length;
+      staleReasonsBeforeRegenerate = getDraftDependencyChangeReasons(
+        payrollRun.draftDependencySnapshot as
+          | Partial<DraftDependencySnapshot>
+          | undefined,
+        await captureDraftDependencySnapshot(ctx, {
+          organizationId: payrollRun.organizationId,
+          cutoffStart,
+          cutoffEnd,
+          employeeIds,
+        }),
+      );
 
       const { base } = await getPayrollRates(ctx, payrollRun.organizationId);
       const taxSettingsUpdate = await getTaxDeductionSettings(
@@ -3227,6 +3518,11 @@ export const updatePayrollRun = mutation({
         ctx,
         payrollRun.organizationId,
       );
+      const payslipOverridesByEmployee = new Map(
+        (preserveExistingPayslipEdits ? mergedPayslipOverrides : []).map(
+          (override) => [String(override.employeeId), override],
+        ),
+      );
       for (const employeeId of employeeIds) {
         const employeeRow = (await ctx.db.get(employeeId)) as any;
         if (
@@ -3277,177 +3573,19 @@ export const updatePayrollRun = mutation({
           nonTaxableAllowanceOverride: allowanceOverrideEntry?.amount,
         });
 
-        let deductionsToPersist = canonical.deductions;
-        let grossPayToPersist = canonical.grossPay;
-        let basicPayToPersist = canonical.basicPay;
-        let netPayToPersist = canonical.netPay;
-        let holidayPayToPersist =
-          payrollBase.holidayPay > 0 ? round2(payrollBase.holidayPay) : undefined;
-        let regularHolidayPayToPersist =
-          (payrollBase.regularHolidayPay ?? 0) > 0
-            ? round2(payrollBase.regularHolidayPay!)
-            : undefined;
-        let specialHolidayPayToPersist =
-          (payrollBase.specialHolidayPay ?? 0) > 0
-            ? round2(payrollBase.specialHolidayPay!)
-            : undefined;
-        let holidayPayTypeToPersist =
-          regularHolidayPayToPersist && specialHolidayPayToPersist
-            ? undefined
-            : payrollBase.holidayPayType;
-        let nightDiffPayToPersist =
-          payrollBase.nightDiffPay > 0
-            ? round2(payrollBase.nightDiffPay)
-            : undefined;
-        let restDayPayToPersist =
-          (payrollBase.restDayPremiumPay ?? 0) > 0
-            ? round2(payrollBase.restDayPremiumPay!)
-            : undefined;
-        let overtimeRegularToPersist =
-          payrollBase.overtimeRegular > 0
-            ? round2(payrollBase.overtimeRegular)
-            : undefined;
-        let overtimeRestDayToPersist =
-          payrollBase.overtimeRestDay > 0
-            ? round2(payrollBase.overtimeRestDay)
-            : undefined;
-        let overtimeRestDayExcessToPersist =
-          payrollBase.overtimeRestDayExcess > 0
-            ? round2(payrollBase.overtimeRestDayExcess)
-            : undefined;
-        let overtimeSpecialHolidayToPersist =
-          payrollBase.overtimeSpecialHoliday > 0
-            ? round2(payrollBase.overtimeSpecialHoliday)
-            : undefined;
-        let overtimeSpecialHolidayExcessToPersist =
-          payrollBase.overtimeSpecialHolidayExcess > 0
-            ? round2(payrollBase.overtimeSpecialHolidayExcess)
-            : undefined;
-        let overtimeLegalHolidayToPersist =
-          payrollBase.overtimeLegalHoliday > 0
-            ? round2(payrollBase.overtimeLegalHoliday)
-            : undefined;
-        let overtimeLegalHolidayExcessToPersist =
-          payrollBase.overtimeLegalHolidayExcess > 0
-            ? round2(payrollBase.overtimeLegalHolidayExcess)
-            : undefined;
-
-        const variableEarningsOverride =
-          preservedVariableEarningsByEmployee.get(String(employeeId));
-        if (variableEarningsOverride) {
-          const atOpen: VariableEarnings = {
-            holidayPay: round2(payrollBase.holidayPay || 0),
-            nightDiffPay: round2(payrollBase.nightDiffPay || 0),
-            restDayPay: round2(payrollBase.restDayPremiumPay || 0),
-            overtimeRegular: round2(payrollBase.overtimeRegular || 0),
-            overtimeRestDay: round2(payrollBase.overtimeRestDay || 0),
-            overtimeRestDayExcess: round2(
-              payrollBase.overtimeRestDayExcess || 0,
-            ),
-            overtimeSpecialHoliday: round2(
-              payrollBase.overtimeSpecialHoliday || 0,
-            ),
-            overtimeSpecialHolidayExcess: round2(
-              payrollBase.overtimeSpecialHolidayExcess || 0,
-            ),
-            overtimeLegalHoliday: round2(
-              payrollBase.overtimeLegalHoliday || 0,
-            ),
-            overtimeLegalHolidayExcess: round2(
-              payrollBase.overtimeLegalHolidayExcess || 0,
-            ),
-          };
-          // Attendance-driven premiums (rest day, OT) always refresh from payroll;
-          // preserve manual edits to holiday / night diff only.
-          const nextE: VariableEarnings = {
-            holidayPay: round2(variableEarningsOverride.holidayPay || 0),
-            nightDiffPay: round2(variableEarningsOverride.nightDiffPay || 0),
-            restDayPay: atOpen.restDayPay,
-            overtimeRegular: atOpen.overtimeRegular,
-            overtimeRestDay: atOpen.overtimeRestDay,
-            overtimeRestDayExcess: atOpen.overtimeRestDayExcess,
-            overtimeSpecialHoliday: atOpen.overtimeSpecialHoliday,
-            overtimeSpecialHolidayExcess: atOpen.overtimeSpecialHolidayExcess,
-            overtimeLegalHoliday: atOpen.overtimeLegalHoliday,
-            overtimeLegalHolidayExcess: atOpen.overtimeLegalHolidayExcess,
-          };
-          const grossAndBasic = recomputeGrossAndBasicFromVariableEarnings(
-            {
-              grossPay: canonical.grossPay,
-              basicPay: canonical.basicPay,
-            },
-            atOpen,
-            nextE,
-            sumTaxableIncentiveAmounts(canonical.incentives),
-            sumTaxableIncentiveAmounts(canonical.incentives),
-          );
-          deductionsToPersist =
-            await recalcWithholdingTaxAfterVariableEarningsEdit(ctx, {
-              payslip: {
-                payrollRunId: args.payrollRunId,
-                periodStart: cutoffStart,
-                periodEnd: cutoffEnd,
-              },
-              employeeId,
-              organizationId: payrollRun.organizationId,
-              newDeductions: canonical.deductions,
-              recalculatedGross: grossAndBasic.grossPay,
-              atOpen,
-              nextE,
-            });
-          const netTotals = recomputeNetFromEarningsAndLines(
-            grossAndBasic.grossPay,
-            canonical.nonTaxableAllowance ?? 0,
-            canonical.incentives,
-            deductionsToPersist,
-          );
-          grossPayToPersist = grossAndBasic.grossPay;
-          basicPayToPersist = round2(grossAndBasic.basicPay);
-          netPayToPersist = netTotals.netPay;
-          holidayPayToPersist =
-            nextE.holidayPay > 0 ? round2(nextE.holidayPay) : undefined;
-          const holidaySplit = splitHolidayPayForPersistence({
-            payslipLike: variableEarningsOverride,
-            nextHolidayPay: nextE.holidayPay,
-            computedRegularHolidayPay: payrollBase.regularHolidayPay,
-            computedSpecialHolidayPay: payrollBase.specialHolidayPay,
-          });
-          regularHolidayPayToPersist = holidaySplit.regularHolidayPay;
-          specialHolidayPayToPersist = holidaySplit.specialHolidayPay;
-          holidayPayTypeToPersist = holidaySplit.holidayPayType;
-          nightDiffPayToPersist =
-            nextE.nightDiffPay > 0 ? round2(nextE.nightDiffPay) : undefined;
-          restDayPayToPersist =
-            nextE.restDayPay > 0 ? round2(nextE.restDayPay) : undefined;
-          overtimeRegularToPersist =
-            nextE.overtimeRegular > 0
-              ? round2(nextE.overtimeRegular)
-              : undefined;
-          overtimeRestDayToPersist =
-            nextE.overtimeRestDay > 0
-              ? round2(nextE.overtimeRestDay)
-              : undefined;
-          overtimeRestDayExcessToPersist =
-            nextE.overtimeRestDayExcess > 0
-              ? round2(nextE.overtimeRestDayExcess)
-              : undefined;
-          overtimeSpecialHolidayToPersist =
-            nextE.overtimeSpecialHoliday > 0
-              ? round2(nextE.overtimeSpecialHoliday)
-              : undefined;
-          overtimeSpecialHolidayExcessToPersist =
-            nextE.overtimeSpecialHolidayExcess > 0
-              ? round2(nextE.overtimeSpecialHolidayExcess)
-              : undefined;
-          overtimeLegalHolidayToPersist =
-            nextE.overtimeLegalHoliday > 0
-              ? round2(nextE.overtimeLegalHoliday)
-              : undefined;
-          overtimeLegalHolidayExcessToPersist =
-            nextE.overtimeLegalHolidayExcess > 0
-              ? round2(nextE.overtimeLegalHolidayExcess)
-              : undefined;
-        }
+        const generatedPayslip = await applyPayslipOverrideToGeneratedPayslip(
+          ctx,
+          {
+            payrollRunId: args.payrollRunId,
+            organizationId: payrollRun.organizationId,
+            employeeId,
+            cutoffStart,
+            cutoffEnd,
+            payrollBase,
+            canonical,
+            override: payslipOverridesByEmployee.get(String(employeeId)),
+          },
+        );
 
         await ctx.db.insert(
           "payslips",
@@ -3459,40 +3597,45 @@ export const updatePayrollRun = mutation({
             period,
             periodStart: cutoffStart,
             periodEnd: cutoffEnd,
-            grossPay: grossPayToPersist,
-            basicPay: basicPayToPersist,
-            deductions: deductionsToPersist,
+            grossPay: generatedPayslip.grossPay,
+            basicPay: generatedPayslip.basicPay,
+            deductions: generatedPayslip.deductions,
             incentives:
-              canonical.incentives.length > 0 ? canonical.incentives : undefined,
-            nonTaxableAllowance: canonical.nonTaxableAllowance,
-            netPay: netPayToPersist,
+              generatedPayslip.incentives.length > 0
+                ? generatedPayslip.incentives
+                : undefined,
+            nonTaxableAllowance: generatedPayslip.nonTaxableAllowance,
+            netPay: generatedPayslip.netPay,
             daysWorked: payrollBase.daysWorked,
             absences: payrollBase.absences,
             lateHours: payrollBase.lateHours,
             undertimeHours: payrollBase.undertimeHours,
             overtimeHours: payrollBase.overtimeHours,
-            holidayPay: holidayPayToPersist,
-            regularHolidayPay: regularHolidayPayToPersist,
-            specialHolidayPay: specialHolidayPayToPersist,
-            holidayPayType: holidayPayTypeToPersist,
-            nightDiffPay: nightDiffPayToPersist,
+            holidayPay: generatedPayslip.holidayPay,
+            regularHolidayPay: generatedPayslip.regularHolidayPay,
+            specialHolidayPay: generatedPayslip.specialHolidayPay,
+            holidayPayType: generatedPayslip.holidayPayType,
+            nightDiffPay: generatedPayslip.nightDiffPay,
             nightDiffBreakdown: payrollBase.nightDiffBreakdown,
-            restDayPay: restDayPayToPersist,
-            overtimeRegular: overtimeRegularToPersist,
-            overtimeRestDay: overtimeRestDayToPersist,
-            overtimeRestDayExcess: overtimeRestDayExcessToPersist,
-            overtimeSpecialHoliday: overtimeSpecialHolidayToPersist,
+            restDayPay: generatedPayslip.restDayPay,
+            overtimeRegular: generatedPayslip.overtimeRegular,
+            overtimeRestDay: generatedPayslip.overtimeRestDay,
+            overtimeRestDayExcess: generatedPayslip.overtimeRestDayExcess,
+            overtimeSpecialHoliday: generatedPayslip.overtimeSpecialHoliday,
             overtimeSpecialHolidayExcess:
-              overtimeSpecialHolidayExcessToPersist,
-            overtimeLegalHoliday: overtimeLegalHolidayToPersist,
-            overtimeLegalHolidayExcess: overtimeLegalHolidayExcessToPersist,
+              generatedPayslip.overtimeSpecialHolidayExcess,
+            overtimeLegalHoliday: generatedPayslip.overtimeLegalHoliday,
+            overtimeLegalHolidayExcess:
+              generatedPayslip.overtimeLegalHolidayExcess,
             pendingDeductions: canonical.pendingDeductions,
             noWorkNoPayDays:
               (payrollBase.noWorkNoPayDays ?? 0) > 0
                 ? payrollBase.noWorkNoPayDays
                 : undefined,
             hasWorkedAtLeastOneDay: canonical.hasWorkedAtLeastOneDay,
-            employerContributions: canonical.employerContributions,
+            employerContributions:
+              generatedPayslip.employerContributions ??
+              canonical.employerContributions,
             editHistory: preservedEditHistoryByEmployee.get(String(employeeId)),
             concernSummary: {
               messageCount: 0,
@@ -3516,7 +3659,17 @@ export const updatePayrollRun = mutation({
 
     await persistPayrollRunSummarySnapshot(ctx, args.payrollRunId);
 
-    return { success: true };
+    return {
+      success: true,
+      regenerationSummary: {
+        mode: preserveExistingPayslipEdits ? "preserve_edits" : "clean_rebuild",
+        employeesProcessed: regeneratedEmployeeCount,
+        manualOverridesPreserved: preserveExistingPayslipEdits
+          ? countPayslipOverrideFields(mergedPayslipOverrides)
+          : 0,
+        staleReasons: staleReasonsBeforeRegenerate,
+      },
+    };
   },
 });
 
@@ -3621,6 +3774,7 @@ export const updatePayrollRunStatus = mutation({
 
     if (args.status === "finalized" && payrollRun.status === "draft") {
       await assertDraftDependenciesFreshForFinalize(ctx, payrollRun);
+      assertDraftOverrideReviewCompleteForFinalize(payrollRun);
     }
 
     // Remove cost items if archiving after finalize/paid
@@ -3662,6 +3816,57 @@ export const updatePayrollRunStatus = mutation({
     }
 
     return { success: true };
+  },
+});
+
+export const markPayrollRunOverrideReviewComplete = mutation({
+  args: {
+    payrollRunId: v.id("payrollRuns"),
+  },
+  handler: async (ctx, args) => {
+    const payrollRun = await ctx.db.get(args.payrollRunId);
+    if (!payrollRun) throw new Error("Payroll run not found");
+
+    const userRecord = await checkAuth(ctx, payrollRun.organizationId);
+    const allowedRoles = ["owner", "admin", "hr", "accounting"];
+    if (!allowedRoles.includes(userRecord.role)) {
+      throw new Error("Not authorized to review payroll overrides");
+    }
+    if (payrollRun.status !== "draft") {
+      throw new Error(
+        "Only draft payroll runs can have override review marked complete.",
+      );
+    }
+
+    const cfg = decryptDraftConfigFromDb(payrollRun.draftConfig) ?? {
+      employeeIds: [],
+    };
+    const currentReview = cfg.overrideReview;
+    if (currentReview?.status !== "needs_review") {
+      return { success: true, reviewed: false };
+    }
+
+    await ctx.db.patch(args.payrollRunId, {
+      draftConfig: encryptDraftConfigForDb(
+        buildDraftPayrollConfig({
+          employeeIds: cfg.employeeIds ?? [],
+          manualDeductions: cfg.manualDeductions,
+          incentives: cfg.incentives,
+          governmentDeductionSettings: cfg.governmentDeductionSettings,
+          nonTaxableAllowanceOverrides: cfg.nonTaxableAllowanceOverrides,
+          payslipOverrides: cfg.payslipOverrides,
+          overrideReview: {
+            ...currentReview,
+            status: "reviewed",
+            reviewedAt: Date.now(),
+            reviewedBy: userRecord._id,
+          },
+        }),
+      ),
+      updatedAt: Date.now(),
+    });
+
+    return { success: true, reviewed: true };
   },
 });
 
@@ -4240,15 +4445,19 @@ export const getPayrollRuns = query({
             cutoffEnd: dec.cutoffEnd,
             employeeIds,
           });
-          dec.isDraftOutdated = hasDraftDependenciesChanged(
+          const draftOutdatedReasons = getDraftDependencyChangeReasons(
             run.draftDependencySnapshot as Partial<DraftDependencySnapshot> | undefined,
             currentSnapshot,
           );
+          dec.draftOutdatedReasons = draftOutdatedReasons;
+          dec.isDraftOutdated = draftOutdatedReasons.length > 0;
         } else {
           dec.isDraftOutdated = false;
+          dec.draftOutdatedReasons = [];
         }
       } else {
         dec.isDraftOutdated = false;
+        dec.draftOutdatedReasons = [];
       }
       out.push(dec);
     }
@@ -5335,6 +5544,7 @@ export const getPayrollFinalizePayslipRecipients = query({
     } else {
       try {
         await assertDraftDependenciesFreshForFinalize(ctx, payrollRun);
+        assertDraftOverrideReviewCompleteForFinalize(payrollRun);
         canFinalize = true;
       } catch (error) {
         finalizeBlockedReason =
@@ -5611,9 +5821,7 @@ export const getPayslip = query({
     );
     if (!userRecord) return null;
 
-    if (!canViewAllPayslips(userRecord) && userRecord.employeeId !== payslip.employeeId) {
-      throw new Error("Not authorized");
-    }
+    await assertPayslipVisibleToViewer(ctx, userRecord, payslip);
 
     let employee = getPayslipEmployeeFromSnapshot(payslip);
     if (!employee) {
@@ -5722,6 +5930,63 @@ async function recalcWithholdingTaxAfterVariableEarningsEdit(
       grossPay: args.recalculatedGross,
     },
   );
+}
+
+async function syncDraftPayslipOverrides(ctx: any, args: {
+  payrollRun: any;
+  payslip: any;
+  deductionChange: unknown | null;
+  incentiveChange: unknown | null;
+  nonTaxableAllowanceChanged: boolean;
+  variableEarningsChanged: boolean;
+  nextDeductions: PayrollLine[];
+  nextIncentives: PayrollLine[];
+  nextNonTaxableAllowance: number;
+  nextVariableEarnings?: VariableEarnings;
+}) {
+  if (args.payrollRun?.status !== "draft") return;
+  const cfg = decryptDraftConfigFromDb(args.payrollRun.draftConfig) ?? {
+    employeeIds: [],
+  };
+  const nextOverride: DraftPayslipOverride = {
+    employeeId: args.payslip.employeeId,
+  };
+
+  if (args.deductionChange) {
+    nextOverride.deductions = buildDeductionOverrideLinesFromEdit(
+      args.payslip.deductions,
+      args.nextDeductions,
+    );
+  }
+  if (args.incentiveChange) {
+    nextOverride.incentives = args.nextIncentives.map(normalizePayrollLine);
+  }
+  if (args.nonTaxableAllowanceChanged) {
+    nextOverride.nonTaxableAllowance = round2(args.nextNonTaxableAllowance);
+  }
+  if (args.variableEarningsChanged && args.nextVariableEarnings) {
+    nextOverride.variableEarnings = args.nextVariableEarnings;
+  }
+
+  const payslipOverrides = mergeDraftPayslipOverride(
+    cfg.payslipOverrides,
+    nextOverride,
+  );
+
+  await ctx.db.patch(args.payrollRun._id, {
+    draftConfig: encryptDraftConfigForDb(
+      buildDraftPayrollConfig({
+        employeeIds: cfg.employeeIds ?? [],
+        manualDeductions: cfg.manualDeductions,
+        incentives: cfg.incentives,
+        governmentDeductionSettings: cfg.governmentDeductionSettings,
+        nonTaxableAllowanceOverrides: cfg.nonTaxableAllowanceOverrides,
+        payslipOverrides,
+        overrideReview: cfg.overrideReview,
+      }),
+    ),
+    updatedAt: Date.now(),
+  });
 }
 
 // Update payslip
@@ -5946,6 +6211,8 @@ export const updatePayslip = mutation({
     let recalculatedNet: number;
     const variableEarningsPatch: Record<string, unknown> = {};
     let finalDeductions: PayslipLine[] = newDeductions;
+    let nextVariableEarningsForOverride: VariableEarnings | undefined;
+    let variableEarningsChangedForOverride = false;
     if (args.variableEarnings) {
       const atOpen = getVariableEarningsFromPayslip(
         payslip as unknown as Record<string, unknown>,
@@ -5963,6 +6230,9 @@ export const updatePayslip = mutation({
         overtimeLegalHoliday: round2(ve.overtimeLegalHoliday),
         overtimeLegalHolidayExcess: round2(ve.overtimeLegalHolidayExcess),
       };
+      nextVariableEarningsForOverride = nextE;
+      variableEarningsChangedForOverride =
+        JSON.stringify(atOpen) !== JSON.stringify(nextE);
       const gbb = recomputeGrossAndBasicFromVariableEarnings(
         {
           grossPay: Number(payslip.grossPay ?? 0),
@@ -5973,7 +6243,7 @@ export const updatePayslip = mutation({
         t0,
         t1,
       );
-      if (JSON.stringify(atOpen) !== JSON.stringify(nextE)) {
+      if (variableEarningsChangedForOverride) {
         finalDeductions = (await recalcWithholdingTaxAfterVariableEarningsEdit(
           ctx,
           {
@@ -6032,38 +6302,8 @@ export const updatePayslip = mutation({
       recalculatedNet = recalculatedTotals.netPay;
     }
 
-    const editedEmployeeSSSAmount = getDeductionAmountByNames(finalDeductions, [
-      "sss",
-    ]);
-    const editedEmployeePhilhealthAmount = getDeductionAmountByNames(
-      finalDeductions,
-      ["philhealth"],
-    );
-    const editedEmployeePagibigAmount = getDeductionAmountByNames(
-      finalDeductions,
-      ["pag-ibig", "pagibig"],
-    );
-    const updatedEmployerContributions: {
-      sss?: number;
-      philhealth?: number;
-      pagibig?: number;
-    } = {};
-    if (editedEmployeeSSSAmount > 0) {
-      updatedEmployerContributions.sss = round2(
-        getSSSContributionByEmployeeDeduction(editedEmployeeSSSAmount)
-          .employerShare,
-      );
-    }
-    if (editedEmployeePhilhealthAmount > 0) {
-      updatedEmployerContributions.philhealth = round2(
-        editedEmployeePhilhealthAmount,
-      );
-    }
-    if (editedEmployeePagibigAmount > 0) {
-      updatedEmployerContributions.pagibig = round2(
-        editedEmployeePagibigAmount,
-      );
-    }
+    const updatedEmployerContributions =
+      getEmployerContributionsFromDeductions(finalDeductions);
 
     // Track changes for edit history (lightweight summaries — line-by-line diffs were O(n²) and slow)
     const changes: EditChange[] = [];
@@ -6082,7 +6322,9 @@ export const updatePayslip = mutation({
 
     // Compare non-taxable allowance
     const previousNonTaxableAllowance = round2(payslip.nonTaxableAllowance || 0);
-    if (previousNonTaxableAllowance !== newNonTaxableAllowance) {
+    const nonTaxableAllowanceChanged =
+      previousNonTaxableAllowance !== newNonTaxableAllowance;
+    if (nonTaxableAllowanceChanged) {
       changes.push({
         field: "nonTaxableAllowance",
         oldValue: previousNonTaxableAllowance,
@@ -6113,6 +6355,8 @@ export const updatePayslip = mutation({
       const atOpenKey = JSON.stringify(atOpen);
       const nextKey = JSON.stringify(nextE);
       if (atOpenKey !== nextKey) {
+        variableEarningsChangedForOverride = true;
+        nextVariableEarningsForOverride = nextE;
         changes.push({
           field: "variableEarnings",
           oldValue: atOpen,
@@ -6175,14 +6419,26 @@ export const updatePayslip = mutation({
         ...(Object.keys(variableEarningsPatch).length > 0
           ? variableEarningsPatch
           : {}),
-        employerContributions:
-          Object.keys(updatedEmployerContributions).length > 0
-            ? updatedEmployerContributions
-            : undefined,
+        employerContributions: updatedEmployerContributions,
         editHistory:
           updatedEditHistory.length > 0 ? updatedEditHistory : undefined,
-      }    ) as any,
+      }) as any,
     );
+
+    if (changes.length > 0 && payrollRun?.status === "draft") {
+      await syncDraftPayslipOverrides(ctx, {
+        payrollRun,
+        payslip,
+        deductionChange,
+        incentiveChange,
+        nonTaxableAllowanceChanged,
+        variableEarningsChanged: variableEarningsChangedForOverride,
+        nextDeductions: finalDeductions,
+        nextIncentives: newIncentives,
+        nextNonTaxableAllowance: newNonTaxableAllowance,
+        nextVariableEarnings: nextVariableEarningsForOverride,
+      });
+    }
 
     if (changes.length > 0 && isFinalizedOrPaid) {
       const reason = (args.correctionReason ?? "").trim();
@@ -6336,9 +6592,7 @@ export const getPayslipMessages = query({
     );
     if (!userRecord) return [];
 
-    if (!canViewAllPayslips(userRecord) && userRecord.employeeId !== payslip.employeeId) {
-      throw new Error("Not authorized");
-    }
+    await assertPayslipVisibleToViewer(ctx, userRecord, payslip);
 
     // Get all messages linked to this payslip
     const messages = await (ctx.db.query("messages") as any)

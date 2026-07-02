@@ -615,6 +615,71 @@ export default defineSchema({
               }),
             ),
           ),
+          nonTaxableAllowanceOverrides: v.optional(
+            v.array(
+              v.object({
+                employeeId: v.id("employees"),
+                amount: v.number(),
+              }),
+            ),
+          ),
+          payslipOverrides: v.optional(
+            v.array(
+              v.object({
+                employeeId: v.id("employees"),
+                deductions: v.optional(
+                  v.array(
+                    v.object({
+                      name: v.string(),
+                      amount: v.number(),
+                      type: v.string(),
+                    }),
+                  ),
+                ),
+                incentives: v.optional(
+                  v.array(
+                    v.object({
+                      name: v.string(),
+                      amount: v.number(),
+                      type: v.string(),
+                      taxable: v.optional(v.boolean()),
+                    }),
+                  ),
+                ),
+                nonTaxableAllowance: v.optional(v.number()),
+                variableEarnings: v.optional(
+                  v.object({
+                    holidayPay: v.number(),
+                    nightDiffPay: v.number(),
+                    restDayPay: v.number(),
+                    overtimeRegular: v.number(),
+                    overtimeRestDay: v.number(),
+                    overtimeRestDayExcess: v.number(),
+                    overtimeSpecialHoliday: v.number(),
+                    overtimeSpecialHolidayExcess: v.number(),
+                    overtimeLegalHoliday: v.number(),
+                    overtimeLegalHolidayExcess: v.number(),
+                  }),
+                ),
+              }),
+            ),
+          ),
+          overrideReview: v.optional(
+            v.object({
+              status: v.union(v.literal("needs_review"), v.literal("reviewed")),
+              generatedAt: v.number(),
+              reviewedAt: v.optional(v.number()),
+              reviewedBy: v.optional(v.id("users")),
+              employees: v.array(
+                v.object({
+                  employeeId: v.id("employees"),
+                  fields: v.array(v.string()),
+                  deductionOverrideCount: v.optional(v.number()),
+                  incentiveOverrideCount: v.optional(v.number()),
+                }),
+              ),
+            }),
+          ),
         }),
       ),
     ),
@@ -643,6 +708,8 @@ export default defineSchema({
         /** Org row updatedAt (pay cadence, etc.). */
         organization: v.optional(v.number()),
         /** Row counts so deletes are detected (max timestamp alone can go down). */
+        attendanceRowCount: v.optional(v.number()),
+        leaveRequestRowCount: v.optional(v.number()),
         holidayRowCount: v.optional(v.number()),
         shiftRowCount: v.optional(v.number()),
         leaveTypeRowCount: v.optional(v.number()),

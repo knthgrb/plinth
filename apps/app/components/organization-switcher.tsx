@@ -7,7 +7,10 @@ import { api } from "@/convex/_generated/api";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -15,6 +18,7 @@ import { Building2, Plus, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CreateOrganizationDialog } from "@/components/create-organization-dialog";
 import { cn } from "@/utils/utils";
+import { hasAlumniOrganizationAccess } from "@/utils/org-membership-lifecycle";
 
 export type OrganizationSwitcherProps = {
   disabled?: boolean;
@@ -59,6 +63,42 @@ export function OrganizationSwitcher({ disabled = false }: OrganizationSwitcherP
       .join("")
       .toUpperCase()
       .slice(0, 2) || "O";
+  const activeOrganizations = organizations.filter(
+    (org) => !hasAlumniOrganizationAccess(org.accessStatus),
+  );
+  const pastOrganizations = organizations.filter((org) =>
+    hasAlumniOrganizationAccess(org.accessStatus),
+  );
+  const renderOrganizationItem = (org: (typeof organizations)[number]) => {
+    const initials =
+      org.name
+        ?.split(" ")
+        .map((n: string) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2) || "O";
+    const isPast = hasAlumniOrganizationAccess(org.accessStatus);
+    return (
+      <SelectItem
+        key={org._id}
+        value={org._id}
+        textValue={org.name}
+        hideItemText={true}
+      >
+        <div className="flex items-center gap-2.5 w-full">
+          <div className="flex h-6 w-6 items-center justify-center rounded bg-gray-100 text-xs font-medium text-gray-600 shrink-0">
+            {initials}
+          </div>
+          <span className="text-sm font-semibold truncate">{org.name}</span>
+          {isPast && (
+            <span className="ml-auto rounded border border-orange-200 bg-orange-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-orange-700">
+              Alumni
+            </span>
+          )}
+        </div>
+      </SelectItem>
+    );
+  };
 
   if (isLoading) {
     return (
@@ -140,30 +180,23 @@ export function OrganizationSwitcher({ disabled = false }: OrganizationSwitcherP
             />
           </SelectTrigger>
           <SelectContent>
-            {organizations.map((org) => {
-              const initials =
-                org.name
-                  ?.split(" ")
-                  .map((n: string) => n[0])
-                  .join("")
-                  .toUpperCase()
-                  .slice(0, 2) || "O";
-              return (
-                <SelectItem
-                  key={org._id}
-                  value={org._id}
-                  textValue={org.name}
-                  hideItemText={true}
-                >
-                  <div className="flex items-center gap-2.5 w-full">
-                    <div className="flex h-6 w-6 items-center justify-center rounded bg-gray-100 text-xs font-medium text-gray-600 shrink-0">
-                      {initials}
-                    </div>
-                    <span className="text-sm font-semibold">{org.name}</span>
-                  </div>
-                </SelectItem>
-              );
-            })}
+            {activeOrganizations.length > 0 && (
+              <SelectGroup>
+                <SelectLabel className="px-2 py-1 text-[11px] uppercase tracking-wide text-gray-500">
+                  Active organizations
+                </SelectLabel>
+                {activeOrganizations.map(renderOrganizationItem)}
+              </SelectGroup>
+            )}
+            {pastOrganizations.length > 0 && (
+              <SelectGroup>
+                {activeOrganizations.length > 0 && <SelectSeparator />}
+                <SelectLabel className="px-2 py-1 text-[11px] uppercase tracking-wide text-gray-500">
+                  Past organizations
+                </SelectLabel>
+                {pastOrganizations.map(renderOrganizationItem)}
+              </SelectGroup>
+            )}
             {canCreateOrganization && (
               <div className="border-t pt-1 mt-1">
                 <Button

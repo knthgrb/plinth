@@ -20,6 +20,17 @@ describe("document visibility scopes", () => {
     expect(documentsSource).toContain("canViewDocument");
     expect(documentsSource).toContain("doc.visibilityScope ??");
     expect(documentsSource).toContain("canUseAlumniPayslipAccess");
+    expect(documentsSource).toContain("assertDocumentWriteAccess");
+    expect(
+      documentsSource.match(/assertDocumentWriteAccess\(userRecord\)/g) ?? [],
+    ).toHaveLength(3);
+    expect(
+      documentsSource.indexOf(
+        "!canUseFullOrganizationAccess(userRecord.accessStatus)",
+      ),
+    ).toBeLessThan(
+      documentsSource.indexOf("canViewAllDocumentsInOrg(userRecord.role)"),
+    );
   });
 
   it("lets uploaded documents choose a visibility scope", () => {
@@ -31,5 +42,6 @@ describe("document visibility scopes", () => {
     expect(pageSource).toContain("All employees");
     expect(pageSource).toContain("Payroll-visible");
     expect(pageSource).toContain("Alumni-visible");
+    expect(pageSource).toContain("canWriteDocuments");
   });
 });

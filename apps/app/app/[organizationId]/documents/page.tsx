@@ -54,6 +54,7 @@ import { generateUploadUrl, getFileUrl } from "@/actions/files";
 import { createDocument } from "@/actions/documents";
 import { useToast } from "@/components/ui/use-toast";
 import { isFileOnlyDocument, openInNewTab } from "@/lib/document-utils";
+import { canUseFullOrganizationAccess } from "@/utils/org-membership-lifecycle";
 
 type DocumentVisibilityScope =
   | "admins_only"
@@ -63,8 +64,11 @@ type DocumentVisibilityScope =
 
 export default function DocumentsPage() {
   const router = useRouter();
-  const { effectiveOrganizationId } = useOrganization();
+  const { effectiveOrganizationId, currentOrganization } = useOrganization();
   const { toast } = useToast();
+  const canWriteDocuments =
+    !!currentOrganization &&
+    canUseFullOrganizationAccess(currentOrganization.accessStatus);
 
   const documents = useQuery(
     (api as any).documents.getDocuments,
@@ -389,6 +393,7 @@ export default function DocumentsPage() {
   };
 
   const handleEdit = (doc: any) => {
+    if (!canWriteDocuments) return;
     if (isFileOnlyDocument(doc)) return;
     router.push(
       getOrganizationPath(effectiveOrganizationId, `/documents/${doc._id}/edit`)
@@ -396,6 +401,7 @@ export default function DocumentsPage() {
   };
 
   const handleDelete = async (documentId: string) => {
+    if (!canWriteDocuments) return;
     if (!confirm("Are you sure you want to delete this document?")) return;
 
     try {
@@ -415,6 +421,7 @@ export default function DocumentsPage() {
   };
 
   const handleNew = () => {
+    if (!canWriteDocuments) return;
     router.push(getOrganizationPath(effectiveOrganizationId, "/documents/new"));
   };
 
@@ -645,19 +652,21 @@ export default function DocumentsPage() {
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Documents</h1>
           </div>
-          <div className="flex gap-2">
-            <Button onClick={handleNew}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create Document
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setIsUploadDialogOpen(true)}
-            >
-              <Upload className="mr-2 h-4 w-4" />
-              Upload Files
-            </Button>
-          </div>
+          {canWriteDocuments && (
+            <div className="flex gap-2">
+              <Button onClick={handleNew}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Document
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => setIsUploadDialogOpen(true)}
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                Upload Files
+              </Button>
+            </div>
+          )}
         </div>
 
         <Card className="mb-4">
@@ -828,7 +837,7 @@ export default function DocumentsPage() {
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
-                            {!fileOnly && (
+                            {canWriteDocuments && !fileOnly && (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -841,17 +850,19 @@ export default function DocumentsPage() {
                                 <Edit className="h-4 w-4" />
                               </Button>
                             )}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDelete(doc._id);
-                              }}
-                              title="Delete"
-                            >
-                              <Trash2 className="h-4 w-4 text-red-600" />
-                            </Button>
+                            {canWriteDocuments && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDelete(doc._id);
+                                }}
+                                title="Delete"
+                              >
+                                <Trash2 className="h-4 w-4 text-red-600" />
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -1410,19 +1421,21 @@ export default function DocumentsPage() {
                   Open in New Tab
                 </Button>
               )}
-              {previewDocument && !isFileOnly(previewDocument) && (
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    if (previewDocument) {
-                      handleEdit(previewDocument);
-                    }
-                  }}
-                >
-                  <Edit className="h-4 w-4 mr-2" />
-                  Edit Document
-                </Button>
-              )}
+              {canWriteDocuments &&
+                previewDocument &&
+                !isFileOnly(previewDocument) && (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (previewDocument) {
+                        handleEdit(previewDocument);
+                      }
+                    }}
+                  >
+                    <Edit className="h-4 w-4 mr-2" />
+                    Edit Document
+                  </Button>
+                )}
               <Button
                 onClick={() => {
                   setPreviewDocument(null);

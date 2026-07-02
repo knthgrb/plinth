@@ -9,6 +9,7 @@ import { MainLoader } from "@/components/main-loader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Building2, LogOut } from "lucide-react";
+import { selectPreferredOrganizationForEntry } from "@/utils/org-membership-lifecycle";
 
 function getDefaultRouteForRole(
   role: string | null | undefined,
@@ -59,8 +60,10 @@ export default function AppHomePage() {
     if (organizations === undefined) return;
 
     if (organizations && organizations.length > 0) {
-      // Use last active organization (first in list) and its role for redirect
-      const lastActiveOrg = organizations[0];
+      const lastActiveOrg = selectPreferredOrganizationForEntry(
+        organizations as any[],
+      );
+      if (!lastActiveOrg) return;
       const path = getDefaultRouteForRole(
         (lastActiveOrg as any).role,
         (lastActiveOrg as any).accessStatus,

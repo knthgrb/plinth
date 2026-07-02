@@ -42,6 +42,29 @@ export function canUseAlumniPayslipAccess(
   return normalized === "active" || normalized === "alumni";
 }
 
+export function hasActiveOrganizationAccess(
+  status: string | null | undefined,
+): boolean {
+  return normalizeOrgMembershipAccessStatus(status) === "active";
+}
+
+export function hasAlumniOrganizationAccess(
+  status: string | null | undefined,
+): boolean {
+  return normalizeOrgMembershipAccessStatus(status) === "alumni";
+}
+
+export function selectPreferredOrganizationForEntry<
+  T extends { accessStatus?: string | null },
+>(organizations: T[] | null | undefined): T | null {
+  if (!organizations || organizations.length === 0) return null;
+  return (
+    organizations.find((org) => hasActiveOrganizationAccess(org.accessStatus)) ??
+    organizations.find((org) => hasAlumniOrganizationAccess(org.accessStatus)) ??
+    organizations[0]
+  );
+}
+
 export function deriveAccessStatusForEmploymentStatus(
   status: EmploymentLifecycleStatus,
 ): OrgMembershipAccessStatus {

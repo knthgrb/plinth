@@ -79,9 +79,18 @@ export function canAccessRoute(
   if (ROUTE_ACCESS[base] === undefined && segments.length >= 2) {
     base = "/" + segments[1];
   }
+  const relativeSegments =
+    ROUTE_ACCESS["/" + segments[0]] === undefined && segments.length >= 2
+      ? segments.slice(1)
+      : segments;
+  const isDocumentsIndex =
+    relativeSegments.length === 1 && relativeSegments[0] === "documents";
 
   if (!canUseFullOrganizationAccess(accessStatus)) {
-    return base === "/payslips" && canUseAlumniPayslipAccess(accessStatus);
+    return (
+      (base === "/payslips" || isDocumentsIndex) &&
+      canUseAlumniPayslipAccess(accessStatus)
+    );
   }
 
   // Admin and owner have full access to all routes

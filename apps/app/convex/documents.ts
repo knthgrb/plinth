@@ -118,6 +118,12 @@ function canViewPayrollScopedDocuments(role: string | undefined) {
   );
 }
 
+function assertDocumentWriteAccess(userRecord: any) {
+  if (!canUseFullOrganizationAccess(userRecord.accessStatus)) {
+    throw new Error("Document write access is not available for past organizations");
+  }
+}
+
 function idsInclude(ids: unknown[] | undefined, id: unknown) {
   return Array.isArray(ids) && ids.some((item) => String(item) === String(id));
 }
@@ -138,11 +144,18 @@ async function getUserEmployeeForDocumentAccess(ctx: any, userRecord: any) {
 }
 
 function canViewDocument(doc: any, userRecord: any, userEmployee: any) {
+  const scope = doc.visibilityScope ?? resolveDocumentVisibilityScope(doc);
+
+  if (!canUseFullOrganizationAccess(userRecord.accessStatus)) {
+    return (
+      scope === "alumni_visible" &&
+      canUseAlumniPayslipAccess(userRecord.accessStatus)
+    );
+  }
+
   if (canViewAllDocumentsInOrg(userRecord.role)) return true;
   if (String(doc.createdBy) === String(userRecord._id)) return true;
   if (idsInclude(doc.sharedWith, userRecord._id)) return true;
-
-  const scope = doc.visibilityScope ?? resolveDocumentVisibilityScope(doc);
 
   if (scope === "admins_only") {
     return canViewAdminScopedDocuments(userRecord.role);
@@ -298,6 +311,7 @@ export const createDocument = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
+    assertDocumentWriteAccess(userRecord);
 
     const now = Date.now();
     const documentId = await ctx.db.insert("documents", {
@@ -352,6 +366,7 @@ export const updateDocument = mutation({
     if (!document) throw new Error("Document not found");
 
     const userRecord = await checkAuth(ctx, document.organizationId);
+    assertDocumentWriteAccess(userRecord);
 
     const canMutate =
       canViewAllDocumentsInOrg(userRecord.role) ||
@@ -414,6 +429,7 @@ export const deleteDocument = mutation({
     if (!document) throw new Error("Document not found");
 
     const userRecord = await checkAuth(ctx, document.organizationId);
+    assertDocumentWriteAccess(userRecord);
 
     const canMutate =
       canViewAllDocumentsInOrg(userRecord.role) ||

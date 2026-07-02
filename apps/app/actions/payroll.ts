@@ -196,6 +196,22 @@ export async function updatePayrollRunStatus(
   }
 }
 
+export type MarkPayrollRunOverrideReviewResult =
+  | { ok: true; data: { success: true; reviewed: boolean } }
+  | { ok: false; error: string };
+
+export async function markPayrollRunOverrideReviewComplete(
+  payrollRunId: string,
+): Promise<MarkPayrollRunOverrideReviewResult> {
+  try {
+    const data =
+      await PayrollService.markPayrollRunOverrideReviewComplete(payrollRunId);
+    return { ok: true, data };
+  } catch (e: unknown) {
+    return { ok: false, error: getConvexUserFacingMessage(e) };
+  }
+}
+
 export async function sendFinalizedPayrollPayslipEmails(payrollRunId: string) {
   return PayrollService.sendFinalizedPayrollPayslipEmails(payrollRunId);
 }
