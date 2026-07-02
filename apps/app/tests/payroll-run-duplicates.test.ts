@@ -21,4 +21,15 @@ describe("payroll run duplicate period guard", () => {
       "A payroll run already exists for this cutoff period.",
     );
   });
+
+  it("does not run the duplicate guard when regenerating an unchanged draft run", () => {
+    const source = readSource("../convex/payroll.ts");
+
+    expect(source).toContain("const cutoffChanged =");
+    expect(source).toContain("nextCutoffStart !== payrollRun.cutoffStart");
+    expect(source).toContain("nextCutoffEnd !== payrollRun.cutoffEnd");
+    expect(source).toMatch(
+      /if\s*\(\s*cutoffChanged\s*\)\s*{\s*await assertNoDuplicatePayrollRunForPeriod/,
+    );
+  });
 });

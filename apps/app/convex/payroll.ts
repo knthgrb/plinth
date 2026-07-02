@@ -3405,13 +3405,18 @@ export const updatePayrollRun = mutation({
 
     const nextCutoffStart = args.cutoffStart ?? payrollRun.cutoffStart;
     const nextCutoffEnd = args.cutoffEnd ?? payrollRun.cutoffEnd;
-    await assertNoDuplicatePayrollRunForPeriod(ctx, {
-      organizationId: payrollRun.organizationId,
-      cutoffStart: nextCutoffStart,
-      cutoffEnd: nextCutoffEnd,
-      runType: payrollRun.runType ?? "regular",
-      excludePayrollRunId: args.payrollRunId,
-    });
+    const cutoffChanged =
+      nextCutoffStart !== payrollRun.cutoffStart ||
+      nextCutoffEnd !== payrollRun.cutoffEnd;
+    if (cutoffChanged) {
+      await assertNoDuplicatePayrollRunForPeriod(ctx, {
+        organizationId: payrollRun.organizationId,
+        cutoffStart: nextCutoffStart,
+        cutoffEnd: nextCutoffEnd,
+        runType: payrollRun.runType ?? "regular",
+        excludePayrollRunId: args.payrollRunId,
+      });
+    }
 
     let period = payrollRun.period;
     if (args.cutoffStart || args.cutoffEnd) {
