@@ -280,9 +280,75 @@ function buildRegenerationSummaryMessage(
           .join(", ")}.`
       : "";
   if (mode === "clean_rebuild") {
-    return `Recalculated ${employees} employee${employees === 1 ? "" : "s"} from payroll draft settings. Per-payslip manual overrides were discarded.${staleReasonText}`;
+    return `Recalculated ${employees} employee${employees === 1 ? "" : "s"} from the saved payroll run setup and ignored current per-payslip manual edits.${staleReasonText}`;
   }
   return `Recalculated ${employees} employee${employees === 1 ? "" : "s"} and reapplied ${manualOverrides} manual override${manualOverrides === 1 ? "" : "s"}. Review preserved overrides before finalizing.${staleReasonText}`;
+}
+
+function PayrollPageSkeleton() {
+  return (
+    <div className="p-8" aria-busy="true">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <div className="space-y-3">
+          <div className="h-8 w-36 rounded bg-gray-200 animate-pulse" />
+          <div className="h-4 w-72 max-w-full rounded bg-gray-200 animate-pulse" />
+        </div>
+        <div className="h-10 w-40 rounded-md bg-gray-200 animate-pulse" />
+      </div>
+
+      <div className="space-y-6">
+        <div className="flex gap-2">
+          <div className="h-10 w-32 rounded-md bg-gray-200 animate-pulse" />
+          <div className="h-10 w-28 rounded-md bg-gray-100 animate-pulse" />
+          <div className="h-10 w-36 rounded-md bg-gray-100 animate-pulse" />
+        </div>
+
+        <Card>
+          <CardHeader className="space-y-3">
+            <div className="h-6 w-32 rounded bg-gray-200 animate-pulse" />
+            <div className="h-4 w-64 max-w-full rounded bg-gray-100 animate-pulse" />
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="h-10 w-56 rounded-md bg-gray-100 animate-pulse" />
+              <div className="h-10 w-32 rounded-md bg-gray-100 animate-pulse" />
+            </div>
+
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Period</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Processed Date</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <TableRow key={`payroll-page-skeleton-${index}`}>
+                      <TableCell>
+                        <div className="h-4 w-40 max-w-full rounded bg-gray-200 animate-pulse" />
+                      </TableCell>
+                      <TableCell>
+                        <div className="h-6 w-20 rounded-full bg-gray-200 animate-pulse" />
+                      </TableCell>
+                      <TableCell>
+                        <div className="h-4 w-28 rounded bg-gray-200 animate-pulse" />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="ml-auto h-8 w-8 rounded bg-gray-200 animate-pulse" />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
 }
 
 type GovernmentDeductionSettings = {
@@ -1074,6 +1140,14 @@ export default function PayrollPageClient() {
         deductionsEnabled: payrollRun.deductionsEnabled,
         preserveExistingPayslipEdits: mode === "preserve_edits",
       });
+      if (!result.ok) {
+        toast({
+          title: "Regeneration failed",
+          description: result.error,
+          variant: "destructive",
+        });
+        return;
+      }
       const refreshedRuns = await loadPayrollRuns();
       const refreshedRun =
         refreshedRuns.find((run: any) => run._id === payrollRun._id) ??
@@ -1087,10 +1161,10 @@ export default function PayrollPageClient() {
       toast({
         title:
           mode === "clean_rebuild"
-            ? "Payroll run rebuilt from draft"
+            ? "Payslips regenerated without edits"
             : "Payslips regenerated",
         description: buildRegenerationSummaryMessage(
-          result?.regenerationSummary,
+          result.data.regenerationSummary,
           mode,
         ),
       });
@@ -2685,7 +2759,7 @@ export default function PayrollPageClient() {
         },
       );
 
-      await updatePayrollRun({
+      const updateResult = await updatePayrollRun({
         payrollRunId: editingPayrollRun._id,
         cutoffStart: dateStringToLocalMs(editCutoffStart),
         cutoffEnd: dateStringToLocalMs(editCutoffEnd),
@@ -2696,6 +2770,9 @@ export default function PayrollPageClient() {
           manualDeductions.length > 0 ? manualDeductions : undefined,
         incentives: incentives.length > 0 ? incentives : undefined,
       });
+      if (!updateResult.ok) {
+        throw new Error(updateResult.error);
+      }
 
       if (Object.keys(previewEditsByEmployeeId).length > 0) {
         const updatedPayslips = await getPayslipsByPayrollRun(
@@ -2758,14 +2835,7 @@ export default function PayrollPageClient() {
   if (effectiveOrganizationId && settings === undefined) {
     return (
       <MainLayout>
-        <div className="flex min-h-[60vh] items-center justify-center p-8">
-          <Card className="w-full max-w-sm">
-            <CardContent className="flex items-center justify-center gap-3 py-8 text-sm text-gray-600">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Loading payroll...
-            </CardContent>
-          </Card>
-        </div>
+        <PayrollPageSkeleton />
       </MainLayout>
     );
   }
@@ -3199,8 +3269,8 @@ export default function PayrollPageClient() {
                     <DialogHeader>
                       <DialogTitle>Regenerate Payslips</DialogTitle>
                       <DialogDescription>
-                        Choose whether to reapply explicit manual overrides or
-                        rebuild this payroll run from the draft settings only.
+                        Choose whether to keep manual payslip edits or ignore
+                        them while recalculating this draft.
                       </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
@@ -3233,11 +3303,14 @@ export default function PayrollPageClient() {
                         onClick={() => setRegenerateMode("clean_rebuild")}
                       >
                         <div className="font-medium">
-                          Rebuild from payroll draft only
+                          Ignore current payslip edits
                         </div>
                         <div className="mt-1 text-sm text-gray-600">
-                          Discard per-payslip manual overrides and regenerate
-                          using only the payroll run configuration.
+                          Recalculate from the saved payroll run setup,
+                          including selected employees, cutoff dates, deduction
+                          settings, and run-level additions/deductions. Manual
+                          edits made directly on existing payslips are not
+                          carried over.
                         </div>
                       </button>
                     </div>

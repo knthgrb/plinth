@@ -30,7 +30,23 @@ describe("payroll regeneration override handling", () => {
     expect(payrollSource).toContain("syncDraftPayslipOverrides");
     expect(payrollSource).toContain("applyPayslipOverrideToGeneratedPayslip");
     expect(payrollSource).toContain("payslipOverridesByEmployee");
+    expect(payrollSource).toContain("toDraftDeductionOverrideLine");
+    expect(payrollSource).toContain("toDraftIncentiveOverrideLine");
+    expect(payrollSource).not.toContain(
+      "override.deductions = (payslip.deductions ?? []).map(normalizePayrollLine)",
+    );
     expect(payrollSource).not.toContain("preservedDeductions = (p.deductions || []).filter");
+  });
+
+  it("clean rebuild discards all per-payslip override config", () => {
+    const payrollSource = readSource("../convex/payroll.ts");
+
+    expect(payrollSource).toMatch(
+      /preserveExistingPayslipEdits\s*&&\s*Array\.isArray\(previousDraftConfig\.nonTaxableAllowanceOverrides\)/,
+    );
+    expect(payrollSource).toMatch(
+      /preserveExistingPayslipEdits\s*&&\s*Array\.isArray\(previousDraftConfig\.payslipOverrides\)/,
+    );
   });
 
   it("shows regenerate summary details in the payroll UI", () => {
@@ -39,6 +55,17 @@ describe("payroll regeneration override handling", () => {
     expect(pageSource).toContain("regenerationSummary");
     expect(pageSource).toContain("manual override");
     expect(pageSource).toContain("stale reason");
+    expect(pageSource).toContain("Ignore current payslip edits");
+    expect(pageSource).not.toContain("Rebuild from payroll draft only");
+  });
+
+  it("returns handled errors from payroll run regeneration actions", () => {
+    const actionsSource = readSource("../actions/payroll.ts");
+    const pageSource = readSource("../app/[organizationId]/payroll/payroll-page-client.tsx");
+
+    expect(actionsSource).toContain("UpdatePayrollRunResult");
+    expect(actionsSource).toContain("getConvexUserFacingMessage");
+    expect(pageSource).toContain("if (!result.ok)");
   });
 
   it("requires review when manual overrides are auto reapplied", () => {

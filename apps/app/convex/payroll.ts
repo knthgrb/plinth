@@ -78,13 +78,16 @@ function buildDraftPayrollConfig(args: {
   /** Review state after explicit per-payslip edits are auto-reapplied by regeneration. */
   overrideReview?: DraftOverrideReview;
 }) {
+  const payslipOverrides = normalizeDraftPayslipOverridesForConfig(
+    args.payslipOverrides,
+  );
   return {
     employeeIds: args.employeeIds,
     manualDeductions: args.manualDeductions,
     incentives: args.incentives,
     governmentDeductionSettings: args.governmentDeductionSettings,
     nonTaxableAllowanceOverrides: args.nonTaxableAllowanceOverrides,
-    payslipOverrides: args.payslipOverrides,
+    payslipOverrides,
     overrideReview: args.overrideReview,
   };
 }
@@ -1666,6 +1669,79 @@ function normalizePayrollLine(line: PayrollLine): PayrollLine {
   };
 }
 
+function toDraftDeductionOverrideLine(line: PayrollLine): PayrollLine {
+  const normalized = normalizePayrollLine(line);
+  return {
+    name: normalized.name,
+    amount: normalized.amount,
+    type: normalized.type,
+  };
+}
+
+function toDraftIncentiveOverrideLine(line: PayrollLine): PayrollLine {
+  const normalized = normalizePayrollLine(line);
+  return {
+    name: normalized.name,
+    amount: normalized.amount,
+    type: normalized.type,
+    ...(normalized.taxable !== undefined
+      ? { taxable: normalized.taxable }
+      : {}),
+  };
+}
+
+function normalizeDraftVariableEarnings(
+  value: VariableEarnings | undefined,
+): VariableEarnings | undefined {
+  if (!value) return undefined;
+  return {
+    holidayPay: round2(Number(value.holidayPay || 0)),
+    nightDiffPay: round2(Number(value.nightDiffPay || 0)),
+    restDayPay: round2(Number(value.restDayPay || 0)),
+    overtimeRegular: round2(Number(value.overtimeRegular || 0)),
+    overtimeRestDay: round2(Number(value.overtimeRestDay || 0)),
+    overtimeRestDayExcess: round2(Number(value.overtimeRestDayExcess || 0)),
+    overtimeSpecialHoliday: round2(Number(value.overtimeSpecialHoliday || 0)),
+    overtimeSpecialHolidayExcess: round2(
+      Number(value.overtimeSpecialHolidayExcess || 0),
+    ),
+    overtimeLegalHoliday: round2(Number(value.overtimeLegalHoliday || 0)),
+    overtimeLegalHolidayExcess: round2(
+      Number(value.overtimeLegalHolidayExcess || 0),
+    ),
+  };
+}
+
+function normalizeDraftPayslipOverrideForConfig(
+  override: DraftPayslipOverride,
+): DraftPayslipOverride {
+  return {
+    employeeId: override.employeeId,
+    deductions:
+      override.deductions && override.deductions.length > 0
+        ? override.deductions.map(toDraftDeductionOverrideLine)
+        : undefined,
+    incentives:
+      override.incentives && override.incentives.length > 0
+        ? override.incentives.map(toDraftIncentiveOverrideLine)
+        : undefined,
+    nonTaxableAllowance:
+      override.nonTaxableAllowance !== undefined
+        ? round2(Number(override.nonTaxableAllowance || 0))
+        : undefined,
+    variableEarnings: normalizeDraftVariableEarnings(override.variableEarnings),
+  };
+}
+
+function normalizeDraftPayslipOverridesForConfig(
+  overrides: DraftPayslipOverride[] | undefined,
+): DraftPayslipOverride[] | undefined {
+  const normalized = (overrides ?? [])
+    .map(normalizeDraftPayslipOverrideForConfig)
+    .filter(hasDraftPayslipOverrideContent);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 function payrollLineKey(line: { name?: string; type?: string }): string {
   return `${(line.name || "").trim().toLowerCase()}|${(line.type || "").trim().toLowerCase()}`;
 }
@@ -1689,7 +1765,7 @@ function buildDeductionOverrideLinesFromEdit(
     const key = payrollLineKey(line);
     const old = previousByKey.get(key);
     if (!old || payrollLineAmountKey(old) !== payrollLineAmountKey(line)) {
-      overrides.push(line);
+      overrides.push(toDraftDeductionOverrideLine(line));
     }
   }
 
@@ -1868,10 +1944,14 @@ function buildLegacyPayslipOverrideFromEditHistory(
 
   const override: DraftPayslipOverride = { employeeId: payslip.employeeId };
   if (changedFields.has("deductions")) {
-    override.deductions = (payslip.deductions ?? []).map(normalizePayrollLine);
+    override.deductions = (payslip.deductions ?? []).map(
+      toDraftDeductionOverrideLine,
+    );
   }
   if (changedFields.has("additions")) {
-    override.incentives = (payslip.incentives ?? []).map(normalizePayrollLine);
+    override.incentives = (payslip.incentives ?? []).map(
+      toDraftIncentiveOverrideLine,
+    );
   }
   if (changedFields.has("nonTaxableAllowance")) {
     override.nonTaxableAllowance = round2(payslip.nonTaxableAllowance || 0);
@@ -3355,7 +3435,8 @@ export const updatePayrollRun = mutation({
     let mergedNonTaxableAllowanceOverrides: Array<{
       employeeId: any;
       amount: number;
-    }> = Array.isArray(previousDraftConfig.nonTaxableAllowanceOverrides)
+    }> = preserveExistingPayslipEdits &&
+      Array.isArray(previousDraftConfig.nonTaxableAllowanceOverrides)
       ? [...previousDraftConfig.nonTaxableAllowanceOverrides]
       : [];
     let mergedPayslipOverrides: DraftPayslipOverride[] = preserveExistingPayslipEdits &&
@@ -3390,6 +3471,9 @@ export const updatePayrollRun = mutation({
         }
       }
     }
+
+    mergedPayslipOverrides =
+      normalizeDraftPayslipOverridesForConfig(mergedPayslipOverrides) ?? [];
 
     const overrideReview = preserveExistingPayslipEdits
       ? buildOverrideReviewFromPayslipOverrides(mergedPayslipOverrides)
@@ -5959,7 +6043,9 @@ async function syncDraftPayslipOverrides(ctx: any, args: {
     );
   }
   if (args.incentiveChange) {
-    nextOverride.incentives = args.nextIncentives.map(normalizePayrollLine);
+    nextOverride.incentives = args.nextIncentives.map(
+      toDraftIncentiveOverrideLine,
+    );
   }
   if (args.nonTaxableAllowanceChanged) {
     nextOverride.nonTaxableAllowance = round2(args.nextNonTaxableAllowance);

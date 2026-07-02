@@ -224,6 +224,21 @@ export async function deletePayrollRuns(payrollRunIds: string[]) {
   return PayrollService.deletePayrollRuns(payrollRunIds);
 }
 
+export type UpdatePayrollRunResult =
+  | {
+      ok: true;
+      data: {
+        success: true;
+        regenerationSummary?: {
+          mode?: "preserve_edits" | "clean_rebuild";
+          employeesProcessed?: number;
+          manualOverridesPreserved?: number;
+          staleReasons?: string[];
+        };
+      };
+    }
+  | { ok: false; error: string };
+
 export async function updatePayrollRun(data: {
   payrollRunId: string;
   cutoffStart?: number;
@@ -254,8 +269,13 @@ export async function updatePayrollRun(data: {
       type: string;
     }>;
   }>;
-}) {
-  return PayrollService.updatePayrollRun(data);
+}): Promise<UpdatePayrollRunResult> {
+  try {
+    const result = await PayrollService.updatePayrollRun(data);
+    return { ok: true, data: result };
+  } catch (e: unknown) {
+    return { ok: false, error: getConvexUserFacingMessage(e) };
+  }
 }
 
 export async function getPayslipMessages(payslipId: string) {
