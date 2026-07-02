@@ -24,6 +24,14 @@ describe("payroll regeneration override handling", () => {
     expect(schemaSource).toContain("variableEarnings");
   });
 
+  it("keeps generated employee snapshots compatible with the payslip schema", () => {
+    const schemaSource = readSource("../convex/schema.ts");
+    const payrollSource = readSource("../convex/payroll.ts");
+
+    expect(payrollSource).toContain("payslipPdfPassword");
+    expect(schemaSource).toContain("payslipPdfPassword: v.optional(v.string())");
+  });
+
   it("regeneration uses explicit overrides instead of copying existing payslip lines", () => {
     const payrollSource = readSource("../convex/payroll.ts");
 
@@ -66,6 +74,13 @@ describe("payroll regeneration override handling", () => {
     expect(actionsSource).toContain("UpdatePayrollRunResult");
     expect(actionsSource).toContain("getConvexUserFacingMessage");
     expect(pageSource).toContain("if (!result.ok)");
+  });
+
+  it("surfaces payroll regeneration mutation failures as structured errors", () => {
+    const payrollSource = readSource("../convex/payroll.ts");
+
+    expect(payrollSource).toContain("throwPayrollRunUpdateError");
+    expect(payrollSource).toContain("new ConvexError");
   });
 
   it("requires review when manual overrides are auto reapplied", () => {

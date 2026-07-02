@@ -755,6 +755,7 @@ export default defineSchema({
             basicSalary: v.optional(v.number()),
             allowance: v.optional(v.number()),
           }),
+          payslipPdfPassword: v.optional(v.string()),
         }),
       ),
     ),

@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
@@ -62,6 +62,31 @@ import {
   canUseAlumniPayslipAccess,
   canUseFullOrganizationAccess,
 } from "@/utils/org-membership-lifecycle";
+
+function getPayrollErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message?.trim()) {
+    return error.message.trim();
+  }
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof (error as { message: unknown }).message === "string"
+  ) {
+    const message = (error as { message: string }).message.trim();
+    if (message) return message;
+  }
+  if (typeof error === "string" && error.trim()) return error.trim();
+  return "Unknown payroll regeneration error";
+}
+
+function throwPayrollRunUpdateError(error: unknown): never {
+  if (error instanceof ConvexError) throw error;
+  throw new ConvexError({
+    code: "PAYROLL_RUN_UPDATE_FAILED",
+    message: getPayrollErrorMessage(error),
+  });
+}
 
 function buildDraftPayrollConfig(args: {
   employeeIds: any[];
@@ -3671,62 +3696,68 @@ export const updatePayrollRun = mutation({
           },
         );
 
-        await ctx.db.insert(
-          "payslips",
-          encryptPayslipRowForDb({
-            organizationId: payrollRun.organizationId,
-            employeeId,
-            employeeSnapshot: buildEmployeeSnapshot(employee),
-            payrollRunId: args.payrollRunId,
-            period,
-            periodStart: cutoffStart,
-            periodEnd: cutoffEnd,
-            grossPay: generatedPayslip.grossPay,
-            basicPay: generatedPayslip.basicPay,
-            deductions: generatedPayslip.deductions,
-            incentives:
-              generatedPayslip.incentives.length > 0
-                ? generatedPayslip.incentives
-                : undefined,
-            nonTaxableAllowance: generatedPayslip.nonTaxableAllowance,
-            netPay: generatedPayslip.netPay,
-            daysWorked: payrollBase.daysWorked,
-            absences: payrollBase.absences,
-            lateHours: payrollBase.lateHours,
-            undertimeHours: payrollBase.undertimeHours,
-            overtimeHours: payrollBase.overtimeHours,
-            holidayPay: generatedPayslip.holidayPay,
-            regularHolidayPay: generatedPayslip.regularHolidayPay,
-            specialHolidayPay: generatedPayslip.specialHolidayPay,
-            holidayPayType: generatedPayslip.holidayPayType,
-            nightDiffPay: generatedPayslip.nightDiffPay,
-            nightDiffBreakdown: payrollBase.nightDiffBreakdown,
-            restDayPay: generatedPayslip.restDayPay,
-            overtimeRegular: generatedPayslip.overtimeRegular,
-            overtimeRestDay: generatedPayslip.overtimeRestDay,
-            overtimeRestDayExcess: generatedPayslip.overtimeRestDayExcess,
-            overtimeSpecialHoliday: generatedPayslip.overtimeSpecialHoliday,
-            overtimeSpecialHolidayExcess:
-              generatedPayslip.overtimeSpecialHolidayExcess,
-            overtimeLegalHoliday: generatedPayslip.overtimeLegalHoliday,
-            overtimeLegalHolidayExcess:
-              generatedPayslip.overtimeLegalHolidayExcess,
-            pendingDeductions: canonical.pendingDeductions,
-            noWorkNoPayDays:
-              (payrollBase.noWorkNoPayDays ?? 0) > 0
-                ? payrollBase.noWorkNoPayDays
-                : undefined,
-            hasWorkedAtLeastOneDay: canonical.hasWorkedAtLeastOneDay,
-            employerContributions:
-              generatedPayslip.employerContributions ??
-              canonical.employerContributions,
-            editHistory: preservedEditHistoryByEmployee.get(String(employeeId)),
-            concernSummary: {
-              messageCount: 0,
-            },
-            createdAt: Date.now(),
-          }) as any,
-        );
+        await ctx.db
+          .insert(
+            "payslips",
+            encryptPayslipRowForDb({
+              organizationId: payrollRun.organizationId,
+              employeeId,
+              employeeSnapshot: buildEmployeeSnapshot(employee),
+              payrollRunId: args.payrollRunId,
+              period,
+              periodStart: cutoffStart,
+              periodEnd: cutoffEnd,
+              grossPay: generatedPayslip.grossPay,
+              basicPay: generatedPayslip.basicPay,
+              deductions: generatedPayslip.deductions,
+              incentives:
+                generatedPayslip.incentives.length > 0
+                  ? generatedPayslip.incentives
+                  : undefined,
+              nonTaxableAllowance: generatedPayslip.nonTaxableAllowance,
+              netPay: generatedPayslip.netPay,
+              daysWorked: payrollBase.daysWorked,
+              absences: payrollBase.absences,
+              lateHours: payrollBase.lateHours,
+              undertimeHours: payrollBase.undertimeHours,
+              overtimeHours: payrollBase.overtimeHours,
+              holidayPay: generatedPayslip.holidayPay,
+              regularHolidayPay: generatedPayslip.regularHolidayPay,
+              specialHolidayPay: generatedPayslip.specialHolidayPay,
+              holidayPayType: generatedPayslip.holidayPayType,
+              nightDiffPay: generatedPayslip.nightDiffPay,
+              nightDiffBreakdown: payrollBase.nightDiffBreakdown,
+              restDayPay: generatedPayslip.restDayPay,
+              overtimeRegular: generatedPayslip.overtimeRegular,
+              overtimeRestDay: generatedPayslip.overtimeRestDay,
+              overtimeRestDayExcess: generatedPayslip.overtimeRestDayExcess,
+              overtimeSpecialHoliday: generatedPayslip.overtimeSpecialHoliday,
+              overtimeSpecialHolidayExcess:
+                generatedPayslip.overtimeSpecialHolidayExcess,
+              overtimeLegalHoliday: generatedPayslip.overtimeLegalHoliday,
+              overtimeLegalHolidayExcess:
+                generatedPayslip.overtimeLegalHolidayExcess,
+              pendingDeductions: canonical.pendingDeductions,
+              noWorkNoPayDays:
+                (payrollBase.noWorkNoPayDays ?? 0) > 0
+                  ? payrollBase.noWorkNoPayDays
+                  : undefined,
+              hasWorkedAtLeastOneDay: canonical.hasWorkedAtLeastOneDay,
+              employerContributions:
+                generatedPayslip.employerContributions ??
+                canonical.employerContributions,
+              editHistory: preservedEditHistoryByEmployee.get(
+                String(employeeId),
+              ),
+              concernSummary: {
+                messageCount: 0,
+              },
+              createdAt: Date.now(),
+            }) as any,
+          )
+          .catch((error: unknown) => {
+            throwPayrollRunUpdateError(error);
+          });
       }
 
       const refreshedSnapshot = await captureDraftDependencySnapshot(ctx, {
