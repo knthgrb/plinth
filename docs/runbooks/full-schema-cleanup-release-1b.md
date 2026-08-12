@@ -17,7 +17,8 @@ writes.
 
 Every Convex command below uses `--prod`, which selects the linked production
 deployment even if local environment variables point to development. Both
-queries are read-only and do not expose production row values or secrets.
+queries are read-only and return policy and audit metadata only; no business-row
+values or secrets.
 
 ## Inspect the complete inventory
 
@@ -81,7 +82,7 @@ database rollback or data restoration procedure for this checkpoint.
 
 If the deployed application needs to be reverted, redeploy the prior
 application/Convex build only. Leave all production data untouched and retain
-the returned redacted inventory and readiness evidence for diagnosis.
+the returned policy and audit metadata evidence for diagnosis.
 
 ## Next plan
 
