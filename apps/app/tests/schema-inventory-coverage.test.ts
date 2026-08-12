@@ -10,6 +10,7 @@ describe("schema source inventory", () => {
         examples: defineTable({
           organizationId: v.id("organizations"),
           policy: v.optional(v.object({ enabled: v.boolean() })),
+          reviewers: v.array(v.object({ userId: v.id("users") })),
           variants: v.union(v.string(), v.object({ legacy: v.string() })),
         }).index("by_organization", ["organizationId"]),
       });
@@ -21,6 +22,7 @@ describe("schema source inventory", () => {
           fields: [
             "organizationId",
             "policy.enabled",
+            "reviewers.userId",
             "variants",
             "variants.legacy",
           ],
