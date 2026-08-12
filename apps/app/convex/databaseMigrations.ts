@@ -34,6 +34,8 @@ import { ORGANIZATION_CONFIGURATION_FIELD_MANIFEST } from "./schemaFieldManifest
 
 const MAX_STATUS_ISSUES = 200;
 const MAX_DESTINATION_ROWS_PER_ORGANIZATION = 500;
+// Readiness is fail-closed when a migration key's recent history exceeds this bound.
+const MAX_FULL_SCHEMA_MIGRATION_RUN_LOOKBACK = 100;
 
 function addCounters(
   current: SchemaCleanupCounters,
@@ -1078,8 +1080,13 @@ async function getLatestConflictFreeWriteRun(
     .query("migrationRuns")
     .withIndex("by_key_started", (q) => q.eq("key", migrationKey))
     .order("desc")
-    .collect();
-  return runs.find(hasConflictFreeCompletedWriteRun) ?? null;
+    .take(MAX_FULL_SCHEMA_MIGRATION_RUN_LOOKBACK + 1);
+  const run = runs.find(hasConflictFreeCompletedWriteRun);
+  if (run) return { status: "found" as const, run };
+  if (runs.length > MAX_FULL_SCHEMA_MIGRATION_RUN_LOOKBACK) {
+    return { status: "truncated" as const };
+  }
+  return { status: "not_found" as const };
 }
 
 function auditBlockers(audit: Doc<"migrationAudits">) {
@@ -1100,10 +1107,25 @@ function auditBlockers(audit: Doc<"migrationAudits">) {
 
 async function getOrganizationConfigurationReadiness(
   ctx: Pick<QueryCtx, "db">,
+  registration: Extract<
+    (typeof FULL_SCHEMA_CLEANUP_DOMAINS)[number],
+    { domain: "organization_configuration" }
+  >,
 ): Promise<FullSchemaDomainReadiness> {
-  const registration = FULL_SCHEMA_CLEANUP_DOMAINS[0];
-  const run = await getLatestConflictFreeWriteRun(ctx, registration.migrationKey);
-  if (!run) {
+  const runLookup = await getLatestConflictFreeWriteRun(
+    ctx,
+    registration.migrationKey,
+  );
+  if (runLookup.status === "truncated") {
+    return {
+      domain: registration.domain,
+      status: "blocked",
+      migrationKey: registration.migrationKey,
+      migrationVersion: registration.migrationVersion,
+      blockers: ["MIGRATION_RUN_HISTORY_TRUNCATED"],
+    };
+  }
+  if (runLookup.status === "not_found") {
     return {
       domain: registration.domain,
       status: "not_started",
@@ -1112,6 +1134,7 @@ async function getOrganizationConfigurationReadiness(
       blockers: ["COMPLETED_WRITE_RUN_NOT_FOUND"],
     };
   }
+  const { run } = runLookup;
   if (run.version !== registration.migrationVersion) {
     return {
       domain: registration.domain,
@@ -1195,16 +1218,16 @@ export const getFullSchemaCleanupReadiness = internalQuery({
   handler: async (ctx) => {
     const domains = await Promise.all(
       FULL_SCHEMA_CLEANUP_DOMAINS.map(async (registration) => {
-        if (registration.implementation === "not_started") {
-          return {
-            domain: registration.domain,
-            status: "not_started" as const,
-            migrationKey: registration.migrationKey,
-            migrationVersion: registration.migrationVersion,
-            blockers: ["DOMAIN_IMPLEMENTATION_NOT_DEPLOYED"],
-          };
+        if (registration.domain === "organization_configuration") {
+          return getOrganizationConfigurationReadiness(ctx, registration);
         }
-        return getOrganizationConfigurationReadiness(ctx);
+        return {
+          domain: registration.domain,
+          status: "not_started" as const,
+          migrationKey: registration.migrationKey,
+          migrationVersion: registration.migrationVersion,
+          blockers: ["DOMAIN_IMPLEMENTATION_NOT_DEPLOYED"],
+        };
       }),
     );
     return {
