@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import {
+  FULL_SCHEMA_TABLE_POLICIES,
+  resolveSchemaFieldPolicy,
+  resolveSchemaIndexPolicy,
+} from "../convex/fullSchemaInventory";
 import { parseSchemaSourceInventory } from "./helpers/schema-source-inventory";
 
 describe("schema source inventory", () => {
@@ -41,5 +46,47 @@ describe("schema source inventory", () => {
     );
     expect(inventory.tables).toHaveLength(44);
     expect(inventory.tables.map(({ name }) => name)).toContain("assets");
+  });
+
+  it("classifies every current table, field, and index", () => {
+    const schemaPath = fileURLToPath(
+      new URL("../convex/schema.ts", import.meta.url),
+    );
+    const inventory = parseSchemaSourceInventory(
+      readFileSync(schemaPath, "utf8"),
+    );
+
+    expect(Object.keys(FULL_SCHEMA_TABLE_POLICIES).sort()).toEqual(
+      inventory.tables.map(({ name }) => name).sort(),
+    );
+
+    for (const table of inventory.tables) {
+      for (const field of table.fields) {
+        expect(resolveSchemaFieldPolicy(table.name, field)).not.toBeNull();
+      }
+      for (const index of table.indexes) {
+        expect(resolveSchemaIndexPolicy(table.name, index)).not.toBeNull();
+      }
+    }
+  });
+
+  it("overrides every known compatibility and historical path", () => {
+    expect(
+      resolveSchemaFieldPolicy("users", "organizationId")?.classification,
+    ).toBe("compatibility_read");
+    expect(resolveSchemaFieldPolicy("employees", "requirements")?.target).toBe(
+      "employeeRequirements",
+    );
+    expect(resolveSchemaFieldPolicy("messages", "readBy")?.target).toBe(
+      "messageReceipts",
+    );
+    expect(
+      resolveSchemaFieldPolicy("payslips", "employeeSnapshot")?.classification,
+    ).toBe("historical_snapshot");
+  });
+
+  it("fails closed for unknown tables", () => {
+    expect(resolveSchemaFieldPolicy("unknown", "field")).toBeNull();
+    expect(resolveSchemaIndexPolicy("unknown", "index")).toBeNull();
   });
 });
