@@ -64,6 +64,28 @@ const getSchemaCleanupRun = makeFunctionReference<
   }
 >("databaseMigrations:getSchemaCleanupRun");
 
+const getSchemaCleanupAudit = makeFunctionReference<
+  "query",
+  { runId: Id<"migrationRuns"> },
+  {
+    ready: boolean;
+    organizations: number;
+    destination: {
+      expected: number;
+      matching: number;
+      missing: number;
+      duplicate: number;
+      mismatched: number;
+    };
+    duplicateLegacySettings: number;
+    fieldManifest: ReadonlyArray<{
+      table: string;
+      field: string;
+      classification: string;
+    }>;
+  }
+>("databaseMigrations:getSchemaCleanupAudit");
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -551,5 +573,103 @@ describe("database migration schema", () => {
       ).length,
     }));
     expect(destinationCounts).toEqual({ payroll: 0, attendance: 0 });
+  });
+
+  it("reports readiness only when every normalized destination matches", async () => {
+    const t = convexTest(schema, modules);
+    const { dryRunId, incompleteWriteRunId } = await t.run(async (ctx) => {
+      await ctx.db.insert("organizations", {
+        name: "Audit organization",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const counters = {
+        scanned: 1,
+        changed: 0,
+        unchanged: 0,
+        skipped: 0,
+        conflicts: 0,
+        errors: 0,
+      };
+      const dryRunId = await ctx.db.insert("migrationRuns", {
+        key: "schema-normalization-release-1",
+        version: 1,
+        dryRun: true,
+        status: "completed",
+        phase: "organizations",
+        batchSize: 20,
+        counters,
+        startedAt: 2,
+        updatedAt: 2,
+        completedAt: 2,
+      });
+      const incompleteWriteRunId = await ctx.db.insert("migrationRuns", {
+        key: "schema-normalization-release-1",
+        version: 1,
+        dryRun: false,
+        status: "completed",
+        phase: "organizations",
+        batchSize: 20,
+        counters,
+        requiredDryRunId: dryRunId,
+        startedAt: 3,
+        updatedAt: 3,
+        completedAt: 3,
+      });
+      return { dryRunId, incompleteWriteRunId };
+    });
+
+    await expect(
+      t.query(getSchemaCleanupAudit, { runId: incompleteWriteRunId }),
+    ).resolves.toMatchObject({
+      ready: false,
+      organizations: 1,
+      destination: {
+        expected: 1,
+        matching: 0,
+        missing: 1,
+        duplicate: 0,
+        mismatched: 0,
+      },
+      duplicateLegacySettings: 0,
+    });
+
+    const writeRunId = await t.run((ctx) =>
+      ctx.db.insert("migrationRuns", {
+        key: "schema-normalization-release-1",
+        version: 1,
+        dryRun: false,
+        status: "running",
+        phase: "organizations",
+        batchSize: 20,
+        counters: {
+          scanned: 0,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        requiredDryRunId: dryRunId,
+        startedAt: 4,
+        updatedAt: 4,
+      }),
+    );
+    await t.mutation(processSchemaCleanupBatch, { runId: writeRunId });
+
+    await expect(
+      t.query(getSchemaCleanupAudit, { runId: writeRunId }),
+    ).resolves.toMatchObject({
+      ready: true,
+      organizations: 1,
+      destination: {
+        expected: 1,
+        matching: 1,
+        missing: 0,
+        duplicate: 0,
+        mismatched: 0,
+      },
+      duplicateLegacySettings: 0,
+    });
   });
 });

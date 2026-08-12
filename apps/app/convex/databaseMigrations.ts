@@ -4,8 +4,9 @@ import {
   internalMutation,
   internalQuery,
   type MutationCtx,
+  type QueryCtx,
 } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   normalizeDepartmentName,
   planOrganizationNormalization,
@@ -15,6 +16,7 @@ import type {
   SchemaCleanupCounters,
   SchemaCleanupIssue,
 } from "./databaseMigrationTypes";
+import { SCHEMA_FIELD_MANIFEST } from "./schemaFieldManifest";
 import {
   EMPTY_SCHEMA_CLEANUP_COUNTERS,
   SCHEMA_CLEANUP_MIGRATION_KEY,
@@ -478,6 +480,184 @@ export const getSchemaCleanupRun = internalQuery({
         run.version === SCHEMA_CLEANUP_VERSION &&
         run.status === "completed" &&
         run.counters.errors === 0,
+    };
+  },
+});
+
+type DestinationAudit = {
+  expected: number;
+  matching: number;
+  missing: number;
+  duplicate: number;
+  mismatched: number;
+};
+
+function countDestination(
+  audit: DestinationAudit,
+  rows: object[],
+  expected: object,
+) {
+  audit.expected += 1;
+  const result = destinationResult(rows, expected);
+  if (result === "unchanged") audit.matching += 1;
+  else if (result === "changed") audit.missing += 1;
+  else if (rows.length > 1) audit.duplicate += 1;
+  else audit.mismatched += 1;
+}
+
+async function auditOrganizationDestinations(
+  ctx: QueryCtx,
+  organization: Doc<"organizations">,
+  version: number,
+  audit: DestinationAudit,
+) {
+  const settingsRows = await ctx.db
+    .query("settings")
+    .withIndex("by_organization", (q) =>
+      q.eq("organizationId", organization._id),
+    )
+    .collect();
+  const legacySettings = settingsRows.length === 1 ? settingsRows[0] : null;
+  const plan = planOrganizationNormalization({
+    organization,
+    legacySettings,
+  });
+
+  const payrollExpected = {
+    organizationId: organization._id,
+    ...plan.payroll,
+    ...(legacySettings?._id ? { sourceSettingsId: legacySettings._id } : {}),
+    migrationVersion: version,
+  };
+  const payrollRows = await ctx.db
+    .query("organizationPayrollSettings")
+    .withIndex("by_organization", (q) =>
+      q.eq("organizationId", organization._id),
+    )
+    .collect();
+  countDestination(audit, payrollRows, payrollExpected);
+
+  if (plan.attendance) {
+    const attendanceExpected = {
+      organizationId: organization._id,
+      attendanceSettings: plan.attendance,
+      ...(legacySettings?._id ? { sourceSettingsId: legacySettings._id } : {}),
+      migrationVersion: version,
+    };
+    const attendanceRows = await ctx.db
+      .query("organizationAttendanceSettings")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", organization._id),
+      )
+      .collect();
+    countDestination(audit, attendanceRows, attendanceExpected);
+  }
+
+  for (const department of plan.departments) {
+    const departmentExpected = {
+      organizationId: organization._id,
+      name: department.name,
+      normalizedName: department.normalizedName,
+      color: department.color,
+      ...(department.departmentHeadUserId
+        ? { departmentHeadUserId: department.departmentHeadUserId }
+        : {}),
+      ...(department.costCenter ? { costCenter: department.costCenter } : {}),
+      ...(department.location ? { location: department.location } : {}),
+      ...(department.parentDepartmentName
+        ? {
+            parentDepartmentNormalizedName: normalizeDepartmentName(
+              department.parentDepartmentName,
+            ),
+          }
+        : {}),
+      ...(legacySettings?._id ? { sourceSettingsId: legacySettings._id } : {}),
+      migrationVersion: version,
+    };
+    const departmentRows = await ctx.db
+      .query("organizationDepartments")
+      .withIndex("by_organization_normalized_name", (q) =>
+        q
+          .eq("organizationId", organization._id)
+          .eq("normalizedName", department.normalizedName),
+      )
+      .collect();
+    countDestination(audit, departmentRows, departmentExpected);
+  }
+
+  for (const requirement of plan.requirements) {
+    const requirementExpected = {
+      organizationId: organization._id,
+      ...requirement,
+      source: "organization" as const,
+      migrationVersion: version,
+    };
+    const requirementRows = await ctx.db
+      .query("organizationRequirementDefinitions")
+      .withIndex("by_organization_normalized_type", (q) =>
+        q
+          .eq("organizationId", organization._id)
+          .eq("normalizedType", requirement.normalizedType),
+      )
+      .collect();
+    countDestination(audit, requirementRows, requirementExpected);
+  }
+
+  return {
+    duplicateLegacySettings: settingsRows.length > 1 ? 1 : 0,
+    sourceConflicts:
+      plan.issues.length + (settingsRows.length > 1 ? 1 : 0),
+  };
+}
+
+export const getSchemaCleanupAudit = internalQuery({
+  args: { runId: v.id("migrationRuns") },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (
+      !run ||
+      run.key !== SCHEMA_CLEANUP_MIGRATION_KEY ||
+      run.version !== SCHEMA_CLEANUP_VERSION
+    ) {
+      throw new Error("Schema cleanup run was not found");
+    }
+
+    const organizations = await ctx.db.query("organizations").collect();
+    const destination: DestinationAudit = {
+      expected: 0,
+      matching: 0,
+      missing: 0,
+      duplicate: 0,
+      mismatched: 0,
+    };
+    let duplicateLegacySettings = 0;
+    let sourceConflicts = 0;
+    for (const organization of organizations) {
+      const result = await auditOrganizationDestinations(
+        ctx,
+        organization,
+        run.version,
+        destination,
+      );
+      duplicateLegacySettings += result.duplicateLegacySettings;
+      sourceConflicts += result.sourceConflicts;
+    }
+
+    return {
+      ready:
+        !run.dryRun &&
+        run.status === "completed" &&
+        run.counters.errors === 0 &&
+        sourceConflicts === 0 &&
+        destination.missing === 0 &&
+        destination.duplicate === 0 &&
+        destination.mismatched === 0 &&
+        destination.matching === destination.expected,
+      organizations: organizations.length,
+      destination,
+      duplicateLegacySettings,
+      sourceConflicts,
+      fieldManifest: SCHEMA_FIELD_MANIFEST,
     };
   },
 });
