@@ -21,11 +21,10 @@ const SOURCE_EXTENSIONS = new Set([
 const IDENTIFIER_CONTINUATION = "\\p{ID_Continue}$";
 
 export const DEFAULT_SCHEMA_REFERENCE_EXCLUSIONS: readonly RegExp[] = [
-  /(?:^|\/)schema\.ts$/,
-  /(?:^|\/)(?:schemaFieldManifest|fullSchemaInventory|fullSchemaCleanupRegistry)\.ts$/,
-  /(?:^|\/)(?:_generated|generated)(?:\/|$)/,
-  /(?:^|\/)(?:[^/]*Migration(?:s)?[^/]*|(?:migration|migrations)(?:[._-][^/]*)?|[^/]*[._-](?:migration|migrations)(?:[._-][^/]*)?)\.(?:[cm]?[jt]sx?)$/,
-  /(?:^|\/)(?:tests|docs)(?:\/|$)/,
+  /(?:^|\/)schema\.ts$/i,
+  /(?:^|\/)(?=[^/]*schema)(?=[^/]*(?:manifest|inventory|registry|policy))[^/]+$/i,
+  /(?:^|\/)[^/]*migrations?[^/]*(?:\/|$)/i,
+  /(?:^|\/)(?:_?generated|tests|docs)(?:\/|$)/i,
 ];
 
 const escapeRegularExpression = (value: string): string =>

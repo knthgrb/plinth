@@ -12,6 +12,7 @@ import {
   DEFAULT_SCHEMA_REFERENCE_EXCLUSIONS,
   scanSchemaReferences,
 } from "./helpers/schema-reference-scan";
+import { summarizeSchemaReferences } from "./helpers/schema-reference-summary";
 
 const fixtureRoots: string[] = [];
 
@@ -38,6 +39,22 @@ const legacyClassifications: readonly SchemaItemClassification[] = [
   "compatibility_write",
   "removable",
 ];
+
+const legacyOverrides = FULL_SCHEMA_FIELD_OVERRIDES.filter(({ classification }) =>
+  legacyClassifications.includes(classification),
+);
+
+const referenceTiers = {
+  enforceable: legacyOverrides.filter(({ field }) => field.includes(".")),
+  discovery: legacyOverrides.filter(({ field }) => !field.includes(".")),
+};
+
+const scanTier = (root: string, tier: keyof typeof referenceTiers) =>
+  scanSchemaReferences(
+    root,
+    referenceTiers[tier].map(({ field }) => field),
+    DEFAULT_SCHEMA_REFERENCE_EXCLUSIONS,
+  );
 
 describe("schema contract references", () => {
   it("returns redacted repository-relative matches", () => {
@@ -97,28 +114,41 @@ describe("schema contract references", () => {
     ).toEqual([{ symbol: "legacyField", file: "convex/live.ts", line: 1 }]);
   });
 
-  it("applies the complete default policy only within intended source roots", () => {
+  it("applies complete exclusions within intended source roots", () => {
     const root = createFixture();
     const excludedFiles = [
       "convex/schema.ts",
       "convex/schemaFieldManifest.ts",
       "convex/fullSchemaInventory.ts",
       "convex/fullSchemaCleanupRegistry.ts",
+      "convex/schemaCleanupPolicy.ts",
+      "convex/schema-policy-registry.ts",
+      "convex/SCHEMA-POLICY.ts",
       "convex/_generated/api.ts",
+      "app/generated/legacy.ts",
       "convex/databaseMigrationPlanner.ts",
       "convex/databaseMigrationTypes.ts",
       "convex/databaseMigrations.ts",
       "convex/dataMigrations.ts",
       "convex/payslipSecurityMigrations.ts",
       "convex/storageMigrations.ts",
-      "tests/legacy.test.ts",
-      "docs/legacy.ts",
-      "services/legacy.ts",
+      "convex/migrationHelpers.ts",
+      "convex/migrationsHelpers.ts",
+      "convex/MIGRATIONHelpers.ts",
+      "convex/migrations/planner.ts",
+      "utils/migrations/helpers.ts",
+      "app/docs/legacy.ts",
+      "components/tests/legacy.ts",
     ];
     for (const file of excludedFiles) {
       writeFixture(root, file, "legacyField;\n");
     }
     writeFixture(root, "convex/live.ts", "legacyField;\n");
+    writeFixture(
+      root,
+      "components/leave-policy-calculations.ts",
+      "legacyField;\n",
+    );
 
     expect(
       scanSchemaReferences(
@@ -126,35 +156,65 @@ describe("schema contract references", () => {
         ["legacyField"],
         DEFAULT_SCHEMA_REFERENCE_EXCLUSIONS,
       ),
-    ).toEqual([{ symbol: "legacyField", file: "convex/live.ts", line: 1 }]);
+    ).toEqual([
+      {
+        symbol: "legacyField",
+        file: "components/leave-policy-calculations.ts",
+        line: 1,
+      },
+      { symbol: "legacyField", file: "convex/live.ts", line: 1 },
+    ]);
   });
 
-  it("covers every legacy policy symbol", () => {
-    const symbols = FULL_SCHEMA_FIELD_OVERRIDES.filter(({ classification }) =>
-      legacyClassifications.includes(classification),
-    ).map(({ field }) => field);
+  it("places every legacy policy symbol in exactly one evidence tier", () => {
+    const tieredOverrides = [
+      ...referenceTiers.enforceable,
+      ...referenceTiers.discovery,
+    ];
 
-    expect(symbols).toHaveLength(
-      FULL_SCHEMA_FIELD_OVERRIDES.filter(({ classification }) =>
-        legacyClassifications.includes(classification),
-      ).length,
-    );
-    expect(symbols.every((symbol) => symbol.length > 0)).toBe(true);
+    expect(tieredOverrides).toHaveLength(legacyOverrides.length);
+    expect(new Set(tieredOverrides)).toEqual(new Set(legacyOverrides));
+    expect(tieredOverrides.every(({ field }) => field.length > 0)).toBe(true);
+    expect(
+      referenceTiers.enforceable.every(({ field }) => field.includes(".")),
+    ).toBe(true);
+    expect(
+      referenceTiers.discovery.every(({ field }) => !field.includes(".")),
+    ).toBe(true);
   });
 
-  it("matches the reviewed nonempty Release 1B reference baseline", () => {
+  it("summarizes redacted matches without line-number churn", () => {
+    const summary = summarizeSchemaReferences([
+      { symbol: "settings.token", file: "convex/settings.ts", line: 1 },
+      { symbol: "settings.token", file: "convex/settings.ts", line: 4 },
+      { symbol: "token", file: "lib/tokens.ts", line: 9 },
+    ]);
+    const movedLines = summarizeSchemaReferences([
+      { symbol: "settings.token", file: "convex/settings.ts", line: 20 },
+      { symbol: "settings.token", file: "convex/settings.ts", line: 40 },
+      { symbol: "token", file: "lib/tokens.ts", line: 90 },
+    ]);
+
+    expect(summary).toMatchObject({
+      totalMatches: 3,
+      fileCount: 2,
+      symbols: [
+        { symbol: "settings.token", matches: 2, files: 1 },
+        { symbol: "token", matches: 1, files: 1 },
+      ],
+    });
+    expect(summary.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(summary.fingerprint).toBe(movedLines.fingerprint);
+  });
+
+  it("matches the reviewed Release 1B summary baseline", () => {
     const root = fileURLToPath(new URL("../", import.meta.url));
-    const symbols = FULL_SCHEMA_FIELD_OVERRIDES.filter(({ classification }) =>
-      legacyClassifications.includes(classification),
-    ).map(({ field }) => field);
+    const tiers = {
+      enforceable: summarizeSchemaReferences(scanTier(root, "enforceable")),
+      discovery: summarizeSchemaReferences(scanTier(root, "discovery")),
+    };
 
-    const matches = scanSchemaReferences(
-      root,
-      symbols,
-      DEFAULT_SCHEMA_REFERENCE_EXCLUSIONS,
-    );
-
-    expect(matches).not.toHaveLength(0);
-    expect(matches).toEqual(baseline);
+    expect(tiers.enforceable.totalMatches).toBeGreaterThan(0);
+    expect({ version: 1, tiers }).toEqual(baseline);
   });
 });
