@@ -34,6 +34,186 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_name", ["name"]),
 
+  organizationPayrollSettings: defineTable({
+    organizationId: v.id("organizations"),
+    salaryPaymentFrequency: v.union(
+      v.literal("monthly"),
+      v.literal("bimonthly"),
+    ),
+    firstPayDate: v.number(),
+    secondPayDate: v.number(),
+    cutoffDates: v.optional(
+      v.object({
+        firstCutoff: v.number(),
+        secondCutoff: v.number(),
+      }),
+    ),
+    payrollSettings: v.optional(
+      v.object({
+        nightDiffPercent: v.optional(v.number()),
+        regularHolidayRate: v.optional(v.number()),
+        specialHolidayRate: v.optional(v.number()),
+        overtimeRegularRate: v.optional(v.number()),
+        overtimeRestDayRate: v.optional(v.number()),
+        regularHolidayOtRate: v.optional(v.number()),
+        specialHolidayOtRate: v.optional(v.number()),
+        nightDiffOnOtRate: v.optional(v.number()),
+        nightDiffRegularHolidayRate: v.optional(v.number()),
+        nightDiffSpecialHolidayRate: v.optional(v.number()),
+        nightDiffRegularHolidayOtRate: v.optional(v.number()),
+        nightDiffSpecialHolidayOtRate: v.optional(v.number()),
+        dailyRateIncludesAllowance: v.optional(v.boolean()),
+        dailyRateWorkingDaysPerYear: v.optional(v.number()),
+        taxDeductionFrequency: v.optional(
+          v.union(v.literal("once_per_month"), v.literal("twice_per_month")),
+        ),
+        taxDeductOnPay: v.optional(
+          v.union(v.literal("first"), v.literal("second")),
+        ),
+        holidayNoWorkNoPay: v.optional(v.boolean()),
+        absentBeforeHolidayNoHolidayPay: v.optional(v.boolean()),
+        trainNinetyThousandCapOnAdditions: v.optional(v.boolean()),
+      }),
+    ),
+    sourceSettingsId: v.optional(v.id("settings")),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  organizationAttendanceSettings: defineTable({
+    organizationId: v.id("organizations"),
+    attendanceSettings: v.object({
+      defaultLunchBreakMinutes: v.optional(v.number()),
+      defaultLunchStart: v.optional(v.string()),
+      defaultLunchEnd: v.optional(v.string()),
+      graceMinutes: v.optional(v.number()),
+      roundingRule: v.optional(
+        v.union(
+          v.literal("none"),
+          v.literal("nearest_5"),
+          v.literal("nearest_15"),
+          v.literal("floor_15"),
+          v.literal("ceiling_15"),
+        ),
+      ),
+      flexibleShiftsEnabled: v.optional(v.boolean()),
+      overnightShiftCutoffHour: v.optional(v.number()),
+      restDayPolicy: v.optional(
+        v.union(
+          v.literal("fixed_weekly"),
+          v.literal("shift_based"),
+          v.literal("attendance_based"),
+        ),
+      ),
+      geofencePolicy: v.optional(
+        v.object({
+          enabled: v.boolean(),
+          allowedRadiusMeters: v.optional(v.number()),
+          requireForClockIn: v.optional(v.boolean()),
+        }),
+      ),
+      importPolicy: v.optional(
+        v.object({
+          allowCsvImport: v.optional(v.boolean()),
+          requireReviewBeforePosting: v.optional(v.boolean()),
+        }),
+      ),
+      payrollLockPolicy: v.optional(
+        v.object({
+          lockAttendanceAfterPayrollFinalized: v.optional(v.boolean()),
+          allowAdminCorrectionWithReason: v.optional(v.boolean()),
+        }),
+      ),
+    }),
+    sourceSettingsId: v.optional(v.id("settings")),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  organizationDepartments: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    normalizedName: v.string(),
+    color: v.string(),
+    departmentHeadUserId: v.optional(v.id("users")),
+    costCenter: v.optional(v.string()),
+    location: v.optional(v.string()),
+    parentDepartmentNormalizedName: v.optional(v.string()),
+    sourceSettingsId: v.optional(v.id("settings")),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_normalized_name", [
+      "organizationId",
+      "normalizedName",
+    ]),
+
+  organizationRequirementDefinitions: defineTable({
+    organizationId: v.id("organizations"),
+    type: v.string(),
+    normalizedType: v.string(),
+    isRequired: v.optional(v.boolean()),
+    appliesToDepartments: v.optional(v.array(v.string())),
+    appliesToEmploymentTypes: v.optional(v.array(v.string())),
+    reminderDaysBeforeDue: v.optional(v.number()),
+    requiresVerification: v.optional(v.boolean()),
+    expiryDaysAfterSubmission: v.optional(v.number()),
+    source: v.literal("organization"),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_normalized_type", [
+      "organizationId",
+      "normalizedType",
+    ]),
+
+  migrationRuns: defineTable({
+    key: v.string(),
+    version: v.number(),
+    dryRun: v.boolean(),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    phase: v.literal("organizations"),
+    cursor: v.optional(v.string()),
+    batchSize: v.number(),
+    counters: v.object({
+      scanned: v.number(),
+      changed: v.number(),
+      unchanged: v.number(),
+      skipped: v.number(),
+      conflicts: v.number(),
+      errors: v.number(),
+    }),
+    requiredDryRunId: v.optional(v.id("migrationRuns")),
+    startedAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    failureCode: v.optional(v.string()),
+  })
+    .index("by_key_started", ["key", "startedAt"])
+    .index("by_key_status", ["key", "status"]),
+
+  migrationIssues: defineTable({
+    runId: v.id("migrationRuns"),
+    organizationId: v.optional(v.id("organizations")),
+    entityType: v.string(),
+    entityId: v.optional(v.string()),
+    field: v.string(),
+    code: v.string(),
+    createdAt: v.number(),
+    resolvedAt: v.optional(v.number()),
+  }).index("by_run", ["runId", "createdAt"]),
+
   // Demo requests from marketing site
   demoRequests: defineTable({
     email: v.string(),
