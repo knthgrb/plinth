@@ -7,6 +7,7 @@ import {
   FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
   type FullSchemaDomainReadiness,
 } from "../convex/fullSchemaCleanupRegistry";
+import { resolveFullSchemaCleanupReadinessMode } from "../convex/databaseMigrations";
 import { FULL_SCHEMA_TABLE_POLICIES } from "../convex/fullSchemaInventory";
 import schema from "../convex/schema";
 
@@ -96,6 +97,34 @@ describe("full schema cleanup readiness", () => {
   it("uses a stable full-schema program identity", () => {
     expect(FULL_SCHEMA_CLEANUP_PROGRAM_KEY).toBe("convex-full-schema-cleanup");
     expect(FULL_SCHEMA_CLEANUP_PROGRAM_VERSION).toBe(1);
+  });
+
+  it("dispatches readiness by implementation before compatibility identity", () => {
+    const organizationConfiguration = FULL_SCHEMA_CLEANUP_DOMAINS.find(
+      ({ domain }) => domain === "organization_configuration",
+    );
+    const identityCredentials = FULL_SCHEMA_CLEANUP_DOMAINS.find(
+      ({ domain }) => domain === "identity_credentials",
+    );
+    if (!organizationConfiguration || !identityCredentials) {
+      throw new Error("Expected cleanup registrations were not found");
+    }
+
+    expect(
+      resolveFullSchemaCleanupReadinessMode({
+        ...organizationConfiguration,
+        implementation: "not_started",
+      }),
+    ).toBe("not_started");
+    expect(
+      resolveFullSchemaCleanupReadinessMode({
+        ...identityCredentials,
+        implementation: "compatibility",
+      }),
+    ).toBe("unsupported");
+    expect(
+      resolveFullSchemaCleanupReadinessMode(organizationConfiguration),
+    ).toBe("organization_configuration");
   });
 
   it("reports every table and blocks unimplemented domains", async () => {
