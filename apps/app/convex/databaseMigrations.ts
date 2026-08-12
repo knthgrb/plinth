@@ -20,6 +20,16 @@ import {
   type SchemaCleanupCounters,
   type SchemaCleanupIssue,
 } from "./databaseMigrationTypes";
+import {
+  FULL_SCHEMA_CLEANUP_DOMAINS,
+  FULL_SCHEMA_CLEANUP_PROGRAM_KEY,
+  FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
+  type FullSchemaDomainReadiness,
+} from "./fullSchemaCleanupRegistry";
+import {
+  CURRENT_SCHEMA_TABLES,
+  FULL_SCHEMA_TABLE_POLICIES,
+} from "./fullSchemaInventory";
 import { ORGANIZATION_CONFIGURATION_FIELD_MANIFEST } from "./schemaFieldManifest";
 
 const MAX_STATUS_ISSUES = 200;
@@ -1026,6 +1036,186 @@ async function getLatestSchemaCleanupAudit(
     .first();
 }
 
+function hasConflictFreeCompletedWriteRun(run: Doc<"migrationRuns">) {
+  return (
+    !run.dryRun &&
+    run.status === "completed" &&
+    run.counters.errors === 0 &&
+    run.counters.conflicts === 0
+  );
+}
+
+function isCurrentSchemaCleanupRun(run: Doc<"migrationRuns">) {
+  return (
+    run.key === SCHEMA_CLEANUP_MIGRATION_KEY &&
+    run.version === SCHEMA_CLEANUP_VERSION
+  );
+}
+
+function hasCleanCompletedSchemaCleanupAudit(
+  run: Doc<"migrationRuns">,
+  audit: Doc<"migrationAudits">,
+) {
+  return (
+    isCurrentSchemaCleanupRun(run) &&
+    hasConflictFreeCompletedWriteRun(run) &&
+    audit.status === "completed" &&
+    !audit.auditTruncated &&
+    audit.sourceConflicts === 0 &&
+    audit.destination.missing === 0 &&
+    audit.destination.duplicate === 0 &&
+    audit.destination.mismatched === 0 &&
+    audit.destination.unexpected === 0 &&
+    audit.destination.matching === audit.destination.expected
+  );
+}
+
+async function getLatestConflictFreeWriteRun(
+  ctx: Pick<QueryCtx, "db">,
+  migrationKey: string,
+) {
+  const runs = await ctx.db
+    .query("migrationRuns")
+    .withIndex("by_key_started", (q) => q.eq("key", migrationKey))
+    .order("desc")
+    .collect();
+  return runs.find(hasConflictFreeCompletedWriteRun) ?? null;
+}
+
+function auditBlockers(audit: Doc<"migrationAudits">) {
+  const blockers: string[] = [];
+  if (audit.auditTruncated) blockers.push("AUDIT_TRUNCATED");
+  if (audit.sourceConflicts > 0) blockers.push("AUDIT_SOURCE_CONFLICTS");
+  if (
+    audit.destination.missing > 0 ||
+    audit.destination.duplicate > 0 ||
+    audit.destination.mismatched > 0 ||
+    audit.destination.unexpected > 0 ||
+    audit.destination.matching !== audit.destination.expected
+  ) {
+    blockers.push("AUDIT_DESTINATION_DISCREPANCIES");
+  }
+  return blockers;
+}
+
+async function getOrganizationConfigurationReadiness(
+  ctx: Pick<QueryCtx, "db">,
+): Promise<FullSchemaDomainReadiness> {
+  const registration = FULL_SCHEMA_CLEANUP_DOMAINS[0];
+  const run = await getLatestConflictFreeWriteRun(ctx, registration.migrationKey);
+  if (!run) {
+    return {
+      domain: registration.domain,
+      status: "not_started",
+      migrationKey: registration.migrationKey,
+      migrationVersion: registration.migrationVersion,
+      blockers: ["COMPLETED_WRITE_RUN_NOT_FOUND"],
+    };
+  }
+  if (run.version !== registration.migrationVersion) {
+    return {
+      domain: registration.domain,
+      status: "stale",
+      migrationKey: registration.migrationKey,
+      migrationVersion: registration.migrationVersion,
+      blockers: ["MIGRATION_VERSION_STALE"],
+    };
+  }
+
+  const audit = await getLatestSchemaCleanupAudit(ctx, run._id);
+  if (!audit) {
+    return {
+      domain: registration.domain,
+      status: "not_started",
+      migrationKey: registration.migrationKey,
+      migrationVersion: registration.migrationVersion,
+      blockers: ["AUDIT_NOT_FOUND"],
+    };
+  }
+
+  const auditMetadata = {
+    auditId: audit._id,
+    auditedAt: audit.completedAt ?? audit.updatedAt,
+  };
+  if (audit.status === "queued" || audit.status === "running") {
+    return {
+      domain: registration.domain,
+      status: "running",
+      migrationKey: registration.migrationKey,
+      migrationVersion: registration.migrationVersion,
+      blockers: ["AUDIT_NOT_COMPLETED"],
+      ...auditMetadata,
+    };
+  }
+  if (audit.status === "failed") {
+    return {
+      domain: registration.domain,
+      status: "failed",
+      migrationKey: registration.migrationKey,
+      migrationVersion: registration.migrationVersion,
+      blockers: ["AUDIT_FAILED"],
+      ...auditMetadata,
+    };
+  }
+  if (!hasCleanCompletedSchemaCleanupAudit(run, audit)) {
+    return {
+      domain: registration.domain,
+      status: "blocked",
+      migrationKey: registration.migrationKey,
+      migrationVersion: registration.migrationVersion,
+      blockers: auditBlockers(audit),
+      ...auditMetadata,
+    };
+  }
+  return {
+    domain: registration.domain,
+    status: "ready",
+    migrationKey: registration.migrationKey,
+    migrationVersion: registration.migrationVersion,
+    blockers: [],
+    ...auditMetadata,
+  };
+}
+
+export const getFullSchemaInventory = internalQuery({
+  args: {},
+  handler: async () => ({
+    programKey: FULL_SCHEMA_CLEANUP_PROGRAM_KEY,
+    programVersion: FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
+    currentTableCount: CURRENT_SCHEMA_TABLES.length,
+    tables: CURRENT_SCHEMA_TABLES.map((table) => ({
+      table,
+      ...FULL_SCHEMA_TABLE_POLICIES[table],
+    })),
+  }),
+});
+
+export const getFullSchemaCleanupReadiness = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const domains = await Promise.all(
+      FULL_SCHEMA_CLEANUP_DOMAINS.map(async (registration) => {
+        if (registration.implementation === "not_started") {
+          return {
+            domain: registration.domain,
+            status: "not_started" as const,
+            migrationKey: registration.migrationKey,
+            migrationVersion: registration.migrationVersion,
+            blockers: ["DOMAIN_IMPLEMENTATION_NOT_DEPLOYED"],
+          };
+        }
+        return getOrganizationConfigurationReadiness(ctx);
+      }),
+    );
+    return {
+      programKey: FULL_SCHEMA_CLEANUP_PROGRAM_KEY,
+      programVersion: FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
+      readyForRelease3: domains.every(({ status }) => status === "ready"),
+      domains,
+    };
+  },
+});
+
 export const startSchemaCleanupAudit = internalMutation({
   args: {
     runId: v.id("migrationRuns"),
@@ -1161,19 +1351,7 @@ export const getSchemaCleanupAudit = internalQuery({
     }
     const audit = await getLatestSchemaCleanupAudit(ctx, run._id);
     if (!audit) return { status: "not_started" as const, ready: false };
-    const ready =
-      !run.dryRun &&
-      run.status === "completed" &&
-      run.counters.errors === 0 &&
-      run.counters.conflicts === 0 &&
-      audit.status === "completed" &&
-      !audit.auditTruncated &&
-      audit.sourceConflicts === 0 &&
-      audit.destination.missing === 0 &&
-      audit.destination.duplicate === 0 &&
-      audit.destination.mismatched === 0 &&
-      audit.destination.unexpected === 0 &&
-      audit.destination.matching === audit.destination.expected;
+    const ready = hasCleanCompletedSchemaCleanupAudit(run, audit);
     return {
       ...audit,
       ready,
