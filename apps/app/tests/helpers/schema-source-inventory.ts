@@ -96,7 +96,9 @@ function collectIndexes(expression: ts.Expression, indexes: Set<string>): void {
   }
 }
 
-export function parseSchemaSourceInventory(source: string): SchemaSourceInventory {
+export function parseSchemaSourceInventory(
+  source: string,
+): SchemaSourceInventory {
   const sourceFile = ts.createSourceFile(
     "schema.ts",
     source,
@@ -110,9 +112,14 @@ export function parseSchemaSourceInventory(source: string): SchemaSourceInventor
     if (ts.isPropertyAssignment(node)) {
       const name = propertyName(node.name);
       const tableCall = defineTableCall(node.initializer);
-      const fieldsArgument = tableCall?.arguments[0];
 
-      if (name && tableCall && ts.isObjectLiteralExpression(fieldsArgument)) {
+      if (!name || !tableCall) {
+        ts.forEachChild(node, visit);
+        return;
+      }
+
+      const fieldsArgument = tableCall.arguments[0];
+      if (fieldsArgument && ts.isObjectLiteralExpression(fieldsArgument)) {
         if (tableNames.has(name)) {
           throw new Error(`Duplicate table: ${name}`);
         }
@@ -122,7 +129,8 @@ export function parseSchemaSourceInventory(source: string): SchemaSourceInventor
         for (const property of fieldsArgument.properties) {
           if (!ts.isPropertyAssignment(property)) continue;
           const fieldName = propertyName(property.name);
-          if (fieldName) collectValidatorPaths(property.initializer, fieldName, fields);
+          if (fieldName)
+            collectValidatorPaths(property.initializer, fieldName, fields);
         }
 
         const indexes = new Set<string>();
