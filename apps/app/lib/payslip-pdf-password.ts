@@ -7,10 +7,9 @@
 export function getPayslipPdfOpenPassword(employee: {
   personalInfo: { dateOfBirth?: number | null };
   employment: { employeeId: string };
+  /** Legacy input retained while old employee rows are migrated. Never used. */
   payslipPdfPassword?: string;
 }): string {
-  const customPassword = String(employee.payslipPdfPassword ?? "").trim();
-  if (customPassword.length > 0) return customPassword;
   const id = String(employee.employment?.employeeId ?? "").trim();
   return id.length > 0 ? id : "employee";
 }

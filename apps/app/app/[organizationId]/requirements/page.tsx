@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +30,7 @@ import {
 import { format } from "date-fns";
 import { useOrganization } from "@/hooks/organization-context";
 import { getFileUrl as getFileUrlAction } from "@/actions/files";
+import { uploadFileToStorage } from "@/lib/storage-upload";
 import { useToast } from "@/components/ui/use-toast";
 import { updateDefaultRequirements } from "@/actions/organizations";
 import { addRequirement, updateRequirementFile } from "@/actions/employees";
@@ -135,10 +136,6 @@ export default function RequirementsPage() {
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
-
-  const generateUploadUrl = useMutation(
-    (api as any).files.generateUploadUrl,
-  ) as () => Promise<string>;
 
   const isOwnerOrAdminOrHr =
     user?.role === "owner" ||
@@ -284,28 +281,11 @@ export default function RequirementsPage() {
 
     setUploadingFile(true);
     try {
-      const uploadUrl = await generateUploadUrl();
-      const result = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": file.type },
-        body: file,
+      const storageId = await uploadFileToStorage({
+        organizationId: effectiveOrganizationId,
+        purpose: "employee_requirement",
+        file,
       });
-
-      if (!result.ok) {
-        throw new Error("Failed to upload file");
-      }
-
-      const responseText = await result.text();
-      // Handle both JSON and plain text responses
-      let storageId: string;
-      try {
-        const jsonResponse = JSON.parse(responseText);
-        storageId = jsonResponse.storageId || jsonResponse;
-      } catch {
-        storageId = responseText;
-      }
-      // Ensure we have a clean storage ID string
-      storageId = storageId.trim().replace(/^["']|["']$/g, "");
 
       // Find the requirement index, or create it if it doesn't exist
       const requirements = currentEmployee.requirements || [];
@@ -436,7 +416,8 @@ export default function RequirementsPage() {
 
     // Use server action to get proper file URL
     try {
-      const url = await getFileUrlAction(storageId);
+      if (!effectiveOrganizationId) throw new Error("Organization is required");
+      const url = await getFileUrlAction(effectiveOrganizationId, storageId);
       if (url) {
         fileUrlCache.current[storageId] = url;
         return url;
@@ -445,8 +426,7 @@ export default function RequirementsPage() {
       console.error("Error getting file URL:", error);
     }
 
-    // Fallback - should not reach here if storage.getUrl works correctly
-    return `${process.env.NEXT_PUBLIC_CONVEX_URL}/api/storage/${storageId}`;
+    throw new Error("File is unavailable");
   };
 
   const getFileMetadata = async (
@@ -964,13 +944,13 @@ export default function RequirementsPage() {
           </Card>
 
           {/* Employee Requirements Modal */}
-          {selectedEmployee && (
+          {selectedEmployee && effectiveOrganizationId && (
             <EmployeeRequirementsModal
               employee={selectedEmployee}
               isOpen={isEmployeeModalOpen}
               onOpenChange={setIsEmployeeModalOpen}
               onEmployeeUpdate={handleEmployeeUpdate}
-              generateUploadUrl={generateUploadUrl}
+              organizationId={effectiveOrganizationId}
               onPreviewFile={(file) => {
                 setPreviewLoading(true);
                 setPreviewFile(null);

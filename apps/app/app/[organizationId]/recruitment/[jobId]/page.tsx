@@ -67,7 +67,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { generateUploadUrl, getFileUrl } from "@/actions/files";
+import { getFileUrl } from "@/actions/files";
+import { uploadFileToStorage } from "@/lib/storage-upload";
 import { useOrganization } from "@/hooks/organization-context";
 import { useRouter } from "next/navigation";
 import { getOrganizationPath } from "@/utils/organization-routing";
@@ -342,14 +343,14 @@ export default function JobDetailPage({
   }, [selectedApplicant]);
 
   useEffect(() => {
-    if (selectedApplicant?.resume) {
-      getFileUrl(selectedApplicant.resume)
+    if (currentOrganizationId && selectedApplicant?.resume) {
+      getFileUrl(currentOrganizationId, selectedApplicant.resume)
         .then((url) => setResumeUrlForView(url))
         .catch(() => setResumeUrlForView(null));
     } else {
       setResumeUrlForView(null);
     }
-  }, [selectedApplicant?.resume]);
+  }, [currentOrganizationId, selectedApplicant?.resume]);
 
   // Redirect to list if job is deleted (not found after jobs have loaded)
   useEffect(() => {
@@ -461,26 +462,13 @@ export default function JobDetailPage({
         throw new Error("File size must be less than 10MB.");
       }
 
-      const uploadUrl = await generateUploadUrl();
-      const uploadResult = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": contentType },
-        body: blob,
+      if (!currentOrganizationId) throw new Error("Organization is required");
+      const extension = contentType === "application/pdf" ? "pdf" : "docx";
+      return await uploadFileToStorage({
+        organizationId: currentOrganizationId,
+        purpose: "applicant_resume",
+        file: new File([blob], `resume.${extension}`, { type: contentType }),
       });
-
-      if (!uploadResult.ok) {
-        throw new Error("Failed to upload file");
-      }
-
-      const responseText = await uploadResult.text();
-      let storageId: string;
-      try {
-        const jsonResponse = JSON.parse(responseText);
-        storageId = jsonResponse.storageId || jsonResponse;
-      } catch {
-        storageId = responseText;
-      }
-      return storageId.trim().replace(/^["']|["']$/g, "");
     } catch (error: any) {
       throw new Error(error.message || "Failed to upload file from URL");
     }
@@ -520,25 +508,11 @@ export default function JobDetailPage({
       let storageId: string;
 
       if (resumeFile) {
-        const uploadUrl = await generateUploadUrl();
-        const uploadResult = await fetch(uploadUrl, {
-          method: "POST",
-          headers: { "Content-Type": resumeFile.type },
-          body: resumeFile,
+        storageId = await uploadFileToStorage({
+          organizationId: currentOrganizationId,
+          purpose: "applicant_resume",
+          file: resumeFile,
         });
-
-        if (!uploadResult.ok) {
-          throw new Error("Failed to upload resume");
-        }
-
-        const responseText = await uploadResult.text();
-        try {
-          const jsonResponse = JSON.parse(responseText);
-          storageId = jsonResponse.storageId || jsonResponse;
-        } catch {
-          storageId = responseText;
-        }
-        storageId = storageId.trim().replace(/^["']|["']$/g, "");
       } else if (resumeUrl.trim()) {
         storageId = await uploadFileFromUrl(resumeUrl.trim());
       } else {
@@ -709,25 +683,12 @@ export default function JobDetailPage({
       let storageId: string;
 
       if (file) {
-        const uploadUrl = await generateUploadUrl();
-        const uploadResult = await fetch(uploadUrl, {
-          method: "POST",
-          headers: { "Content-Type": file.type },
-          body: file,
+        if (!currentOrganizationId) throw new Error("Organization is required");
+        storageId = await uploadFileToStorage({
+          organizationId: currentOrganizationId,
+          purpose: "applicant_resume",
+          file,
         });
-
-        if (!uploadResult.ok) {
-          throw new Error("Failed to upload resume");
-        }
-
-        const responseText = await uploadResult.text();
-        try {
-          const jsonResponse = JSON.parse(responseText);
-          storageId = jsonResponse.storageId || jsonResponse;
-        } catch {
-          storageId = responseText;
-        }
-        storageId = storageId.trim().replace(/^["']|["']$/g, "");
       } else if (url) {
         storageId = await uploadFileFromUrl(url);
       } else {

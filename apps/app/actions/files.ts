@@ -1,9 +1,13 @@
 "use server";
 
 import { FilesService } from "@/services/files-service";
+import type { StoragePurpose } from "@/services/files-service";
 
-export async function getFileUrl(storageId: string): Promise<string> {
-  return FilesService.getFileUrl(storageId);
+export async function getFileUrl(
+  organizationId: string,
+  storageId: string,
+): Promise<string> {
+  return FilesService.getFileUrl(organizationId, storageId);
 }
 
 /**
@@ -23,6 +27,17 @@ export async function getAnnouncementAttachmentUrl(
   );
 }
 
-export async function generateUploadUrl(): Promise<string> {
-  return FilesService.generateUploadUrl();
+export async function createUploadIntent(
+  organizationId: string,
+  purpose: StoragePurpose,
+): Promise<{ uploadUrl: string; intentId: string }> {
+  return FilesService.createUploadIntent(organizationId, purpose);
+}
+
+export async function registerUploadedFile(
+  intentId: string,
+  storageId: string,
+  metadata?: { fileName?: string },
+): Promise<string> {
+  return FilesService.registerUploadedFile(intentId, storageId, metadata);
 }

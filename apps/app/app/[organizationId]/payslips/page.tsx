@@ -446,10 +446,10 @@ function PayslipsPageContent() {
   };
 
   const handleSetPin = async () => {
-    if (!employeeId || pinToSet.length < 4) {
+    if (!employeeId || !/^\d{6,12}$/.test(pinToSet)) {
       toast({
         title: "Invalid PIN",
-        description: "PIN must be at least 4 characters",
+        description: "PIN must contain 6 to 12 digits",
         variant: "destructive",
       });
       return;
@@ -922,7 +922,7 @@ function PayslipsPageContent() {
             <DialogHeader>
               <DialogTitle>Set payslip PIN</DialogTitle>
               <DialogDescription>
-                Create a PIN (at least 4 characters) to protect access to your
+                Create a 6 to 12 digit PIN to protect access to your
                 payslips. You will need this PIN each time you open the payslips
                 page.
               </DialogDescription>
@@ -935,7 +935,7 @@ function PayslipsPageContent() {
                   type="password"
                   inputMode="numeric"
                   autoComplete="off"
-                  placeholder="At least 4 characters"
+                  placeholder="6 to 12 digits"
                   value={pinToSet}
                   onChange={(e) =>
                     setPinToSet(e.target.value.replace(/\D/g, "").slice(0, 8))
@@ -964,7 +964,9 @@ function PayslipsPageContent() {
               <Button
                 onClick={handleSetPin}
                 disabled={
-                  isSettingPin || pinToSet.length < 4 || pinToSet !== pinConfirm
+                  isSettingPin ||
+                  !/^\d{6,12}$/.test(pinToSet) ||
+                  pinToSet !== pinConfirm
                 }
               >
                 {isSettingPin ? "Setting..." : "Set PIN"}

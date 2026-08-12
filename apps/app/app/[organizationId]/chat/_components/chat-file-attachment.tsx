@@ -115,7 +115,12 @@ export function CachedFileAttachment({
 
   const fileData = useQuery(
     (api as any).files.getFileUrlAndType,
-    storageId ? { storageId: storageId as Id<"_storage"> } : "skip",
+    storageId && organizationId
+      ? {
+          organizationId: organizationId as Id<"organizations">,
+          storageId: storageId as Id<"_storage">,
+        }
+      : "skip",
   );
 
   // Revoke object URLs on unmount or when replacing

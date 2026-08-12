@@ -47,31 +47,51 @@ describe("public Convex security boundaries", () => {
 
   it("rejects unauthenticated upload URL generation", async () => {
     const t = convexTest(schema, modules);
-
-    await expect(t.mutation(api.files.generateUploadUrl)).rejects.toThrow(
-      "Not authenticated",
+    const organizationId = await t.run((ctx) =>
+      ctx.db.insert("organizations", {
+        name: "Private Org",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
     );
+
+    await expect(
+      t.mutation(api.files.createUploadIntent, {
+        organizationId,
+        purpose: "document_attachment",
+      }),
+    ).rejects.toThrow("Not authenticated");
   });
 
   it("rejects unauthenticated storage URL lookup", async () => {
     const t = convexTest(schema, modules);
-    const storageId = await t.run((ctx) =>
-      ctx.storage.store(new Blob(["private document"])),
-    );
+    const { organizationId, storageId } = await t.run(async (ctx) => ({
+      organizationId: await ctx.db.insert("organizations", {
+        name: "Private Org",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+      storageId: await ctx.storage.store(new Blob(["private document"])),
+    }));
 
     await expect(
-      t.query(api.files.getFileUrl, { storageId }),
+      t.query(api.files.getFileUrl, { organizationId, storageId }),
     ).rejects.toThrow("Not authenticated");
   });
 
   it("rejects unauthenticated storage metadata lookup", async () => {
     const t = convexTest(schema, modules);
-    const storageId = await t.run((ctx) =>
-      ctx.storage.store(new Blob(["private document"])),
-    );
+    const { organizationId, storageId } = await t.run(async (ctx) => ({
+      organizationId: await ctx.db.insert("organizations", {
+        name: "Private Org",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+      storageId: await ctx.storage.store(new Blob(["private document"])),
+    }));
 
     await expect(
-      t.query(api.files.getFileUrlAndType, { storageId }),
+      t.query(api.files.getFileUrlAndType, { organizationId, storageId }),
     ).rejects.toThrow("Not authenticated");
   });
 

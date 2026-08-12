@@ -1,54 +1,83 @@
 "use node";
 
 import { v } from "convex/values";
+import { makeFunctionReference } from "convex/server";
 import { action } from "./_generated/server";
-import { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import {
+  hashPayslipPin,
+  isLegacyPayslipPinHash,
+  validateNewPayslipPin,
+  verifyPayslipPinHash,
+} from "./payslipPinCrypto";
 
-const PIN_SALT_PREFIX = "payslip-pin-v1-";
+const storeCredential = makeFunctionReference<
+  "mutation",
+  { employeeId: Id<"employees">; credential: string },
+  { success: boolean }
+>("payslipPinResetDb:storePayslipPinCredential");
 
-function hashPin(employeeId: string, pin: string): string {
-  const crypto = require("crypto");
-  return crypto
-    .createHash("sha256")
-    .update(PIN_SALT_PREFIX + employeeId + "-" + pin)
-    .digest("hex");
-}
+const beginVerification = makeFunctionReference<
+  "mutation",
+  { employeeId: Id<"employees"> },
+  { credential: string | null; locked: boolean }
+>("payslipPinResetDb:beginPayslipPinVerification");
 
-/** Set or change the payslip PIN for an employee. PIN is hashed in this action then stored via mutation. */
+const completeVerification = makeFunctionReference<
+  "mutation",
+  { employeeId: Id<"employees">; upgradedCredential?: string },
+  { success: boolean }
+>("payslipPinResetDb:completePayslipPinVerification");
+
 export const setPayslipPin = action({
   args: {
     employeeId: v.id("employees"),
     pin: v.string(),
   },
   handler: async (ctx, args) => {
-    if (!args.pin || args.pin.length < 4) {
-      throw new Error("PIN must be at least 4 characters");
-    }
-    const hashed = hashPin(args.employeeId, args.pin);
-    await ctx.runMutation(api.employees.setPayslipPinHash, {
+    const pin = validateNewPayslipPin(args.pin);
+    const credential = await hashPayslipPin(pin);
+    await ctx.runMutation(storeCredential, {
       employeeId: args.employeeId,
-      hashedPin: hashed,
+      credential,
     });
     return { success: true };
   },
 });
 
-/** Verify the payslip PIN. Returns { valid: true } if correct. Uses query to get hash, compares in action. */
 export const verifyPayslipPin = action({
   args: {
     employeeId: v.id("employees"),
     pin: v.string(),
   },
   handler: async (ctx, args): Promise<{ valid: boolean }> => {
-    const result = (await ctx.runQuery(
-      api.employees.getPayslipPinHash,
-      { employeeId: args.employeeId }
-    )) as { hash: string | null };
-    const stored = result.hash;
-    if (!stored) {
+    const verification = await ctx.runMutation(beginVerification, {
+      employeeId: args.employeeId,
+    });
+    if (verification.locked) {
+      throw new Error("Too many PIN attempts. Try again in 15 minutes.");
+    }
+    if (!verification.credential) {
+      await ctx.runMutation(completeVerification, {
+        employeeId: args.employeeId,
+      });
       return { valid: true };
     }
-    const hashed = hashPin(args.employeeId, args.pin);
-    return { valid: hashed === stored };
+
+    const valid = await verifyPayslipPinHash(
+      args.pin,
+      verification.credential,
+      String(args.employeeId),
+    );
+    if (!valid) return { valid: false };
+
+    const upgradedCredential = isLegacyPayslipPinHash(verification.credential)
+      ? await hashPayslipPin(args.pin)
+      : undefined;
+    await ctx.runMutation(completeVerification, {
+      employeeId: args.employeeId,
+      upgradedCredential,
+    });
+    return { valid: true };
   },
 });

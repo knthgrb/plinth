@@ -1,40 +1,40 @@
 "use node";
 
+import { createHash, randomBytes } from "node:crypto";
 import { v } from "convex/values";
+import { makeFunctionReference } from "convex/server";
 import { action } from "./_generated/server";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
+import { hashPayslipPin, validateNewPayslipPin } from "./payslipPinCrypto";
 
 const TOKEN_SALT_PREFIX = "payslip-pin-reset-v1-";
-const PIN_SALT_PREFIX = "payslip-pin-v1-";
-const RESET_TTL_MS = 60 * 60 * 1000; // 1 hour
+const RESET_TTL_MS = 60 * 60 * 1000;
 
-function sha256Hex(text: string): string {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const crypto = require("crypto");
-  return crypto.createHash("sha256").update(text).digest("hex");
-}
+const getResetEmployeeContext = makeFunctionReference<
+  "query",
+  { employeeId: Id<"employees"> },
+  { employeeEmail: string; organizationId: Id<"organizations"> }
+>("payslipPinResetDb:getPayslipPinResetContext");
 
-function base64Url(bytes: Buffer): string {
-  return bytes
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-}
+const getAuthorizedReset = makeFunctionReference<
+  "query",
+  { tokenHash: string },
+  { employeeId: Id<"employees"> }
+>("payslipPinResetDb:getAuthorizedResetByTokenHash");
+
+const consumeReset = makeFunctionReference<
+  "mutation",
+  { tokenHash: string; credential: string },
+  { success: boolean }
+>("payslipPinResetDb:consumeResetAndSetCredential");
 
 function hashToken(token: string): string {
-  return sha256Hex(TOKEN_SALT_PREFIX + token);
+  return createHash("sha256")
+    .update(TOKEN_SALT_PREFIX + token)
+    .digest("hex");
 }
 
-function hashPin(employeeId: string, pin: string): string {
-  return sha256Hex(PIN_SALT_PREFIX + employeeId + "-" + pin);
-}
-
-/**
- * Create a short-lived PIN reset token for an employee, returning the raw token
- * so the caller (server action) can email it.
- */
 export const createPayslipPinResetToken = action({
   args: { employeeId: v.id("employees") },
   handler: async (
@@ -45,35 +45,16 @@ export const createPayslipPinResetToken = action({
     employeeEmail: string;
     organizationId: Id<"organizations">;
   }> => {
-    const employee = await ctx.runQuery(api.employees.getEmployee, {
+    const context = await ctx.runQuery(getResetEmployeeContext, {
       employeeId: args.employeeId,
     });
-    if (!employee) throw new Error("Employee not found");
-
-    // Enforce "same employee" by reusing employees.getPayslipPinHash authorization logic:
-    // If the caller isn't authorized to see the hash, they also cannot create a reset token.
-    await ctx.runQuery(api.employees.getPayslipPinHash, {
-      employeeId: args.employeeId,
-    });
-
-    // Generate raw token (never stored), store only hash.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const crypto = require("crypto");
-    const token = base64Url(crypto.randomBytes(32));
-    const tokenHash = hashToken(token);
-    const expiresAt = Date.now() + RESET_TTL_MS;
-
+    const token = randomBytes(32).toString("base64url");
     await ctx.runMutation(internal.payslipPinResetDb.insertReset, {
       employeeId: args.employeeId,
-      tokenHash,
-      expiresAt,
+      tokenHash: hashToken(token),
+      expiresAt: Date.now() + RESET_TTL_MS,
     });
-
-    return {
-      token,
-      employeeEmail: employee.personalInfo.email,
-      organizationId: employee.organizationId,
-    };
+    return { token, ...context };
   },
 });
 
@@ -83,32 +64,11 @@ export const resetPayslipPinWithToken = action({
     newPin: v.string(),
   },
   handler: async (ctx, args) => {
-    const trimmedPin = args.newPin.trim();
-    if (trimmedPin.length < 4) throw new Error("PIN must be at least 4 characters");
-
+    const pin = validateNewPayslipPin(args.newPin);
     const tokenHash = hashToken(args.token);
-    const reset = await ctx.runQuery(
-      internal.payslipPinResetDb.getResetByTokenHash,
-      { tokenHash },
-    );
-    if (!reset) throw new Error("Reset link is invalid or has expired");
-    if (reset.usedAt) throw new Error("Reset link has already been used");
-    if (Date.now() > reset.expiresAt) throw new Error("Reset link has expired");
-
-    // Authorize caller for this employee (same employee or HR/admin/owner)
-    await ctx.runQuery(api.employees.getPayslipPinHash, {
-      employeeId: reset.employeeId,
-    });
-
-    const hashed = hashPin(String(reset.employeeId), trimmedPin);
-    await ctx.runMutation(api.employees.setPayslipPinHash, {
-      employeeId: reset.employeeId,
-      hashedPin: hashed,
-    });
-
-    await ctx.runMutation(internal.payslipPinResetDb.markResetUsed, {
-      resetId: reset._id,
-    });
+    await ctx.runQuery(getAuthorizedReset, { tokenHash });
+    const credential = await hashPayslipPin(pin);
+    await ctx.runMutation(consumeReset, { tokenHash, credential });
     return { success: true };
   },
 });

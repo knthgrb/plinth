@@ -30,8 +30,11 @@ export function decryptCompensationFromDb(comp: Record<string, any>) {
 
 export function decryptEmployeeFromDb(emp: any): any {
   if (!emp) return emp;
+  const safeEmployee = { ...emp };
+  delete safeEmployee.payslipPinHash;
+  delete safeEmployee.payslipPdfPassword;
   return {
-    ...emp,
+    ...safeEmployee,
     compensation: decryptCompensationFromDb(emp.compensation),
   };
 }

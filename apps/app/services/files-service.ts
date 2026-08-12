@@ -2,12 +2,29 @@ import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
 import { getAuthedConvexClient } from "@/lib/convex-client";
 
+export type StoragePurpose =
+  | "accounting_receipt"
+  | "announcement_attachment"
+  | "applicant_resume"
+  | "chat_attachment"
+  | "document_attachment"
+  | "employee_requirement"
+  | "leave_attachment"
+  | "memo_attachment"
+  | "payslip_pdf";
+
 export class FilesService {
-  static async getFileUrl(storageId: string): Promise<string> {
+  static async getFileUrl(
+    organizationId: string,
+    storageId: string,
+  ): Promise<string> {
     const convex = await getAuthedConvexClient();
-    return await (convex.query as any)((api as any).files.getFileUrl, {
+    const url = await convex.query(api.files.getFileUrl, {
+      organizationId: organizationId as Id<"organizations">,
       storageId: storageId as Id<"_storage">,
     });
+    if (!url) throw new Error("File is unavailable");
+    return url;
   }
 
   /**
@@ -20,18 +37,44 @@ export class FilesService {
     storageId: string
   ): Promise<string> {
     const convex = await getAuthedConvexClient();
-    return await (convex.query as any)(
-      (api as any).announcements.getAnnouncementAttachmentUrl,
+    const url = await convex.query(
+      api.announcements.getAnnouncementAttachmentUrl,
       {
         organizationId: organizationId as Id<"organizations">,
         announcementId: announcementId as Id<"memos">,
         storageId: storageId as Id<"_storage">,
-      }
+      },
     );
+    if (!url) throw new Error("File is unavailable");
+    return url;
   }
 
-  static async generateUploadUrl(): Promise<string> {
+  static async createUploadIntent(
+    organizationId: string,
+    purpose: StoragePurpose,
+  ): Promise<{ uploadUrl: string; intentId: string }> {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)((api as any).files.generateUploadUrl);
+    const intent = await convex.mutation(api.files.createUploadIntent, {
+      organizationId: organizationId as Id<"organizations">,
+      purpose,
+    });
+    return { ...intent, intentId: String(intent.intentId) };
+  }
+
+  static async registerUploadedFile(
+    intentId: string,
+    storageId: string,
+    metadata?: { fileName?: string },
+  ): Promise<string> {
+    const convex = await getAuthedConvexClient();
+    const storageObjectId = await convex.mutation(
+      api.files.registerUploadedFile,
+      {
+        intentId: intentId as Id<"storageUploadIntents">,
+        storageId: storageId as Id<"_storage">,
+        ...metadata,
+      },
+    );
+    return String(storageObjectId);
   }
 }

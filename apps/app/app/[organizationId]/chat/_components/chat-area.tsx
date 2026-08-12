@@ -42,7 +42,7 @@ import {
 } from "@/components/ui/popover";
 import { chatCache, mergeChatMessagesById } from "@/services/chat-cache-service";
 import { CachedFileAttachment } from "./chat-file-attachment";
-import { generateUploadUrl } from "@/actions/files";
+import { uploadFileToStorage } from "@/lib/storage-upload";
 import { validateChatFile } from "@/lib/chat-file-validation";
 import { DocumentSelectorModal } from "./document-selector-modal";
 import {
@@ -465,26 +465,12 @@ export function ChatArea({
       ]);
 
       try {
-        const uploadUrl = await generateUploadUrl();
-        const result = await fetch(uploadUrl, {
-          method: "POST",
-          headers: { "Content-Type": file.type },
-          body: file,
+        if (!currentOrganizationId) throw new Error("Organization is required");
+        const storageId = await uploadFileToStorage({
+          organizationId: currentOrganizationId,
+          purpose: "chat_attachment",
+          file,
         });
-
-        if (!result.ok) {
-          throw new Error(`Failed to upload ${file.name}`);
-        }
-
-        const responseText = await result.text();
-        let storageId: string;
-        try {
-          const jsonResponse = JSON.parse(responseText);
-          storageId = jsonResponse.storageId || jsonResponse;
-        } catch {
-          storageId = responseText;
-        }
-        storageId = storageId.trim().replace(/^["']|["']$/g, "");
 
         setAttachments((prev) =>
           prev.map((att) =>

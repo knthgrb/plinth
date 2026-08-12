@@ -2,6 +2,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../../convex/_generated/api";
 import schema from "../../convex/schema";
+import { decryptEmployeeFromDb } from "../../convex/employeeCompensationCrypto";
 
 vi.mock("../../convex/auth", () => ({
   authComponent: {
@@ -31,6 +32,17 @@ const defaultSchedule = {
 };
 
 describe("employee field projection", () => {
+  it("never projects payslip credentials from employee records", () => {
+    const projected = decryptEmployeeFromDb({
+      compensation: { basicSalary: 30_000 },
+      payslipPinHash: "scrypt$v1$private",
+      payslipPdfPassword: "plaintext-private",
+    });
+
+    expect(projected).not.toHaveProperty("payslipPinHash");
+    expect(projected).not.toHaveProperty("payslipPdfPassword");
+  });
+
   it("omits compensation, banking, and private contact fields for employee viewers", async () => {
     const t = convexTest(schema, modules);
     const viewerEmail = "viewer@example.com";

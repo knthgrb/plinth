@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/select";
 import { TiptapEditor } from "@/components/tiptap-editor";
 import { createAnnouncement, updateAnnouncement } from "@/actions/announcements";
-import { generateUploadUrl } from "@/actions/files";
+import { uploadFileToStorage } from "@/lib/storage-upload";
 import { useToast } from "@/components/ui/use-toast";
 import { X, FileText, Check } from "lucide-react";
 import { useOrganization } from "@/hooks/organization-context";
@@ -316,26 +316,11 @@ export function CreateAnnouncementModal({
             ),
           );
 
-          const uploadUrl = await generateUploadUrl();
-          const result = await fetch(uploadUrl, {
-            method: "POST",
-            headers: { "Content-Type": fileItem.file.type },
-            body: fileItem.file,
+          const storageId = await uploadFileToStorage({
+            organizationId,
+            purpose: "announcement_attachment",
+            file: fileItem.file,
           });
-
-          if (!result.ok) {
-            throw new Error(`Failed to upload ${fileItem.file.name}`);
-          }
-
-          const responseText = await result.text();
-          let storageId: string;
-          try {
-            const jsonResponse = JSON.parse(responseText);
-            storageId = jsonResponse.storageId || jsonResponse;
-          } catch {
-            storageId = responseText;
-          }
-          storageId = storageId.trim().replace(/^["']|["']$/g, "");
 
           uploadedFileIds.push(storageId);
           setFiles((prev) =>

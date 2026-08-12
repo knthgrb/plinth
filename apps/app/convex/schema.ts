@@ -100,6 +100,58 @@ export default defineSchema({
     .index("by_organization", ["organizationId"])
     .index("by_user_organization", ["userId", "organizationId"]),
 
+  storageUploadIntents: defineTable({
+    organizationId: v.id("organizations"),
+    ownerUserId: v.id("users"),
+    purpose: v.union(
+      v.literal("accounting_receipt"),
+      v.literal("announcement_attachment"),
+      v.literal("applicant_resume"),
+      v.literal("chat_attachment"),
+      v.literal("document_attachment"),
+      v.literal("employee_requirement"),
+      v.literal("leave_attachment"),
+      v.literal("memo_attachment"),
+      v.literal("payslip_pdf"),
+    ),
+    expiresAt: v.number(),
+    consumedAt: v.optional(v.number()),
+    storageId: v.optional(v.id("_storage")),
+    createdAt: v.number(),
+  })
+    .index("by_owner", ["ownerUserId", "createdAt"])
+    .index("by_expiry", ["expiresAt"]),
+
+  storageObjects: defineTable({
+    storageId: v.id("_storage"),
+    organizationId: v.id("organizations"),
+    ownerUserId: v.id("users"),
+    purpose: v.union(
+      v.literal("accounting_receipt"),
+      v.literal("announcement_attachment"),
+      v.literal("applicant_resume"),
+      v.literal("chat_attachment"),
+      v.literal("document_attachment"),
+      v.literal("employee_requirement"),
+      v.literal("leave_attachment"),
+      v.literal("memo_attachment"),
+      v.literal("payslip_pdf"),
+    ),
+    fileName: v.optional(v.string()),
+    contentType: v.optional(v.string()),
+    size: v.optional(v.number()),
+    state: v.union(
+      v.literal("active"),
+      v.literal("orphaned"),
+      v.literal("deleted"),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_storage", ["storageId"])
+    .index("by_organization", ["organizationId", "createdAt"])
+    .index("by_owner", ["ownerUserId", "createdAt"]),
+
   /** In-app notifications (not chat); excludes new-message events. */
   notifications: defineTable({
     userId: v.id("users"),
@@ -358,7 +410,7 @@ export default defineSchema({
       ),
     ),
     customFields: v.optional(v.any()), // Flexible object for custom fields
-    /** Hashed PIN for accessing payslips page (e.g. SHA-256 of pin + salt). Set by employee or HR. */
+    /** Versioned payslip PIN credential. Legacy SHA-256 rows upgrade after successful verification. */
     payslipPinHash: v.optional(v.string()),
     /** Optional custom password for emailed payslip PDFs. When absent, employee ID is used. */
     payslipPdfPassword: v.optional(v.string()),
@@ -385,6 +437,18 @@ export default defineSchema({
   })
     .index("by_employee", ["employeeId"])
     .index("by_token_hash", ["tokenHash"]),
+
+  payslipPinAttempts: defineTable({
+    userId: v.id("users"),
+    employeeId: v.id("employees"),
+    organizationId: v.id("organizations"),
+    attemptCount: v.number(),
+    windowStartedAt: v.number(),
+    lockedUntil: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index("by_user_employee", ["userId", "employeeId"])
+    .index("by_locked_until", ["lockedUntil"]),
 
   // Employee schedule history (effective-dated snapshots).
   // Used so attendance/payroll resolve the schedule that was active on a specific date.

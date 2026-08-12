@@ -57,7 +57,8 @@ import {
   deleteCostItem,
   repairPayrollAccounting,
 } from "@/actions/accounting";
-import { generateUploadUrl, getFileUrl } from "@/actions/files";
+import { getFileUrl } from "@/actions/files";
+import { uploadFileToStorage } from "@/lib/storage-upload";
 import { useToast } from "@/components/ui/use-toast";
 import { getStatusBadgeClass, getStatusBadgeStyle } from "@/utils/colors";
 import {
@@ -311,10 +312,14 @@ export default function AccountingPage() {
         });
         setSelectedCategoryName(item.categoryName ?? "Employee Related Cost");
         // Load existing receipt URLs
-        if (item.receipts && item.receipts.length > 0) {
+        if (
+          currentOrganizationId &&
+          item.receipts &&
+          item.receipts.length > 0
+        ) {
           Promise.all(
             item.receipts.map(async (id: string) => {
-              const url = await getFileUrl(id);
+              const url = await getFileUrl(currentOrganizationId, id);
               return { url, id };
             }),
           ).then((receipts) => setReceiptUrls(receipts));
@@ -412,26 +417,11 @@ export default function AccountingPage() {
 
       // Upload new receipt files
       for (const file of receiptFiles) {
-        const uploadUrl = await generateUploadUrl();
-        const result = await fetch(uploadUrl, {
-          method: "POST",
-          headers: { "Content-Type": file.type },
-          body: file,
+        const storageId = await uploadFileToStorage({
+          organizationId: currentOrganizationId,
+          purpose: "accounting_receipt",
+          file,
         });
-
-        if (!result.ok) {
-          throw new Error(`Failed to upload ${file.name}`);
-        }
-
-        const responseText = await result.text();
-        let storageId: string;
-        try {
-          const jsonResponse = JSON.parse(responseText);
-          storageId = jsonResponse.storageId || jsonResponse;
-        } catch {
-          storageId = responseText;
-        }
-        storageId = storageId.trim().replace(/^["']|["']$/g, "");
         receiptIds.push(storageId);
       }
 
@@ -595,11 +585,11 @@ export default function AccountingPage() {
     setBreakdownDialogOpen(true);
     setDetailImageLoadErrors({});
 
-    if (item.receipts?.length) {
+    if (currentOrganizationId && item.receipts?.length) {
       const attachments = await Promise.all(
         item.receipts.map(async (id: string) => ({
           id,
-          url: await getFileUrl(id),
+          url: await getFileUrl(currentOrganizationId, id),
         })),
       );
       setDetailAttachmentUrls(attachments);

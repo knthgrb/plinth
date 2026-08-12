@@ -28,7 +28,7 @@ describe("payroll regeneration override handling", () => {
     const schemaSource = readSource("../convex/schema.ts");
     const payrollSource = readSource("../convex/payroll.ts");
 
-    expect(payrollSource).toContain("payslipPdfPassword");
+    expect(payrollSource).not.toContain("payslipPdfPassword");
     expect(schemaSource).toContain("payslipPdfPassword: v.optional(v.string())");
   });
 

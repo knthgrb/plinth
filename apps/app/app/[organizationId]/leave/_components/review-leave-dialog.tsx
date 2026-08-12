@@ -20,7 +20,7 @@ import { format } from "date-fns";
 import { useToast } from "@/components/ui/use-toast";
 import { approveLeaveRequest, rejectLeaveRequest } from "@/actions/leave";
 import { createDocument } from "@/actions/documents";
-import { generateUploadUrl } from "@/actions/files";
+import { uploadFileToStorage } from "@/lib/storage-upload";
 import { TiptapViewer } from "@/components/tiptap-viewer";
 import { SignaturePad } from "@/components/signature-pad";
 import {
@@ -243,27 +243,11 @@ export function ReviewLeaveDialog({
       const start = format(new Date(request.startDate), "yyyy-MM-dd");
       const fileName = `leave-request-${safeEmployeeName || "employee"}-${start}.pdf`;
       const pdfBlob = await getElementPdfBlob(pdfContentRef.current);
-      const uploadUrl = await generateUploadUrl();
-      const uploadResponse = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/pdf" },
-        body: new File([pdfBlob], fileName, { type: "application/pdf" }),
+      const storageId = await uploadFileToStorage({
+        organizationId,
+        purpose: "leave_attachment",
+        file: new File([pdfBlob], fileName, { type: "application/pdf" }),
       });
-
-      if (!uploadResponse.ok) {
-        throw new Error("Failed to upload PDF");
-      }
-
-      const responseText = await uploadResponse.text();
-      let storageId: string;
-      try {
-        const jsonResponse = JSON.parse(responseText);
-        storageId = jsonResponse.storageId || jsonResponse;
-      } catch {
-        storageId = responseText;
-      }
-
-      storageId = storageId.trim().replace(/^["']|["']$/g, "");
 
       await createDocument({
         organizationId,

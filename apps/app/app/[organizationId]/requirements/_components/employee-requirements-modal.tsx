@@ -19,8 +19,8 @@ import {
   removeRequirement,
   setEmployeeRequirementsComplete,
 } from "@/actions/employees";
-import { getFileUrl as getFileUrlAction } from "@/actions/files";
 import { useToast } from "@/components/ui/use-toast";
+import { uploadFileToStorage } from "@/lib/storage-upload";
 import { AddRequirementDialog } from "./add-requirement-dialog";
 import { FileText } from "lucide-react";
 import { getStatusBadgeClass, getStatusBadgeStyle } from "@/utils/colors";
@@ -99,7 +99,7 @@ interface EmployeeRequirementsModalProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   onEmployeeUpdate: (employee: any) => void;
-  generateUploadUrl: () => Promise<string>;
+  organizationId: string;
   onPreviewFile: (file: { url: string; name: string; type: string }) => void;
   fileMetadataCache: React.MutableRefObject<{
     [key: string]: {
@@ -123,7 +123,7 @@ export function EmployeeRequirementsModal({
   isOpen,
   onOpenChange,
   onEmployeeUpdate,
-  generateUploadUrl,
+  organizationId,
   onPreviewFile,
   fileMetadataCache,
   getFileMetadata,
@@ -271,22 +271,11 @@ export function EmployeeRequirementsModal({
       }
 
       if (selectedFile && selectedReqIndexForUpload >= 0) {
-        const uploadUrl = await generateUploadUrl();
-        const result = await fetch(uploadUrl, {
-          method: "POST",
-          headers: { "Content-Type": selectedFile.type },
-          body: selectedFile,
+        const storageId = await uploadFileToStorage({
+          organizationId,
+          purpose: "employee_requirement",
+          file: selectedFile,
         });
-        if (!result.ok) throw new Error("Failed to upload");
-        const responseText = await result.text();
-        let storageId: string;
-        try {
-          const jsonResponse = JSON.parse(responseText);
-          storageId = jsonResponse.storageId || jsonResponse;
-        } catch {
-          storageId = responseText;
-        }
-        storageId = storageId.trim().replace(/^["']|["']$/g, "");
         await updateRequirementFile({
           employeeId: employee._id,
           requirementIndex: selectedReqIndexForUpload,

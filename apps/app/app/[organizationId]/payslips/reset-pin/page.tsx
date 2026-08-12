@@ -19,7 +19,9 @@ export default async function ResetPayslipPinPage(props: {
     const newPin = String(formData.get("pin") ?? "");
     const confirm = String(formData.get("confirm") ?? "");
     if (!token) throw new Error("Missing token");
-    if (newPin.trim().length < 4) throw new Error("PIN must be at least 4 characters");
+    if (!/^\d{6,12}$/.test(newPin.trim())) {
+      throw new Error("PIN must contain 6 to 12 digits");
+    }
     if (newPin !== confirm) throw new Error("PINs do not match");
 
     await resetPayslipPinFromToken({ token, newPin });
@@ -48,7 +50,10 @@ export default async function ResetPayslipPinPage(props: {
                     type="password"
                     inputMode="numeric"
                     autoComplete="off"
-                    placeholder="At least 4 digits"
+                    placeholder="6 to 12 digits"
+                    minLength={6}
+                    maxLength={12}
+                    pattern="[0-9]{6,12}"
                   />
                 </div>
                 <div className="space-y-2">
@@ -73,4 +78,3 @@ export default async function ResetPayslipPinPage(props: {
     </MainLayout>
   );
 }
-

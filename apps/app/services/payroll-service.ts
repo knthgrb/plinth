@@ -13,8 +13,14 @@ import {
   formatManilaShortDate,
 } from "@/lib/manila-date";
 
-async function uploadPayslipPdfToStorage(pdf: Buffer): Promise<string> {
-  const uploadUrl = await FilesService.generateUploadUrl();
+async function uploadPayslipPdfToStorage(
+  organizationId: string,
+  pdf: Buffer,
+): Promise<string> {
+  const { intentId, uploadUrl } = await FilesService.createUploadIntent(
+    organizationId,
+    "payslip_pdf",
+  );
   const uploadResult = await fetch(uploadUrl, {
     method: "POST",
     headers: { "Content-Type": "application/pdf" },
@@ -31,9 +37,13 @@ async function uploadPayslipPdfToStorage(pdf: Buffer): Promise<string> {
   } catch {
     storageId = responseText;
   }
-  return String(storageId)
+  storageId = String(storageId)
     .trim()
     .replace(/^["']|["']$/g, "");
+  await FilesService.registerUploadedFile(intentId, storageId, {
+    fileName: "payslip.pdf",
+  });
+  return storageId;
 }
 
 export class PayrollService {
@@ -364,7 +374,10 @@ export class PayrollService {
         .slice(0, 48);
       const fileName = `payslip-${safePeriod}-${payslip.employeeId}.pdf`;
       const messageBody = `Your payslip for ${payslipPeriod} is attached. PDF open password: ${payslipPdfPasswordDescription()}`;
-      const storageId = await uploadPayslipPdfToStorage(pdf);
+      const storageId = await uploadPayslipPdfToStorage(
+        payslip.organizationId,
+        pdf,
+      );
       await ChatService.sendMessageToEmployee({
         organizationId: payslip.organizationId,
         employeeId: result.employeeId,
@@ -534,7 +547,10 @@ export class PayrollService {
         const messageBody = `Your payslip for ${period} (${
           recipients.organizationName
         }) is attached.\n\nPDF open password: ${payslipPdfPasswordDescription()}`;
-        const storageId = await uploadPayslipPdfToStorage(pdf);
+        const storageId = await uploadPayslipPdfToStorage(
+          payslip.organizationId,
+          pdf,
+        );
         await ChatService.sendMessageToEmployee({
           organizationId: payslip.organizationId,
           employeeId: row.employeeId,
@@ -640,7 +656,10 @@ export class PayrollService {
             ? "Correction applied."
             : group.reasons.map((r, i) => `${i + 1}. ${r}`).join("\n");
         const messageBody = `Corrected payslip for ${period} (${recipients.organizationName}).\n\nReason for correction:\n${reasonText}\n\nPDF open password: ${payslipPdfPasswordDescription()}`;
-        const storageId = await uploadPayslipPdfToStorage(pdf);
+        const storageId = await uploadPayslipPdfToStorage(
+          payslip.organizationId,
+          pdf,
+        );
         await ChatService.sendMessageToEmployee({
           organizationId: payslip.organizationId,
           employeeId: String(payslip.employeeId),

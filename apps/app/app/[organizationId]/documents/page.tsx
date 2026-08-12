@@ -50,7 +50,8 @@ import { useRouter } from "next/navigation";
 import { useOrganization } from "@/hooks/organization-context";
 import { getOrganizationPath } from "@/utils/organization-routing";
 import { deleteDocument } from "@/actions/documents";
-import { generateUploadUrl, getFileUrl } from "@/actions/files";
+import { getFileUrl } from "@/actions/files";
+import { uploadFileToStorage } from "@/lib/storage-upload";
 import { createDocument } from "@/actions/documents";
 import { useToast } from "@/components/ui/use-toast";
 import { isFileOnlyDocument, openInNewTab } from "@/lib/document-utils";
@@ -322,26 +323,11 @@ export default function DocumentsPage() {
       const { file, id, title, category, type, visibilityScope } = fileItem;
       try {
         // Upload file
-        const uploadUrl = await generateUploadUrl();
-        const result = await fetch(uploadUrl, {
-          method: "POST",
-          headers: { "Content-Type": file.type },
-          body: file,
+        const storageId = await uploadFileToStorage({
+          organizationId: effectiveOrganizationId,
+          purpose: "document_attachment",
+          file,
         });
-
-        if (!result.ok) {
-          throw new Error(`Failed to upload ${file.name}`);
-        }
-
-        const responseText = await result.text();
-        let storageId: string;
-        try {
-          const jsonResponse = JSON.parse(responseText);
-          storageId = jsonResponse.storageId || jsonResponse;
-        } catch {
-          storageId = responseText;
-        }
-        storageId = storageId.trim().replace(/^["']|["']$/g, "");
 
         // Create document entry with file metadata
         await createDocument({
@@ -428,7 +414,8 @@ export default function DocumentsPage() {
 
   const handleDownloadFile = async (storageId: string) => {
     try {
-      const url = await getFileUrl(storageId);
+      if (!effectiveOrganizationId) throw new Error("Organization is required");
+      const url = await getFileUrl(effectiveOrganizationId, storageId);
       openInNewTab(url);
     } catch (error: any) {
       toast({
@@ -449,7 +436,13 @@ export default function DocumentsPage() {
     // If it's a file-only document with attachments, load the first file
     if (isFileOnly(doc) && doc.attachments && doc.attachments.length > 0) {
       try {
-        const url = await getFileUrl(doc.attachments[0]);
+        if (!effectiveOrganizationId) {
+          throw new Error("Organization is required");
+        }
+        const url = await getFileUrl(
+          effectiveOrganizationId,
+          doc.attachments[0],
+        );
         setPreviewFileUrl(url);
 
         // Try to verify file type by checking Content-Type header

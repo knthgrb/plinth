@@ -519,10 +519,6 @@ function buildEmployeeSnapshot(employee: any) {
           ? employee.compensation.allowance
           : undefined,
     },
-    payslipPdfPassword:
-      typeof employee?.payslipPdfPassword === "string"
-        ? employee.payslipPdfPassword
-        : undefined,
   };
 }
 
@@ -535,10 +531,6 @@ function getPayslipEmployeeFromSnapshot(payslip: any): any {
     personalInfo: snapshot.personalInfo ?? {},
     employment: snapshot.employment ?? {},
     compensation: snapshot.compensation ?? {},
-    payslipPdfPassword:
-      typeof snapshot.payslipPdfPassword === "string"
-        ? snapshot.payslipPdfPassword
-        : undefined,
   };
 }
 
@@ -6512,7 +6504,6 @@ export const getPayrollFinalizePayslipRecipients = query({
           personalInfo: decrypted.personalInfo,
           employment: decrypted.employment,
           compensation: decrypted.compensation,
-          payslipPdfPassword: (decrypted as any).payslipPdfPassword,
         };
       }
       const workEmail = String(employee.personalInfo?.email || "").trim();
@@ -6594,7 +6585,6 @@ export const getPayslipListByPayrollRun = query({
               personalInfo: decrypted.personalInfo,
               employment: decrypted.employment,
               compensation: decrypted.compensation,
-              payslipPdfPassword: (decrypted as any).payslipPdfPassword,
             };
           }
         }
@@ -6657,7 +6647,6 @@ export const getPayslipsByPayrollRun = query({
               personalInfo: decrypted.personalInfo,
               employment: decrypted.employment,
               compensation: decrypted.compensation,
-              payslipPdfPassword: (decrypted as any).payslipPdfPassword,
             };
           }
         }
@@ -6757,7 +6746,6 @@ export const getPayslip = query({
           personalInfo: decrypted.personalInfo,
           employment: decrypted.employment,
           compensation: decrypted.compensation,
-          payslipPdfPassword: (decrypted as any).payslipPdfPassword,
         };
       }
     }
