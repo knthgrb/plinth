@@ -24,9 +24,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 6807,
-      "fileCount": 227,
-      "fingerprint": "5bcd5bf9349db8e9fc93cead3f3e93bc780cbb0beaaa8f5b8c3202739526186c",
+      "totalMatches": 6797,
+      "fileCount": 226,
+      "fingerprint": "9844128a7bb827d48228ce1bca230057cd636eb7ff94bb97b066674ed7af58fe",
       "symbols": [
         {
           "symbol": "acknowledgedBy",
@@ -215,8 +215,8 @@
         },
         {
           "symbol": "organizationId",
-          "matches": 1644,
-          "files": 152
+          "matches": 1638,
+          "files": 151
         },
         {
           "symbol": "paidLeaveRequiresRegularization",
@@ -290,8 +290,8 @@
         },
         {
           "symbol": "role",
-          "matches": 551,
-          "files": 78
+          "matches": 547,
+          "files": 77
         },
         {
           "symbol": "salaryPaymentFrequency",
