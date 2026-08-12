@@ -1,7 +1,12 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
-import { getEffectiveSettings } from "./organizationConfiguration";
+import {
+  getEffectiveSettings,
+  replaceDepartmentConfiguration,
+  upsertAttendanceConfiguration,
+  upsertPayrollConfiguration,
+} from "./organizationConfiguration";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -110,8 +115,8 @@ export const getSettings = query({
         _id: null,
         organizationId: args.organizationId,
         proratedLeave: true,
-        leaveAccrualFrequency: "monthly",
-        leaveTrackerMode: "general",
+        leaveAccrualFrequency: "monthly" as const,
+        leaveTrackerMode: "general" as const,
         enableAnniversaryLeave: true,
         anniversaryLeaveMaxDays: 15,
         annualSil: 8,
@@ -173,7 +178,7 @@ export const getSettings = query({
     if (settings.leaveAccrualFrequency === undefined) {
       settings = {
         ...settings,
-        leaveAccrualFrequency: "monthly",
+        leaveAccrualFrequency: "monthly" as const,
       };
     }
     if (settings.anniversaryLeaveMaxDays === undefined) {
@@ -259,6 +264,10 @@ export const updatePayrollSettings = mutation({
       });
     }
 
+    await upsertPayrollConfiguration(ctx, args.organizationId, {
+      payrollSettings: args.payrollSettings,
+    });
+
     return { success: true };
   },
 });
@@ -339,6 +348,11 @@ export const updateAttendanceSettings = mutation({
         updatedAt: now,
       });
     }
+    await upsertAttendanceConfiguration(
+      ctx,
+      args.organizationId,
+      args.attendanceSettings,
+    );
     return { success: true };
   },
 });
@@ -632,6 +646,12 @@ export const updateDepartments = mutation({
         updatedAt: now,
       });
     }
+
+    await replaceDepartmentConfiguration(
+      ctx,
+      args.organizationId,
+      args.departments,
+    );
 
     return { success: true };
   },

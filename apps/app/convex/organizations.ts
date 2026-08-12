@@ -16,6 +16,8 @@ import { requireActiveMembership } from "./access";
 import {
   getEffectiveOrganization,
   getEffectiveRequirementDefinitions,
+  replaceRequirementConfiguration,
+  upsertPayrollConfiguration,
 } from "./organizationConfiguration";
 
 const defaultRequirementValidator = v.object({
@@ -478,6 +480,12 @@ export const createOrganization = mutation({
       updatedAt: now,
     });
 
+    await upsertPayrollConfiguration(ctx, organizationId, {
+      salaryPaymentFrequency: "bimonthly",
+      firstPayDate: 15,
+      secondPayDate: 30,
+    });
+
     // Create user-organization relationship with owner role
     await ctx.db.insert("userOrganizations", {
       userId: userRecord._id,
@@ -555,6 +563,17 @@ export const updateOrganization = mutation({
       updates.salaryPaymentFrequency = args.salaryPaymentFrequency;
 
     await ctx.db.patch(args.organizationId, updates);
+    if (
+      args.salaryPaymentFrequency !== undefined ||
+      args.firstPayDate !== undefined ||
+      args.secondPayDate !== undefined
+    ) {
+      await upsertPayrollConfiguration(ctx, args.organizationId, {
+        salaryPaymentFrequency: args.salaryPaymentFrequency,
+        firstPayDate: args.firstPayDate,
+        secondPayDate: args.secondPayDate,
+      });
+    }
     return { success: true };
   },
 });
@@ -996,6 +1015,11 @@ export const updateDefaultRequirements = mutation({
       defaultRequirements: args.requirements,
       updatedAt: Date.now(),
     });
+    await replaceRequirementConfiguration(
+      ctx,
+      args.organizationId,
+      args.requirements,
+    );
 
     // Sync default requirements to all employees
     // Get all employees

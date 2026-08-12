@@ -1,8 +1,10 @@
 import type { Doc, Id } from "./_generated/dataModel";
-import type { QueryCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { normalizeDepartmentName } from "./databaseMigrationPlanner";
 
 type ReadContext = Pick<QueryCtx, "db">;
 type ConfigurationSource = "normalized" | "legacy" | "default";
+const RELEASE_2_MIGRATION_VERSION = 2;
 
 type LegacyDepartment =
   | string
@@ -14,6 +16,11 @@ type LegacyDepartment =
       location?: string;
       parentDepartmentName?: string;
     };
+
+export type DepartmentConfigurationInput = Exclude<LegacyDepartment, string>;
+export type RequirementConfigurationInput = NonNullable<
+  Doc<"organizations">["defaultRequirements"]
+>[number];
 
 const DEPARTMENT_COLORS = [
   "#9CA3AF",
@@ -299,4 +306,267 @@ export async function getEffectiveSettings(
           : "default") as ConfigurationSource,
     },
   };
+}
+
+export async function upsertPayrollConfiguration(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  patch: {
+    salaryPaymentFrequency?: "monthly" | "bimonthly";
+    firstPayDate?: number;
+    secondPayDate?: number;
+    payrollSettings?: NonNullable<Doc<"settings">["payrollSettings"]>;
+  },
+) {
+  const [organization, existing, legacySettings] = await Promise.all([
+    ctx.db.get(organizationId),
+    getPayrollRow(ctx, organizationId),
+    getLegacySettings(ctx, organizationId),
+  ]);
+  if (!organization) throw new Error("Organization not found");
+  const now = Date.now();
+  const currentPayrollSettings =
+    existing?.payrollSettings ??
+    sanitizeLegacyPayrollSettings(legacySettings?.payrollSettings);
+  const payrollSettings = patch.payrollSettings
+    ? {
+        ...(currentPayrollSettings ?? {}),
+        ...sanitizeLegacyPayrollSettings(patch.payrollSettings),
+      }
+    : currentPayrollSettings;
+  const value = {
+    organizationId,
+    salaryPaymentFrequency:
+      patch.salaryPaymentFrequency ??
+      existing?.salaryPaymentFrequency ??
+      organization.salaryPaymentFrequency ??
+      "bimonthly",
+    firstPayDate:
+      patch.firstPayDate ??
+      existing?.firstPayDate ??
+      organization.firstPayDate ??
+      15,
+    secondPayDate:
+      patch.secondPayDate ??
+      existing?.secondPayDate ??
+      organization.secondPayDate ??
+      30,
+    ...(existing?.cutoffDates
+      ? { cutoffDates: existing.cutoffDates }
+      : legacySettings?.cutoffDates
+        ? { cutoffDates: legacySettings.cutoffDates }
+        : {}),
+    ...(payrollSettings ? { payrollSettings } : {}),
+    ...(legacySettings?._id
+      ? { sourceSettingsId: legacySettings._id }
+      : existing?.sourceSettingsId
+        ? { sourceSettingsId: existing.sourceSettingsId }
+        : {}),
+    migrationVersion: RELEASE_2_MIGRATION_VERSION,
+    updatedAt: now,
+  };
+  if (existing) {
+    await ctx.db.patch(existing._id, value);
+    return existing._id;
+  }
+  return ctx.db.insert("organizationPayrollSettings", {
+    ...value,
+    createdAt: now,
+  });
+}
+
+export async function upsertAttendanceConfiguration(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  attendancePatch: Doc<"organizationAttendanceSettings">["attendanceSettings"],
+) {
+  const [existing, legacySettings] = await Promise.all([
+    getAttendanceRow(ctx, organizationId),
+    getLegacySettings(ctx, organizationId),
+  ]);
+  const now = Date.now();
+  const attendanceSettings = {
+    ...(existing?.attendanceSettings ??
+      legacySettings?.attendanceSettings ??
+      {}),
+    ...attendancePatch,
+  };
+  const value = {
+    organizationId,
+    attendanceSettings,
+    ...(legacySettings?._id
+      ? { sourceSettingsId: legacySettings._id }
+      : existing?.sourceSettingsId
+        ? { sourceSettingsId: existing.sourceSettingsId }
+        : {}),
+    migrationVersion: RELEASE_2_MIGRATION_VERSION,
+    updatedAt: now,
+  };
+  if (existing) {
+    await ctx.db.patch(existing._id, value);
+    return existing._id;
+  }
+  return ctx.db.insert("organizationAttendanceSettings", {
+    ...value,
+    createdAt: now,
+  });
+}
+
+async function validateDepartmentHead(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  userId: Id<"users">,
+) {
+  const memberships = await ctx.db
+    .query("userOrganizations")
+    .withIndex("by_user_organization", (query) =>
+      query.eq("userId", userId).eq("organizationId", organizationId),
+    )
+    .take(2);
+  if (
+    memberships.length !== 1 ||
+    (memberships[0].accessStatus ?? "active") !== "active"
+  ) {
+    throw new Error("Department head must be an active organization member");
+  }
+}
+
+export async function replaceDepartmentConfiguration(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  departments: DepartmentConfigurationInput[],
+) {
+  const normalizedNames = departments.map((department) =>
+    normalizeDepartmentName(department.name),
+  );
+  if (
+    normalizedNames.some((name) => !name) ||
+    new Set(normalizedNames).size !== normalizedNames.length
+  ) {
+    throw new Error("Department names must be unique and non-empty");
+  }
+  for (const department of departments) {
+    if (department.departmentHeadUserId) {
+      await validateDepartmentHead(
+        ctx,
+        organizationId,
+        department.departmentHeadUserId,
+      );
+    }
+  }
+  const [existingRows, legacySettings] = await Promise.all([
+    ctx.db
+      .query("organizationDepartments")
+      .withIndex("by_organization", (query) =>
+        query.eq("organizationId", organizationId),
+      )
+      .collect(),
+    getLegacySettings(ctx, organizationId),
+  ]);
+  const existingByName = new Map<string, Doc<"organizationDepartments">>();
+  for (const row of existingRows) {
+    if (existingByName.has(row.normalizedName)) {
+      throw new Error("Duplicate normalized department rows");
+    }
+    existingByName.set(row.normalizedName, row);
+  }
+  const now = Date.now();
+  const retainedIds = new Set<Id<"organizationDepartments">>();
+  for (const department of departments) {
+    const normalizedName = normalizeDepartmentName(department.name);
+    const existing = existingByName.get(normalizedName);
+    const value = {
+      organizationId,
+      name: department.name.trim(),
+      normalizedName,
+      color: department.color,
+      departmentHeadUserId: department.departmentHeadUserId,
+      costCenter: department.costCenter,
+      location: department.location,
+      parentDepartmentNormalizedName: department.parentDepartmentName
+        ? normalizeDepartmentName(department.parentDepartmentName)
+        : undefined,
+      sourceSettingsId: legacySettings?._id,
+      migrationVersion: RELEASE_2_MIGRATION_VERSION,
+      updatedAt: now,
+    };
+    if (existing) {
+      await ctx.db.patch(existing._id, value);
+      retainedIds.add(existing._id);
+    } else {
+      const id = await ctx.db.insert("organizationDepartments", {
+        ...value,
+        createdAt: now,
+      });
+      retainedIds.add(id);
+    }
+  }
+  for (const existing of existingRows) {
+    if (!retainedIds.has(existing._id)) await ctx.db.delete(existing._id);
+  }
+}
+
+export async function replaceRequirementConfiguration(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  requirements: RequirementConfigurationInput[],
+) {
+  const normalizedTypes = requirements.map((requirement) =>
+    normalizeDepartmentName(requirement.type),
+  );
+  if (
+    normalizedTypes.some((type) => !type) ||
+    new Set(normalizedTypes).size !== normalizedTypes.length
+  ) {
+    throw new Error("Requirement types must be unique and non-empty");
+  }
+  const existingRows = await ctx.db
+    .query("organizationRequirementDefinitions")
+    .withIndex("by_organization", (query) =>
+      query.eq("organizationId", organizationId),
+    )
+    .collect();
+  const existingByType = new Map<
+    string,
+    Doc<"organizationRequirementDefinitions">
+  >();
+  for (const row of existingRows) {
+    if (existingByType.has(row.normalizedType)) {
+      throw new Error("Duplicate normalized requirement rows");
+    }
+    existingByType.set(row.normalizedType, row);
+  }
+  const now = Date.now();
+  const retainedIds = new Set<Id<"organizationRequirementDefinitions">>();
+  for (const requirement of requirements) {
+    const normalizedType = normalizeDepartmentName(requirement.type);
+    const existing = existingByType.get(normalizedType);
+    const value = {
+      organizationId,
+      type: requirement.type.trim(),
+      normalizedType,
+      isRequired: requirement.isRequired,
+      appliesToDepartments: requirement.appliesToDepartments,
+      appliesToEmploymentTypes: requirement.appliesToEmploymentTypes,
+      reminderDaysBeforeDue: requirement.reminderDaysBeforeDue,
+      requiresVerification: requirement.requiresVerification,
+      expiryDaysAfterSubmission: requirement.expiryDaysAfterSubmission,
+      source: "organization" as const,
+      migrationVersion: RELEASE_2_MIGRATION_VERSION,
+      updatedAt: now,
+    };
+    if (existing) {
+      await ctx.db.patch(existing._id, value);
+      retainedIds.add(existing._id);
+    } else {
+      const id = await ctx.db.insert("organizationRequirementDefinitions", {
+        ...value,
+        createdAt: now,
+      });
+      retainedIds.add(id);
+    }
+  }
+  for (const existing of existingRows) {
+    if (!retainedIds.has(existing._id)) await ctx.db.delete(existing._id);
+  }
 }

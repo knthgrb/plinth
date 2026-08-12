@@ -247,18 +247,20 @@ async function captureDraftDependencySnapshot(
       q.eq("organizationId", args.organizationId),
     )
     .first();
-  const normalizedPayrollRows = await ctx.db
-    .query("organizationPayrollSettings")
-    .withIndex("by_organization", (query) =>
+  const normalizedPayrollRows = await (
+    ctx.db.query("organizationPayrollSettings") as any
+  )
+    .withIndex("by_organization", (query: any) =>
       query.eq("organizationId", args.organizationId),
     )
     .take(2);
   if (normalizedPayrollRows.length > 1) {
     throw new Error("Duplicate normalized payroll settings");
   }
-  const normalizedAttendanceRows = await ctx.db
-    .query("organizationAttendanceSettings")
-    .withIndex("by_organization", (query) =>
+  const normalizedAttendanceRows = await (
+    ctx.db.query("organizationAttendanceSettings") as any
+  )
+    .withIndex("by_organization", (query: any) =>
       query.eq("organizationId", args.organizationId),
     )
     .take(2);

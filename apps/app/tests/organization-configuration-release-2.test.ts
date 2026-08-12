@@ -378,4 +378,395 @@ describe("Release 2 organization configuration", () => {
       }),
     ]);
   });
+
+  it("dual-writes payroll and attendance changes", async () => {
+    const t = convexTest(schema, modules);
+    const email = "configuration-owner@example.com";
+    const organizationId = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Dual write settings",
+        salaryPaymentFrequency: "bimonthly",
+        firstPayDate: 15,
+        secondPayDate: 30,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const userId = await ctx.db.insert("users", {
+        email,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId,
+        organizationId,
+        role: "owner",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      const settingsId = await ctx.db.insert("settings", {
+        organizationId,
+        payrollSettings: { nightDiffPercent: 1.1 },
+        attendanceSettings: { graceMinutes: 5 },
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("organizationPayrollSettings", {
+        organizationId,
+        salaryPaymentFrequency: "bimonthly",
+        firstPayDate: 15,
+        secondPayDate: 30,
+        payrollSettings: { nightDiffPercent: 1.1 },
+        sourceSettingsId: settingsId,
+        migrationVersion: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("organizationAttendanceSettings", {
+        organizationId,
+        attendanceSettings: { graceMinutes: 5 },
+        sourceSettingsId: settingsId,
+        migrationVersion: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return organizationId;
+    });
+    const authenticated = t.withIdentity({ email });
+
+    await authenticated.mutation(api.settings.updatePayrollSettings, {
+      organizationId,
+      payrollSettings: {
+        nightDiffPercent: 1.3,
+        dailyRateWorkingDaysPerYear: 260,
+      },
+    });
+    await authenticated.mutation(api.organizations.updateOrganization, {
+      organizationId,
+      salaryPaymentFrequency: "monthly",
+      firstPayDate: 28,
+      secondPayDate: 28,
+    });
+    await authenticated.mutation(api.settings.updateAttendanceSettings, {
+      organizationId,
+      attendanceSettings: { graceMinutes: 9, roundingRule: "nearest_5" },
+    });
+
+    const result = await t.run(async (ctx) => ({
+      organization: await ctx.db.get(organizationId),
+      settings: await ctx.db
+        .query("settings")
+        .withIndex("by_organization", (query) =>
+          query.eq("organizationId", organizationId),
+        )
+        .unique(),
+      payroll: await ctx.db
+        .query("organizationPayrollSettings")
+        .withIndex("by_organization", (query) =>
+          query.eq("organizationId", organizationId),
+        )
+        .unique(),
+      attendance: await ctx.db
+        .query("organizationAttendanceSettings")
+        .withIndex("by_organization", (query) =>
+          query.eq("organizationId", organizationId),
+        )
+        .unique(),
+    }));
+    expect(result.organization).toMatchObject({
+      salaryPaymentFrequency: "monthly",
+      firstPayDate: 28,
+      secondPayDate: 28,
+    });
+    expect(result.payroll).toMatchObject({
+      salaryPaymentFrequency: "monthly",
+      firstPayDate: 28,
+      secondPayDate: 28,
+      payrollSettings: {
+        nightDiffPercent: 1.3,
+        dailyRateWorkingDaysPerYear: 260,
+      },
+      migrationVersion: 2,
+    });
+    expect(result.settings?.payrollSettings).toEqual(
+      result.payroll?.payrollSettings,
+    );
+    expect(result.attendance).toMatchObject({
+      attendanceSettings: { graceMinutes: 9, roundingRule: "nearest_5" },
+      migrationVersion: 2,
+    });
+    expect(result.settings?.attendanceSettings).toEqual(
+      result.attendance?.attendanceSettings,
+    );
+  });
+
+  it("reconciles department and requirement rows while preserving stable IDs", async () => {
+    const t = convexTest(schema, modules);
+    const email = "structure-owner@example.com";
+    const fixture = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Stable configuration children",
+        defaultRequirements: [{ type: "NBI Clearance", isRequired: true }],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const userId = await ctx.db.insert("users", {
+        email,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId,
+        organizationId,
+        role: "owner",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("settings", {
+        organizationId,
+        departments: [{ name: "Operations", color: "#111111" }],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const departmentId = await ctx.db.insert("organizationDepartments", {
+        organizationId,
+        name: "Operations",
+        normalizedName: "operations",
+        color: "#111111",
+        migrationVersion: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const requirementId = await ctx.db.insert(
+        "organizationRequirementDefinitions",
+        {
+          organizationId,
+          type: "NBI Clearance",
+          normalizedType: "nbi clearance",
+          isRequired: true,
+          source: "organization",
+          migrationVersion: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      );
+      return { organizationId, departmentId, requirementId };
+    });
+    const authenticated = t.withIdentity({ email });
+
+    await authenticated.mutation(api.settings.updateDepartments, {
+      organizationId: fixture.organizationId,
+      departments: [
+        { name: "Operations", color: "#222222" },
+        { name: "Finance", color: "#333333" },
+      ],
+    });
+    await authenticated.mutation(api.organizations.updateDefaultRequirements, {
+      organizationId: fixture.organizationId,
+      requirements: [
+        { type: "NBI Clearance", isRequired: false },
+        { type: "Medical Certificate", isRequired: true },
+      ],
+    });
+
+    const result = await t.run(async (ctx) => ({
+      organization: await ctx.db.get(fixture.organizationId),
+      settings: await ctx.db
+        .query("settings")
+        .withIndex("by_organization", (query) =>
+          query.eq("organizationId", fixture.organizationId),
+        )
+        .unique(),
+      departments: await ctx.db
+        .query("organizationDepartments")
+        .withIndex("by_organization", (query) =>
+          query.eq("organizationId", fixture.organizationId),
+        )
+        .collect(),
+      requirements: await ctx.db
+        .query("organizationRequirementDefinitions")
+        .withIndex("by_organization", (query) =>
+          query.eq("organizationId", fixture.organizationId),
+        )
+        .collect(),
+    }));
+    expect(result.settings?.departments).toEqual([
+      { name: "Operations", color: "#222222" },
+      { name: "Finance", color: "#333333" },
+    ]);
+    expect(result.departments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          _id: fixture.departmentId,
+          normalizedName: "operations",
+          color: "#222222",
+          migrationVersion: 2,
+        }),
+        expect.objectContaining({
+          normalizedName: "finance",
+          migrationVersion: 2,
+        }),
+      ]),
+    );
+    expect(result.organization?.defaultRequirements).toEqual([
+      { type: "NBI Clearance", isRequired: false },
+      { type: "Medical Certificate", isRequired: true },
+    ]);
+    expect(result.requirements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          _id: fixture.requirementId,
+          normalizedType: "nbi clearance",
+          isRequired: false,
+          migrationVersion: 2,
+        }),
+        expect.objectContaining({
+          normalizedType: "medical certificate",
+          migrationVersion: 2,
+        }),
+      ]),
+    );
+  });
+
+  it("creates normalized payroll defaults with a new organization", async () => {
+    const t = convexTest(schema, modules);
+    const organizationId = await t
+      .withIdentity({ email: "new-owner@example.com", name: "New Owner" })
+      .mutation(api.organizations.createOrganization, {
+        name: "New normalized organization",
+      });
+
+    const payroll = await t.run((ctx) =>
+      ctx.db
+        .query("organizationPayrollSettings")
+        .withIndex("by_organization", (query) =>
+          query.eq("organizationId", organizationId),
+        )
+        .unique(),
+    );
+    expect(payroll).toMatchObject({
+      salaryPaymentFrequency: "bimonthly",
+      firstPayDate: 15,
+      secondPayDate: 30,
+      migrationVersion: 2,
+    });
+  });
+
+  it("rejects duplicate normalized department names before writing", async () => {
+    const t = convexTest(schema, modules);
+    const email = "duplicate-departments@example.com";
+    const organizationId = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Department validation",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const userId = await ctx.db.insert("users", {
+        email,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId,
+        organizationId,
+        role: "owner",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("settings", {
+        organizationId,
+        departments: [{ name: "Existing", color: "#111111" }],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return organizationId;
+    });
+
+    await expect(
+      t.withIdentity({ email }).mutation(api.settings.updateDepartments, {
+        organizationId,
+        departments: [
+          { name: "Operations", color: "#222222" },
+          { name: " operations ", color: "#333333" },
+        ],
+      }),
+    ).rejects.toThrow("Department names must be unique and non-empty");
+
+    const settings = await t.run((ctx) =>
+      ctx.db
+        .query("settings")
+        .withIndex("by_organization", (query) =>
+          query.eq("organizationId", organizationId),
+        )
+        .unique(),
+    );
+    expect(settings?.departments).toEqual([
+      { name: "Existing", color: "#111111" },
+    ]);
+  });
+
+  it("rejects a department head without active membership in the organization", async () => {
+    const t = convexTest(schema, modules);
+    const email = "department-owner@example.com";
+    const fixture = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Head validation",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const otherOrganizationId = await ctx.db.insert("organizations", {
+        name: "Other tenant",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const ownerId = await ctx.db.insert("users", {
+        email,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const otherUserId = await ctx.db.insert("users", {
+        email: "other-tenant-head@example.com",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId: ownerId,
+        organizationId,
+        role: "owner",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId: otherUserId,
+        organizationId: otherOrganizationId,
+        role: "employee",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("settings", {
+        organizationId,
+        departments: [{ name: "Existing", color: "#111111" }],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return { organizationId, otherUserId };
+    });
+
+    await expect(
+      t.withIdentity({ email }).mutation(api.settings.updateDepartments, {
+        organizationId: fixture.organizationId,
+        departments: [
+          {
+            name: "Operations",
+            color: "#222222",
+            departmentHeadUserId: fixture.otherUserId,
+          },
+        ],
+      }),
+    ).rejects.toThrow("Department head must be an active organization member");
+  });
 });
