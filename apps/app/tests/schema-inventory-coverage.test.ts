@@ -88,5 +88,27 @@ describe("schema source inventory", () => {
   it("fails closed for unknown tables", () => {
     expect(resolveSchemaFieldPolicy("unknown", "field")).toBeNull();
     expect(resolveSchemaIndexPolicy("unknown", "index")).toBeNull();
+    expect(resolveSchemaFieldPolicy("constructor", "field")).toBeNull();
+    expect(resolveSchemaIndexPolicy("constructor", "index")).toBeNull();
+    expect(resolveSchemaFieldPolicy("toString", "field")).toBeNull();
+    expect(resolveSchemaIndexPolicy("toString", "index")).toBeNull();
+  });
+
+  it("retains migration evidence fields through all contract releases", () => {
+    expect(resolveSchemaFieldPolicy("migrationIssues", "redactedIssue")).toEqual(
+      {
+        classification: "migration_only",
+        releaseGate: "retain_until_all_contract_releases_complete",
+      },
+    );
+  });
+
+  it("uses the longest matching field override", () => {
+    expect(
+      resolveSchemaFieldPolicy(
+        "settings",
+        "payrollSettings.payrollTabPassword",
+      )?.classification,
+    ).toBe("removable");
   });
 });

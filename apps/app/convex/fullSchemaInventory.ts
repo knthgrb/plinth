@@ -109,12 +109,13 @@ const tablePolicy = (
   domain: FullSchemaCleanupDomain,
   disposition: SchemaTablePolicy["disposition"],
   defaultFieldClassification: SchemaItemClassification,
+  releaseGate = "release_3b_full_schema_contract",
 ): SchemaTablePolicy => ({
   domain,
   disposition,
   defaultFieldClassification,
   defaultIndexClassification: "verify_usage",
-  releaseGate: "release_3b_full_schema_contract",
+  releaseGate,
 });
 
 export const FULL_SCHEMA_TABLE_POLICIES = {
@@ -143,9 +144,24 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "retain",
     "canonical_row",
   ),
-  migrationRuns: tablePolicy("migration_control", "retain", "migration_only"),
-  migrationIssues: tablePolicy("migration_control", "retain", "migration_only"),
-  migrationAudits: tablePolicy("migration_control", "retain", "migration_only"),
+  migrationRuns: tablePolicy(
+    "migration_control",
+    "retain",
+    "migration_only",
+    "retain_until_all_contract_releases_complete",
+  ),
+  migrationIssues: tablePolicy(
+    "migration_control",
+    "retain",
+    "migration_only",
+    "retain_until_all_contract_releases_complete",
+  ),
+  migrationAudits: tablePolicy(
+    "migration_control",
+    "retain",
+    "migration_only",
+    "retain_until_all_contract_releases_complete",
+  ),
   demoRequests: tablePolicy("marketing_intake", "retain", "canonical_row"),
   users: tablePolicy("identity_membership", "contract_legacy", "canonical_row"),
   userOrganizations: tablePolicy(
@@ -1105,7 +1121,7 @@ export const resolveSchemaFieldPolicy = (
   table: string,
   field: string,
 ): SchemaFieldPolicy | null => {
-  if (!(table in FULL_SCHEMA_TABLE_POLICIES)) {
+  if (!Object.hasOwn(FULL_SCHEMA_TABLE_POLICIES, table)) {
     return null;
   }
 
@@ -1126,7 +1142,7 @@ export const resolveSchemaIndexPolicy = (
   table: string,
   index: string,
 ): SchemaIndexPolicy | null => {
-  if (!(table in FULL_SCHEMA_TABLE_POLICIES)) {
+  if (!Object.hasOwn(FULL_SCHEMA_TABLE_POLICIES, table)) {
     return null;
   }
 
