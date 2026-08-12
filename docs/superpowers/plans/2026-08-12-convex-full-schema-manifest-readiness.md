@@ -35,7 +35,7 @@
 - Field paths use dot notation for nested `v.object` properties and keep the parent path for scalar, union, and array leaves.
 - Consumes only source text and the TypeScript compiler API; it never imports or evaluates the Convex schema.
 
-- [ ] **Step 1: Write the failing inventory parser tests**
+- [x] **Step 1: Write the failing inventory parser tests**
 
 Create fixtures inside `schema-inventory-coverage.test.ts` proving the parser handles `v.optional`, `v.array`, nested `v.object`, object alternatives inside `v.union`, and chained indexes:
 
@@ -85,7 +85,7 @@ describe("schema source inventory", () => {
 });
 ```
 
-- [ ] **Step 2: Run the parser tests and verify RED**
+- [x] **Step 2: Run the parser tests and verify RED**
 
 Run:
 
@@ -95,7 +95,7 @@ pnpm --filter app test -- tests/schema-inventory-coverage.test.ts
 
 Expected: FAIL because `tests/helpers/schema-source-inventory.ts` does not exist.
 
-- [ ] **Step 3: Implement the TypeScript AST parser**
+- [x] **Step 3: Implement the TypeScript AST parser**
 
 Create `schema-source-inventory.ts` with these exported types and traversal boundaries:
 
@@ -167,7 +167,7 @@ function collectValidatorPaths(
 
 Add a visitor that recognizes property assignments whose initializer call chain contains `defineTable`, reads the first `defineTable` object argument, walks chained `.index("name", ...)` calls, sorts fields/indexes, and returns tables in source order. Reject duplicate table names and indexes with an error rather than silently collapsing them.
 
-- [ ] **Step 4: Run the parser tests and verify GREEN**
+- [x] **Step 4: Run the parser tests and verify GREEN**
 
 Run:
 
@@ -177,7 +177,7 @@ pnpm --filter app test -- tests/schema-inventory-coverage.test.ts
 
 Expected: both tests pass and the real schema count is 44.
 
-- [ ] **Step 5: Commit the source inventory parser**
+- [x] **Step 5: Commit the source inventory parser**
 
 ```bash
 git add apps/app/tests/helpers/schema-source-inventory.ts apps/app/tests/schema-inventory-coverage.test.ts
@@ -199,7 +199,7 @@ git commit -m "test: inventory complete Convex schema source"
 - Produces `resolveSchemaFieldPolicy(table, field)` and `resolveSchemaIndexPolicy(table, index)`.
 - Existing `ORGANIZATION_CONFIGURATION_FIELD_MANIFEST` remains exported for the deployed Release 2 audit response.
 
-- [ ] **Step 1: Add failing full-coverage policy tests**
+- [x] **Step 1: Add failing full-coverage policy tests**
 
 Extend `schema-inventory-coverage.test.ts`:
 
@@ -246,7 +246,7 @@ it("overrides every known compatibility and historical path", () => {
 });
 ```
 
-- [ ] **Step 2: Run coverage tests and verify RED**
+- [x] **Step 2: Run coverage tests and verify RED**
 
 Run:
 
@@ -256,7 +256,7 @@ pnpm --filter app test -- tests/schema-inventory-coverage.test.ts
 
 Expected: FAIL because `convex/fullSchemaInventory.ts` does not exist.
 
-- [ ] **Step 3: Implement the Convex-safe policy types and all-table map**
+- [x] **Step 3: Implement the Convex-safe policy types and all-table map**
 
 Create `fullSchemaInventory.ts` with:
 
@@ -331,7 +331,7 @@ export type CurrentSchemaTable = (typeof CURRENT_SCHEMA_TABLES)[number];
 
 Define `FULL_SCHEMA_TABLE_POLICIES` with one property for each tuple member. Use the exact domain/disposition matrix from `docs/superpowers/specs/2026-08-12-convex-full-schema-cleanup-design.md`. Cohesive row tables default to `canonical_row`; aggregate-heavy tables default to `canonical_embedded`; migration tables default to `migration_only`. Every current index defaults to `verify_usage` until a later production/static report explicitly retains or removes it.
 
-- [ ] **Step 4: Add exact field overrides and resolvers**
+- [x] **Step 4: Add exact field overrides and resolvers**
 
 Add exact/prefix overrides for every path listed below as compatibility,
 normalized target, historical, migration-only, or removable:
@@ -465,7 +465,7 @@ export const FULL_SCHEMA_FIELD_OVERRIDES = [
 
 Merge the existing organization-configuration entries into this override set without changing their exported audit shape. `resolveSchemaFieldPolicy` chooses the longest exact/prefix override and otherwise returns the owning table's default. `resolveSchemaIndexPolicy` returns the table default plus a later override when present. Return `null` for an unknown table. A checked-in reviewed schema-item snapshot is the fail-closed gate for added, removed, or renamed fields and indexes on known tables; resolver defaults remain useful table-policy metadata.
 
-- [ ] **Step 5: Run policy tests and verify GREEN**
+- [x] **Step 5: Run policy tests and verify GREEN**
 
 Run:
 
@@ -476,7 +476,7 @@ pnpm --filter app exec tsc --noEmit --pretty false
 
 Expected: all inventory/manifest tests and TypeScript pass; the existing Release 2 manifest export remains compatible.
 
-- [ ] **Step 6: Commit the complete classification policy**
+- [x] **Step 6: Commit the complete classification policy**
 
 ```bash
 git add apps/app/convex/fullSchemaInventory.ts apps/app/convex/schemaFieldManifest.ts apps/app/tests/schema-inventory-coverage.test.ts apps/app/tests/database-migration-planner.test.ts
@@ -496,7 +496,7 @@ git commit -m "feat: classify complete Convex schema"
 - Produces `FullSchemaDomainReadiness` with explicit status and blocker codes.
 - The organization-configuration entry points to the deployed Release 1 migration key/version; future entries begin as `not_started` requirements and are activated by their domain plans.
 
-- [ ] **Step 1: Write failing registry completeness tests**
+- [x] **Step 1: Write failing registry completeness tests**
 
 Create `full-schema-readiness.test.ts`:
 
@@ -524,7 +524,7 @@ it("uses a stable full-schema program identity", () => {
 });
 ```
 
-- [ ] **Step 2: Run the registry test and verify RED**
+- [x] **Step 2: Run the registry test and verify RED**
 
 Run:
 
@@ -534,7 +534,7 @@ pnpm --filter app test -- tests/full-schema-readiness.test.ts
 
 Expected: FAIL because `fullSchemaCleanupRegistry.ts` does not exist.
 
-- [ ] **Step 3: Implement the stable domain registry**
+- [x] **Step 3: Implement the stable domain registry**
 
 Create the module with these exact domain names and states:
 
@@ -598,7 +598,7 @@ export type FullSchemaDomainReadiness = {
 
 Keep the registry free of database access. Later domain plans change only their own `implementation` state after their migration/audit functions exist and have tests.
 
-- [ ] **Step 4: Run registry and inventory tests**
+- [x] **Step 4: Run registry and inventory tests**
 
 ```bash
 pnpm --filter app test -- tests/full-schema-readiness.test.ts tests/schema-inventory-coverage.test.ts
@@ -606,7 +606,7 @@ pnpm --filter app test -- tests/full-schema-readiness.test.ts tests/schema-inven
 
 Expected: both files pass and every table policy references a registered domain.
 
-- [ ] **Step 5: Commit the cleanup registry**
+- [x] **Step 5: Commit the cleanup registry**
 
 ```bash
 git add apps/app/convex/fullSchemaCleanupRegistry.ts apps/app/tests/full-schema-readiness.test.ts
@@ -627,7 +627,7 @@ git commit -m "feat: register full schema cleanup domains"
 - Produces internal query `databaseMigrations:getFullSchemaCleanupReadiness({})`.
 - Global readiness is false until every registered domain has a completed, non-truncated, discrepancy-free audit for the required migration key/version.
 
-- [ ] **Step 1: Write failing internal-query tests**
+- [x] **Step 1: Write failing internal-query tests**
 
 Use `makeFunctionReference` in `full-schema-readiness.test.ts`:
 
@@ -671,7 +671,7 @@ it("reports every table and blocks unimplemented domains", async () => {
 
 Add a fixture with the completed organization-configuration write/audit and assert that domain is `ready` while the global result stays false because all other domains are not started.
 
-- [ ] **Step 2: Run the readiness tests and verify RED**
+- [x] **Step 2: Run the readiness tests and verify RED**
 
 Run:
 
@@ -681,7 +681,7 @@ pnpm --filter app test -- tests/full-schema-readiness.test.ts
 
 Expected: FAIL because both internal queries are absent.
 
-- [ ] **Step 3: Implement the inventory query**
+- [x] **Step 3: Implement the inventory query**
 
 Import `CURRENT_SCHEMA_TABLES`, `FULL_SCHEMA_TABLE_POLICIES`, and the registry. Return only policy metadata—never production row values:
 
@@ -700,7 +700,7 @@ export const getFullSchemaInventory = internalQuery({
 });
 ```
 
-- [ ] **Step 4: Implement fail-closed readiness resolution**
+- [x] **Step 4: Implement fail-closed readiness resolution**
 
 For entries whose `implementation` is `not_started`, return that status and `blockers: ["DOMAIN_IMPLEMENTATION_NOT_DEPLOYED"]`. For `organization_configuration`, locate the latest completed conflict-free write run using `migrationRuns.by_key_started`, then the newest audit using `migrationAudits.by_run`. Reuse the same equality predicates as `getSchemaCleanupAudit`; return explicit blockers for missing run/audit, stale version, truncation, source conflicts, or destination discrepancies.
 
@@ -717,7 +717,7 @@ Return:
 
 Do not infer readiness from an absent domain and do not select an arbitrary duplicate audit.
 
-- [ ] **Step 5: Run focused and migration regression tests**
+- [x] **Step 5: Run focused and migration regression tests**
 
 ```bash
 pnpm --filter app test -- tests/full-schema-readiness.test.ts tests/data-migrations.test.ts tests/database-migration-planner.test.ts
@@ -726,7 +726,7 @@ pnpm --filter app exec tsc --noEmit --pretty false
 
 Expected: readiness, migration, and TypeScript checks pass; existing Release 1/2 status commands retain their response shapes.
 
-- [ ] **Step 6: Regenerate Convex bindings**
+- [x] **Step 6: Regenerate Convex bindings**
 
 ```bash
 pnpm --dir apps/app exec convex codegen --typecheck disable
@@ -734,7 +734,7 @@ pnpm --dir apps/app exec convex codegen --typecheck disable
 
 Expected: `_generated/api.d.ts` includes both new internal queries and production data is unchanged.
 
-- [ ] **Step 7: Commit global readiness**
+- [x] **Step 7: Commit global readiness**
 
 ```bash
 git add apps/app/convex/databaseMigrations.ts apps/app/convex/_generated/api.d.ts apps/app/tests/full-schema-readiness.test.ts
@@ -755,7 +755,7 @@ git commit -m "feat: report full schema cleanup readiness"
 - A match contains only `symbol`, repository-relative `file`, and `line`; it never contains source-line content.
 - The baseline report proves every compatibility/removable policy has a scan symbol. Release 3 changes the same test to enforce zero live references.
 
-- [ ] **Step 1: Write failing redaction and coverage tests**
+- [x] **Step 1: Write failing redaction and coverage tests**
 
 Create a temporary fixture directory using Vitest's test context or `mkdtempSync`, then assert:
 
@@ -770,7 +770,7 @@ expect(
 
 For the repository scan, build symbols from every `compatibility_read`, `compatibility_write`, and `removable` override. Exclude `schema.ts`, manifest/policy modules, migrations, generated files, tests, and documentation. Assert every policy has a non-empty symbol and the scanner completes deterministically.
 
-- [ ] **Step 2: Run the reference tests and verify RED**
+- [x] **Step 2: Run the reference tests and verify RED**
 
 ```bash
 pnpm --filter app test -- tests/schema-contract-references.test.ts
@@ -778,7 +778,7 @@ pnpm --filter app test -- tests/schema-contract-references.test.ts
 
 Expected: FAIL because the scanner helper is absent.
 
-- [ ] **Step 3: Implement the redacted source scanner**
+- [x] **Step 3: Implement the redacted source scanner**
 
 Use `readdirSync`, `readFileSync`, and recursive directory traversal limited to `apps/app/app`, `apps/app/components`, `apps/app/convex`, `apps/app/lib`, and `apps/app/utils`. Match symbols by escaped word/dotted-path segments, calculate line numbers from newline offsets, deduplicate `{symbol,file,line}`, sort results, and never retain the matching line content.
 
@@ -798,7 +798,7 @@ export function scanSchemaReferences(
 ): SchemaReferenceMatch[];
 ```
 
-- [ ] **Step 4: Add the repeatable package command**
+- [x] **Step 4: Add the repeatable package command**
 
 Add to `apps/app/package.json`:
 
@@ -806,7 +806,7 @@ Add to `apps/app/package.json`:
 "schema:inventory": "vitest run tests/schema-inventory-coverage.test.ts tests/schema-contract-references.test.ts tests/full-schema-readiness.test.ts"
 ```
 
-- [ ] **Step 5: Run inventory and reference evidence tests**
+- [x] **Step 5: Run inventory and reference evidence tests**
 
 ```bash
 pnpm --filter app schema:inventory
@@ -814,7 +814,7 @@ pnpm --filter app schema:inventory
 
 Expected: tests pass. Current legacy references are reported as evidence but do not fail the Release 1B expansion. The Release 3 plan will change the expected count to zero for contracted domains.
 
-- [ ] **Step 6: Commit static contract evidence**
+- [x] **Step 6: Commit static contract evidence**
 
 ```bash
 git add apps/app/tests/helpers/schema-reference-scan.ts apps/app/tests/schema-contract-references.test.ts apps/app/package.json
