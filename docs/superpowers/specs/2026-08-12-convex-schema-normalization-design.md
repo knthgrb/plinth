@@ -1,7 +1,12 @@
 # Convex Schema Normalization Design
 
 **Date:** 2026-08-12
-**Status:** Approved direction; implementation requires staged production rollout
+**Status:** Superseded by `2026-08-12-convex-full-schema-cleanup-design.md`
+
+This document records the organization-configuration tranche that is already
+deployed. The superseding design expands the same migration guarantees across
+all 44 current Convex tables and reserves all physical legacy removal for the
+Release 3 contract program.
 
 ## Objective
 
