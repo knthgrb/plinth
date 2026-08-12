@@ -16,13 +16,15 @@ import {
 } from "./payrollRunCrypto";
 import { decryptEmployeeFromDb } from "./employeeCompensationCrypto";
 import {
+  getEffectiveAttendanceSettings,
+  getEffectiveOrganization,
+  getEffectivePayrollSettings,
+} from "./organizationConfiguration";
+import {
   getSSSContribution,
   getSSSContributionByEmployeeDeduction,
 } from "./sss";
-import {
-  getScheduleWithLunch,
-  type ScheduleLunchContext,
-} from "./shifts";
+import { getScheduleWithLunch, type ScheduleLunchContext } from "./shifts";
 import {
   calculateNightDiffWorkHoursForAttendance,
   calculatePayrollBaseFromRecords,
@@ -33,10 +35,7 @@ import {
   isEmployeeRestDay,
   type PayrollBaseResult,
 } from "@/lib/payroll-calculations";
-import {
-  formatManilaNumericDate,
-  getManilaDateParts,
-} from "@/lib/manila-date";
+import { formatManilaNumericDate, getManilaDateParts } from "@/lib/manila-date";
 import {
   getUserIdForEmployeeInOrg,
   insertInAppNotification,
@@ -179,17 +178,22 @@ async function resolveDraftEmployeeIdsForRun(ctx: any, payrollRun: any) {
   const fromConfig = Array.isArray(cfg?.employeeIds) ? cfg.employeeIds : [];
   if (fromConfig.length > 0) return fromConfig;
   const payslips = await (ctx.db.query("payslips") as any)
-    .withIndex("by_payroll_run", (q: any) => q.eq("payrollRunId", payrollRun._id))
+    .withIndex("by_payroll_run", (q: any) =>
+      q.eq("payrollRunId", payrollRun._id),
+    )
     .collect();
   return Array.from(new Set(payslips.map((p: any) => p.employeeId)));
 }
 
-async function captureDraftDependencySnapshot(ctx: any, args: {
-  organizationId: any;
-  cutoffStart: number;
-  cutoffEnd: number;
-  employeeIds: any[];
-}): Promise<DraftDependencySnapshot> {
+async function captureDraftDependencySnapshot(
+  ctx: any,
+  args: {
+    organizationId: any;
+    cutoffStart: number;
+    cutoffEnd: number;
+    employeeIds: any[];
+  },
+): Promise<DraftDependencySnapshot> {
   let attendance = 0;
   let employees = 0;
   let attendanceRowCount = 0;
@@ -213,29 +217,59 @@ async function captureDraftDependencySnapshot(ctx: any, args: {
 
   let holidays = 0;
   const holidayRows = await (ctx.db.query("holidays") as any)
-    .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", args.organizationId),
+    )
     .collect();
   for (const row of holidayRows) holidays = maxTs(holidays, row);
   const holidayRowCount = holidayRows.length;
 
   let leaveTypes = 0;
   const leaveTypeRows = await (ctx.db.query("leaveTypes") as any)
-    .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", args.organizationId),
+    )
     .collect();
   for (const row of leaveTypeRows) leaveTypes = maxTs(leaveTypes, row);
   const leaveTypeRowCount = leaveTypeRows.length;
 
   let shifts = 0;
   const shiftRows = await (ctx.db.query("shifts") as any)
-    .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", args.organizationId),
+    )
     .collect();
   for (const row of shiftRows) shifts = maxTs(shifts, row);
   const shiftRowCount = shiftRows.length;
 
   const settingsRow = await (ctx.db.query("settings") as any)
-    .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", args.organizationId),
+    )
     .first();
-  const payrollSettings = maxTs(0, settingsRow);
+  const normalizedPayrollRows = await ctx.db
+    .query("organizationPayrollSettings")
+    .withIndex("by_organization", (query) =>
+      query.eq("organizationId", args.organizationId),
+    )
+    .take(2);
+  if (normalizedPayrollRows.length > 1) {
+    throw new Error("Duplicate normalized payroll settings");
+  }
+  const normalizedAttendanceRows = await ctx.db
+    .query("organizationAttendanceSettings")
+    .withIndex("by_organization", (query) =>
+      query.eq("organizationId", args.organizationId),
+    )
+    .take(2);
+  if (normalizedAttendanceRows.length > 1) {
+    throw new Error("Duplicate normalized attendance settings");
+  }
+  const payrollSettings = maxTs(
+    maxTs(0, settingsRow),
+    normalizedPayrollRows[0],
+  );
+  attendance = maxTs(attendance, normalizedAttendanceRows[0]);
 
   let leaveRequests = 0;
   let leaveRequestRowCount = 0;
@@ -362,7 +396,10 @@ async function assertDraftDependenciesFreshForFinalize(
   const savedSnapshot = payrollRun.draftDependencySnapshot as
     | Partial<DraftDependencySnapshot>
     | undefined;
-  const reasons = getDraftDependencyChangeReasons(savedSnapshot, currentSnapshot);
+  const reasons = getDraftDependencyChangeReasons(
+    savedSnapshot,
+    currentSnapshot,
+  );
   if (reasons.length > 0) {
     throw new Error(
       "This payroll run is out of date (attendance, holidays, leave, rates, or schedules changed after the last payslip calculation). Regenerate payslips from the payroll list, then finalize again.",
@@ -448,7 +485,9 @@ async function canUsePayrollSummarySnapshot(
     employeeIds,
   });
   return !hasDraftDependenciesChanged(
-    payrollRun.draftDependencySnapshot as Partial<DraftDependencySnapshot> | undefined,
+    payrollRun.draftDependencySnapshot as
+      | Partial<DraftDependencySnapshot>
+      | undefined,
     current,
   );
 }
@@ -480,8 +519,14 @@ function isAttendanceDeductionName(name: string): boolean {
   );
 }
 
-function isAttendanceDeductionEntry(d: { name?: string; type?: string }): boolean {
-  return (d?.type || "").toLowerCase() === "attendance" || isAttendanceDeductionName(d?.name || "");
+function isAttendanceDeductionEntry(d: {
+  name?: string;
+  type?: string;
+}): boolean {
+  return (
+    (d?.type || "").toLowerCase() === "attendance" ||
+    isAttendanceDeductionName(d?.name || "")
+  );
 }
 
 /** Regenerated payslip rows recompute this from prior cutoffs; do not carry over from old payslip into manual merge. */
@@ -573,8 +618,10 @@ function splitHolidayPayForPersistence(args: {
       );
       const specialHolidayPay = round2(nextHolidayPay - regularHolidayPay);
       return {
-        regularHolidayPay: regularHolidayPay > 0 ? regularHolidayPay : undefined,
-        specialHolidayPay: specialHolidayPay > 0 ? specialHolidayPay : undefined,
+        regularHolidayPay:
+          regularHolidayPay > 0 ? regularHolidayPay : undefined,
+        specialHolidayPay:
+          specialHolidayPay > 0 ? specialHolidayPay : undefined,
         holidayPayType:
           regularHolidayPay > 0 && specialHolidayPay > 0
             ? undefined
@@ -708,7 +755,9 @@ type PreviousPayslipRecord = {
  * Parse the legacy `period` string ("M/D/YYYY to M/D/YYYY") into a UTC-ms start.
  * Used only to support rows created before `periodStart` existed.
  */
-function parseLegacyPayslipPeriodStart(period: string | undefined): number | null {
+function parseLegacyPayslipPeriodStart(
+  period: string | undefined,
+): number | null {
   if (!period || typeof period !== "string") return null;
   const parts = period.split(" to ");
   if (parts.length !== 2) return null;
@@ -918,7 +967,9 @@ function canViewAllPayslips(userRecord: any): boolean {
   );
 }
 
-function getVisiblePayslipRunStatusesForViewer(userRecord: any): string[] | null {
+function getVisiblePayslipRunStatusesForViewer(
+  userRecord: any,
+): string[] | null {
   return canViewAllPayslips(userRecord) ? null : ["finalized", "paid"];
 }
 
@@ -1166,12 +1217,10 @@ async function getTaxDeductionSettings(
   taxDeductionFrequency: "once_per_month" | "twice_per_month";
   taxDeductOnPay: "first" | "second";
 }> {
-  const settings = await (ctx.db.query("settings") as any)
-    .withIndex("by_organization", (q: any) =>
-      q.eq("organizationId", organizationId),
-    )
-    .first();
-  const ps = settings?.payrollSettings;
+  const { payrollSettings: ps } = await getEffectivePayrollSettings(
+    ctx,
+    organizationId,
+  );
   return {
     taxDeductionFrequency: ps?.taxDeductionFrequency ?? "twice_per_month",
     taxDeductOnPay: ps?.taxDeductOnPay ?? "first",
@@ -1182,12 +1231,11 @@ async function getPayrollRates(
   ctx: any,
   organizationId: any,
 ): Promise<{ rates: PayrollRates; base: BasePayrollConfig }> {
-  const settings = await (ctx.db.query("settings") as any)
-    .withIndex("by_organization", (q: any) =>
-      q.eq("organizationId", organizationId),
-    )
-    .first();
-  const ps = settings?.payrollSettings ?? {};
+  const { payrollSettings } = await getEffectivePayrollSettings(
+    ctx,
+    organizationId,
+  );
+  const ps = payrollSettings ?? {};
   const base: BasePayrollConfig = {
     nightDiffPercent: ps.nightDiffPercent ?? DEFAULT_NIGHT_DIFF_RATE,
     regularHolidayRate: ps.regularHolidayRate ?? DEFAULT_REGULAR_HOLIDAY,
@@ -1199,8 +1247,7 @@ async function getPayrollRates(
       ps.dailyRateWorkingDaysPerYear ??
       DEFAULT_DAILY_RATE_WORKING_DAYS_PER_YEAR,
     holidayNoWorkNoPay: ps.holidayNoWorkNoPay ?? false,
-    absentBeforeHolidayNoHolidayPay:
-      ps.absentBeforeHolidayNoHolidayPay ?? true,
+    absentBeforeHolidayNoHolidayPay: ps.absentBeforeHolidayNoHolidayPay ?? true,
   };
   return { rates: derivePayrollRatesFromBase(base), base };
 }
@@ -1424,12 +1471,8 @@ async function enrichAttendanceRecordWithSchedule(
       lunchStart = lunchStart ?? scheduleLunchContext.defaultLunchStart;
       lunchEnd = lunchEnd ?? scheduleLunchContext.defaultLunchEnd;
     } else {
-      const settings = await (ctx.db.query("settings") as any)
-        .withIndex("by_organization", (q: any) =>
-          q.eq("organizationId", employee.organizationId),
-        )
-        .first();
-      const attSettings = settings?.attendanceSettings;
+      const { attendanceSettings: attSettings } =
+        await getEffectiveAttendanceSettings(ctx, employee.organizationId);
       lunchStart = lunchStart ?? attSettings?.defaultLunchStart ?? "12:00";
       lunchEnd = lunchEnd ?? attSettings?.defaultLunchEnd ?? "13:00";
     }
@@ -1452,19 +1495,15 @@ async function loadScheduleLunchContextForOrg(
   ctx: any,
   organizationId: any,
 ): Promise<ScheduleLunchContext> {
-  const [orgShifts, settingsRow] = await Promise.all([
+  const [orgShifts, attendance] = await Promise.all([
     (ctx.db.query("shifts") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", organizationId),
       )
       .collect(),
-    (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", organizationId),
-      )
-      .first(),
+    getEffectiveAttendanceSettings(ctx, organizationId),
   ]);
-  const att = settingsRow?.attendanceSettings;
+  const att = attendance.attendanceSettings;
   return {
     orgShifts,
     defaultLunchStart: att?.defaultLunchStart ?? "12:00",
@@ -1688,7 +1727,8 @@ function normalizePayrollLine(line: PayrollLine): PayrollLine {
     name: (line.name || "").trim(),
     amount: round2(Number(line.amount || 0)),
     type: (line.type || "custom").trim() || "custom",
-    taxable: line.taxable === false ? false : line.taxable === true ? true : undefined,
+    taxable:
+      line.taxable === false ? false : line.taxable === true ? true : undefined,
   };
 }
 
@@ -1780,7 +1820,9 @@ function buildDeductionOverrideLinesFromEdit(
 ): PayrollLine[] {
   const previous = (previousRaw ?? []).map(normalizePayrollLine);
   const next = (nextRaw ?? []).map(normalizePayrollLine);
-  const previousByKey = new Map(previous.map((line) => [payrollLineKey(line), line]));
+  const previousByKey = new Map(
+    previous.map((line) => [payrollLineKey(line), line]),
+  );
   const nextByKey = new Map(next.map((line) => [payrollLineKey(line), line]));
   const overrides: PayrollLine[] = [];
 
@@ -1805,7 +1847,9 @@ function buildDeductionOverrideLinesFromEdit(
   return overrides;
 }
 
-function hasDraftPayslipOverrideContent(override: DraftPayslipOverride): boolean {
+function hasDraftPayslipOverrideContent(
+  override: DraftPayslipOverride,
+): boolean {
   return (
     (override.deductions?.length ?? 0) > 0 ||
     (override.incentives?.length ?? 0) > 0 ||
@@ -1866,10 +1910,9 @@ function getEmployerContributionsFromDeductions(deductions: PayrollLine[]) {
   const editedEmployeeSSSAmount = getDeductionAmountByNames(deductions, [
     "sss",
   ]);
-  const editedEmployeePhilhealthAmount = getDeductionAmountByNames(
-    deductions,
-    ["philhealth"],
-  );
+  const editedEmployeePhilhealthAmount = getDeductionAmountByNames(deductions, [
+    "philhealth",
+  ]);
   const editedEmployeePagibigAmount = getDeductionAmountByNames(deductions, [
     "pag-ibig",
     "pagibig",
@@ -1940,7 +1983,9 @@ function buildPayslipCorrectionAuditSummary(args: {
   };
 }
 
-function countPayslipOverrideFields(overrides: DraftPayslipOverride[] | undefined): number {
+function countPayslipOverrideFields(
+  overrides: DraftPayslipOverride[] | undefined,
+): number {
   return (overrides ?? []).reduce((count, override) => {
     let next = count;
     if ((override.deductions?.length ?? 0) > 0) next += 1;
@@ -2029,16 +2074,19 @@ function buildLegacyPayslipOverrideFromEditHistory(
   return hasDraftPayslipOverrideContent(override) ? override : null;
 }
 
-async function applyPayslipOverrideToGeneratedPayslip(ctx: any, args: {
-  payrollRunId: any;
-  organizationId: any;
-  employeeId: any;
-  cutoffStart: number;
-  cutoffEnd: number;
-  payrollBase: PayrollBaseResult;
-  canonical: Awaited<ReturnType<typeof buildCanonicalPayrollResult>>;
-  override?: DraftPayslipOverride;
-}) {
+async function applyPayslipOverrideToGeneratedPayslip(
+  ctx: any,
+  args: {
+    payrollRunId: any;
+    organizationId: any;
+    employeeId: any;
+    cutoffStart: number;
+    cutoffEnd: number;
+    payrollBase: PayrollBaseResult;
+    canonical: Awaited<ReturnType<typeof buildCanonicalPayrollResult>>;
+    override?: DraftPayslipOverride;
+  },
+) {
   const payrollBase = args.payrollBase;
   const computedEarnings: VariableEarnings = {
     holidayPay: round2(payrollBase.holidayPay || 0),
@@ -2090,7 +2138,10 @@ async function applyPayslipOverrideToGeneratedPayslip(ctx: any, args: {
       nextE,
     });
   }
-  deductions = applyDeductionOverrideLines(deductions, args.override?.deductions);
+  deductions = applyDeductionOverrideLines(
+    deductions,
+    args.override?.deductions,
+  );
 
   const nonTaxableAllowance =
     args.override?.nonTaxableAllowance !== undefined
@@ -2249,12 +2300,11 @@ async function getTrainNinetyThousandCapOnAdditions(
   ctx: any,
   organizationId: any,
 ): Promise<boolean> {
-  const settings = await (ctx.db.query("settings") as any)
-    .withIndex("by_organization", (q: any) =>
-      q.eq("organizationId", organizationId),
-    )
-    .first();
-  return settings?.payrollSettings?.trainNinetyThousandCapOnAdditions === true;
+  const { payrollSettings } = await getEffectivePayrollSettings(
+    ctx,
+    organizationId,
+  );
+  return payrollSettings?.trainNinetyThousandCapOnAdditions === true;
 }
 
 async function getYtdNonTaxableIncentiveTotalForTrainCap(
@@ -2587,7 +2637,8 @@ async function buildFinalPayAutomaticIncentives(
     )
     .first();
   const maxConvertibleLeaveDays = settings?.maxConvertibleLeaveDays ?? 5;
-  const vacationBalance = Number(args.employee?.leaveCredits?.vacation?.balance) || 0;
+  const vacationBalance =
+    Number(args.employee?.leaveCredits?.vacation?.balance) || 0;
   const sickBalance = Number(args.employee?.leaveCredits?.sick?.balance) || 0;
   const convertibleLeaveDays = Math.min(
     maxConvertibleLeaveDays,
@@ -2822,25 +2873,28 @@ function getEmployeeIncentiveLines(
   return lines;
 }
 
-async function buildCanonicalPayrollResult(ctx: any, args: {
-  employeeId: any;
-  employee: any;
-  cutoffStart: number;
-  cutoffEnd: number;
-  payFrequency: PayFrequency;
-  payrollBase: PayrollBaseResult;
-  deductionsEnabled: boolean;
-  taxSettings: {
-    taxDeductionFrequency: "once_per_month" | "twice_per_month";
-    taxDeductOnPay: "first" | "second";
-  };
-  govSettings?: EmployeeGovSettings;
-  manualDeductionEntry?: { employeeId: any; deductions: PayrollLine[] };
-  incentiveEntry?: { employeeId: any; incentives: PayrollLine[] };
-  excludePayrollRunId?: any;
-  nonTaxableAllowanceOverride?: number;
-  suppressRecurringEmployeeLoanDeductions?: boolean;
-}) {
+async function buildCanonicalPayrollResult(
+  ctx: any,
+  args: {
+    employeeId: any;
+    employee: any;
+    cutoffStart: number;
+    cutoffEnd: number;
+    payFrequency: PayFrequency;
+    payrollBase: PayrollBaseResult;
+    deductionsEnabled: boolean;
+    taxSettings: {
+      taxDeductionFrequency: "once_per_month" | "twice_per_month";
+      taxDeductOnPay: "first" | "second";
+    };
+    govSettings?: EmployeeGovSettings;
+    manualDeductionEntry?: { employeeId: any; deductions: PayrollLine[] };
+    incentiveEntry?: { employeeId: any; incentives: PayrollLine[] };
+    excludePayrollRunId?: any;
+    nonTaxableAllowanceOverride?: number;
+    suppressRecurringEmployeeLoanDeductions?: boolean;
+  },
+) {
   const employee = args.employee;
   const payrollBase = args.payrollBase;
   const now = Date.now();
@@ -2950,8 +3004,7 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
     manualDeductionLines
       .filter(
         (line) =>
-          isGovernmentDeductionName(line.name) &&
-          round2(line.amount || 0) <= 0,
+          isGovernmentDeductionName(line.name) && round2(line.amount || 0) <= 0,
       )
       .map((line) => governmentDeductionKey(line.name)),
   );
@@ -3042,7 +3095,10 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
   }
 
   deductions.push(
-    ...applyDeductionOverrideLines(attendanceDeductions, attendanceOverrideLines),
+    ...applyDeductionOverrideLines(
+      attendanceDeductions,
+      attendanceOverrideLines,
+    ),
   );
 
   const qualifiesForFirstCutoffTax =
@@ -3078,9 +3134,7 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
       type: "government",
     });
   } else if (previousPendingDeductions > 0) {
-    pendingDeductions = round2(
-      pendingDeductions + previousPendingDeductions,
-    );
+    pendingDeductions = round2(pendingDeductions + previousPendingDeductions);
   }
 
   deductions = deductions
@@ -3101,7 +3155,9 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
   const totalEarnings = round2(
     grossPay + nonTaxableAllowance + totalNonTaxableIncentives,
   );
-  const earnedAfterAttendance = round2(totalEarnings - attendanceDeductionsTotal);
+  const earnedAfterAttendance = round2(
+    totalEarnings - attendanceDeductionsTotal,
+  );
 
   let netPay = round2(earnedAfterAttendance - nonAttendanceDeductionsTotal);
 
@@ -3117,7 +3173,9 @@ async function buildCanonicalPayrollResult(ctx: any, args: {
       (line) => line.name === PENDING_PREVIOUS_CUTOFF_DEDUCTION_NAME,
     );
     if (pendingIndex >= 0) {
-      const remaining = round2(deductions[pendingIndex].amount - excessDeductions);
+      const remaining = round2(
+        deductions[pendingIndex].amount - excessDeductions,
+      );
       if (remaining <= 0) {
         deductions.splice(pendingIndex, 1);
       } else {
@@ -3232,7 +3290,10 @@ export const computeEmployeePayroll = query({
 
     if (!(await checkAuthForQuery(ctx, employee.organizationId))) return null;
 
-    const organization = await ctx.db.get(employee.organizationId);
+    const organization = await getEffectiveOrganization(
+      ctx,
+      employee.organizationId,
+    );
     const payFrequency: PayFrequency =
       getOrganizationPayFrequency(organization);
     const payrollBase = await buildEmployeePayrollBase(ctx, {
@@ -3367,7 +3428,10 @@ export const computePayrollPreviewBatch = query({
   handler: async (ctx, args) => {
     if (!(await checkAuthForQuery(ctx, args.organizationId))) return null;
 
-    const organization = await ctx.db.get(args.organizationId);
+    const organization = await getEffectiveOrganization(
+      ctx,
+      args.organizationId,
+    );
     if (!organization) {
       throw new Error("Organization not found");
     }
@@ -3537,14 +3601,19 @@ export const createPayrollRun = mutation({
       runType,
     });
 
-    const organization = await ctx.db.get(args.organizationId);
+    const organization = await getEffectiveOrganization(
+      ctx,
+      args.organizationId,
+    );
     const payFrequency: PayFrequency =
       getOrganizationPayFrequency(organization);
 
     const now = Date.now();
     const periodDateRange = `${formatManilaNumericDate(args.cutoffStart)} to ${formatManilaNumericDate(args.cutoffEnd)}`;
     const period =
-      runType === "final_pay" ? `Final Pay ${periodDateRange}` : periodDateRange;
+      runType === "final_pay"
+        ? `Final Pay ${periodDateRange}`
+        : periodDateRange;
 
     const employeeRows = await Promise.all(
       args.employeeIds.map((employeeId) => ctx.db.get(employeeId)),
@@ -3614,9 +3683,7 @@ export const createPayrollRun = mutation({
     const _cutRangeEnd = args.cutoffEnd + 24 * 60 * 60 * 1000 - 1;
     for (const employeeId of employeeIdsForRun) {
       const employeeRow = await ctx.db.get(employeeId);
-      const employee = employeeRow
-        ? decryptEmployeeFromDb(employeeRow)
-        : null;
+      const employee = employeeRow ? decryptEmployeeFromDb(employeeRow) : null;
       const attendance = await (ctx.db.query("attendance") as any)
         .withIndex("by_employee_date", (q: any) =>
           q
@@ -3977,13 +4044,12 @@ export const updatePayrollRun = mutation({
     ) ?? {
       employeeIds: [],
     };
-    const resolvedGovernmentDeductionSettings: GovSettingsEntry[] = Array.isArray(
-      args.governmentDeductionSettings,
-    )
-      ? (args.governmentDeductionSettings as GovSettingsEntry[])
-      : Array.isArray(previousDraftConfig.governmentDeductionSettings)
-        ? (previousDraftConfig.governmentDeductionSettings as GovSettingsEntry[])
-        : [];
+    const resolvedGovernmentDeductionSettings: GovSettingsEntry[] =
+      Array.isArray(args.governmentDeductionSettings)
+        ? (args.governmentDeductionSettings as GovSettingsEntry[])
+        : Array.isArray(previousDraftConfig.governmentDeductionSettings)
+          ? (previousDraftConfig.governmentDeductionSettings as GovSettingsEntry[])
+          : [];
     const resolvedManualDeductions: ManualDeductionEntry[] = Array.isArray(
       args.manualDeductions,
     )
@@ -3997,7 +4063,9 @@ export const updatePayrollRun = mutation({
         ? (previousDraftConfig.incentives as IncentiveEntry[])
         : [];
 
-    const existingPayslipsBeforeRegenerate = await (ctx.db.query("payslips") as any)
+    const existingPayslipsBeforeRegenerate = await (
+      ctx.db.query("payslips") as any
+    )
       .withIndex("by_payroll_run", (q: any) =>
         q.eq("payrollRunId", args.payrollRunId),
       )
@@ -4005,19 +4073,22 @@ export const updatePayrollRun = mutation({
     const preserveExistingPayslipEdits =
       args.preserveExistingPayslipEdits !== false;
 
-    let mergedManualDeductions: ManualDeductionEntry[] = resolvedManualDeductions;
+    let mergedManualDeductions: ManualDeductionEntry[] =
+      resolvedManualDeductions;
     let mergedIncentives: IncentiveEntry[] = resolvedIncentives;
     let mergedNonTaxableAllowanceOverrides: Array<{
       employeeId: any;
       amount: number;
-    }> = preserveExistingPayslipEdits &&
+    }> =
+      preserveExistingPayslipEdits &&
       Array.isArray(previousDraftConfig.nonTaxableAllowanceOverrides)
-      ? [...previousDraftConfig.nonTaxableAllowanceOverrides]
-      : [];
-    let mergedPayslipOverrides: DraftPayslipOverride[] = preserveExistingPayslipEdits &&
+        ? [...previousDraftConfig.nonTaxableAllowanceOverrides]
+        : [];
+    let mergedPayslipOverrides: DraftPayslipOverride[] =
+      preserveExistingPayslipEdits &&
       Array.isArray(previousDraftConfig.payslipOverrides)
-      ? [...previousDraftConfig.payslipOverrides]
-      : [];
+        ? [...previousDraftConfig.payslipOverrides]
+        : [];
     const preservedEditHistoryByEmployee = new Map<string, any[]>();
 
     if (
@@ -4037,10 +4108,11 @@ export const updatePayrollRun = mutation({
         if (!overrideEmployeeIds.has(String(empId))) {
           const legacyOverride = buildLegacyPayslipOverrideFromEditHistory(p);
           if (legacyOverride) {
-            mergedPayslipOverrides = mergeDraftPayslipOverride(
-              mergedPayslipOverrides,
-              legacyOverride,
-            ) ?? [];
+            mergedPayslipOverrides =
+              mergeDraftPayslipOverride(
+                mergedPayslipOverrides,
+                legacyOverride,
+              ) ?? [];
             overrideEmployeeIds.add(String(empId));
           }
         }
@@ -4061,7 +4133,8 @@ export const updatePayrollRun = mutation({
       deductionsEnabled: runDeductionsEnabled,
       draftConfig: encryptDraftConfigForDb(
         buildDraftPayrollConfig({
-          employeeIds: args.employeeIds ?? previousDraftConfig.employeeIds ?? [],
+          employeeIds:
+            args.employeeIds ?? previousDraftConfig.employeeIds ?? [],
           manualDeductions: mergedManualDeductions,
           incentives: mergedIncentives,
           governmentDeductionSettings: resolvedGovernmentDeductionSettings,
@@ -4136,7 +4209,10 @@ export const updatePayrollRun = mutation({
         ctx,
         payrollRun.organizationId,
       );
-      const organizationUpdate = await ctx.db.get(payrollRun.organizationId);
+      const organizationUpdate = await getEffectiveOrganization(
+        ctx,
+        payrollRun.organizationId,
+      );
       const payFrequencyUpdate: PayFrequency =
         getOrganizationPayFrequency(organizationUpdate);
       const holidays = await (ctx.db.query("holidays") as any)
@@ -4232,7 +4308,10 @@ export const updatePayrollRun = mutation({
           String(employeeId),
         );
         const effectiveManualDeductionEntry = finalSettlement
-          ? mergeFinalSettlementDeductions(manualDeductionEntry, finalSettlement)
+          ? mergeFinalSettlementDeductions(
+              manualDeductionEntry,
+              finalSettlement,
+            )
           : manualDeductionEntry;
         const allowanceOverrideEntry = mergedNonTaxableAllowanceOverrides.find(
           (entry: { employeeId: any }) => entry.employeeId === employeeId,
@@ -4397,7 +4476,8 @@ async function createPayslipReadyNotificationsForRun(
 ) {
   const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
   const orgRow = await ctx.db.get(payrollRun.organizationId);
-  const orgName = (orgRow as { name?: string } | null)?.name ?? "Your organization";
+  const orgName =
+    (orgRow as { name?: string } | null)?.name ?? "Your organization";
   const payslipsRaw = await (ctx.db.query("payslips") as any)
     .withIndex("by_payroll_run", (q: any) => q.eq("payrollRunId", payrollRunId))
     .collect();
@@ -4445,7 +4525,9 @@ async function syncFinalPayStatusForRun(
   if (!nextFinalPayStatus) return;
 
   const payslips = await (ctx.db.query("payslips") as any)
-    .withIndex("by_payroll_run", (q: any) => q.eq("payrollRunId", payrollRunRaw._id))
+    .withIndex("by_payroll_run", (q: any) =>
+      q.eq("payrollRunId", payrollRunRaw._id),
+    )
     .collect();
 
   for (const payslip of payslips) {
@@ -4508,7 +4590,9 @@ async function assertFinalPayClearanceReadyForRelease(
       .filter(Boolean)
       .join(" ")
       .trim();
-    blocked.push(name || employee.employment?.employeeId || String(employee._id));
+    blocked.push(
+      name || employee.employment?.employeeId || String(employee._id),
+    );
   }
 
   if (blocked.length > 0) {
@@ -4533,10 +4617,7 @@ function isFinalTaxReviewedForFinalPay(settlement: any): boolean {
   );
 }
 
-async function assertFinalSettlementReadyForPaid(
-  ctx: any,
-  payrollRunRaw: any,
-) {
+async function assertFinalSettlementReadyForPaid(ctx: any, payrollRunRaw: any) {
   const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
   if ((payrollRun.runType ?? "regular") !== "final_pay") return;
 
@@ -5343,7 +5424,9 @@ export const getPayrollRuns = query({
             employeeIds,
           });
           const draftOutdatedReasons = getDraftDependencyChangeReasons(
-            run.draftDependencySnapshot as Partial<DraftDependencySnapshot> | undefined,
+            run.draftDependencySnapshot as
+              | Partial<DraftDependencySnapshot>
+              | undefined,
             currentSnapshot,
           );
           dec.draftOutdatedReasons = draftOutdatedReasons;
@@ -5430,7 +5513,7 @@ async function compute13thMonthAmountsInternal(
     thirteenthMonthAmount: number;
   }>
 > {
-  const org = await ctx.db.get(args.organizationId);
+  const org = await getEffectiveOrganization(ctx, args.organizationId);
   const payFrequency = getOrganizationPayFrequency(org);
   const yearStart = new Date(args.year, 0, 1).getTime();
   const yearEnd = new Date(args.year, 11, 31, 23, 59, 59, 999).getTime();
@@ -5507,8 +5590,7 @@ async function compute13thMonthAmountsInternal(
     let totalBasicPay = 0;
 
     const empPayslips = payslipsInYear.filter(
-      (p: any) =>
-        p.employeeId === employeeId && runIds.has(p.payrollRunId),
+      (p: any) => p.employeeId === employeeId && runIds.has(p.payrollRunId),
     );
 
     if (empPayslips.length > 0) {
@@ -5617,7 +5699,9 @@ export const create13thMonthRun = mutation({
       const amt = amountMap.get(employeeId) ?? 0;
       if (amt <= 0) continue;
       const employeeRow = await ctx.db.get(employeeId);
-      const employee = employeeRow ? decryptEmployeeFromDb(employeeRow as any) : null;
+      const employee = employeeRow
+        ? decryptEmployeeFromDb(employeeRow as any)
+        : null;
       const specialBenefit = await buildSpecialBenefitPayslipParts(ctx, {
         employeeId,
         calendarYear: args.year,
@@ -5631,7 +5715,9 @@ export const create13thMonthRun = mutation({
         encryptPayslipRowForDb({
           organizationId: args.organizationId,
           employeeId,
-          employeeSnapshot: employee ? buildEmployeeSnapshot(employee) : undefined,
+          employeeSnapshot: employee
+            ? buildEmployeeSnapshot(employee)
+            : undefined,
           payrollRunId,
           period,
           periodStart: yearStart,
@@ -5685,6 +5771,10 @@ async function computeLeaveConversionAmountsInternal(
       q.eq("organizationId", args.organizationId),
     )
     .first();
+  const { payrollSettings } = await getEffectivePayrollSettings(
+    ctx,
+    args.organizationId,
+  );
 
   const employees = await (ctx.db.query("employees") as any)
     .withIndex("by_organization", (q: any) =>
@@ -5728,7 +5818,7 @@ async function computeLeaveConversionAmountsInternal(
   });
 
   const workingDaysPerYear =
-    settings?.payrollSettings?.dailyRateWorkingDaysPerYear ??
+    payrollSettings?.dailyRateWorkingDaysPerYear ??
     DEFAULT_DAILY_RATE_WORKING_DAYS_PER_YEAR;
   const results: Array<{
     employeeId: any;
@@ -5878,7 +5968,9 @@ export const createLeaveConversionRun = mutation({
       const amt = amountMap.get(employeeId) ?? 0;
       if (amt <= 0) continue;
       const employeeRow = await ctx.db.get(employeeId);
-      const employee = employeeRow ? decryptEmployeeFromDb(employeeRow as any) : null;
+      const employee = employeeRow
+        ? decryptEmployeeFromDb(employeeRow as any)
+        : null;
       const specialBenefit = await buildSpecialBenefitPayslipParts(ctx, {
         employeeId,
         calendarYear: args.year,
@@ -5892,7 +5984,9 @@ export const createLeaveConversionRun = mutation({
         encryptPayslipRowForDb({
           organizationId: args.organizationId,
           employeeId,
-          employeeSnapshot: employee ? buildEmployeeSnapshot(employee) : undefined,
+          employeeSnapshot: employee
+            ? buildEmployeeSnapshot(employee)
+            : undefined,
           payrollRunId,
           period,
           periodStart: yearStart,
@@ -5944,119 +6038,118 @@ async function computePayrollRunSummaryData(
   await checkAuth(ctx, payrollRun.organizationId);
 
   // Get all payslips for this payroll run to get employee IDs
-    const payslipsRaw = await (ctx.db.query("payslips") as any)
-      .withIndex("by_payroll_run", (q: any) =>
-        q.eq("payrollRunId", args.payrollRunId),
-      )
-      .collect();
-    const payslips = payslipsRaw.map((p: any) => decryptPayslipRowFromDb(p)!);
+  const payslipsRaw = await (ctx.db.query("payslips") as any)
+    .withIndex("by_payroll_run", (q: any) =>
+      q.eq("payrollRunId", args.payrollRunId),
+    )
+    .collect();
+  const payslips = payslipsRaw.map((p: any) => decryptPayslipRowFromDb(p)!);
 
-    const employeeIds = payslips.map((p: any) => p.employeeId);
+  const employeeIds = payslips.map((p: any) => p.employeeId);
 
-    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-    // Per-employee date index + buffer (same as buildEmployeePayrollBase): avoids loading an entire org's history.
-    const attQueryStart = payrollRun.cutoffStart - 5 * ONE_DAY_MS;
-    const attQueryEnd = payrollRun.cutoffEnd + 2 * ONE_DAY_MS;
-    const rangeEnd =
-      payrollRun.cutoffEnd +
-      ONE_DAY_MS -
-      1; /* include full last day (e.g. 23:59:59.999) */
-    const perEmployeeAttendance = await Promise.all(
-      employeeIds.map((id: any) =>
-        (ctx.db.query("attendance") as any)
-          .withIndex("by_employee_date", (q: any) =>
-            q
-              .eq("employeeId", id)
-              .gte("date", attQueryStart)
-              .lte("date", attQueryEnd),
-          )
-          .collect(),
-      ),
-    );
-    let periodAttendance = perEmployeeAttendance.flat();
-    periodAttendance = periodAttendance.filter(
-      (a: any) => a.date >= payrollRun.cutoffStart && a.date <= rangeEnd,
-    );
-
-    // Get all employees
-    const employees = await Promise.all(
-      employeeIds.map(async (id: any) => {
-        const row = await ctx.db.get(id);
-        return row ? decryptEmployeeFromDb(row) : null;
-      }),
-    );
-
-    // Generate one date slot per calendar day (same logic as attendance page: start + i*24h)
-    const numDays =
-      Math.floor((payrollRun.cutoffEnd - payrollRun.cutoffStart) / ONE_DAY_MS) +
-      1;
-    const dates: number[] = [];
-    for (let i = 0; i < numDays; i++) {
-      dates.push(payrollRun.cutoffStart + i * ONE_DAY_MS);
-    }
-
-    // Org pay frequency + settings base (per-employee rates merged in loop)
-    const organization = await ctx.db.get(payrollRun.organizationId);
-    if (!organization) throw new Error("Organization not found");
-    const payFrequency = getOrganizationPayFrequency(organization);
-    const { base } = await getPayrollRates(ctx, payrollRun.organizationId);
-
-    const holidaysForPayroll = await (ctx.db.query("holidays") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", payrollRun.organizationId),
-      )
-      .collect();
-
-    const [orgShiftsForSummary, settingsRowSummary] = await Promise.all([
-      (ctx.db.query("shifts") as any)
-        .withIndex("by_organization", (q: any) =>
-          q.eq("organizationId", payrollRun.organizationId),
+  // Per-employee date index + buffer (same as buildEmployeePayrollBase): avoids loading an entire org's history.
+  const attQueryStart = payrollRun.cutoffStart - 5 * ONE_DAY_MS;
+  const attQueryEnd = payrollRun.cutoffEnd + 2 * ONE_DAY_MS;
+  const rangeEnd =
+    payrollRun.cutoffEnd +
+    ONE_DAY_MS -
+    1; /* include full last day (e.g. 23:59:59.999) */
+  const perEmployeeAttendance = await Promise.all(
+    employeeIds.map((id: any) =>
+      (ctx.db.query("attendance") as any)
+        .withIndex("by_employee_date", (q: any) =>
+          q
+            .eq("employeeId", id)
+            .gte("date", attQueryStart)
+            .lte("date", attQueryEnd),
         )
         .collect(),
-      (ctx.db.query("settings") as any)
-        .withIndex("by_organization", (q: any) =>
-          q.eq("organizationId", payrollRun.organizationId),
-        )
-        .first(),
-    ]);
-    const attSetSummary = settingsRowSummary?.attendanceSettings;
-    const scheduleLunchContextForSummary: ScheduleLunchContext = {
-      orgShifts: orgShiftsForSummary,
-      defaultLunchStart: attSetSummary?.defaultLunchStart ?? "12:00",
-      defaultLunchEnd: attSetSummary?.defaultLunchEnd ?? "13:00",
-    };
+    ),
+  );
+  let periodAttendance = perEmployeeAttendance.flat();
+  periodAttendance = periodAttendance.filter(
+    (a: any) => a.date >= payrollRun.cutoffStart && a.date <= rangeEnd,
+  );
 
-    // Get all approved leave requests for all employees in the period
-    const allLeaveRequests = await (ctx.db.query("leaveRequests") as any)
+  // Get all employees
+  const employees = await Promise.all(
+    employeeIds.map(async (id: any) => {
+      const row = await ctx.db.get(id);
+      return row ? decryptEmployeeFromDb(row) : null;
+    }),
+  );
+
+  // Generate one date slot per calendar day (same logic as attendance page: start + i*24h)
+  const numDays =
+    Math.floor((payrollRun.cutoffEnd - payrollRun.cutoffStart) / ONE_DAY_MS) +
+    1;
+  const dates: number[] = [];
+  for (let i = 0; i < numDays; i++) {
+    dates.push(payrollRun.cutoffStart + i * ONE_DAY_MS);
+  }
+
+  // Org pay frequency + settings base (per-employee rates merged in loop)
+  const organization = await getEffectiveOrganization(
+    ctx,
+    payrollRun.organizationId,
+  );
+  if (!organization) throw new Error("Organization not found");
+  const payFrequency = getOrganizationPayFrequency(organization);
+  const { base } = await getPayrollRates(ctx, payrollRun.organizationId);
+
+  const holidaysForPayroll = await (ctx.db.query("holidays") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", payrollRun.organizationId),
+    )
+    .collect();
+
+  const [orgShiftsForSummary, attendanceSummary] = await Promise.all([
+    (ctx.db.query("shifts") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", payrollRun.organizationId),
       )
-      .collect();
+      .collect(),
+    getEffectiveAttendanceSettings(ctx, payrollRun.organizationId),
+  ]);
+  const attSetSummary = attendanceSummary.attendanceSettings;
+  const scheduleLunchContextForSummary: ScheduleLunchContext = {
+    orgShifts: orgShiftsForSummary,
+    defaultLunchStart: attSetSummary?.defaultLunchStart ?? "12:00",
+    defaultLunchEnd: attSetSummary?.defaultLunchEnd ?? "13:00",
+  };
 
-    const approvedLeaves = allLeaveRequests.filter(
-      (lr: any) =>
-        lr.status === "approved" &&
-        lr.startDate <= payrollRun.cutoffEnd &&
-        lr.endDate >= payrollRun.cutoffStart &&
-        employeeIds.includes(lr.employeeId),
-    );
+  // Get all approved leave requests for all employees in the period
+  const allLeaveRequests = await (ctx.db.query("leaveRequests") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", payrollRun.organizationId),
+    )
+    .collect();
 
-    // Get leave types to check if leave is paid
-    const leaveTypes = await (ctx.db.query("leaveTypes") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", payrollRun.organizationId),
-      )
-      .collect();
+  const approvedLeaves = allLeaveRequests.filter(
+    (lr: any) =>
+      lr.status === "approved" &&
+      lr.startDate <= payrollRun.cutoffEnd &&
+      lr.endDate >= payrollRun.cutoffStart &&
+      employeeIds.includes(lr.employeeId),
+  );
 
-    // Build summary data
-    const payslipByEmployeeId = new Map(
-      payslips.map((payslip: any) => [payslip.employeeId, payslip]),
-    );
-    const summary = await Promise.all(
-      employees
-        .filter((e: any) => e)
-        .map(async (employee: any) => {
+  // Get leave types to check if leave is paid
+  const leaveTypes = await (ctx.db.query("leaveTypes") as any)
+    .withIndex("by_organization", (q: any) =>
+      q.eq("organizationId", payrollRun.organizationId),
+    )
+    .collect();
+
+  // Build summary data
+  const payslipByEmployeeId = new Map(
+    payslips.map((payslip: any) => [payslip.employeeId, payslip]),
+  );
+  const summary = await Promise.all(
+    employees
+      .filter((e: any) => e)
+      .map(async (employee: any) => {
         const empAttendance = periodAttendance.filter(
           (a: any) => a.employeeId === employee._id,
         );
@@ -6145,124 +6238,127 @@ async function computePayrollRunSummaryData(
         // Build daily attendance data (match by 24h window so attendance aligns with summary dates)
         const dailyData = await Promise.all(
           dates.map(async (dateTimestamp) => {
-          const windowEnd = dateTimestamp + ONE_DAY_MS;
-          const att = empAttendance.find(
-            (a: any) => a.date >= dateTimestamp && a.date < windowEnd,
-          );
-
-          if (!att) {
-            return {
-              date: dateTimestamp,
-              timeIn: null,
-              timeOut: null,
-              status: null,
-              lateMinutes: 0,
-              undertimeMinutes: 0,
-              regularOTHours: 0,
-              specialOTHours: 0,
-              nightDiffHours: 0,
-              isAbsent: false,
-              note: null,
-            };
-          }
-
-          let lateMinutes = 0;
-          let undertimeMinutes = 0;
-          let regularOTHours = 0;
-          let specialOTHours = 0;
-          let nightDiffHours = 0;
-
-          if (att.status === "present") {
-            if (att.lateManualOverride === true) {
-              lateMinutes = att.late ?? 0;
-              if (lateMinutes > 0) totalLateMinutes += lateMinutes;
-            } else if (att.late !== undefined && att.late !== null) {
-              lateMinutes = att.late;
-              if (lateMinutes > 0) totalLateMinutes += lateMinutes;
-            } else if (att.actualIn && att.scheduleIn) {
-              const scheduleMinutes = timeToMinutes(att.scheduleIn);
-              const actualMinutes = timeToMinutes(att.actualIn);
-              if (actualMinutes > scheduleMinutes) {
-                lateMinutes = actualMinutes - scheduleMinutes;
-                totalLateMinutes += lateMinutes;
-              }
-            }
-            if (att.undertimeManualOverride === true) {
-              undertimeMinutes = Math.round((att.undertime ?? 0) * 60);
-              if (undertimeMinutes > 0)
-                totalUndertimeMinutes += undertimeMinutes;
-            } else if (att.undertime !== undefined && att.undertime !== null) {
-              undertimeMinutes = Math.round(att.undertime * 60);
-              if (undertimeMinutes > 0)
-                totalUndertimeMinutes += undertimeMinutes;
-            } else if (att.actualOut && att.scheduleOut) {
-              const scheduleInMin = att.scheduleIn
-                ? timeToMinutes(att.scheduleIn)
-                : null;
-              const scheduleOutMin = timeToMinutes(att.scheduleOut);
-              let actualOutMin = timeToMinutes(att.actualOut);
-              if (
-                scheduleInMin !== null &&
-                scheduleInMin < scheduleOutMin &&
-                actualOutMin < scheduleOutMin &&
-                actualOutMin <= 12 * 60
-              ) {
-                actualOutMin += 24 * 60;
-              }
-              if (actualOutMin < scheduleOutMin) {
-                undertimeMinutes = scheduleOutMin - actualOutMin;
-                totalUndertimeMinutes += undertimeMinutes;
-              }
-            }
-          }
-
-          // Overtime: user-set only (no auto-calculation from time out)
-          if (att.status === "present" && att.overtime && att.overtime > 0) {
-            if (att.isHoliday && att.holidayType === "special") {
-              totalSpecialOTHours += att.overtime;
-              specialOTHours = att.overtime;
-            } else {
-              totalRegularOTHours += att.overtime;
-              regularOTHours = att.overtime;
-            }
-          }
-
-          // Night diff: Manila segments, lunch excluded (same as payslip), schedule fallback
-          if (att.status === "present") {
-            const enriched = await enrichAttendanceRecordWithSchedule(
-              ctx,
-              employee,
-              att,
-              scheduleLunchContextForSummary,
+            const windowEnd = dateTimestamp + ONE_DAY_MS;
+            const att = empAttendance.find(
+              (a: any) => a.date >= dateTimestamp && a.date < windowEnd,
             );
-            nightDiffHours =
-              calculateNightDiffWorkHoursForAttendance(enriched);
-            totalNightDiffHours += nightDiffHours;
-          }
 
-          // Count absent and leave_without_pay as absent (deduction)
-          if (att.status === "absent") {
-            if (!isPaidLeave(dateTimestamp)) {
+            if (!att) {
+              return {
+                date: dateTimestamp,
+                timeIn: null,
+                timeOut: null,
+                status: null,
+                lateMinutes: 0,
+                undertimeMinutes: 0,
+                regularOTHours: 0,
+                specialOTHours: 0,
+                nightDiffHours: 0,
+                isAbsent: false,
+                note: null,
+              };
+            }
+
+            let lateMinutes = 0;
+            let undertimeMinutes = 0;
+            let regularOTHours = 0;
+            let specialOTHours = 0;
+            let nightDiffHours = 0;
+
+            if (att.status === "present") {
+              if (att.lateManualOverride === true) {
+                lateMinutes = att.late ?? 0;
+                if (lateMinutes > 0) totalLateMinutes += lateMinutes;
+              } else if (att.late !== undefined && att.late !== null) {
+                lateMinutes = att.late;
+                if (lateMinutes > 0) totalLateMinutes += lateMinutes;
+              } else if (att.actualIn && att.scheduleIn) {
+                const scheduleMinutes = timeToMinutes(att.scheduleIn);
+                const actualMinutes = timeToMinutes(att.actualIn);
+                if (actualMinutes > scheduleMinutes) {
+                  lateMinutes = actualMinutes - scheduleMinutes;
+                  totalLateMinutes += lateMinutes;
+                }
+              }
+              if (att.undertimeManualOverride === true) {
+                undertimeMinutes = Math.round((att.undertime ?? 0) * 60);
+                if (undertimeMinutes > 0)
+                  totalUndertimeMinutes += undertimeMinutes;
+              } else if (
+                att.undertime !== undefined &&
+                att.undertime !== null
+              ) {
+                undertimeMinutes = Math.round(att.undertime * 60);
+                if (undertimeMinutes > 0)
+                  totalUndertimeMinutes += undertimeMinutes;
+              } else if (att.actualOut && att.scheduleOut) {
+                const scheduleInMin = att.scheduleIn
+                  ? timeToMinutes(att.scheduleIn)
+                  : null;
+                const scheduleOutMin = timeToMinutes(att.scheduleOut);
+                let actualOutMin = timeToMinutes(att.actualOut);
+                if (
+                  scheduleInMin !== null &&
+                  scheduleInMin < scheduleOutMin &&
+                  actualOutMin < scheduleOutMin &&
+                  actualOutMin <= 12 * 60
+                ) {
+                  actualOutMin += 24 * 60;
+                }
+                if (actualOutMin < scheduleOutMin) {
+                  undertimeMinutes = scheduleOutMin - actualOutMin;
+                  totalUndertimeMinutes += undertimeMinutes;
+                }
+              }
+            }
+
+            // Overtime: user-set only (no auto-calculation from time out)
+            if (att.status === "present" && att.overtime && att.overtime > 0) {
+              if (att.isHoliday && att.holidayType === "special") {
+                totalSpecialOTHours += att.overtime;
+                specialOTHours = att.overtime;
+              } else {
+                totalRegularOTHours += att.overtime;
+                regularOTHours = att.overtime;
+              }
+            }
+
+            // Night diff: Manila segments, lunch excluded (same as payslip), schedule fallback
+            if (att.status === "present") {
+              const enriched = await enrichAttendanceRecordWithSchedule(
+                ctx,
+                employee,
+                att,
+                scheduleLunchContextForSummary,
+              );
+              nightDiffHours =
+                calculateNightDiffWorkHoursForAttendance(enriched);
+              totalNightDiffHours += nightDiffHours;
+            }
+
+            // Count absent and leave_without_pay as absent (deduction)
+            if (att.status === "absent") {
+              if (!isPaidLeave(dateTimestamp)) {
+                totalAbsentDays += 1;
+              }
+            } else if (att.status === "leave_without_pay") {
               totalAbsentDays += 1;
             }
-          } else if (att.status === "leave_without_pay") {
-            totalAbsentDays += 1;
-          }
 
-          return {
-            date: dateTimestamp,
-            timeIn: att.actualIn || null,
-            timeOut: att.actualOut || null,
-            status: att.status,
-            lateMinutes,
-            undertimeMinutes,
-            regularOTHours,
-            specialOTHours,
-            nightDiffHours,
-            isAbsent:
-              att.status === "absent" || att.status === "leave_without_pay",
-            note: att.remarks || null,
-          };
+            return {
+              date: dateTimestamp,
+              timeIn: att.actualIn || null,
+              timeOut: att.actualOut || null,
+              status: att.status,
+              lateMinutes,
+              undertimeMinutes,
+              regularOTHours,
+              specialOTHours,
+              nightDiffHours,
+              isAbsent:
+                att.status === "absent" || att.status === "leave_without_pay",
+              note: att.remarks || null,
+            };
           }),
         );
 
@@ -6302,7 +6398,7 @@ async function computePayrollRunSummaryData(
           },
         };
       }),
-    );
+  );
 
   return {
     payrollRun,
@@ -6680,7 +6776,10 @@ export const getEmployeePayslips = query({
     );
     if (!userRecord) return [];
 
-    if (!canViewAllPayslips(userRecord) && userRecord.employeeId !== args.employeeId) {
+    if (
+      !canViewAllPayslips(userRecord) &&
+      userRecord.employeeId !== args.employeeId
+    ) {
       throw new Error("Not authorized");
     }
 
@@ -6695,9 +6794,7 @@ export const getEmployeePayslips = query({
     // Only show payslips from runs that are already finalized (or subsequently paid).
     const runIds = Array.from(
       new Set(
-        payslipsDecrypted
-          .map((p: any) => p.payrollRunId)
-          .filter(Boolean),
+        payslipsDecrypted.map((p: any) => p.payrollRunId).filter(Boolean),
       ),
     );
     const runStatusById = new Map<string, string>();
@@ -6804,14 +6901,16 @@ async function recalcWithholdingTaxAfterVariableEarningsEdit(
     return args.newDeductions;
   }
   const employee = decryptEmployeeFromDb(employeeRow);
-  const org = await ctx.db.get(args.organizationId);
+  const org = await getEffectiveOrganization(ctx, args.organizationId);
   const payFrequency = getOrganizationPayFrequency(org);
   const taxSettings = await getTaxDeductionSettings(ctx, args.organizationId);
   const rates = await getPayrollRates(ctx, args.organizationId);
   const workingDays =
-    rates.rates.dailyRateWorkingDaysPerYear ?? DEFAULT_DAILY_RATE_WORKING_DAYS_PER_YEAR;
+    rates.rates.dailyRateWorkingDaysPerYear ??
+    DEFAULT_DAILY_RATE_WORKING_DAYS_PER_YEAR;
   const cutoffStart =
-    (typeof args.payslip.periodStart === "number" && args.payslip.periodStart) ||
+    (typeof args.payslip.periodStart === "number" &&
+      args.payslip.periodStart) ||
     run.cutoffStart;
   const cutoffEnd =
     (typeof args.payslip.periodEnd === "number" && args.payslip.periodEnd) ||
@@ -6833,29 +6932,29 @@ async function recalcWithholdingTaxAfterVariableEarningsEdit(
     payrollRates: employeeRates,
   });
   const isDailyized = payrollBase.dailyizedFirstCutoff === true;
-  return mergeWithholdingTaxDeductionLine(
-    args.newDeductions,
-    {
-      taxEnabledInRun: true,
-      taxCutoffAmount: taxCutoff,
-      isDailyizedFirstCutoff: isDailyized,
-      grossPay: args.recalculatedGross,
-    },
-  );
+  return mergeWithholdingTaxDeductionLine(args.newDeductions, {
+    taxEnabledInRun: true,
+    taxCutoffAmount: taxCutoff,
+    isDailyizedFirstCutoff: isDailyized,
+    grossPay: args.recalculatedGross,
+  });
 }
 
-async function syncDraftPayslipOverrides(ctx: any, args: {
-  payrollRun: any;
-  payslip: any;
-  deductionChange: unknown | null;
-  incentiveChange: unknown | null;
-  nonTaxableAllowanceChanged: boolean;
-  variableEarningsChanged: boolean;
-  nextDeductions: PayrollLine[];
-  nextIncentives: PayrollLine[];
-  nextNonTaxableAllowance: number;
-  nextVariableEarnings?: VariableEarnings;
-}) {
+async function syncDraftPayslipOverrides(
+  ctx: any,
+  args: {
+    payrollRun: any;
+    payslip: any;
+    deductionChange: unknown | null;
+    incentiveChange: unknown | null;
+    nonTaxableAllowanceChanged: boolean;
+    variableEarningsChanged: boolean;
+    nextDeductions: PayrollLine[];
+    nextIncentives: PayrollLine[];
+    nextNonTaxableAllowance: number;
+    nextVariableEarnings?: VariableEarnings;
+  },
+) {
   if (args.payrollRun?.status !== "draft") return;
   const cfg = decryptDraftConfigFromDb(args.payrollRun.draftConfig) ?? {
     employeeIds: [],
@@ -6968,8 +7067,9 @@ export const updatePayslip = mutation({
     });
     const normalizeLines = (lines: PayslipLine[] | undefined): PayslipLine[] =>
       (lines ?? []).map(normalizeLine);
-    const normalizeIncentiveLines = (lines: PayslipLine[] | undefined): PayslipLine[] =>
-      (lines ?? []).map(normalizeIncentiveLine);
+    const normalizeIncentiveLines = (
+      lines: PayslipLine[] | undefined,
+    ): PayslipLine[] => (lines ?? []).map(normalizeIncentiveLine);
     const lineIdentity = (line: PayslipLine): string =>
       `${line.name.toLowerCase()}|${line.type.toLowerCase()}|${line.taxable === false ? "nt" : "tx"}`;
     const lineExactKey = (line: PayslipLine): string =>
@@ -6980,11 +7080,16 @@ export const updatePayslip = mutation({
         const bKey = lineExactKey(b);
         return aKey.localeCompare(bKey);
       });
-    const areSameLines = (left: PayslipLine[], right: PayslipLine[]): boolean => {
+    const areSameLines = (
+      left: PayslipLine[],
+      right: PayslipLine[],
+    ): boolean => {
       if (left.length !== right.length) return false;
       const l = sortedLines(left);
       const r = sortedLines(right);
-      return l.every((line, idx) => lineExactKey(line) === lineExactKey(r[idx]));
+      return l.every(
+        (line, idx) => lineExactKey(line) === lineExactKey(r[idx]),
+      );
     };
     const subtractLineMultiset = (
       source: PayslipLine[],
@@ -7199,9 +7304,7 @@ export const updatePayslip = mutation({
           nextE.overtimeSpecialHolidayExcess,
         ),
         overtimeLegalHoliday: round2(nextE.overtimeLegalHoliday),
-        overtimeLegalHolidayExcess: round2(
-          nextE.overtimeLegalHolidayExcess,
-        ),
+        overtimeLegalHolidayExcess: round2(nextE.overtimeLegalHolidayExcess),
       } as Record<string, unknown>);
     } else {
       finalDeductions = newDeductions;
@@ -7235,7 +7338,9 @@ export const updatePayslip = mutation({
     if (incentiveChange) changes.push(incentiveChange);
 
     // Compare non-taxable allowance
-    const previousNonTaxableAllowance = round2(payslip.nonTaxableAllowance || 0);
+    const previousNonTaxableAllowance = round2(
+      payslip.nonTaxableAllowance || 0,
+    );
     const nonTaxableAllowanceChanged =
       previousNonTaxableAllowance !== newNonTaxableAllowance;
     if (nonTaxableAllowanceChanged) {
@@ -7275,7 +7380,9 @@ export const updatePayslip = mutation({
           field: "variableEarnings",
           oldValue: atOpen,
           newValue: nextE,
-          details: ["Updated holiday, night diff, rest day, or overtime line amounts."],
+          details: [
+            "Updated holiday, night diff, rest day, or overtime line amounts.",
+          ],
         });
       }
     }
@@ -7321,14 +7428,21 @@ export const updatePayslip = mutation({
     await ctx.db.patch(
       args.payslipId,
       encryptPayslipPartialForDb({
-        deductions: finalDeductions.map((d: { name: string; amount: number; type: string }) => ({
-          ...d,
-          amount: round2(d.amount),
-        })),
+        deductions: finalDeductions.map(
+          (d: { name: string; amount: number; type: string }) => ({
+            ...d,
+            amount: round2(d.amount),
+          }),
+        ),
         incentives:
           newIncentives.length > 0
             ? newIncentives.map(
-                (i: { name: string; amount: number; type: string; taxable?: boolean }) => ({
+                (i: {
+                  name: string;
+                  amount: number;
+                  type: string;
+                  taxable?: boolean;
+                }) => ({
                   name: i.name,
                   type: i.type,
                   amount: round2(i.amount),
@@ -7478,9 +7592,10 @@ export const markPayslipCorrectionsNotified = mutation({
     if (args.correctionIds.length === 0) {
       return { success: true };
     }
-    const first = (await ctx.db.get(args.correctionIds[0])) as
-      | { organizationId: any; notified?: boolean }
-      | null;
+    const first = (await ctx.db.get(args.correctionIds[0])) as {
+      organizationId: any;
+      notified?: boolean;
+    } | null;
     if (!first) throw new Error("Correction not found");
     if (first.notified === true) {
       return { success: true };
@@ -7641,7 +7756,10 @@ export const backfillPayslipPeriodRange = mutation({
       )
       .collect();
 
-    const runCache = new Map<string, { cutoffStart: number; cutoffEnd: number } | null>();
+    const runCache = new Map<
+      string,
+      { cutoffStart: number; cutoffEnd: number } | null
+    >();
     let updated = 0;
     let skippedAlreadySet = 0;
     let skippedNoCutoff = 0;
@@ -7659,9 +7777,10 @@ export const backfillPayslipPeriodRange = mutation({
       const runKey = String(row.payrollRunId);
       let runCutoff = runCache.get(runKey);
       if (runCutoff === undefined) {
-        const runRow = (await ctx.db.get(row.payrollRunId)) as
-          | { cutoffStart?: number; cutoffEnd?: number }
-          | null;
+        const runRow = (await ctx.db.get(row.payrollRunId)) as {
+          cutoffStart?: number;
+          cutoffEnd?: number;
+        } | null;
         runCutoff =
           runRow &&
           typeof runRow.cutoffStart === "number" &&

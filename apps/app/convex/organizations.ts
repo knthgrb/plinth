@@ -13,6 +13,10 @@ import {
   normalizeOrgMembershipAccessStatus,
 } from "@/utils/org-membership-lifecycle";
 import { requireActiveMembership } from "./access";
+import {
+  getEffectiveOrganization,
+  getEffectiveRequirementDefinitions,
+} from "./organizationConfiguration";
 
 const defaultRequirementValidator = v.object({
   type: v.string(),
@@ -53,7 +57,8 @@ function mergeDefaultRequirementPolicy(existing: any, defaultReq: any) {
     expiryDate:
       existing.expiryDate ??
       (defaultReq.expiryDaysAfterSubmission
-        ? Date.now() + defaultReq.expiryDaysAfterSubmission * 24 * 60 * 60 * 1000
+        ? Date.now() +
+          defaultReq.expiryDaysAfterSubmission * 24 * 60 * 60 * 1000
         : undefined),
   };
 }
@@ -236,7 +241,10 @@ export const getUserOrganizations = query({
       const organizations = await Promise.all(
         userOrgs.map(async (userOrg: any) => {
           if (!isVisibleMembership(userOrg)) return null;
-          const org = await ctx.db.get(userOrg.organizationId);
+          const org = await getEffectiveOrganization(
+            ctx,
+            userOrg.organizationId,
+          );
           if (!org) return null;
           if ((org as any).status === "archived") return null;
           return {
@@ -256,7 +264,10 @@ export const getUserOrganizations = query({
 
       // If no organizations found in junction table, check legacy organizationId
       if (validOrgs.length === 0 && userRecord.organizationId) {
-        const legacyOrg = await ctx.db.get(userRecord.organizationId);
+        const legacyOrg = await getEffectiveOrganization(
+          ctx,
+          userRecord.organizationId,
+        );
         if (legacyOrg) {
           return [
             {
@@ -320,7 +331,7 @@ export const getCurrentUser = query({
         .first();
 
       if (userOrg) {
-        currentOrg = await ctx.db.get(args.organizationId);
+        currentOrg = await getEffectiveOrganization(ctx, args.organizationId);
       } else {
         // Fallback: if userOrg not found, check if userRecord has legacy organizationId
         // and it matches the requested organizationId
@@ -328,7 +339,7 @@ export const getCurrentUser = query({
           userRecord.organizationId &&
           userRecord.organizationId === args.organizationId
         ) {
-          currentOrg = await ctx.db.get(args.organizationId);
+          currentOrg = await getEffectiveOrganization(ctx, args.organizationId);
           userOrg = {
             role: userRecord.role || "admin", // Default to admin for legacy users
             employeeId: userRecord.employeeId,
@@ -339,7 +350,10 @@ export const getCurrentUser = query({
     } else {
       // Fallback to legacy organizationId field for backward compatibility
       if (userRecord.organizationId) {
-        currentOrg = await ctx.db.get(userRecord.organizationId);
+        currentOrg = await getEffectiveOrganization(
+          ctx,
+          userRecord.organizationId,
+        );
         userOrg = {
           role: userRecord.role || "admin", // Default to admin for legacy users
           employeeId: userRecord.employeeId,
@@ -348,10 +362,7 @@ export const getCurrentUser = query({
       }
     }
 
-    if (
-      userOrg &&
-      !canUseAlumniPayslipAccess((userOrg as any).accessStatus)
-    ) {
+    if (userOrg && !canUseAlumniPayslipAccess((userOrg as any).accessStatus)) {
       return null;
     }
 
@@ -635,7 +646,10 @@ export const getOrganization = query({
       return null;
     }
 
-    const organization = await ctx.db.get(args.organizationId);
+    const organization = await getEffectiveOrganization(
+      ctx,
+      args.organizationId,
+    );
     if (!organization) {
       return null;
     }
@@ -665,7 +679,8 @@ export const getOrganizationMembers = query({
       .first();
 
     const hasAccess =
-      (userOrg && canUseFullOrganizationAccess((userOrg as any).accessStatus)) ||
+      (userOrg &&
+        canUseFullOrganizationAccess((userOrg as any).accessStatus)) ||
       userRecord.organizationId === args.organizationId;
 
     if (!hasAccess) {
@@ -682,7 +697,9 @@ export const getOrganizationMembers = query({
     // Fetch user details
     const members = await Promise.all(
       userOrgs.map(async (userOrg: any) => {
-        if (normalizeOrgMembershipAccessStatus(userOrg.accessStatus) === "removed") {
+        if (
+          normalizeOrgMembershipAccessStatus(userOrg.accessStatus) === "removed"
+        ) {
           return null;
         }
         const user = await ctx.db.get(userOrg.userId);
@@ -937,8 +954,9 @@ export const updateUserRoleInOrganization = mutation({
     await ctx.db.patch(targetUserOrg._id, {
       role: args.role,
       accessStatus:
-        normalizeOrgMembershipAccessStatus((targetUserOrg as any).accessStatus) ===
-        "removed"
+        normalizeOrgMembershipAccessStatus(
+          (targetUserOrg as any).accessStatus,
+        ) === "removed"
           ? "active"
           : (targetUserOrg as any).accessStatus,
       updatedAt: Date.now(),
@@ -957,10 +975,11 @@ export const getDefaultRequirements = query({
     return runOrgQuery(async () => {
       const userRecord = await checkAuth(ctx, args.organizationId);
 
-      const organization = await ctx.db.get(args.organizationId);
-      if (!organization) throw new Error("Organization not found");
-
-      return organization.defaultRequirements || [];
+      const result = await getEffectiveRequirementDefinitions(
+        ctx,
+        args.organizationId,
+      );
+      return result.requirements;
     }, []);
   },
 });
@@ -1048,14 +1067,18 @@ export const getEmployeeSelfMatchForElevatedRole = query({
 
     const userOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId),
+        q
+          .eq("userId", userRecord._id)
+          .eq("organizationId", args.organizationId),
       )
       .first();
 
     const role = (userOrg?.role ?? userRecord.role ?? "").toLowerCase();
     if (role === "employee") return null;
 
-    const elevated = ["owner", "admin", "hr", "manager", "accounting"].includes(role);
+    const elevated = ["owner", "admin", "hr", "manager", "accounting"].includes(
+      role,
+    );
     if (!elevated) return null;
 
     const employees = await (ctx.db.query("employees") as any)
@@ -1096,7 +1119,9 @@ export const getEmployeeIdForPayslips = query({
     let employeeId = userOrg?.employeeId ?? userRecord.employeeId ?? null;
 
     const orgRole = (userOrg?.role ?? userRecord.role ?? "").toLowerCase();
-    const elevated = ["owner", "admin", "hr", "manager", "accounting"].includes(orgRole);
+    const elevated = ["owner", "admin", "hr", "manager", "accounting"].includes(
+      orgRole,
+    );
 
     if (
       !employeeId &&
@@ -1135,7 +1160,7 @@ export const getCurrentUserOrganization = query({
     if (!userRecord) return null;
 
     if (userRecord.organizationId) {
-      return await ctx.db.get(userRecord.organizationId);
+      return await getEffectiveOrganization(ctx, userRecord.organizationId);
     }
 
     // Try to get first organization from userOrganizations
@@ -1144,7 +1169,7 @@ export const getCurrentUserOrganization = query({
       .first();
 
     if (userOrg) {
-      return await ctx.db.get(userOrg.organizationId);
+      return await getEffectiveOrganization(ctx, userOrg.organizationId);
     }
 
     return null;

@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import { encryptCompensationForDb } from "./employeeCompensationCrypto";
+import { getEffectiveRequirementDefinitions } from "./organizationConfiguration";
 import { runOrgQuery } from "./queryAuthGrace";
 
 // Helper to check authorization with organization context
@@ -63,24 +64,22 @@ async function checkAuth(
   return { ...userRecord, role: userRole, organizationId };
 }
 
-function buildDefaultRequirementsForConvertedEmployee(organization: any) {
+function buildDefaultRequirementsForConvertedEmployee(requirements: any[]) {
   const now = Date.now();
-  return (
-    organization?.defaultRequirements?.map((req: any) => ({
-      type: req.type,
-      status: "pending" as const,
-      isRequired: req.isRequired ?? true,
-      appliesToDepartments: req.appliesToDepartments,
-      appliesToEmploymentTypes: req.appliesToEmploymentTypes,
-      reminderDaysBeforeDue: req.reminderDaysBeforeDue,
-      requiresVerification: req.requiresVerification ?? true,
-      expiryDate: req.expiryDaysAfterSubmission
-        ? now + req.expiryDaysAfterSubmission * 24 * 60 * 60 * 1000
-        : undefined,
-      isDefault: true,
-      isCustom: false,
-    })) ?? []
-  );
+  return requirements.map((req: any) => ({
+    type: req.type,
+    status: "pending" as const,
+    isRequired: req.isRequired ?? true,
+    appliesToDepartments: req.appliesToDepartments,
+    appliesToEmploymentTypes: req.appliesToEmploymentTypes,
+    reminderDaysBeforeDue: req.reminderDaysBeforeDue,
+    requiresVerification: req.requiresVerification ?? true,
+    expiryDate: req.expiryDaysAfterSubmission
+      ? now + req.expiryDaysAfterSubmission * 24 * 60 * 60 * 1000
+      : undefined,
+    isDefault: true,
+    isCustom: false,
+  }));
 }
 
 // Get job postings
@@ -698,9 +697,13 @@ export const convertApplicantToEmployee = mutation({
 
     // Create employee record
     const now = Date.now();
-    const organization = await ctx.db.get(applicant.organizationId);
-    const defaultRequirements =
-      buildDefaultRequirementsForConvertedEmployee(organization);
+    const requirementDefinitions = await getEffectiveRequirementDefinitions(
+      ctx,
+      applicant.organizationId,
+    );
+    const defaultRequirements = buildDefaultRequirementsForConvertedEmployee(
+      requirementDefinitions.requirements,
+    );
 
     const employeeId = await ctx.db.insert("employees", {
       organizationId: applicant.organizationId,

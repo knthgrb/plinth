@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { getEffectiveSettings } from "./organizationConfiguration";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -54,11 +55,7 @@ async function checkAuth(
   return { ...userRecord, role: userRole, organizationId };
 }
 
-type SettingsChangeArea =
-  | "payroll"
-  | "leave"
-  | "attendance"
-  | "organization";
+type SettingsChangeArea = "payroll" | "leave" | "attendance" | "organization";
 
 function buildSettingsAuditPatch(
   settings: any,
@@ -104,47 +101,12 @@ export const getSettings = query({
       throw error;
     }
 
-    let settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .first();
-
-    // Migrate departments from old format (string[]) to new format (Department[]) in memory
-    // Note: Queries are read-only, so we can't save the migration here
-    // The migration will be saved when updateDepartments is called
-    if (settings?.departments && settings.departments.length > 0) {
-      const firstDept = settings.departments[0];
-      if (typeof firstDept === "string") {
-        // Old format - migrate to new format in memory only
-        const PRESET_COLORS = [
-          "#9CA3AF", // gray
-          "#EF4444", // red
-          "#F97316", // orange
-          "#EAB308", // yellow
-          "#22C55E", // green
-          "#3B82F6", // blue
-          "#A855F7", // purple
-          "#EC4899", // pink
-        ];
-        const migratedDepartments = (settings.departments as string[]).map(
-          (name, index) => ({
-            name,
-            color: PRESET_COLORS[index % PRESET_COLORS.length],
-          }),
-        );
-
-        // Return migrated format (but don't save - that happens in updateDepartments)
-        settings = {
-          ...settings,
-          departments: migratedDepartments,
-        };
-      }
-    }
+    let settings = await getEffectiveSettings(ctx, args.organizationId);
 
     // If no settings exist, return default settings structure (don't create in query)
-    if (!settings) {
+    if (settings._id === null) {
       return {
+        ...settings,
         _id: null,
         organizationId: args.organizationId,
         proratedLeave: true,
@@ -173,6 +135,7 @@ export const getSettings = query({
           taxDeductOnPay: "first",
           holidayNoWorkNoPay: false,
           absentBeforeHolidayNoHolidayPay: true,
+          ...(settings.payrollSettings ?? {}),
         },
         attendanceSettings: {
           defaultLunchBreakMinutes: 60,
@@ -196,6 +159,7 @@ export const getSettings = query({
             lockAttendanceAfterPayrollFinalized: true,
             allowAdminCorrectionWithReason: true,
           },
+          ...(settings.attendanceSettings ?? {}),
         },
       };
     }
@@ -527,7 +491,9 @@ export const updateLeaveTypes = mutation({
         leaveRequestFormTemplate: args.leaveRequestFormTemplate,
         leaveRequestPdfLayout: args.leaveRequestPdfLayout,
         maxConvertibleLeaveDays: args.maxConvertibleLeaveDays ?? 5,
-        ...(args.leaveTypes !== undefined ? { leaveTypes: args.leaveTypes } : {}),
+        ...(args.leaveTypes !== undefined
+          ? { leaveTypes: args.leaveTypes }
+          : {}),
         ...buildSettingsAuditPatch(settings, "leave", userRecord, now),
         createdAt: now,
         updatedAt: now,
@@ -588,14 +554,26 @@ export const updateLeaveTracker = mutation({
         organizationId: args.organizationId,
         annualSil: 8,
         leaveTrackerByYear: newByYear,
-        ...buildSettingsAuditPatch(settings, "leave", userRecord, now, overrideReason),
+        ...buildSettingsAuditPatch(
+          settings,
+          "leave",
+          userRecord,
+          now,
+          overrideReason,
+        ),
         createdAt: now,
         updatedAt: now,
       });
     } else {
       await ctx.db.patch(settings._id, {
         leaveTrackerByYear: newByYear,
-        ...buildSettingsAuditPatch(settings, "leave", userRecord, now, overrideReason),
+        ...buildSettingsAuditPatch(
+          settings,
+          "leave",
+          userRecord,
+          now,
+          overrideReason,
+        ),
         updatedAt: now,
       });
     }

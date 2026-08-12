@@ -9,6 +9,7 @@ import {
   canUseFullOrganizationAccess,
   deriveAccessStatusForEmploymentStatus,
 } from "@/utils/org-membership-lifecycle";
+import { getEffectiveRequirementDefinitions } from "./organizationConfiguration";
 
 function assertHireDateIsNotFuture(hireDate: number) {
   const today = new Date();
@@ -481,9 +482,7 @@ export const listEmployeesAvailableForOrgInvite = query({
       const pendingInviteEmails = new Set<string>();
       for (const inv of invitations) {
         if (inv.status === "pending") {
-          pendingInviteEmails.add(
-            normalizeInviteListEmail(String(inv.email)),
-          );
+          pendingInviteEmails.add(normalizeInviteListEmail(String(inv.email)));
         }
       }
 
@@ -497,7 +496,10 @@ export const listEmployeesAvailableForOrgInvite = query({
 
       for (const raw of employees) {
         const e = decryptEmployeeFromDb(raw);
-        const em = String((e as { personalInfo?: { email?: string } }).personalInfo?.email ?? "").trim();
+        const em = String(
+          (e as { personalInfo?: { email?: string } }).personalInfo?.email ??
+            "",
+        ).trim();
         if (!em) continue;
         const emNorm = normalizeInviteListEmail(em);
         if (linkedEmployeeIds.has(e._id as string)) continue;
@@ -509,8 +511,8 @@ export const listEmployeesAvailableForOrgInvite = query({
             .firstName,
           lastName: (e as { personalInfo: { lastName: string } }).personalInfo
             .lastName,
-          middleName: (e as { personalInfo: { middleName?: string } }).personalInfo
-            .middleName,
+          middleName: (e as { personalInfo: { middleName?: string } })
+            .personalInfo.middleName,
           email: em,
         });
       }
@@ -678,11 +680,13 @@ export const createEmployee = mutation({
     const now = Date.now();
 
     // Get organization default requirements
-    const organization = await ctx.db.get(args.organizationId);
-    const defaultRequirements =
-      organization?.defaultRequirements?.map((req: any) =>
-        buildRequirementFromDefault(req, now),
-      ) || [];
+    const requirementDefinitions = await getEffectiveRequirementDefinitions(
+      ctx,
+      args.organizationId,
+    );
+    const defaultRequirements = requirementDefinitions.requirements.map(
+      (requirement) => buildRequirementFromDefault(requirement, now),
+    );
 
     const insertedId = await ctx.db.insert("employees", {
       organizationId: args.organizationId,
@@ -926,21 +930,28 @@ export const updateEmployee = mutation({
 
     const normalizedCurrentShiftId = (employee as any).shiftId ?? null;
     const normalizedNextShiftId =
-      args.shiftId !== undefined ? args.shiftId ?? null : normalizedCurrentShiftId;
+      args.shiftId !== undefined
+        ? (args.shiftId ?? null)
+        : normalizedCurrentShiftId;
     const nextSchedule = args.schedule ?? (employee as any).schedule;
     const scheduleChanged =
       args.schedule !== undefined &&
-      JSON.stringify(args.schedule) !== JSON.stringify((employee as any).schedule);
+      JSON.stringify(args.schedule) !==
+        JSON.stringify((employee as any).schedule);
     const shiftChanged =
-      args.shiftId !== undefined && normalizedNextShiftId !== normalizedCurrentShiftId;
+      args.shiftId !== undefined &&
+      normalizedNextShiftId !== normalizedCurrentShiftId;
 
     if ((scheduleChanged || shiftChanged) && nextSchedule) {
       const now = Date.now();
       const effectiveFrom = toManilaDayStartUtcMs(now);
-      const existingTodayHistory = await (ctx.db
-        .query("employeeScheduleHistory") as any)
+      const existingTodayHistory = await (
+        ctx.db.query("employeeScheduleHistory") as any
+      )
         .withIndex("by_employee_effective_from", (q: any) =>
-          q.eq("employeeId", args.employeeId).eq("effectiveFrom", effectiveFrom),
+          q
+            .eq("employeeId", args.employeeId)
+            .eq("effectiveFrom", effectiveFrom),
         )
         .first();
 
@@ -1175,10 +1186,7 @@ export const updateRequirementStatus = mutation({
     if (requirements[args.requirementIndex]) {
       const requirement = requirements[args.requirementIndex];
       requirement.status = args.status;
-      if (
-        args.status === "submitted" &&
-        !requirement.submittedDate
-      ) {
+      if (args.status === "submitted" && !requirement.submittedDate) {
         requirement.submittedDate = now;
       }
       if (args.status === "verified") {

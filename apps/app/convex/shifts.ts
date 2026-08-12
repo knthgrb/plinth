@@ -1,9 +1,14 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { getEffectiveAttendanceSettings } from "./organizationConfiguration";
 import { runOrgQuery } from "./queryAuthGrace";
 
-async function checkAuth(ctx: any, organizationId: any, requiredRole?: "owner" | "admin" | "hr") {
+async function checkAuth(
+  ctx: any,
+  organizationId: any,
+  requiredRole?: "owner" | "admin" | "hr",
+) {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
   const userRecord = await ctx.db
@@ -21,15 +26,26 @@ async function checkAuth(ctx: any, organizationId: any, requiredRole?: "owner" |
     userOrg ||
     (userRecord.organizationId === organizationId && userRecord.role);
   if (!hasAccess) throw new Error("User is not a member of this organization");
-  const userRole = userOrg?.role ?? (userRecord.organizationId === organizationId ? userRecord.role : undefined);
+  const userRole =
+    userOrg?.role ??
+    (userRecord.organizationId === organizationId
+      ? userRecord.role
+      : undefined);
   const isOwnerOrAdmin = userRole === "owner" || userRole === "admin";
-  if (requiredRole && userRole !== requiredRole && !isOwnerOrAdmin) throw new Error("Not authorized");
+  if (requiredRole && userRole !== requiredRole && !isOwnerOrAdmin)
+    throw new Error("Not authorized");
   return { ...userRecord, role: userRole, organizationId };
 }
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 const dayNames = [
-  "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
 ] as const;
 
 function getManilaDateParts(ts: number) {
@@ -38,22 +54,39 @@ function getManilaDateParts(ts: number) {
 }
 
 /** Get employee's scheduled in/out for a date. Uses Manila timezone so the correct per-day schedule is used. */
-function getScheduledTimesForDate(date: number, employeeSchedule: any): { scheduleIn: string | null; scheduleOut: string | null } {
-  if (!employeeSchedule?.defaultSchedule) return { scheduleIn: null, scheduleOut: null };
+function getScheduledTimesForDate(
+  date: number,
+  employeeSchedule: any,
+): { scheduleIn: string | null; scheduleOut: string | null } {
+  if (!employeeSchedule?.defaultSchedule)
+    return { scheduleIn: null, scheduleOut: null };
   const manilaParts = getManilaDateParts(date);
-  if (employeeSchedule.scheduleOverrides && Array.isArray(employeeSchedule.scheduleOverrides)) {
+  if (
+    employeeSchedule.scheduleOverrides &&
+    Array.isArray(employeeSchedule.scheduleOverrides)
+  ) {
     const override = employeeSchedule.scheduleOverrides.find((o: any) => {
       if (o.date == null) return false;
-      const oTs = typeof o.date === "number" ? o.date : new Date(o.date).getTime();
+      const oTs =
+        typeof o.date === "number" ? o.date : new Date(o.date).getTime();
       const oParts = getManilaDateParts(oTs);
-      return oParts.y === manilaParts.y && oParts.m === manilaParts.m && oParts.d === manilaParts.d;
+      return (
+        oParts.y === manilaParts.y &&
+        oParts.m === manilaParts.m &&
+        oParts.d === manilaParts.d
+      );
     });
-    if (override?.in && override?.out) return { scheduleIn: override.in, scheduleOut: override.out };
+    if (override?.in && override?.out)
+      return { scheduleIn: override.in, scheduleOut: override.out };
   }
   const manilaDay = new Date(date + MANILA_OFFSET_MS).getUTCDay();
   const dayName = dayNames[manilaDay];
-  const daySchedule = employeeSchedule.defaultSchedule[dayName as keyof typeof employeeSchedule.defaultSchedule];
-  if (!daySchedule?.in || !daySchedule?.out) return { scheduleIn: null, scheduleOut: null };
+  const daySchedule =
+    employeeSchedule.defaultSchedule[
+      dayName as keyof typeof employeeSchedule.defaultSchedule
+    ];
+  if (!daySchedule?.in || !daySchedule?.out)
+    return { scheduleIn: null, scheduleOut: null };
   return { scheduleIn: daySchedule.in, scheduleOut: daySchedule.out };
 }
 
@@ -95,7 +128,13 @@ export async function getScheduleWithLunch(
   date: number,
   organizationId: any,
   cache?: ScheduleLunchContext,
-): Promise<{ scheduleIn: string; scheduleOut: string; lunchStart: string; lunchEnd: string; lunchMinutes: number } | null> {
+): Promise<{
+  scheduleIn: string;
+  scheduleOut: string;
+  lunchStart: string;
+  lunchEnd: string;
+  lunchMinutes: number;
+} | null> {
   let scheduleIn: string;
   let scheduleOut: string;
   let lunchStart: string;
@@ -127,7 +166,10 @@ export async function getScheduleWithLunch(
         cache.scheduleHistoryByEmployeeId[employeeIdKey] = historyRows;
       }
     }
-    const effectiveFromHistory = resolveEffectiveScheduleHistory(date, historyRows);
+    const effectiveFromHistory = resolveEffectiveScheduleHistory(
+      date,
+      historyRows,
+    );
     if (effectiveFromHistory) {
       effectiveSchedule = effectiveFromHistory.schedule;
       effectiveShiftId = effectiveFromHistory.shiftId;
@@ -146,11 +188,12 @@ export async function getScheduleWithLunch(
     const orgShifts =
       cache?.orgShifts ??
       (await (ctx.db.query("shifts") as any)
-        .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", organizationId),
+        )
         .collect());
     const matchingShift = orgShifts.find(
-      (s: any) =>
-        s.scheduleIn === scheduleIn && s.scheduleOut === scheduleOut,
+      (s: any) => s.scheduleIn === scheduleIn && s.scheduleOut === scheduleOut,
     );
     if (matchingShift) {
       lunchStart = matchingShift.lunchStart;
@@ -166,12 +209,8 @@ export async function getScheduleWithLunch(
           lunchStart = d.start;
           lunchEnd = d.end;
         } else {
-          const settings = await (ctx.db.query("settings") as any)
-            .withIndex("by_organization", (q: any) =>
-              q.eq("organizationId", organizationId),
-            )
-            .first();
-          const att = settings?.attendanceSettings;
+          const { attendanceSettings: att } =
+            await getEffectiveAttendanceSettings(ctx, organizationId);
           lunchStart = att?.defaultLunchStart ?? "12:00";
           lunchEnd = att?.defaultLunchEnd ?? "13:00";
         }
@@ -182,20 +221,15 @@ export async function getScheduleWithLunch(
         lunchStart = d.start;
         lunchEnd = d.end;
       } else {
-        const settings = await (ctx.db.query("settings") as any)
-          .withIndex("by_organization", (q: any) =>
-            q.eq("organizationId", organizationId),
-          )
-          .first();
-        const att = settings?.attendanceSettings;
+        const { attendanceSettings: att } =
+          await getEffectiveAttendanceSettings(ctx, organizationId);
         lunchStart = att?.defaultLunchStart ?? "12:00";
         lunchEnd = att?.defaultLunchEnd ?? "13:00";
       }
     }
   } else if (effectiveShiftId) {
     const shift = await ctx.db.get(effectiveShiftId);
-    if (!shift || shift.organizationId !== organizationId)
-      return null;
+    if (!shift || shift.organizationId !== organizationId) return null;
     scheduleIn = shift.scheduleIn;
     scheduleOut = shift.scheduleOut;
     lunchStart = shift.lunchStart;
@@ -210,7 +244,13 @@ export async function getScheduleWithLunch(
   const endM = (leH ?? 0) * 60 + (leM ?? 0);
   let lunchMinutes = endM - startM;
   if (lunchMinutes < 0) lunchMinutes += 24 * 60; // lunch crosses midnight (e.g. 23:00–00:00)
-  return { scheduleIn, scheduleOut, lunchStart, lunchEnd, lunchMinutes: Math.max(0, lunchMinutes) };
+  return {
+    scheduleIn,
+    scheduleOut,
+    lunchStart,
+    lunchEnd,
+    lunchMinutes: Math.max(0, lunchMinutes),
+  };
 }
 
 export const listShifts = query({
@@ -219,7 +259,9 @@ export const listShifts = query({
     return runOrgQuery(async () => {
       await checkAuth(ctx, args.organizationId);
       const shifts = await (ctx.db.query("shifts") as any)
-        .withIndex("by_organization", (q: any) => q.eq("organizationId", args.organizationId))
+        .withIndex("by_organization", (q: any) =>
+          q.eq("organizationId", args.organizationId),
+        )
         .collect();
       return shifts.sort((a: any, b: any) => a.name.localeCompare(b.name));
     }, []);
