@@ -540,13 +540,23 @@ export const updateOrganization = mutation({
 
     // Fallback to legacy check - owner has admin privileges
     const allowedRoles = ["admin", "owner", "accounting"];
+    const activeMembershipRole =
+      userOrg && canUseFullOrganizationAccess(userOrg.accessStatus)
+        ? userOrg.role
+        : undefined;
     const isAuthorized =
-      allowedRoles.includes(userOrg?.role || "") ||
-      (userRecord.organizationId === args.organizationId &&
+      allowedRoles.includes(activeMembershipRole ?? "") ||
+      (!userOrg &&
+        userRecord.organizationId === args.organizationId &&
         allowedRoles.includes(userRecord.role || ""));
 
     if (!isAuthorized) {
       throw new Error("Only admins or accounting can update organization");
+    }
+
+    const organization = await ctx.db.get(args.organizationId);
+    if (!organization || organization.status === "archived") {
+      throw new Error("Only active organizations can be updated");
     }
 
     const updates: any = { updatedAt: Date.now() };

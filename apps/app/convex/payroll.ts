@@ -6567,8 +6567,11 @@ export const getPayrollFinalizePayslipRecipients = query({
       }
     }
 
-    const org = await ctx.db.get(payrollRun.organizationId);
-    const organizationName = (org as any)?.name ?? "Organization";
+    const organization = await getEffectiveOrganization(
+      ctx,
+      payrollRun.organizationId,
+    );
+    const organizationName = organization?.name ?? "Organization";
 
     const payslipsRaw = await (ctx.db.query("payslips") as any)
       .withIndex("by_payroll_run", (q: any) =>
@@ -6641,10 +6644,10 @@ export const getPayrollFinalizePayslipRecipients = query({
       cutoffStart: payrollRun.cutoffStart,
       cutoffEnd: payrollRun.cutoffEnd,
       paySchedule: {
-        firstPayDate: (org as any)?.firstPayDate ?? 15,
-        secondPayDate: (org as any)?.secondPayDate ?? 30,
+        firstPayDate: organization?.firstPayDate ?? 15,
+        secondPayDate: organization?.secondPayDate ?? 30,
         salaryPaymentFrequency:
-          (org as any)?.salaryPaymentFrequency ?? "bimonthly",
+          organization?.salaryPaymentFrequency ?? "bimonthly",
       },
       withAccount,
       withoutAccount,

@@ -32,6 +32,95 @@ const defaultSchedule = {
 };
 
 describe("employee lifecycle access", () => {
+  it("blocks alumni members from reading or changing organization settings", async () => {
+    const t = convexTest(schema, modules);
+    const alumniEmail = "former-hr@example.com";
+    const organizationId = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Former HR organization",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const userId = await ctx.db.insert("users", {
+        email: alumniEmail,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId,
+        organizationId,
+        role: "hr",
+        accessStatus: "alumni",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      return organizationId;
+    });
+    const alumni = t.withIdentity({ email: alumniEmail });
+
+    await expect(
+      alumni.query(api.settings.getSettings, { organizationId }),
+    ).rejects.toThrow("Organization access is limited or inactive");
+    await expect(
+      alumni.mutation(api.settings.updatePayrollSettings, {
+        organizationId,
+        payrollSettings: { nightDiffPercent: 1.5 },
+      }),
+    ).rejects.toThrow("Organization access is limited or inactive");
+
+    await expect(
+      t.run((ctx) => ctx.db.query("settings").collect()),
+    ).resolves.toEqual([]);
+  });
+
+  it("blocks an alumni administrator from changing organization payroll cadence", async () => {
+    const t = convexTest(schema, modules);
+    const alumniEmail = "former-admin@example.com";
+    const organizationId = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Protected organization",
+        salaryPaymentFrequency: "bimonthly",
+        firstPayDate: 15,
+        secondPayDate: 30,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const userId = await ctx.db.insert("users", {
+        email: alumniEmail,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId,
+        organizationId,
+        role: "admin",
+        accessStatus: "alumni",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      return organizationId;
+    });
+
+    await expect(
+      t
+        .withIdentity({ email: alumniEmail })
+        .mutation(api.organizations.updateOrganization, {
+          organizationId,
+          salaryPaymentFrequency: "monthly",
+          firstPayDate: 28,
+          secondPayDate: 28,
+        }),
+    ).rejects.toThrow("Only admins or accounting can update organization");
+
+    await expect(
+      t.run((ctx) => ctx.db.get(organizationId)),
+    ).resolves.toMatchObject({
+      salaryPaymentFrequency: "bimonthly",
+      firstPayDate: 15,
+      secondPayDate: 30,
+    });
+  });
+
   it("links and moves the organization membership to alumni when an employee resigns", async () => {
     const t = convexTest(schema, modules);
     const hrEmail = "hr@example.com";
@@ -97,18 +186,20 @@ describe("employee lifecycle access", () => {
       return { employeeId, employeeMembershipId };
     });
 
-    await t.withIdentity({ email: hrEmail }).mutation(api.employees.updateEmployee, {
-      employeeId: fixture.employeeId,
-      employment: {
-        employeeId: "EMP-001",
-        position: "Analyst",
-        department: "Operations",
-        employmentType: "regular",
-        hireDate: 1,
-        separationDate: 2,
-        status: "resigned",
-      },
-    });
+    await t
+      .withIdentity({ email: hrEmail })
+      .mutation(api.employees.updateEmployee, {
+        employeeId: fixture.employeeId,
+        employment: {
+          employeeId: "EMP-001",
+          position: "Analyst",
+          department: "Operations",
+          employmentType: "regular",
+          hireDate: 1,
+          separationDate: 2,
+          status: "resigned",
+        },
+      });
 
     const membership = await t.run((ctx) =>
       ctx.db.get(fixture.employeeMembershipId),

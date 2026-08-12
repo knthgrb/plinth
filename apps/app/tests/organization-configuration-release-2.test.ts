@@ -50,6 +50,7 @@ describe("Release 2 organization configuration", () => {
         salaryPaymentFrequency: "bimonthly",
         firstPayDate: 15,
         secondPayDate: 30,
+        cutoffDates: { firstCutoff: 12, secondCutoff: 27 },
         payrollSettings: { nightDiffPercent: 1.25 },
         sourceSettingsId: settingsId,
         migrationVersion: 1,
@@ -113,6 +114,7 @@ describe("Release 2 organization configuration", () => {
       },
     });
     expect(result.settings).toMatchObject({
+      cutoffDates: { firstCutoff: 12, secondCutoff: 27 },
       payrollSettings: { nightDiffPercent: 1.25 },
       attendanceSettings: { graceMinutes: 12 },
       _normalizationSources: {
@@ -176,6 +178,51 @@ describe("Release 2 organization configuration", () => {
     });
   });
 
+  it("keeps canonical child collections empty after an organization is normalized", async () => {
+    const t = convexTest(schema, modules);
+    const result = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Canonical empty collections",
+        defaultRequirements: [{ type: "Legacy requirement" }],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("settings", {
+        organizationId,
+        payrollSettings: { nightDiffPercent: 1.9 },
+        departments: [{ name: "Legacy department", color: "#abcdef" }],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("organizationPayrollSettings", {
+        organizationId,
+        salaryPaymentFrequency: "bimonthly",
+        firstPayDate: 15,
+        secondPayDate: 30,
+        migrationVersion: 1,
+        createdAt: 2,
+        updatedAt: 2,
+      });
+      return {
+        organization: await getEffectiveOrganization(ctx, organizationId),
+        settings: await getEffectiveSettings(ctx, organizationId),
+      };
+    });
+
+    expect(result.organization).toMatchObject({
+      defaultRequirements: [],
+      _normalizationSources: { requirements: "normalized" },
+    });
+    expect(result.settings).toMatchObject({
+      departments: [],
+      _normalizationSources: {
+        payroll: "normalized",
+        departments: "normalized",
+      },
+    });
+    expect(result.settings.payrollSettings).toBeUndefined();
+  });
+
   it("rejects duplicate normalized singleton rows", async () => {
     const t = convexTest(schema, modules);
     const organizationId = await t.run(async (ctx) => {
@@ -203,6 +250,56 @@ describe("Release 2 organization configuration", () => {
         getEffectiveOrganization(ctx, organizationId as Id<"organizations">),
       ),
     ).rejects.toThrow("Duplicate normalized payroll settings");
+  });
+
+  it("rejects duplicate normalized child keys", async () => {
+    const t = convexTest(schema, modules);
+    const organizationId = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Duplicate canonical children",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("organizationPayrollSettings", {
+        organizationId,
+        salaryPaymentFrequency: "bimonthly",
+        firstPayDate: 15,
+        secondPayDate: 30,
+        migrationVersion: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const department = {
+        organizationId,
+        name: "Operations",
+        normalizedName: "operations",
+        color: "#123456",
+        migrationVersion: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      await ctx.db.insert("organizationDepartments", department);
+      await ctx.db.insert("organizationDepartments", department);
+      const requirement = {
+        organizationId,
+        type: "NBI Clearance",
+        normalizedType: "nbi clearance",
+        source: "organization" as const,
+        migrationVersion: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      await ctx.db.insert("organizationRequirementDefinitions", requirement);
+      await ctx.db.insert("organizationRequirementDefinitions", requirement);
+      return organizationId;
+    });
+
+    await expect(
+      t.run((ctx) => getEffectiveSettings(ctx, organizationId)),
+    ).rejects.toThrow("Duplicate normalized department rows");
+    await expect(
+      t.run((ctx) => getEffectiveOrganization(ctx, organizationId)),
+    ).rejects.toThrow("Duplicate normalized requirement rows");
   });
 
   it("returns canonical configuration through existing authenticated queries", async () => {
@@ -377,6 +474,65 @@ describe("Release 2 organization configuration", () => {
         isDefault: true,
       }),
     ]);
+  });
+
+  it("uses canonical pay cadence in payroll finalization recipients", async () => {
+    const t = convexTest(schema, modules);
+    const email = "payroll-owner@example.com";
+    const payrollRunId = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Canonical payroll recipients",
+        salaryPaymentFrequency: "monthly",
+        firstPayDate: 5,
+        secondPayDate: 20,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const userId = await ctx.db.insert("users", {
+        email,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId,
+        organizationId,
+        role: "owner",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("organizationPayrollSettings", {
+        organizationId,
+        salaryPaymentFrequency: "bimonthly",
+        firstPayDate: 15,
+        secondPayDate: 30,
+        migrationVersion: 1,
+        createdAt: 2,
+        updatedAt: 2,
+      });
+      return ctx.db.insert("payrollRuns", {
+        organizationId,
+        cutoffStart: 1,
+        cutoffEnd: 2,
+        period: "Test period",
+        status: "finalized",
+        processedBy: userId,
+        createdAt: 2,
+        updatedAt: 2,
+      });
+    });
+
+    const result = await t
+      .withIdentity({ email })
+      .query(api.payroll.getPayrollFinalizePayslipRecipients, {
+        payrollRunId,
+      });
+
+    expect(result?.paySchedule).toEqual({
+      salaryPaymentFrequency: "bimonthly",
+      firstPayDate: 15,
+      secondPayDate: 30,
+    });
   });
 
   it("dual-writes payroll and attendance changes", async () => {

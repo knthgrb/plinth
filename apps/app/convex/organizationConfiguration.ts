@@ -109,6 +109,13 @@ async function getCanonicalDepartments(
       query.eq("organizationId", organizationId),
     )
     .collect();
+  const normalizedNames = new Set<string>();
+  for (const department of rows) {
+    if (normalizedNames.has(department.normalizedName)) {
+      throw new Error("Duplicate normalized department rows");
+    }
+    normalizedNames.add(department.normalizedName);
+  }
   const names = new Map(
     rows.map((department) => [department.normalizedName, department.name]),
   );
@@ -139,8 +146,9 @@ export async function getEffectiveRequirementDefinitions(
   ctx: ReadContext,
   organizationId: Id<"organizations">,
 ) {
-  const [organization, normalizedRows] = await Promise.all([
+  const [organization, payroll, normalizedRows] = await Promise.all([
     ctx.db.get(organizationId),
+    getPayrollRow(ctx, organizationId),
     ctx.db
       .query("organizationRequirementDefinitions")
       .withIndex("by_organization", (query) =>
@@ -149,7 +157,14 @@ export async function getEffectiveRequirementDefinitions(
       .collect(),
   ]);
   if (!organization) throw new Error("Organization not found");
-  if (normalizedRows.length === 0) {
+  const normalizedTypes = new Set<string>();
+  for (const requirement of normalizedRows) {
+    if (normalizedTypes.has(requirement.normalizedType)) {
+      throw new Error("Duplicate normalized requirement rows");
+    }
+    normalizedTypes.add(requirement.normalizedType);
+  }
+  if (normalizedRows.length === 0 && !payroll) {
     return {
       requirements: organization.defaultRequirements ?? [],
       source: (organization.defaultRequirements ? "legacy" : "default") as
@@ -279,10 +294,12 @@ export async function getEffectiveSettings(
   const legacyDepartments = projectLegacyDepartments(
     legacySettings?.departments as LegacyDepartment[] | undefined,
   );
-  const useNormalizedDepartments = normalizedDepartments.length > 0;
+  const useNormalizedDepartments =
+    normalizedDepartments.length > 0 || payroll !== null;
   return {
     ...(legacySettings ?? { _id: null, organizationId }),
-    payrollSettings: payroll?.payrollSettings ?? legacyPayrollSettings,
+    cutoffDates: payroll ? payroll.cutoffDates : legacySettings?.cutoffDates,
+    payrollSettings: payroll ? payroll.payrollSettings : legacyPayrollSettings,
     attendanceSettings:
       attendance?.attendanceSettings ?? legacySettings?.attendanceSettings,
     departments: useNormalizedDepartments

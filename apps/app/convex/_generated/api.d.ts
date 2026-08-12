@@ -39,6 +39,7 @@ import type * as maintenance from "../maintenance.js";
 import type * as memos from "../memos.js";
 import type * as notificationHelpers from "../notificationHelpers.js";
 import type * as notifications from "../notifications.js";
+import type * as organizationConfiguration from "../organizationConfiguration.js";
 import type * as organizations from "../organizations.js";
 import type * as payroll from "../payroll.js";
 import type * as payrollRunCrypto from "../payrollRunCrypto.js";
@@ -96,6 +97,7 @@ declare const fullApi: ApiFromModules<{
   memos: typeof memos;
   notificationHelpers: typeof notificationHelpers;
   notifications: typeof notifications;
+  organizationConfiguration: typeof organizationConfiguration;
   organizations: typeof organizations;
   payroll: typeof payroll;
   payrollRunCrypto: typeof payrollRunCrypto;

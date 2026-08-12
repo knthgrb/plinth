@@ -7,6 +7,7 @@ import {
   upsertAttendanceConfiguration,
   upsertPayrollConfiguration,
 } from "./organizationConfiguration";
+import { canUseFullOrganizationAccess } from "@/utils/org-membership-lifecycle";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -22,7 +23,9 @@ async function checkAuth(
     .withIndex("by_email", (q: any) => q.eq("email", user.email))
     .first();
 
-  if (!userRecord) throw new Error("User not found");
+  if (!userRecord || userRecord.isActive === false) {
+    throw new Error("Not authorized");
+  }
 
   if (!organizationId) {
     throw new Error("Organization ID is required");
@@ -43,6 +46,14 @@ async function checkAuth(
 
   if (!hasAccess) {
     throw new Error("User is not a member of this organization");
+  }
+  if (userOrg && !canUseFullOrganizationAccess(userOrg.accessStatus)) {
+    throw new Error("Organization access is limited or inactive");
+  }
+
+  const organization = await ctx.db.get(organizationId);
+  if (!organization || organization.status === "archived") {
+    throw new Error("Organization access is limited or inactive");
   }
 
   // Use legacy role if userOrg doesn't exist
