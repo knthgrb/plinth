@@ -4,7 +4,7 @@ import {
   normalizeDepartmentName,
   planOrganizationNormalization,
 } from "../convex/databaseMigrationPlanner";
-import { SCHEMA_FIELD_MANIFEST } from "../convex/schemaFieldManifest";
+import { RELEASE_1_SCHEMA_FIELD_MANIFEST } from "../convex/schemaFieldManifest";
 
 describe("database migration planner", () => {
   it("keeps active organization payroll cadence and reports a legacy conflict", () => {
@@ -37,8 +37,23 @@ describe("database migration planner", () => {
     });
   });
 
+  it("does not copy the deprecated plaintext payroll password", () => {
+    const plan = planOrganizationNormalization({
+      organization: {},
+      legacySettings: {
+        payrollSettings: {
+          nightDiffPercent: 1.1,
+          payrollTabPassword: "plaintext-secret",
+        },
+      },
+    });
+
+    expect(plan.payroll.payrollSettings).toEqual({ nightDiffPercent: 1.1 });
+    expect(JSON.stringify(plan)).not.toContain("plaintext-secret");
+  });
+
   it("classifies compatibility, historical, and removable schema fields", () => {
-    expect(SCHEMA_FIELD_MANIFEST).toEqual(
+    expect(RELEASE_1_SCHEMA_FIELD_MANIFEST).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           table: "organizations",
@@ -75,7 +90,7 @@ describe("database migration planner", () => {
         }),
         expect.objectContaining({
           table: "settings",
-          field: "payrollTabPassword",
+          field: "payrollSettings.payrollTabPassword",
           classification: "removable",
           releaseGate: "production_count_and_export",
         }),
@@ -96,6 +111,18 @@ describe("database migration planner", () => {
     });
     expect(plan.attendance).toBeNull();
     expect(plan.issues).toEqual([]);
+  });
+
+  it("reports unsupported weekly legacy payroll frequency", () => {
+    const plan = planOrganizationNormalization({
+      organization: {},
+      legacySettings: { payrollFrequency: "weekly" },
+    });
+
+    expect(plan.issues).toContainEqual({
+      code: "UNSUPPORTED_PAYROLL_FREQUENCY",
+      field: "payrollFrequency",
+    });
   });
 
   it("normalizes departments and reports duplicate names without values", () => {

@@ -34,11 +34,13 @@
 ### Task 1: Define projections and conflict rules
 
 **Files:**
+
 - Create: `apps/app/convex/databaseMigrationTypes.ts`
 - Create: `apps/app/convex/databaseMigrationPlanner.ts`
 - Test: `apps/app/tests/database-migration-planner.test.ts`
 
 **Interfaces:**
+
 - Produces: `SCHEMA_CLEANUP_MIGRATION_KEY`, `SCHEMA_CLEANUP_VERSION`, `normalizeDepartmentName(name)`, `defaultDepartmentColor(index)`, `planOrganizationNormalization({ organization, legacySettings })`.
 - `planOrganizationNormalization` returns payroll settings, optional attendance settings, departments, requirement definitions, and redacted issues without mutating input values.
 
@@ -70,9 +72,15 @@ Use migration key `schema-normalization-release-1` and version `1`. Normalize de
 
 ```ts
 [
-  "#9CA3AF", "#EF4444", "#F97316", "#EAB308",
-  "#22C55E", "#3B82F6", "#A855F7", "#EC4899",
-]
+  "#9CA3AF",
+  "#EF4444",
+  "#F97316",
+  "#EAB308",
+  "#22C55E",
+  "#3B82F6",
+  "#A855F7",
+  "#EC4899",
+];
 ```
 
 Do not include source values in issue payloads. Requirement identities use normalized requirement type within the organization; duplicate types become `DUPLICATE_REQUIREMENT_TYPE` issues.
@@ -93,10 +101,12 @@ git commit -m "feat: define schema normalization projections"
 ### Task 2: Add normalized and migration-control tables
 
 **Files:**
+
 - Modify: `apps/app/convex/schema.ts`
 - Test: `apps/app/tests/data-migrations.test.ts`
 
 **Interfaces:**
+
 - Produces tables `organizationPayrollSettings`, `organizationAttendanceSettings`, `organizationDepartments`, `organizationRequirementDefinitions`, `migrationRuns`, and `migrationIssues`.
 - Produces indexes `by_organization`, `by_organization_normalized_name`, `by_key_started`, `by_key_status`, and `by_run` where applicable.
 
@@ -147,10 +157,12 @@ git commit -m "feat: add normalized organization settings schema"
 ### Task 3: Implement one bounded normalization batch
 
 **Files:**
+
 - Create: `apps/app/convex/databaseMigrations.ts`
 - Modify: `apps/app/tests/data-migrations.test.ts`
 
 **Interfaces:**
+
 - Produces internal mutation `processSchemaCleanupBatch({ runId })`.
 - Consumes one `migrationRuns` row, pages `organizations` using its cursor and batch size, reads at most the matching settings rows for each organization, and returns `{ done, cursor, counters }`.
 
@@ -215,13 +227,16 @@ git commit -m "feat: backfill normalized settings in bounded batches"
 ### Task 4: Add the guarded all-organizations runner
 
 **Files:**
+
 - Modify: `apps/app/convex/databaseMigrations.ts`
 - Modify: `apps/app/tests/data-migrations.test.ts`
 
 **Interfaces:**
+
 - Produces internal mutation `startSchemaCleanup({ dryRun, dryRunId?, batchSize? })` returning `{ runId, key, version, dryRun }`.
-- Produces internal mutation `continueSchemaCleanup({ runId })` that processes one batch and schedules itself with `ctx.scheduler.runAfter(0, ...)` until completion.
+- Produces internal action `continueSchemaCleanup({ runId })` that invokes one transactional batch and schedules itself with `ctx.scheduler.runAfter(0, ...)` until completion.
 - Produces internal query `getSchemaCleanupRun({ runId })` returning the run plus aggregated issues.
+- Produces paginated internal query `listSchemaCleanupIssues({ runId, paginationOpts })` and stale-run recovery mutation `resumeSchemaCleanup({ runId })`.
 
 - [ ] **Step 1: Write failing guard tests**
 
@@ -247,7 +262,7 @@ Expected: all runner tests pass.
 
 - [ ] **Step 5: Add read-only status reporting**
 
-`getSchemaCleanupRun` returns counters and issues ordered by creation time. It must never return legacy field values. Include `canStartWrite: true` only when the dry-run is completed, version-matched, and has no systemic error.
+`getSchemaCleanupRun` returns counters and a bounded issue preview ordered by creation time. It must never return legacy field values. `listSchemaCleanupIssues` pages the complete redacted issue set. Include `canStartWrite: true` only when the dry-run is completed, version-matched, and has neither errors nor conflicts.
 
 - [ ] **Step 6: Run focused verification**
 
@@ -270,17 +285,19 @@ git commit -m "feat: orchestrate resumable schema cleanup runs"
 ### Task 5: Add contract-readiness verification and field classification
 
 **Files:**
+
 - Create: `apps/app/convex/schemaFieldManifest.ts`
 - Modify: `apps/app/convex/databaseMigrations.ts`
 - Modify: `apps/app/tests/data-migrations.test.ts`
 
 **Interfaces:**
-- Produces internal query `getSchemaCleanupAudit({ runId })` with field classifications, source/destination counts, mismatch counters, and Release 1 readiness.
-- Produces `SCHEMA_FIELD_MANIFEST` entries with table, field, classification, target, and release gate.
+
+- Produces a persisted, cursor-bounded audit started by `startSchemaCleanupAudit({ runId, batchSize? })` and inspected through `getSchemaCleanupAudit({ runId })`.
+- Produces `RELEASE_1_SCHEMA_FIELD_MANIFEST` entries with table, field, classification, target, and release gate.
 
 - [ ] **Step 1: Write failing verification tests**
 
-Assert readiness is false when a destination row is missing, duplicated, or unequal and true when every Release 1 source projection has exactly one equal destination. Assert `payslips.employeeSnapshot`, `payrollRuns.draftConfig`, and `payrollRuns.summarySnapshot` are classified `historical_snapshot`; assert organization pay cadence is `compatibility_read`; assert `settings.taxTable`, `settings.payrollFrequency`, and `settings.payrollTabPassword` are `removable` with a production-count gate.
+Assert readiness is false when a destination row is missing, duplicated, or unequal and true when every Release 1 source projection has exactly one equal destination. Assert `payslips.employeeSnapshot`, `payrollRuns.draftConfig`, and `payrollRuns.summarySnapshot` are classified `historical_snapshot`; assert organization pay cadence is `compatibility_read`; assert `settings.taxTable`, `settings.payrollFrequency`, and `settings.payrollSettings.payrollTabPassword` are `removable` with a production-count gate.
 
 - [ ] **Step 2: Run the tests and verify the missing audit failure**
 
@@ -313,10 +330,12 @@ git commit -m "feat: report schema cleanup readiness"
 ### Task 6: Document and verify Release 1
 
 **Files:**
+
 - Create: `docs/runbooks/schema-normalization-release-1.md`
 - Modify: `docs/superpowers/plans/2026-08-12-convex-schema-normalization-release-1.md`
 
 **Interfaces:**
+
 - Documents exact production commands for dry-run start, run-status inspection, write-run start, audit verification, rerun idempotency, and stop conditions.
 
 - [ ] **Step 1: Write the production runbook**
@@ -335,6 +354,10 @@ pnpm --filter app exec convex run --prod \
 pnpm --filter app exec convex run --prod \
   databaseMigrations:startSchemaCleanup \
   '{"dryRun":false,"dryRunId":"DRY_RUN_ID","batchSize":20}'
+
+pnpm --filter app exec convex run --prod \
+  databaseMigrations:startSchemaCleanupAudit \
+  '{"runId":"WRITE_RUN_ID","batchSize":5}'
 
 pnpm --filter app exec convex run --prod \
   databaseMigrations:getSchemaCleanupAudit \

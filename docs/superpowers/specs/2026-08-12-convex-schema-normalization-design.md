@@ -42,9 +42,10 @@ top-level fields. The first static usage scan identified these categories:
 - Some apparently unused indexes and fields need production telemetry before
   contraction because static absence does not prove external or dashboard use.
 
-The implementation will generate a machine-readable field manifest classifying
-every field as `canonical`, `compatibility_read`, `migration_only`,
-`historical_snapshot`, or `removable`.
+Each release generates a machine-readable field manifest for the fields in its
+normalization scope, classifying them as `canonical`, `compatibility_read`,
+`migration_only`, `historical_snapshot`, or `removable`. The manifests must
+cover every schema field before the final contract release can begin.
 
 ## Target ownership boundaries
 
@@ -81,9 +82,9 @@ backfill because it is actively read. Any non-empty legacy
 `settings.payrollFrequency` value is compared and reported when it conflicts;
 it is not allowed to overwrite active production behavior.
 
-`settings.taxTable` and `settings.payrollTabPassword` are removal candidates.
-The password has no canonical destination. Both fields must first be counted,
-exported when non-empty, cleared, and verified.
+`settings.taxTable` and `settings.payrollSettings.payrollTabPassword` are
+removal candidates. The password has no canonical destination. Both fields must
+first be counted, exported when non-empty, cleared, and verified.
 
 ### Attendance configuration
 

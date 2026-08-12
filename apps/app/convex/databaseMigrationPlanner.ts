@@ -53,7 +53,10 @@ export type PlannedPayrollSettings = {
   firstPayDate: number;
   secondPayDate: number;
   cutoffDates?: { firstCutoff: number; secondCutoff: number };
-  payrollSettings?: Doc<"settings">["payrollSettings"];
+  payrollSettings?: Omit<
+    NonNullable<Doc<"settings">["payrollSettings"]>,
+    "payrollTabPassword"
+  >;
 };
 
 export type PlannedDepartment = {
@@ -108,6 +111,15 @@ function normalizePayrollFrequency(
   if (frequency === "monthly") return "monthly";
   if (frequency === "semi-monthly") return "bimonthly";
   return null;
+}
+
+function sanitizePayrollSettings(
+  settings: LegacySettingsSource["payrollSettings"],
+): PlannedPayrollSettings["payrollSettings"] {
+  if (!settings) return undefined;
+  const { payrollTabPassword: deprecatedPassword, ...safeSettings } = settings;
+  void deprecatedPassword;
+  return safeSettings;
 }
 
 function planDepartments(
@@ -195,6 +207,15 @@ export function planOrganizationNormalization(args: {
       field: "salaryPaymentFrequency",
     });
   }
+  if (args.legacySettings?.payrollFrequency === "weekly") {
+    issues.push({
+      code: "UNSUPPORTED_PAYROLL_FREQUENCY",
+      field: "payrollFrequency",
+    });
+  }
+  const payrollSettings = sanitizePayrollSettings(
+    args.legacySettings?.payrollSettings,
+  );
 
   return {
     payroll: {
@@ -204,9 +225,7 @@ export function planOrganizationNormalization(args: {
       ...(args.legacySettings?.cutoffDates
         ? { cutoffDates: args.legacySettings.cutoffDates }
         : {}),
-      ...(args.legacySettings?.payrollSettings
-        ? { payrollSettings: args.legacySettings.payrollSettings }
-        : {}),
+      ...(payrollSettings ? { payrollSettings } : {}),
     },
     attendance: args.legacySettings?.attendanceSettings ?? null,
     departments: planDepartments(args.legacySettings?.departments, issues),

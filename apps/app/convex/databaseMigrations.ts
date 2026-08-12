@@ -1,10 +1,10 @@
 import { v } from "convex/values";
-import { makeFunctionReference } from "convex/server";
+import { makeFunctionReference, paginationOptsValidator } from "convex/server";
 import {
+  internalAction,
   internalMutation,
   internalQuery,
   type MutationCtx,
-  type QueryCtx,
 } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -12,16 +12,17 @@ import {
   planOrganizationNormalization,
   valuesEqual,
 } from "./databaseMigrationPlanner";
-import type {
-  SchemaCleanupCounters,
-  SchemaCleanupIssue,
-} from "./databaseMigrationTypes";
-import { SCHEMA_FIELD_MANIFEST } from "./schemaFieldManifest";
 import {
   EMPTY_SCHEMA_CLEANUP_COUNTERS,
   SCHEMA_CLEANUP_MIGRATION_KEY,
   SCHEMA_CLEANUP_VERSION,
+  type SchemaCleanupCounters,
+  type SchemaCleanupIssue,
 } from "./databaseMigrationTypes";
+import { RELEASE_1_SCHEMA_FIELD_MANIFEST } from "./schemaFieldManifest";
+
+const MAX_STATUS_ISSUES = 200;
+const MAX_DESTINATION_ROWS_PER_ORGANIZATION = 500;
 
 function addCounters(
   current: SchemaCleanupCounters,
@@ -85,272 +86,377 @@ async function recordIssue(
   });
 }
 
+async function findUnexpectedDestinationFields(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  plan: ReturnType<typeof planOrganizationNormalization>,
+): Promise<string[]> {
+  const [attendanceRows, departmentRows, requirementRows] = await Promise.all([
+    ctx.db
+      .query("organizationAttendanceSettings")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", organizationId),
+      )
+      .take(2),
+    ctx.db
+      .query("organizationDepartments")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", organizationId),
+      )
+      .take(MAX_DESTINATION_ROWS_PER_ORGANIZATION + 1),
+    ctx.db
+      .query("organizationRequirementDefinitions")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", organizationId),
+      )
+      .take(MAX_DESTINATION_ROWS_PER_ORGANIZATION + 1),
+  ]);
+  const fields: string[] = [];
+  if (!plan.attendance && attendanceRows.length > 0) {
+    fields.push("attendanceSettings");
+  }
+  const departmentNames = new Set(
+    plan.departments.map((department) => department.normalizedName),
+  );
+  if (
+    departmentRows.length > MAX_DESTINATION_ROWS_PER_ORGANIZATION ||
+    departmentRows.some(
+      (department) => !departmentNames.has(department.normalizedName),
+    )
+  ) {
+    fields.push("departments");
+  }
+  const requirementTypes = new Set(
+    plan.requirements.map((requirement) => requirement.normalizedType),
+  );
+  if (
+    requirementRows.length > MAX_DESTINATION_ROWS_PER_ORGANIZATION ||
+    requirementRows.some(
+      (requirement) => !requirementTypes.has(requirement.normalizedType),
+    )
+  ) {
+    fields.push("defaultRequirements");
+  }
+  return fields;
+}
+
+async function validateDepartmentHeads(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  departments: ReturnType<typeof planOrganizationNormalization>["departments"],
+) {
+  const validDepartments: typeof departments = [];
+  let invalidCount = 0;
+  for (const department of departments) {
+    if (!department.departmentHeadUserId) {
+      validDepartments.push(department);
+      continue;
+    }
+    const memberships = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_user_organization", (q) =>
+        q
+          .eq("userId", department.departmentHeadUserId!)
+          .eq("organizationId", organizationId),
+      )
+      .take(2);
+    const membership = memberships.length === 1 ? memberships[0] : null;
+    if (membership && (membership.accessStatus ?? "active") === "active") {
+      validDepartments.push(department);
+    } else {
+      invalidCount += 1;
+    }
+  }
+  return { validDepartments, invalidCount };
+}
+
 async function runSchemaCleanupBatch(
   ctx: MutationCtx,
   runId: Id<"migrationRuns">,
 ) {
-    const run = await ctx.db.get(runId);
-    if (!run || run.key !== "schema-normalization-release-1") {
-      throw new Error("Schema cleanup run was not found");
-    }
-    if (run.status !== "running") {
-      throw new Error("Schema cleanup run is not active");
-    }
-
-    const page = await ctx.db.query("organizations").paginate({
-      cursor: run.cursor ?? null,
-      numItems: run.batchSize,
+  const run = await ctx.db.get(runId);
+  if (!run || run.key !== SCHEMA_CLEANUP_MIGRATION_KEY) {
+    throw new Error("Schema cleanup run was not found");
+  }
+  if (run.status === "queued") {
+    await ctx.db.patch(run._id, {
+      status: "running",
+      updatedAt: Date.now(),
     });
-    let counters = run.counters;
-    const now = Date.now();
+  } else if (run.status !== "running") {
+    throw new Error("Schema cleanup run is not active");
+  }
 
-    for (const organization of page.page) {
-      counters = addCounters(counters, { scanned: 1 });
-      const settingsRows = await ctx.db
-        .query("settings")
-        .withIndex("by_organization", (q) =>
-          q.eq("organizationId", organization._id),
-        )
-        .collect();
+  const page = await ctx.db.query("organizations").paginate({
+    cursor: run.cursor ?? null,
+    numItems: run.batchSize,
+  });
+  let counters = run.counters;
+  const now = Date.now();
 
-      const issues: SchemaCleanupIssue[] = [];
-      if (settingsRows.length > 1) {
-        issues.push({
-          code: "DUPLICATE_SETTINGS_ROWS",
-          field: "settings",
-        });
-      }
-      const legacySettings =
-        settingsRows.length === 1 ? settingsRows[0] : null;
-      const plan = planOrganizationNormalization({
-        organization,
-        legacySettings,
+  for (const organization of page.page) {
+    counters = addCounters(counters, { scanned: 1 });
+    const settingsRows = await ctx.db
+      .query("settings")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", organization._id),
+      )
+      .take(2);
+
+    const issues: SchemaCleanupIssue[] = [];
+    if (settingsRows.length > 1) {
+      issues.push({
+        code: "DUPLICATE_SETTINGS_ROWS",
+        field: "settings",
       });
-      issues.push(...plan.issues);
+    }
+    const legacySettings = settingsRows.length === 1 ? settingsRows[0] : null;
+    const plan = planOrganizationNormalization({
+      organization,
+      legacySettings,
+    });
+    issues.push(...plan.issues);
+    const departmentValidation = await validateDepartmentHeads(
+      ctx,
+      organization._id,
+      plan.departments,
+    );
+    for (let index = 0; index < departmentValidation.invalidCount; index += 1) {
+      issues.push({
+        code: "INVALID_DEPARTMENT_HEAD_MEMBERSHIP",
+        field: "departments",
+      });
+    }
+    const effectivePlan = {
+      ...plan,
+      departments: departmentValidation.validDepartments,
+    };
+    const unexpectedDestinationFields = await findUnexpectedDestinationFields(
+      ctx,
+      organization._id,
+      effectivePlan,
+    );
+    for (const field of unexpectedDestinationFields) {
+      issues.push({ code: "UNEXPECTED_DESTINATION_ROWS", field });
+    }
 
-      for (const issue of issues) {
-        await recordIssue(ctx, {
-          runId: run._id,
-          organizationId: organization._id,
-          entityType: "organization",
-          entityId: organization._id,
-          field: issue.field,
-          code: issue.code,
-          now,
-        });
-      }
-      counters = addCounters(counters, { conflicts: issues.length });
-
-      if (run.dryRun) continue;
-
-      const payrollExpected = {
+    for (const issue of issues) {
+      await recordIssue(ctx, {
+        runId: run._id,
         organizationId: organization._id,
-        ...plan.payroll,
+        entityType: "organization",
+        entityId: organization._id,
+        field: issue.field,
+        code: issue.code,
+        now,
+      });
+    }
+    counters = addCounters(counters, { conflicts: issues.length });
+
+    const payrollExpected = {
+      organizationId: organization._id,
+      ...plan.payroll,
+      ...(legacySettings?._id ? { sourceSettingsId: legacySettings._id } : {}),
+      migrationVersion: run.version,
+    };
+    const payrollRows = await ctx.db
+      .query("organizationPayrollSettings")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", organization._id),
+      )
+      .take(2);
+    const payrollResult = destinationResult(payrollRows, payrollExpected);
+    if (payrollResult === "changed" && !run.dryRun) {
+      await ctx.db.insert("organizationPayrollSettings", {
+        ...payrollExpected,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } else if (payrollResult === "conflict") {
+      await recordIssue(ctx, {
+        runId: run._id,
+        organizationId: organization._id,
+        entityType: "organizationPayrollSettings",
+        field: "organizationId",
+        code:
+          payrollRows.length > 1
+            ? "DUPLICATE_DESTINATION_ROWS"
+            : "DESTINATION_VALUE_CONFLICT",
+        now,
+      });
+    }
+    counters = addCounters(counters, {
+      changed: payrollResult === "changed" && !run.dryRun ? 1 : 0,
+      unchanged: payrollResult === "unchanged" ? 1 : 0,
+      conflicts: payrollResult === "conflict" ? 1 : 0,
+    });
+
+    if (plan.attendance) {
+      const attendanceExpected = {
+        organizationId: organization._id,
+        attendanceSettings: plan.attendance,
         ...(legacySettings?._id
           ? { sourceSettingsId: legacySettings._id }
           : {}),
         migrationVersion: run.version,
       };
-      const payrollRows = await ctx.db
-        .query("organizationPayrollSettings")
+      const attendanceRows = await ctx.db
+        .query("organizationAttendanceSettings")
         .withIndex("by_organization", (q) =>
           q.eq("organizationId", organization._id),
         )
-        .collect();
-      const payrollResult = destinationResult(payrollRows, payrollExpected);
-      if (payrollResult === "changed") {
-        await ctx.db.insert("organizationPayrollSettings", {
-          ...payrollExpected,
+        .take(2);
+      const attendanceResult = destinationResult(
+        attendanceRows,
+        attendanceExpected,
+      );
+      if (attendanceResult === "changed" && !run.dryRun) {
+        await ctx.db.insert("organizationAttendanceSettings", {
+          ...attendanceExpected,
           createdAt: now,
           updatedAt: now,
         });
-      } else if (payrollResult === "conflict") {
+      } else if (attendanceResult === "conflict") {
         await recordIssue(ctx, {
           runId: run._id,
           organizationId: organization._id,
-          entityType: "organizationPayrollSettings",
+          entityType: "organizationAttendanceSettings",
           field: "organizationId",
           code:
-            payrollRows.length > 1
+            attendanceRows.length > 1
               ? "DUPLICATE_DESTINATION_ROWS"
               : "DESTINATION_VALUE_CONFLICT",
           now,
         });
       }
       counters = addCounters(counters, {
-        changed: payrollResult === "changed" ? 1 : 0,
-        unchanged: payrollResult === "unchanged" ? 1 : 0,
-        conflicts: payrollResult === "conflict" ? 1 : 0,
+        changed: attendanceResult === "changed" && !run.dryRun ? 1 : 0,
+        unchanged: attendanceResult === "unchanged" ? 1 : 0,
+        conflicts: attendanceResult === "conflict" ? 1 : 0,
       });
-
-      if (plan.attendance) {
-        const attendanceExpected = {
-          organizationId: organization._id,
-          attendanceSettings: plan.attendance,
-          ...(legacySettings?._id
-            ? { sourceSettingsId: legacySettings._id }
-            : {}),
-          migrationVersion: run.version,
-        };
-        const attendanceRows = await ctx.db
-          .query("organizationAttendanceSettings")
-          .withIndex("by_organization", (q) =>
-            q.eq("organizationId", organization._id),
-          )
-          .collect();
-        const attendanceResult = destinationResult(
-          attendanceRows,
-          attendanceExpected,
-        );
-        if (attendanceResult === "changed") {
-          await ctx.db.insert("organizationAttendanceSettings", {
-            ...attendanceExpected,
-            createdAt: now,
-            updatedAt: now,
-          });
-        } else if (attendanceResult === "conflict") {
-          await recordIssue(ctx, {
-            runId: run._id,
-            organizationId: organization._id,
-            entityType: "organizationAttendanceSettings",
-            field: "organizationId",
-            code:
-              attendanceRows.length > 1
-                ? "DUPLICATE_DESTINATION_ROWS"
-                : "DESTINATION_VALUE_CONFLICT",
-            now,
-          });
-        }
-        counters = addCounters(counters, {
-          changed: attendanceResult === "changed" ? 1 : 0,
-          unchanged: attendanceResult === "unchanged" ? 1 : 0,
-          conflicts: attendanceResult === "conflict" ? 1 : 0,
-        });
-      }
-
-      for (const department of plan.departments) {
-        const departmentExpected = {
-          organizationId: organization._id,
-          name: department.name,
-          normalizedName: department.normalizedName,
-          color: department.color,
-          ...(department.departmentHeadUserId
-            ? { departmentHeadUserId: department.departmentHeadUserId }
-            : {}),
-          ...(department.costCenter ? { costCenter: department.costCenter } : {}),
-          ...(department.location ? { location: department.location } : {}),
-          ...(department.parentDepartmentName
-            ? {
-                parentDepartmentNormalizedName: normalizeDepartmentName(
-                  department.parentDepartmentName,
-                ),
-              }
-            : {}),
-          ...(legacySettings?._id
-            ? { sourceSettingsId: legacySettings._id }
-            : {}),
-          migrationVersion: run.version,
-        };
-        const departmentRows = await ctx.db
-          .query("organizationDepartments")
-          .withIndex("by_organization_normalized_name", (q) =>
-            q
-              .eq("organizationId", organization._id)
-              .eq("normalizedName", department.normalizedName),
-          )
-          .collect();
-        const departmentResult = destinationResult(
-          departmentRows,
-          departmentExpected,
-        );
-        if (departmentResult === "changed") {
-          await ctx.db.insert("organizationDepartments", {
-            ...departmentExpected,
-            createdAt: now,
-            updatedAt: now,
-          });
-        } else if (departmentResult === "conflict") {
-          await recordIssue(ctx, {
-            runId: run._id,
-            organizationId: organization._id,
-            entityType: "organizationDepartment",
-            entityId: department.normalizedName,
-            field: "normalizedName",
-            code:
-              departmentRows.length > 1
-                ? "DUPLICATE_DESTINATION_ROWS"
-                : "DESTINATION_VALUE_CONFLICT",
-            now,
-          });
-        }
-        counters = addCounters(counters, {
-          changed: departmentResult === "changed" ? 1 : 0,
-          unchanged: departmentResult === "unchanged" ? 1 : 0,
-          conflicts: departmentResult === "conflict" ? 1 : 0,
-        });
-      }
-
-      for (const requirement of plan.requirements) {
-        const requirementExpected = {
-          organizationId: organization._id,
-          ...requirement,
-          source: "organization" as const,
-          migrationVersion: run.version,
-        };
-        const requirementRows = await ctx.db
-          .query("organizationRequirementDefinitions")
-          .withIndex("by_organization_normalized_type", (q) =>
-            q
-              .eq("organizationId", organization._id)
-              .eq("normalizedType", requirement.normalizedType),
-          )
-          .collect();
-        const requirementResult = destinationResult(
-          requirementRows,
-          requirementExpected,
-        );
-        if (requirementResult === "changed") {
-          await ctx.db.insert("organizationRequirementDefinitions", {
-            ...requirementExpected,
-            createdAt: now,
-            updatedAt: now,
-          });
-        } else if (requirementResult === "conflict") {
-          await recordIssue(ctx, {
-            runId: run._id,
-            organizationId: organization._id,
-            entityType: "organizationRequirementDefinition",
-            entityId: requirement.normalizedType,
-            field: "normalizedType",
-            code:
-              requirementRows.length > 1
-                ? "DUPLICATE_DESTINATION_ROWS"
-                : "DESTINATION_VALUE_CONFLICT",
-            now,
-          });
-        }
-        counters = addCounters(counters, {
-          changed: requirementResult === "changed" ? 1 : 0,
-          unchanged: requirementResult === "unchanged" ? 1 : 0,
-          conflicts: requirementResult === "conflict" ? 1 : 0,
-        });
-      }
     }
 
-    const done = page.isDone;
-    await ctx.db.patch(run._id, {
-      status: done ? "completed" : "running",
-      cursor: done ? undefined : page.continueCursor,
-      counters,
-      updatedAt: now,
-      completedAt: done ? now : undefined,
-    });
+    for (const department of effectivePlan.departments) {
+      const departmentExpected = {
+        organizationId: organization._id,
+        name: department.name,
+        normalizedName: department.normalizedName,
+        color: department.color,
+        ...(department.departmentHeadUserId
+          ? { departmentHeadUserId: department.departmentHeadUserId }
+          : {}),
+        ...(department.costCenter ? { costCenter: department.costCenter } : {}),
+        ...(department.location ? { location: department.location } : {}),
+        ...(department.parentDepartmentName
+          ? {
+              parentDepartmentNormalizedName: normalizeDepartmentName(
+                department.parentDepartmentName,
+              ),
+            }
+          : {}),
+        ...(legacySettings?._id
+          ? { sourceSettingsId: legacySettings._id }
+          : {}),
+        migrationVersion: run.version,
+      };
+      const departmentRows = await ctx.db
+        .query("organizationDepartments")
+        .withIndex("by_organization_normalized_name", (q) =>
+          q
+            .eq("organizationId", organization._id)
+            .eq("normalizedName", department.normalizedName),
+        )
+        .take(2);
+      const departmentResult = destinationResult(
+        departmentRows,
+        departmentExpected,
+      );
+      if (departmentResult === "changed" && !run.dryRun) {
+        await ctx.db.insert("organizationDepartments", {
+          ...departmentExpected,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } else if (departmentResult === "conflict") {
+        await recordIssue(ctx, {
+          runId: run._id,
+          organizationId: organization._id,
+          entityType: "organizationDepartment",
+          field: "normalizedName",
+          code:
+            departmentRows.length > 1
+              ? "DUPLICATE_DESTINATION_ROWS"
+              : "DESTINATION_VALUE_CONFLICT",
+          now,
+        });
+      }
+      counters = addCounters(counters, {
+        changed: departmentResult === "changed" && !run.dryRun ? 1 : 0,
+        unchanged: departmentResult === "unchanged" ? 1 : 0,
+        conflicts: departmentResult === "conflict" ? 1 : 0,
+      });
+    }
 
-    return {
-      done,
-      cursor: done ? null : page.continueCursor,
-      counters,
-    };
+    for (const requirement of plan.requirements) {
+      const requirementExpected = {
+        organizationId: organization._id,
+        ...requirement,
+        source: "organization" as const,
+        migrationVersion: run.version,
+      };
+      const requirementRows = await ctx.db
+        .query("organizationRequirementDefinitions")
+        .withIndex("by_organization_normalized_type", (q) =>
+          q
+            .eq("organizationId", organization._id)
+            .eq("normalizedType", requirement.normalizedType),
+        )
+        .take(2);
+      const requirementResult = destinationResult(
+        requirementRows,
+        requirementExpected,
+      );
+      if (requirementResult === "changed" && !run.dryRun) {
+        await ctx.db.insert("organizationRequirementDefinitions", {
+          ...requirementExpected,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } else if (requirementResult === "conflict") {
+        await recordIssue(ctx, {
+          runId: run._id,
+          organizationId: organization._id,
+          entityType: "organizationRequirementDefinition",
+          field: "normalizedType",
+          code:
+            requirementRows.length > 1
+              ? "DUPLICATE_DESTINATION_ROWS"
+              : "DESTINATION_VALUE_CONFLICT",
+          now,
+        });
+      }
+      counters = addCounters(counters, {
+        changed: requirementResult === "changed" && !run.dryRun ? 1 : 0,
+        unchanged: requirementResult === "unchanged" ? 1 : 0,
+        conflicts: requirementResult === "conflict" ? 1 : 0,
+      });
+    }
+  }
+
+  const done = page.isDone;
+  await ctx.db.patch(run._id, {
+    status: done ? "completed" : "running",
+    cursor: done ? undefined : page.continueCursor,
+    counters,
+    updatedAt: now,
+    completedAt: done ? now : undefined,
+  });
+
+  return {
+    done,
+    cursor: done ? null : page.continueCursor,
+    counters,
+  };
 }
 
 export const processSchemaCleanupBatch = internalMutation({
@@ -359,9 +465,18 @@ export const processSchemaCleanupBatch = internalMutation({
 });
 
 const continueSchemaCleanupReference = makeFunctionReference<
-  "mutation",
+  "action",
   { runId: Id<"migrationRuns"> }
 >("databaseMigrations:continueSchemaCleanup");
+const processSchemaCleanupBatchReference = makeFunctionReference<
+  "mutation",
+  { runId: Id<"migrationRuns"> },
+  { done: boolean }
+>("databaseMigrations:processSchemaCleanupBatch");
+const failSchemaCleanupReference = makeFunctionReference<
+  "mutation",
+  { runId: Id<"migrationRuns">; failureCode: string }
+>("databaseMigrations:failSchemaCleanup");
 
 export const startSchemaCleanup = internalMutation({
   args: {
@@ -381,13 +496,13 @@ export const startSchemaCleanup = internalMutation({
         .withIndex("by_key_status", (q) =>
           q.eq("key", SCHEMA_CLEANUP_MIGRATION_KEY).eq("status", "queued"),
         )
-        .collect()),
+        .take(1)),
       ...(await ctx.db
         .query("migrationRuns")
         .withIndex("by_key_status", (q) =>
           q.eq("key", SCHEMA_CLEANUP_MIGRATION_KEY).eq("status", "running"),
         )
-        .collect()),
+        .take(1)),
     ];
     if (activeRuns.length > 0) {
       throw new Error("A schema cleanup run is already active");
@@ -403,9 +518,10 @@ export const startSchemaCleanup = internalMutation({
         dryRun.key !== SCHEMA_CLEANUP_MIGRATION_KEY ||
         dryRun.version !== SCHEMA_CLEANUP_VERSION ||
         dryRun.status !== "completed" ||
-        dryRun.counters.errors > 0
+        dryRun.counters.errors > 0 ||
+        dryRun.counters.conflicts > 0
       ) {
-        throw new Error("Completed dry-run is required");
+        throw new Error("Conflict-free completed dry-run is required");
       }
       requiredDryRunId = dryRun._id;
     }
@@ -434,24 +550,46 @@ export const startSchemaCleanup = internalMutation({
   },
 });
 
-export const continueSchemaCleanup = internalMutation({
+export const continueSchemaCleanup = internalAction({
   args: { runId: v.id("migrationRuns") },
   handler: async (ctx, args) => {
-    const run = await ctx.db.get(args.runId);
-    if (!run) throw new Error("Schema cleanup run was not found");
-    if (run.status === "queued") {
-      await ctx.db.patch(run._id, { status: "running", updatedAt: Date.now() });
-    } else if (run.status !== "running") {
-      return { done: true };
-    }
-
-    const result = await runSchemaCleanupBatch(ctx, args.runId);
-    if (!result.done) {
-      await ctx.scheduler.runAfter(0, continueSchemaCleanupReference, {
+    try {
+      const result = await ctx.runMutation(processSchemaCleanupBatchReference, {
         runId: args.runId,
       });
+      if (!result.done) {
+        await ctx.scheduler.runAfter(0, continueSchemaCleanupReference, {
+          runId: args.runId,
+        });
+      }
+      return { done: result.done };
+    } catch {
+      await ctx.runMutation(failSchemaCleanupReference, {
+        runId: args.runId,
+        failureCode: "BATCH_FAILED",
+      });
+      return { done: true, failed: true };
     }
-    return { done: result.done };
+  },
+});
+
+export const failSchemaCleanup = internalMutation({
+  args: {
+    runId: v.id("migrationRuns"),
+    failureCode: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.key !== SCHEMA_CLEANUP_MIGRATION_KEY) return;
+    if (run.status === "completed" || run.status === "failed") return;
+    const now = Date.now();
+    await ctx.db.patch(run._id, {
+      status: "failed",
+      failureCode: args.failureCode,
+      counters: addCounters(run.counters, { errors: 1 }),
+      updatedAt: now,
+      completedAt: now,
+    });
   },
 });
 
@@ -465,22 +603,92 @@ export const getSchemaCleanupRun = internalQuery({
     const issues = await ctx.db
       .query("migrationIssues")
       .withIndex("by_run", (q) => q.eq("runId", run._id))
-      .collect();
+      .take(MAX_STATUS_ISSUES + 1);
+    const issuesTruncated = issues.length > MAX_STATUS_ISSUES;
     return {
       run,
-      issues: issues.map(({ code, field, entityType, entityId, createdAt }) => ({
-        code,
-        field,
-        entityType,
-        entityId,
-        createdAt,
-      })),
+      issues: issues
+        .slice(0, MAX_STATUS_ISSUES)
+        .map(
+          ({
+            code,
+            field,
+            entityType,
+            entityId,
+            organizationId,
+            createdAt,
+          }) => ({
+            code,
+            field,
+            entityType,
+            entityId,
+            organizationId,
+            createdAt,
+          }),
+        ),
+      issuesTruncated,
       canStartWrite:
         run.dryRun &&
         run.version === SCHEMA_CLEANUP_VERSION &&
         run.status === "completed" &&
-        run.counters.errors === 0,
+        run.counters.errors === 0 &&
+        run.counters.conflicts === 0,
     };
+  },
+});
+
+export const listSchemaCleanupIssues = internalQuery({
+  args: {
+    runId: v.id("migrationRuns"),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.key !== SCHEMA_CLEANUP_MIGRATION_KEY) {
+      throw new Error("Schema cleanup run was not found");
+    }
+    const result = await ctx.db
+      .query("migrationIssues")
+      .withIndex("by_run", (q) => q.eq("runId", run._id))
+      .paginate(args.paginationOpts);
+    return {
+      ...result,
+      page: result.page.map(
+        ({ code, field, entityType, entityId, organizationId, createdAt }) => ({
+          code,
+          field,
+          entityType,
+          entityId,
+          organizationId,
+          createdAt,
+        }),
+      ),
+    };
+  },
+});
+
+export const resumeSchemaCleanup = internalMutation({
+  args: { runId: v.id("migrationRuns") },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.key !== SCHEMA_CLEANUP_MIGRATION_KEY) {
+      throw new Error("Schema cleanup run was not found");
+    }
+    if (run.status !== "queued" && run.status !== "running") {
+      throw new Error("Only an active schema cleanup run can resume");
+    }
+    const staleBefore = Date.now() - 5 * 60 * 1_000;
+    if (run.updatedAt > staleBefore) {
+      throw new Error("Schema cleanup run is not stale");
+    }
+    await ctx.db.patch(run._id, {
+      status: "queued",
+      updatedAt: Date.now(),
+    });
+    await ctx.scheduler.runAfter(0, continueSchemaCleanupReference, {
+      runId: run._id,
+    });
+    return { resumed: true, runId: run._id };
   },
 });
 
@@ -490,7 +698,34 @@ type DestinationAudit = {
   missing: number;
   duplicate: number;
   mismatched: number;
+  unexpected: number;
+  totalRows: number;
 };
+
+const EMPTY_DESTINATION_AUDIT: DestinationAudit = {
+  expected: 0,
+  matching: 0,
+  missing: 0,
+  duplicate: 0,
+  mismatched: 0,
+  unexpected: 0,
+  totalRows: 0,
+};
+
+function addDestinationAudit(
+  current: DestinationAudit,
+  increment: Partial<DestinationAudit>,
+): DestinationAudit {
+  return {
+    expected: current.expected + (increment.expected ?? 0),
+    matching: current.matching + (increment.matching ?? 0),
+    missing: current.missing + (increment.missing ?? 0),
+    duplicate: current.duplicate + (increment.duplicate ?? 0),
+    mismatched: current.mismatched + (increment.mismatched ?? 0),
+    unexpected: current.unexpected + (increment.unexpected ?? 0),
+    totalRows: current.totalRows + (increment.totalRows ?? 0),
+  };
+}
 
 function countDestination(
   audit: DestinationAudit,
@@ -506,7 +741,7 @@ function countDestination(
 }
 
 async function auditOrganizationDestinations(
-  ctx: QueryCtx,
+  ctx: MutationCtx,
   organization: Doc<"organizations">,
   version: number,
   audit: DestinationAudit,
@@ -516,12 +751,17 @@ async function auditOrganizationDestinations(
     .withIndex("by_organization", (q) =>
       q.eq("organizationId", organization._id),
     )
-    .collect();
+    .take(2);
   const legacySettings = settingsRows.length === 1 ? settingsRows[0] : null;
   const plan = planOrganizationNormalization({
     organization,
     legacySettings,
   });
+  const departmentValidation = await validateDepartmentHeads(
+    ctx,
+    organization._id,
+    plan.departments,
+  );
 
   const payrollExpected = {
     organizationId: organization._id,
@@ -534,7 +774,7 @@ async function auditOrganizationDestinations(
     .withIndex("by_organization", (q) =>
       q.eq("organizationId", organization._id),
     )
-    .collect();
+    .take(2);
   countDestination(audit, payrollRows, payrollExpected);
 
   if (plan.attendance) {
@@ -549,11 +789,11 @@ async function auditOrganizationDestinations(
       .withIndex("by_organization", (q) =>
         q.eq("organizationId", organization._id),
       )
-      .collect();
+      .take(2);
     countDestination(audit, attendanceRows, attendanceExpected);
   }
 
-  for (const department of plan.departments) {
+  for (const department of departmentValidation.validDepartments) {
     const departmentExpected = {
       organizationId: organization._id,
       name: department.name,
@@ -581,7 +821,7 @@ async function auditOrganizationDestinations(
           .eq("organizationId", organization._id)
           .eq("normalizedName", department.normalizedName),
       )
-      .collect();
+      .take(2);
     countDestination(audit, departmentRows, departmentExpected);
   }
 
@@ -599,16 +839,299 @@ async function auditOrganizationDestinations(
           .eq("organizationId", organization._id)
           .eq("normalizedType", requirement.normalizedType),
       )
-      .collect();
+      .take(2);
     countDestination(audit, requirementRows, requirementExpected);
   }
 
   return {
+    destination: audit,
     duplicateLegacySettings: settingsRows.length > 1 ? 1 : 0,
     sourceConflicts:
-      plan.issues.length + (settingsRows.length > 1 ? 1 : 0),
+      plan.issues.length +
+      departmentValidation.invalidCount +
+      (settingsRows.length > 1 ? 1 : 0),
   };
 }
+
+type AuditPhase = Doc<"migrationAudits">["phase"];
+
+const AUDIT_PHASES: readonly AuditPhase[] = [
+  "organizations",
+  "payroll_settings",
+  "attendance_settings",
+  "departments",
+  "requirements",
+];
+
+function nextAuditPhase(phase: AuditPhase): AuditPhase | null {
+  const index = AUDIT_PHASES.indexOf(phase);
+  return AUDIT_PHASES[index + 1] ?? null;
+}
+
+async function paginateAuditPhase(
+  ctx: MutationCtx,
+  phase: AuditPhase,
+  cursor: string | null,
+  batchSize: number,
+) {
+  const options = { cursor, numItems: batchSize };
+  switch (phase) {
+    case "organizations":
+      return ctx.db.query("organizations").paginate(options);
+    case "payroll_settings":
+      return ctx.db.query("organizationPayrollSettings").paginate(options);
+    case "attendance_settings":
+      return ctx.db.query("organizationAttendanceSettings").paginate(options);
+    case "departments":
+      return ctx.db.query("organizationDepartments").paginate(options);
+    case "requirements":
+      return ctx.db
+        .query("organizationRequirementDefinitions")
+        .paginate(options);
+  }
+}
+
+export const processSchemaCleanupAuditBatch = internalMutation({
+  args: { auditId: v.id("migrationAudits") },
+  handler: async (ctx, args) => {
+    const audit = await ctx.db.get(args.auditId);
+    if (!audit) throw new Error("Schema cleanup audit was not found");
+    if (audit.status === "queued") {
+      await ctx.db.patch(audit._id, {
+        status: "running",
+        updatedAt: Date.now(),
+      });
+    } else if (audit.status !== "running") {
+      throw new Error("Schema cleanup audit is not active");
+    }
+    const run = await ctx.db.get(audit.migrationRunId);
+    if (
+      !run ||
+      run.key !== SCHEMA_CLEANUP_MIGRATION_KEY ||
+      run.version !== SCHEMA_CLEANUP_VERSION ||
+      run.dryRun ||
+      run.status !== "completed" ||
+      run.counters.errors > 0 ||
+      run.counters.conflicts > 0
+    ) {
+      throw new Error("Completed write run is required");
+    }
+
+    const page = await paginateAuditPhase(
+      ctx,
+      audit.phase,
+      audit.cursor ?? null,
+      audit.batchSize,
+    );
+    let organizations = audit.organizations;
+    let destination = audit.destination;
+    let duplicateLegacySettings = audit.duplicateLegacySettings;
+    let sourceConflicts = audit.sourceConflicts;
+
+    if (audit.phase === "organizations") {
+      for (const organization of page.page as Doc<"organizations">[]) {
+        const localDestination = { ...EMPTY_DESTINATION_AUDIT };
+        const result = await auditOrganizationDestinations(
+          ctx,
+          organization,
+          run.version,
+          localDestination,
+        );
+        organizations += 1;
+        destination = addDestinationAudit(destination, result.destination);
+        duplicateLegacySettings += result.duplicateLegacySettings;
+        sourceConflicts += result.sourceConflicts;
+      }
+    } else {
+      destination = addDestinationAudit(destination, {
+        totalRows: page.page.length,
+      });
+    }
+
+    const now = Date.now();
+    if (!page.isDone) {
+      await ctx.db.patch(audit._id, {
+        cursor: page.continueCursor,
+        organizations,
+        destination,
+        duplicateLegacySettings,
+        sourceConflicts,
+        updatedAt: now,
+      });
+      return { done: false };
+    }
+
+    const nextPhase = nextAuditPhase(audit.phase);
+    if (nextPhase) {
+      await ctx.db.patch(audit._id, {
+        phase: nextPhase,
+        cursor: undefined,
+        organizations,
+        destination,
+        duplicateLegacySettings,
+        sourceConflicts,
+        updatedAt: now,
+      });
+      return { done: false };
+    }
+
+    destination = {
+      ...destination,
+      unexpected: Math.max(0, destination.totalRows - destination.expected),
+    };
+    await ctx.db.patch(audit._id, {
+      status: "completed",
+      cursor: undefined,
+      organizations,
+      destination,
+      duplicateLegacySettings,
+      sourceConflicts,
+      updatedAt: now,
+      completedAt: now,
+    });
+    return { done: true };
+  },
+});
+
+const continueAuditReference = makeFunctionReference<
+  "action",
+  { auditId: Id<"migrationAudits"> }
+>("databaseMigrations:continueSchemaCleanupAudit");
+const processAuditBatchReference = makeFunctionReference<
+  "mutation",
+  { auditId: Id<"migrationAudits"> },
+  { done: boolean }
+>("databaseMigrations:processSchemaCleanupAuditBatch");
+const failAuditReference = makeFunctionReference<
+  "mutation",
+  { auditId: Id<"migrationAudits">; failureCode: string }
+>("databaseMigrations:failSchemaCleanupAudit");
+
+export const startSchemaCleanupAudit = internalMutation({
+  args: {
+    runId: v.id("migrationRuns"),
+    batchSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const batchSize = args.batchSize ?? 5;
+    if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 10) {
+      throw new Error("Audit batch size must be between 1 and 10");
+    }
+    const run = await ctx.db.get(args.runId);
+    if (
+      !run ||
+      run.key !== SCHEMA_CLEANUP_MIGRATION_KEY ||
+      run.version !== SCHEMA_CLEANUP_VERSION ||
+      run.dryRun ||
+      run.status !== "completed" ||
+      run.counters.errors > 0 ||
+      run.counters.conflicts > 0
+    ) {
+      throw new Error("Conflict-free completed write run is required");
+    }
+    const existing = await ctx.db
+      .query("migrationAudits")
+      .withIndex("by_run", (q) => q.eq("migrationRunId", run._id))
+      .unique();
+    if (existing) throw new Error("Schema cleanup audit already exists");
+
+    const now = Date.now();
+    const auditId = await ctx.db.insert("migrationAudits", {
+      migrationRunId: run._id,
+      status: "queued",
+      phase: "organizations",
+      batchSize,
+      organizations: 0,
+      destination: EMPTY_DESTINATION_AUDIT,
+      duplicateLegacySettings: 0,
+      sourceConflicts: 0,
+      auditTruncated: false,
+      startedAt: now,
+      updatedAt: now,
+    });
+    await ctx.scheduler.runAfter(0, continueAuditReference, { auditId });
+    return { auditId, runId: run._id };
+  },
+});
+
+export const continueSchemaCleanupAudit = internalAction({
+  args: { auditId: v.id("migrationAudits") },
+  handler: async (ctx, args) => {
+    try {
+      const result = await ctx.runMutation(processAuditBatchReference, args);
+      if (!result.done) {
+        await ctx.scheduler.runAfter(0, continueAuditReference, args);
+      }
+      return { done: result.done };
+    } catch {
+      await ctx.runMutation(failAuditReference, {
+        auditId: args.auditId,
+        failureCode: "AUDIT_BATCH_FAILED",
+      });
+      return { done: true, failed: true };
+    }
+  },
+});
+
+export const failSchemaCleanupAudit = internalMutation({
+  args: {
+    auditId: v.id("migrationAudits"),
+    failureCode: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const audit = await ctx.db.get(args.auditId);
+    if (!audit || audit.status === "completed" || audit.status === "failed") {
+      return;
+    }
+    const now = Date.now();
+    await ctx.db.patch(audit._id, {
+      status: "failed",
+      failureCode: args.failureCode,
+      updatedAt: now,
+      completedAt: now,
+    });
+  },
+});
+
+export const resumeSchemaCleanupAudit = internalMutation({
+  args: { runId: v.id("migrationRuns") },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (
+      !run ||
+      run.key !== SCHEMA_CLEANUP_MIGRATION_KEY ||
+      run.version !== SCHEMA_CLEANUP_VERSION ||
+      run.dryRun ||
+      run.status !== "completed" ||
+      run.counters.errors > 0 ||
+      run.counters.conflicts > 0
+    ) {
+      throw new Error("Conflict-free completed write run is required");
+    }
+    const audit = await ctx.db
+      .query("migrationAudits")
+      .withIndex("by_run", (q) => q.eq("migrationRunId", run._id))
+      .unique();
+    if (!audit) throw new Error("Schema cleanup audit was not found");
+    if (audit.status === "completed") {
+      throw new Error("Completed schema cleanup audit cannot resume");
+    }
+    const now = Date.now();
+    if (audit.status !== "failed" && audit.updatedAt > now - 5 * 60 * 1_000) {
+      throw new Error("Schema cleanup audit is not stale");
+    }
+    await ctx.db.patch(audit._id, {
+      status: "queued",
+      failureCode: undefined,
+      completedAt: undefined,
+      updatedAt: now,
+    });
+    await ctx.scheduler.runAfter(0, continueAuditReference, {
+      auditId: audit._id,
+    });
+    return { resumed: true, auditId: audit._id };
+  },
+});
 
 export const getSchemaCleanupAudit = internalQuery({
   args: { runId: v.id("migrationRuns") },
@@ -621,43 +1144,28 @@ export const getSchemaCleanupAudit = internalQuery({
     ) {
       throw new Error("Schema cleanup run was not found");
     }
-
-    const organizations = await ctx.db.query("organizations").collect();
-    const destination: DestinationAudit = {
-      expected: 0,
-      matching: 0,
-      missing: 0,
-      duplicate: 0,
-      mismatched: 0,
-    };
-    let duplicateLegacySettings = 0;
-    let sourceConflicts = 0;
-    for (const organization of organizations) {
-      const result = await auditOrganizationDestinations(
-        ctx,
-        organization,
-        run.version,
-        destination,
-      );
-      duplicateLegacySettings += result.duplicateLegacySettings;
-      sourceConflicts += result.sourceConflicts;
-    }
-
+    const audit = await ctx.db
+      .query("migrationAudits")
+      .withIndex("by_run", (q) => q.eq("migrationRunId", run._id))
+      .unique();
+    if (!audit) return { status: "not_started" as const, ready: false };
+    const ready =
+      !run.dryRun &&
+      run.status === "completed" &&
+      run.counters.errors === 0 &&
+      run.counters.conflicts === 0 &&
+      audit.status === "completed" &&
+      !audit.auditTruncated &&
+      audit.sourceConflicts === 0 &&
+      audit.destination.missing === 0 &&
+      audit.destination.duplicate === 0 &&
+      audit.destination.mismatched === 0 &&
+      audit.destination.unexpected === 0 &&
+      audit.destination.matching === audit.destination.expected;
     return {
-      ready:
-        !run.dryRun &&
-        run.status === "completed" &&
-        run.counters.errors === 0 &&
-        sourceConflicts === 0 &&
-        destination.missing === 0 &&
-        destination.duplicate === 0 &&
-        destination.mismatched === 0 &&
-        destination.matching === destination.expected,
-      organizations: organizations.length,
-      destination,
-      duplicateLegacySettings,
-      sourceConflicts,
-      fieldManifest: SCHEMA_FIELD_MANIFEST,
+      ...audit,
+      ready,
+      fieldManifest: RELEASE_1_SCHEMA_FIELD_MANIFEST,
     };
   },
 });

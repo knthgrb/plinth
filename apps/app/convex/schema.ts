@@ -214,6 +214,44 @@ export default defineSchema({
     resolvedAt: v.optional(v.number()),
   }).index("by_run", ["runId", "createdAt"]),
 
+  migrationAudits: defineTable({
+    migrationRunId: v.id("migrationRuns"),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    phase: v.union(
+      v.literal("organizations"),
+      v.literal("payroll_settings"),
+      v.literal("attendance_settings"),
+      v.literal("departments"),
+      v.literal("requirements"),
+    ),
+    cursor: v.optional(v.string()),
+    batchSize: v.number(),
+    organizations: v.number(),
+    destination: v.object({
+      expected: v.number(),
+      matching: v.number(),
+      missing: v.number(),
+      duplicate: v.number(),
+      mismatched: v.number(),
+      unexpected: v.number(),
+      totalRows: v.number(),
+    }),
+    duplicateLegacySettings: v.number(),
+    sourceConflicts: v.number(),
+    auditTruncated: v.boolean(),
+    startedAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    failureCode: v.optional(v.string()),
+  })
+    .index("by_run", ["migrationRunId"])
+    .index("by_status", ["status", "updatedAt"]),
+
   // Demo requests from marketing site
   demoRequests: defineTable({
     email: v.string(),

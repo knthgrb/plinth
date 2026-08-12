@@ -13,7 +13,7 @@ export type SchemaFieldManifestEntry = {
   releaseGate: string;
 };
 
-export const SCHEMA_FIELD_MANIFEST: readonly SchemaFieldManifestEntry[] = [
+export const RELEASE_1_SCHEMA_FIELD_MANIFEST = [
   {
     table: "organizations",
     field: "firstPayDate",
@@ -70,7 +70,7 @@ export const SCHEMA_FIELD_MANIFEST: readonly SchemaFieldManifestEntry[] = [
   },
   {
     table: "settings",
-    field: "payrollTabPassword",
+    field: "payrollSettings.payrollTabPassword",
     classification: "removable",
     releaseGate: "production_count_and_export",
   },
@@ -104,5 +104,4 @@ export const SCHEMA_FIELD_MANIFEST: readonly SchemaFieldManifestEntry[] = [
     classification: "migration_only",
     releaseGate: "retain_until_all_contract_releases_complete",
   },
-] as const;
-
+] as const satisfies readonly SchemaFieldManifestEntry[];
