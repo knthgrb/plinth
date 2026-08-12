@@ -463,7 +463,7 @@ export const FULL_SCHEMA_FIELD_OVERRIDES = [
 ] as const;
 ```
 
-Merge the existing organization-configuration entries into this override set without changing their exported audit shape. `resolveSchemaFieldPolicy` chooses the longest exact/prefix override and otherwise returns the owning table's default. `resolveSchemaIndexPolicy` returns the table default plus a later override when present. Return `null` for an unknown table so coverage tests fail closed.
+Merge the existing organization-configuration entries into this override set without changing their exported audit shape. `resolveSchemaFieldPolicy` chooses the longest exact/prefix override and otherwise returns the owning table's default. `resolveSchemaIndexPolicy` returns the table default plus a later override when present. Return `null` for an unknown table. A checked-in reviewed schema-item snapshot is the fail-closed gate for added, removed, or renamed fields and indexes on known tables; resolver defaults remain useful table-policy metadata.
 
 - [ ] **Step 5: Run policy tests and verify GREEN**
 
@@ -869,7 +869,8 @@ Expected: inventory, all application tests, TypeScript, focused lint, dependency
 Confirm the implementation:
 
 - inventories exactly 44 current tables;
-- fails when a new table/field/index has no resolvable policy;
+- fails when parsed table, field, or index inventory drifts from the reviewed
+  schema-item snapshot until that snapshot is intentionally updated;
 - preserves the deployed organization audit API;
 - reports all undeployed domains as blockers;
 - exposes no production row values or secrets;
@@ -885,4 +886,4 @@ git commit -m "docs: add full schema cleanup release 1b runbook"
 
 ## Completion boundary
 
-This plan is complete when all current schema items resolve to a policy, the internal inventory query reports 44 tables, and global readiness accurately recognizes the deployed organization-configuration audit while blocking every undeployed domain. It intentionally creates no target business tables and changes no production data. The next plan is the identity, membership, credentials, and invitation Release 1B migration.
+This plan is complete when the parsed schema exactly matches the reviewed schema-item snapshot, all reviewed items resolve to a policy, the internal inventory query reports 44 table-policy rows, and global readiness accurately recognizes the deployed organization-configuration audit while blocking every undeployed domain. It intentionally creates no target business tables and changes no production data. The next plan is the identity, membership, credentials, and invitation Release 1B migration.

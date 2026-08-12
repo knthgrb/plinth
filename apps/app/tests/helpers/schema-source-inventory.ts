@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import ts from "typescript";
 
 export type SchemaSourceTable = {
@@ -7,6 +8,41 @@ export type SchemaSourceTable = {
 };
 
 export type SchemaSourceInventory = { tables: SchemaSourceTable[] };
+
+export type SchemaSourceTableReview = {
+  name: string;
+  fieldCount: number;
+  fieldsSha256: string;
+  indexCount: number;
+  indexesSha256: string;
+};
+
+export type SchemaSourceInventoryReview = {
+  tableCount: number;
+  tables: SchemaSourceTableReview[];
+};
+
+const sha256 = (values: string[]) =>
+  createHash("sha256")
+    .update([...values].sort().join("\0"))
+    .digest("hex");
+
+export function summarizeSchemaSourceInventory(
+  inventory: SchemaSourceInventory,
+): SchemaSourceInventoryReview {
+  return {
+    tableCount: inventory.tables.length,
+    tables: inventory.tables
+      .map(({ name, fields, indexes }) => ({
+        name,
+        fieldCount: fields.length,
+        fieldsSha256: sha256(fields),
+        indexCount: indexes.length,
+        indexesSha256: sha256(indexes),
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+  };
+}
 
 function propertyName(node: ts.PropertyName): string | null {
   if (ts.isIdentifier(node) || ts.isStringLiteral(node)) return node.text;

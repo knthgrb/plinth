@@ -1,0 +1,313 @@
+{
+  "tableCount": 44,
+  "tables": [
+    {
+      "name": "accountingCostItems",
+      "fieldCount": 33,
+      "fieldsSha256": "1cb379410f1cbdd08d39b611a0542e0c5c89d7ca8c1fdfd10a3f09505774c5bf",
+      "indexCount": 5,
+      "indexesSha256": "1307227f9448c1f9e63a3aa55594f01148271d47b3d983ee015e044d4bc4e1da"
+    },
+    {
+      "name": "announcementComments",
+      "fieldCount": 7,
+      "fieldsSha256": "4e7957b95bb7cae240d6c25c694f948d62c331090529455dd7347195e37c37c6",
+      "indexCount": 2,
+      "indexesSha256": "500e17109a688304ad3b3552a485271b3d0c28ea0142ce4875437e0db816f52e"
+    },
+    {
+      "name": "announcementLastSeen",
+      "fieldCount": 4,
+      "fieldsSha256": "e684fbdd9c85271b77a307c097b5b0f8f5bb05fe4c52b491ce012c4edb206e48",
+      "indexCount": 1,
+      "indexesSha256": "fbdc3b721dde9314e7256e356bdf5b033a2a5bd6e57f5e8e30c09528b9f81380"
+    },
+    {
+      "name": "applicants",
+      "fieldCount": 45,
+      "fieldsSha256": "f85cc977bfe4f0084909f49c11d0dc1a066adb51498506a3bd632dc4293fd0c0",
+      "indexCount": 3,
+      "indexesSha256": "d69967249f003c9f4eb0e9bf9841d5430dde49e8f442fa9b560a1922d3a32239"
+    },
+    {
+      "name": "assets",
+      "fieldCount": 27,
+      "fieldsSha256": "02f1e4576f371e7716e7da8d11bdff06000773a52f190e3ad2d232bbe34db10d",
+      "indexCount": 1,
+      "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
+    },
+    {
+      "name": "attendance",
+      "fieldCount": 20,
+      "fieldsSha256": "185bddbfb43aa1fc960c86907ae7a30cd53c03941e527a855229204df74edc60",
+      "indexCount": 4,
+      "indexesSha256": "00f2f5c711a1a3b50c134743bd06247173bc8ea50ffee6e942030099f508f37d"
+    },
+    {
+      "name": "conversations",
+      "fieldCount": 12,
+      "fieldsSha256": "481adcc869ca00ee095fb277cbb26090828e4b712248e69a42184ce80acdeb18",
+      "indexCount": 2,
+      "indexesSha256": "b2dc25730a84a5383bfc2026bb1a0eef2ccbb5c02c720298ee4feb930b8c1ff0"
+    },
+    {
+      "name": "demoRequests",
+      "fieldCount": 5,
+      "fieldsSha256": "85b9338cdaeb55d64256521cd3c7f904d562c6cd5e4005016a0f500453e95fed",
+      "indexCount": 1,
+      "indexesSha256": "57935a1582c632ea88184fe494e265d84fe2f4e00b4761267ec3497628d3566b"
+    },
+    {
+      "name": "documents",
+      "fieldCount": 16,
+      "fieldsSha256": "4abe408e98257976ef8d47d34d9959aab70a02fe0cb38c6a2d04467877bf4256",
+      "indexCount": 3,
+      "indexesSha256": "013dac832ca77d9e04f9ffcbe217edb3ce8601332ba09e9b050a0e04fe9f8be0"
+    },
+    {
+      "name": "documentVersions",
+      "fieldCount": 7,
+      "fieldsSha256": "091a8924991a233abf5f69170022d0115cd7e6c4dec9f1bac38b6b028af78fbe",
+      "indexCount": 2,
+      "indexesSha256": "b094b9565fc358e354e1ff7a71c7922131eebc5a7f5db8d3855ccb0ba1375595"
+    },
+    {
+      "name": "employees",
+      "fieldCount": 119,
+      "fieldsSha256": "c1c76560eb6c3d85ed4026fbfa1434676cc12da4b011f3b38ebd1737411d1af5",
+      "indexCount": 5,
+      "indexesSha256": "1aff2c9166851dc1567d1968f552f28966de71e6a211f49bf8eac45560296085"
+    },
+    {
+      "name": "employeeScheduleHistory",
+      "fieldCount": 31,
+      "fieldsSha256": "aa10324ea887b2ce3205bbd8a348b04503dc20d415c8780d03948dc8886835e2",
+      "indexCount": 3,
+      "indexesSha256": "58e9986a9e22ede5ebaddaf1f319960c2cef9d59b8beefb9254e5ec02f2c6704"
+    },
+    {
+      "name": "evaluations",
+      "fieldCount": 27,
+      "fieldsSha256": "6f392c6faaff54d9154b1521f66401fae0c86b46242018de39078551863383ef",
+      "indexCount": 2,
+      "indexesSha256": "db8b6c9f85a3a577e91fab98f3c43a9212989281de1060e869a0f6a6f952e859"
+    },
+    {
+      "name": "evaluationTemplates",
+      "fieldCount": 9,
+      "fieldsSha256": "d090a32e13aa82374bfa0a88ff34e0c51e8b6f8ccb0f2be45c8960cb8cf71a97",
+      "indexCount": 1,
+      "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
+    },
+    {
+      "name": "finalSettlements",
+      "fieldCount": 48,
+      "fieldsSha256": "3c2ce871b6d00eeca80d385e36240be9150c70361b365f6844b78d18105456a0",
+      "indexCount": 4,
+      "indexesSha256": "174b1d3ca3856faf2c97d5c31c026968fd67466326125a9afa89259b32fc0657"
+    },
+    {
+      "name": "holidays",
+      "fieldCount": 11,
+      "fieldsSha256": "9012ffd87b86d243c38a2eaecd6c5de9d853a9ea07ad08e95b1c663c12daa62e",
+      "indexCount": 3,
+      "indexesSha256": "0a13ef1145e3293ecc19830456ff1c3319b2ab93ebc99edb0fa0eaf3c387f20e"
+    },
+    {
+      "name": "invitations",
+      "fieldCount": 11,
+      "fieldsSha256": "69a5255ab6b5a8ed942d88a94d078cdee3008d15f86661e682c91737b26764d4",
+      "indexCount": 3,
+      "indexesSha256": "e4a1d9a79da279370ce18336756d3f0899106e8e7d3a6e22c1551e58df5189b2"
+    },
+    {
+      "name": "jobs",
+      "fieldCount": 16,
+      "fieldsSha256": "1f16a240b2504f8dce0172a38850f44c93c272ebb1a12ecb49b21bc959cacc66",
+      "indexCount": 2,
+      "indexesSha256": "dfcb796064aacbec4e96cd67759a1d5dd7a3dd4f24e6fca95e8c4f093d29e4a3"
+    },
+    {
+      "name": "leaveRequests",
+      "fieldCount": 24,
+      "fieldsSha256": "7b9bfa96461dc1ebd00dc3b6e4518b9f29ef570963c9011aacc863b1d5a0d3bc",
+      "indexCount": 5,
+      "indexesSha256": "7c5f9530c1cb0aaf9343812b7c8d6ace2cf35256c7bdfa7f848db246c3a2a334"
+    },
+    {
+      "name": "leaveTypes",
+      "fieldCount": 8,
+      "fieldsSha256": "482b26da6cf90f3b45e26ebdae3f04373be4cf05b76e0e058ff467a17f1ea03f",
+      "indexCount": 1,
+      "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
+    },
+    {
+      "name": "memos",
+      "fieldCount": 29,
+      "fieldsSha256": "23ee5e5499af0ed7091ea3d0d08003a4e0f1fa9be4555be818a7bfce564482d5",
+      "indexCount": 3,
+      "indexesSha256": "a8e43925fec4ae3ea85a1f823de628b54de7ecebe6fbe3302dcba20058cd81b9"
+    },
+    {
+      "name": "memoTemplates",
+      "fieldCount": 10,
+      "fieldsSha256": "d5c1bf42e72d5801d855b105c2206b06883c25561bcc3e40b13ec4efd49c9e8f",
+      "indexCount": 2,
+      "indexesSha256": "a44c513df5b3d6e520ff7d7538bfd173767bfe9ca6b4f67fb29392332b78581a"
+    },
+    {
+      "name": "messages",
+      "fieldCount": 9,
+      "fieldsSha256": "af95533176e490ee0994936cf42162baf257356cdcb4741a655825bd675de33c",
+      "indexCount": 3,
+      "indexesSha256": "c3ce8af2a7a2e5202dc562df13970087e475203a1c3acd9497a0efd0d25b8fc7"
+    },
+    {
+      "name": "migrationAudits",
+      "fieldCount": 20,
+      "fieldsSha256": "4ac0275abc2280da2f2e364a91d7630dac5db91a315accfe16c8258ca352252c",
+      "indexCount": 2,
+      "indexesSha256": "09bf93f928ec3a85fc7785763ee247c22be279480fb2d69322beaae4675a6d9f"
+    },
+    {
+      "name": "migrationIssues",
+      "fieldCount": 8,
+      "fieldsSha256": "7d4ba4516dcef2550acbb027025b9393c07c5a7713e117b5fc3c5fff380690cc",
+      "indexCount": 1,
+      "indexesSha256": "67b569c91d30df47e434e0d710316c6a3a04bba84d61dadce907e9a7a6b78be7"
+    },
+    {
+      "name": "migrationRuns",
+      "fieldCount": 18,
+      "fieldsSha256": "747b33ca961485872e528dce0f945a5917901d1e0f1ed2852c1838bfce4cf1f4",
+      "indexCount": 2,
+      "indexesSha256": "7cb193f1956b7733f33f2de7ff49424424d16529407c8131d54a1d48bcc5e94b"
+    },
+    {
+      "name": "notifications",
+      "fieldCount": 11,
+      "fieldsSha256": "41fd870fbc8771bad6037e0f09842670894a72c8d3c4dabd6db3233a38c27ee4",
+      "indexCount": 3,
+      "indexesSha256": "f3d2b0ae98ddcb96be9ad5797e89ff3857b06499ad76aca23b5fdfadb36eac9d"
+    },
+    {
+      "name": "organizationAttendanceSettings",
+      "fieldCount": 20,
+      "fieldsSha256": "48e940e428637f966a110a796050adefb9816fcf5b7d69b6b196fba83ff90090",
+      "indexCount": 1,
+      "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
+    },
+    {
+      "name": "organizationDepartments",
+      "fieldCount": 12,
+      "fieldsSha256": "83f1a732c500ba2c18cf666ef1e51cf5afd813d3083571bd49cfe588810640d0",
+      "indexCount": 2,
+      "indexesSha256": "517148b4bcc53b6861b7a35b1e4be7f9fc694dbe935316e9bcac8cc9a5a248b8"
+    },
+    {
+      "name": "organizationPayrollSettings",
+      "fieldCount": 29,
+      "fieldsSha256": "e0e6f7024686291c100a07d7064f00af6d2afb5f0c6eef7f9409a01df42b03c5",
+      "indexCount": 1,
+      "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
+    },
+    {
+      "name": "organizationRequirementDefinitions",
+      "fieldCount": 13,
+      "fieldsSha256": "e746ba60e4fa6ac27be077a1807931089f4d979a5761de632e7162762d9231a3",
+      "indexCount": 2,
+      "indexesSha256": "5be58cff5c4fb9a2479c7a65529456c61d2f7d800afc871efc94b3ac1c7e52a9"
+    },
+    {
+      "name": "organizations",
+      "fieldCount": 20,
+      "fieldsSha256": "540c0efca9a91ca11e21f8ede3c591876967bb997e6218f9e7242a9f7b57687b",
+      "indexCount": 1,
+      "indexesSha256": "d38f033b2b89986a3a7fc4ba9c11039d187f563304bfe287baabe0f0b824eb9e"
+    },
+    {
+      "name": "payrollRuns",
+      "fieldCount": 80,
+      "fieldsSha256": "8c6363c25e9763217151dc557b791976b27d6e2607efde58c5164b8db745b82b",
+      "indexCount": 3,
+      "indexesSha256": "be609d55044ff0e4c8dd35615d4cc271af37cb354bde1c42e2ab9eb7dbbbe30d"
+    },
+    {
+      "name": "payslipCorrections",
+      "fieldCount": 19,
+      "fieldsSha256": "85d203ea0ccbe2026e69ee37e4aeb52c3830091f797919101d6362508dc4fb64",
+      "indexCount": 3,
+      "indexesSha256": "6ed8d3fc865ae0f506effe8150372b949d0445a35823a4a07457d2172b9ec3c3"
+    },
+    {
+      "name": "payslipPinAttempts",
+      "fieldCount": 7,
+      "fieldsSha256": "d64aafc0ea8963e16191ab0fd598f2ec7bf00d27b7e86b9d7a53fa78216663ef",
+      "indexCount": 2,
+      "indexesSha256": "209c9ec58e28945e7ab9a91694fc4038b4eecd8beaaab4bd6edd326d107da8e5"
+    },
+    {
+      "name": "payslipPinResets",
+      "fieldCount": 5,
+      "fieldsSha256": "f9c3364df21934ceddb3889fa1558dedc354b383d7ee84e892f4cc057736fc5e",
+      "indexCount": 2,
+      "indexesSha256": "3914955ffd17d9b1071acca836534d107c33e3924a64ae42c7d3c2cb0b30a651"
+    },
+    {
+      "name": "payslips",
+      "fieldCount": 60,
+      "fieldsSha256": "2aa5a87c414e53bd9752cab5cc0e59118f96e506f33ab2a3743ca9e6c527f367",
+      "indexCount": 5,
+      "indexesSha256": "325e5d72a28e564cdd2166441869afc2866e9a76a82a73d34827a0944cd29576"
+    },
+    {
+      "name": "settings",
+      "fieldCount": 118,
+      "fieldsSha256": "6b896ac9bb040bdf0d816d452f8466c37d9a2e32c55121a9a161f3c01fb1655d",
+      "indexCount": 1,
+      "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
+    },
+    {
+      "name": "shifts",
+      "fieldCount": 8,
+      "fieldsSha256": "ef6a236d0c9f992158443bac1d21268d34369bd91fbd16124fe08a09bac4c663",
+      "indexCount": 1,
+      "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
+    },
+    {
+      "name": "storageObjects",
+      "fieldCount": 10,
+      "fieldsSha256": "b4d186ff40b5ccf41d071272a645ff6dd189872350e64f0ca442dbed21c4a2d6",
+      "indexCount": 3,
+      "indexesSha256": "b9f5231092ede41588cfea38eb9dd007b69f2b0a99198a3b7a2939d52cf77a73"
+    },
+    {
+      "name": "storageUploadIntents",
+      "fieldCount": 7,
+      "fieldsSha256": "7c951e977b5c8c1c1efefecdd1455dd6fc0e132c5c4c6f145a43c5c923160512",
+      "indexCount": 2,
+      "indexesSha256": "f38cd5fd5b760cf1f10872adfe478366cebdc39ba24e59675da3adc1a90b4171"
+    },
+    {
+      "name": "userChatPreferences",
+      "fieldCount": 5,
+      "fieldsSha256": "55100e397092d3d5e033db7f41d96aab4abe5b02cc480895fd0d87c46001cc47",
+      "indexCount": 1,
+      "indexesSha256": "fbdc3b721dde9314e7256e356bdf5b033a2a5bd6e57f5e8e30c09528b9f81380"
+    },
+    {
+      "name": "userOrganizations",
+      "fieldCount": 9,
+      "fieldsSha256": "229ce8e59d510d0b686b91bbbae90c3e793d730d8fc74cfd4b7e9ec6289a16bf",
+      "indexCount": 3,
+      "indexesSha256": "bfc760c31b8599a4b0a2ce79da02f670904a7d759943e31c00b59588e43f34f4"
+    },
+    {
+      "name": "users",
+      "fieldCount": 10,
+      "fieldsSha256": "dd1be563e456fb74cba5b8636179561ee0757f27342da8b528d061cf0725bc1d",
+      "indexCount": 3,
+      "indexesSha256": "9e1f83be3920add1061fa47ba7785f571ba0c29c8bd7093743d51b076a6f2bf1"
+    }
+  ]
+}

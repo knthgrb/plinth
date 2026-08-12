@@ -6,7 +6,21 @@ import {
   resolveSchemaFieldPolicy,
   resolveSchemaIndexPolicy,
 } from "../convex/fullSchemaInventory";
-import { parseSchemaSourceInventory } from "./helpers/schema-source-inventory";
+import reviewedSchemaInventory from "./fixtures/schema-inventory.reviewed.json";
+import {
+  parseSchemaSourceInventory,
+  summarizeSchemaSourceInventory,
+  type SchemaSourceInventoryReview,
+} from "./helpers/schema-source-inventory";
+
+const schemaPath = fileURLToPath(
+  new URL("../convex/schema.ts", import.meta.url),
+);
+const schemaSource = readFileSync(schemaPath, "utf8");
+
+const expectReviewedInventory = (review: SchemaSourceInventoryReview) => {
+  expect(review).toEqual(reviewedSchemaInventory);
+};
 
 describe("schema source inventory", () => {
   it("collects nested field paths and chained indexes", () => {
@@ -38,23 +52,44 @@ describe("schema source inventory", () => {
   });
 
   it("finds all current Convex tables", () => {
-    const schemaPath = fileURLToPath(
-      new URL("../convex/schema.ts", import.meta.url),
-    );
-    const inventory = parseSchemaSourceInventory(
-      readFileSync(schemaPath, "utf8"),
-    );
+    const inventory = parseSchemaSourceInventory(schemaSource);
     expect(inventory.tables).toHaveLength(44);
     expect(inventory.tables.map(({ name }) => name)).toContain("assets");
   });
 
-  it("classifies every current table, field, and index", () => {
-    const schemaPath = fileURLToPath(
-      new URL("../convex/schema.ts", import.meta.url),
+  it("matches the reviewed schema-item inventory exactly", () => {
+    expectReviewedInventory(
+      summarizeSchemaSourceInventory(parseSchemaSourceInventory(schemaSource)),
     );
-    const inventory = parseSchemaSourceInventory(
-      readFileSync(schemaPath, "utf8"),
+  });
+
+  it("rejects an unreviewed field and index", () => {
+    const currentDeclaration = `
+    updatedAt: v.number(),
+  }).index("by_name", ["name"]),`;
+    const changedDeclaration = `
+    updatedAt: v.number(),
+    unreviewedField: v.string(),
+  })
+    .index("by_name", ["name"])
+    .index("by_unreviewed_field", ["unreviewedField"]),`;
+    const changedSource = schemaSource.replace(
+      currentDeclaration,
+      changedDeclaration,
     );
+
+    expect(changedSource).not.toBe(schemaSource);
+    expect(() =>
+      expectReviewedInventory(
+        summarizeSchemaSourceInventory(
+          parseSchemaSourceInventory(changedSource),
+        ),
+      ),
+    ).toThrow();
+  });
+
+  it("classifies every reviewed table, field, and index", () => {
+    const inventory = parseSchemaSourceInventory(schemaSource);
 
     expect(Object.keys(FULL_SCHEMA_TABLE_POLICIES).sort()).toEqual(
       inventory.tables.map(({ name }) => name).sort(),
@@ -95,20 +130,18 @@ describe("schema source inventory", () => {
   });
 
   it("retains migration evidence fields through all contract releases", () => {
-    expect(resolveSchemaFieldPolicy("migrationIssues", "redactedIssue")).toEqual(
-      {
-        classification: "migration_only",
-        releaseGate: "retain_until_all_contract_releases_complete",
-      },
-    );
+    expect(
+      resolveSchemaFieldPolicy("migrationIssues", "redactedIssue"),
+    ).toEqual({
+      classification: "migration_only",
+      releaseGate: "retain_until_all_contract_releases_complete",
+    });
   });
 
   it("uses the longest matching field override", () => {
     expect(
-      resolveSchemaFieldPolicy(
-        "settings",
-        "payrollSettings.payrollTabPassword",
-      )?.classification,
+      resolveSchemaFieldPolicy("settings", "payrollSettings.payrollTabPassword")
+        ?.classification,
     ).toBe("removable");
   });
 });

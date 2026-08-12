@@ -14,6 +14,10 @@ writes.
    linked to the intended production deployment.
 3. This is an inventory checkpoint, not a migration. Do not start, resume, or
    otherwise invoke a migration from this runbook.
+4. Run `pnpm --filter app schema:inventory`. The command must pass before
+   deployment. It compares every parsed table field path and index name with
+   the checked-in reviewed SHA-256 inventory. Any schema-item drift requires an
+   intentional review and fixture update.
 
 Every Convex command below uses `--prod`, which selects the linked production
 deployment even if local environment variables point to development. Both
@@ -39,9 +43,9 @@ Accept the checkpoint inventory only when all of the following are true:
 - Every returned policy row includes its domain, disposition, default field
   classification, default index classification, and release gate.
 
-Stop and investigate any count mismatch, duplicate table row, missing table
-policy, or unresolved policy before proceeding. Do not add a new table, field,
-or index without a resolvable inventory policy.
+Stop and investigate any count mismatch, duplicate table row, or missing table
+policy before proceeding. The query intentionally returns table-policy
+metadata; the static reviewed inventory check is the field/index review gate.
 
 ## Inspect global readiness
 
