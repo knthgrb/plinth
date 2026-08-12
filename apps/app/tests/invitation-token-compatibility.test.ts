@@ -107,12 +107,12 @@ describe("invitation token compatibility writes", () => {
   });
 
   it("atomically hashes tokens created for an employee", async () => {
-    const { t, actor, organizationId, employeeId } =
-      await setupActor("active");
-    const result = await actor.mutation(
-      api.invitations.createUserForEmployee,
-      { organizationId, employeeId, role: "employee" },
-    );
+    const { t, actor, organizationId, employeeId } = await setupActor("active");
+    const result = await actor.mutation(api.invitations.createUserForEmployee, {
+      organizationId,
+      employeeId,
+      role: "employee",
+    });
 
     const invitation = await t.run((ctx) =>
       ctx.db.get(result.invitationId as Id<"invitations">),
@@ -122,8 +122,7 @@ describe("invitation token compatibility writes", () => {
   });
 
   it("blocks inactive organization members from both invitation paths", async () => {
-    const { t, actor, organizationId, employeeId } =
-      await setupActor("alumni");
+    const { t, actor, organizationId, employeeId } = await setupActor("alumni");
 
     await expect(
       actor.mutation(api.invitations.createInvitation, {
@@ -142,5 +141,114 @@ describe("invitation token compatibility writes", () => {
     await expect(
       t.run((ctx) => ctx.db.query("invitations").collect()),
     ).resolves.toEqual([]);
+  });
+
+  it("blocks inactive HR from previewing, listing, or cancelling invitations", async () => {
+    const { t, actor, organizationId } = await setupActor("alumni");
+    const invitationId = await t.run(async (ctx) => {
+      const inviter = await ctx.db
+        .query("users")
+        .withIndex("by_email", (query) =>
+          query.eq("email", "alumni-hr@example.com"),
+        )
+        .unique();
+      return ctx.db.insert("invitations", {
+        organizationId,
+        email: "protected-invite@example.com",
+        role: "employee",
+        invitedBy: inviter!._id,
+        token: "protected-token",
+        tokenHash: hashInvitationToken("protected-token"),
+        status: "pending",
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1,
+      });
+    });
+
+    await expect(
+      actor.query(api.invitations.getInviteRecipientPreview, {
+        organizationId,
+        email: "protected-invite@example.com",
+      }),
+    ).rejects.toThrow("Not authorized");
+    await expect(
+      actor.query(api.invitations.getInvitations, { organizationId }),
+    ).rejects.toThrow("Not authorized");
+    await expect(
+      actor.mutation(api.invitations.cancelInvitation, { invitationId }),
+    ).rejects.toThrow("Not authorized");
+    await expect(
+      t.run((ctx) => ctx.db.get(invitationId)),
+    ).resolves.toMatchObject({
+      status: "pending",
+    });
+  });
+
+  it("does not reactivate an alumni membership through an old invitation", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Past Employer",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const employeeId = await insertEmployee(ctx, organizationId);
+      const employee = await ctx.db.get(employeeId);
+      await ctx.db.patch(employeeId, {
+        employment: {
+          ...employee!.employment,
+          status: "resigned",
+          separationDate: 2,
+        },
+      });
+      const userId = await ctx.db.insert("users", {
+        email: "employee-invite@example.com",
+        employeeId,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const membershipId = await ctx.db.insert("userOrganizations", {
+        userId,
+        organizationId,
+        employeeId,
+        role: "employee",
+        accessStatus: "alumni",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      const inviterId = await ctx.db.insert("users", {
+        email: "inviter@example.com",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const token = "old-pending-token";
+      const invitationId = await ctx.db.insert("invitations", {
+        organizationId,
+        employeeId,
+        email: "employee-invite@example.com",
+        role: "employee",
+        invitedBy: inviterId,
+        token,
+        tokenHash: hashInvitationToken(token),
+        status: "pending",
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1,
+      });
+      return { invitationId, membershipId, token };
+    });
+
+    await expect(
+      t.mutation(api.invitations.acceptInvitation, { token: fixture.token }),
+    ).rejects.toThrow("Invitation is no longer eligible");
+    await expect(
+      t.run((ctx) => ctx.db.get(fixture.membershipId)),
+    ).resolves.toMatchObject({
+      accessStatus: "alumni",
+    });
+    await expect(
+      t.run((ctx) => ctx.db.get(fixture.invitationId)),
+    ).resolves.toMatchObject({
+      status: "pending",
+    });
   });
 });

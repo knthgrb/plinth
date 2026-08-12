@@ -6,20 +6,7 @@ import { getAssignableOrganizationRoleOptions } from "@/utils/organization-roles
 import { requireActiveMembership, requireIdentity } from "./access";
 import { bytesToBase64 } from "./binaryBase64";
 import { hashInvitationToken } from "./invitationTokenHash";
-
-// Helper to get user record
-async function getUserRecord(ctx: any) {
-  const user = await authComponent.getAuthUser(ctx);
-  if (!user) throw new Error("Not authenticated");
-
-  const userRecord = await ctx.db
-    .query("users")
-    .withIndex("by_email", (q: any) => q.eq("email", user.email))
-    .first();
-
-  if (!userRecord) throw new Error("User not found");
-  return userRecord;
-}
+import type { Id } from "./_generated/dataModel";
 
 function normalizeInviteEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -255,9 +242,7 @@ async function tryCreateOrgInvitationSoft(
   if (existingUser) {
     const existingUserOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q
-          .eq("userId", existingUser._id)
-          .eq("organizationId", organizationId),
+        q.eq("userId", existingUser._id).eq("organizationId", organizationId),
       )
       .first();
 
@@ -333,8 +318,9 @@ async function tryCreateOrgInvitationSoft(
         .trim();
       const accountDisplay = accountNameRaw.trim();
       inviteeName =
-        (accountDisplay.length > 0 ? accountDisplay : inviteeNameFromEmployee) ||
-        undefined;
+        (accountDisplay.length > 0
+          ? accountDisplay
+          : inviteeNameFromEmployee) || undefined;
     }
   } else if (resolvedEmployeeId) {
     const employeeDoc = await ctx.db.get(resolvedEmployeeId);
@@ -345,8 +331,10 @@ async function tryCreateOrgInvitationSoft(
         middleName?: string;
       };
       inviteeName =
-        [p.firstName, p.middleName, p.lastName].filter(Boolean).join(" ").trim() ||
-        undefined;
+        [p.firstName, p.middleName, p.lastName]
+          .filter(Boolean)
+          .join(" ")
+          .trim() || undefined;
     }
   }
 
@@ -404,7 +392,7 @@ export const createInvitation = mutation({
       v.literal("hr"),
       v.literal("manager"),
       v.literal("employee"),
-      v.literal("accounting")
+      v.literal("accounting"),
     ),
     employeeId: v.optional(v.id("employees")),
     confirmInviteToExistingPlinthUser: v.optional(v.boolean()),
@@ -556,7 +544,9 @@ export const getInvitationById = query({
       throw new Error("Not authorized");
     }
 
-    const organization = await ctx.db.get(invitation.organizationId);
+    const organization = await ctx.db.get(
+      invitation.organizationId as import("./_generated/dataModel").Id<"organizations">,
+    );
     const inviter = (await ctx.db.get(invitation.invitedBy)) as any;
 
     return {
@@ -641,22 +631,15 @@ export const getInviteRecipientPreview = query({
       throw new Error("Provide an email or employeeId");
     }
 
-    const userRecord = await getUserRecord(ctx);
-
-    const userOrg = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
-      )
-      .first();
+    const { membership: userOrg } = await requireActiveMembership(
+      ctx,
+      args.organizationId,
+    );
 
     const isAuthorized =
-      userOrg?.role === "owner" ||
-      userOrg?.role === "admin" ||
-      userOrg?.role === "hr" ||
-      (userRecord.organizationId === args.organizationId &&
-        (userRecord.role === "admin" ||
-          userRecord.role === "hr" ||
-          userRecord.role === "owner"));
+      userOrg.role === "owner" ||
+      userOrg.role === "admin" ||
+      userOrg.role === "hr";
 
     if (!isAuthorized) {
       throw new Error("Not authorized to preview invitations");
@@ -695,15 +678,13 @@ export const getInviteRecipientPreview = query({
         .withIndex("by_user_organization", (q: any) =>
           q
             .eq("userId", existingConvexUser._id)
-            .eq("organizationId", args.organizationId)
+            .eq("organizationId", args.organizationId),
         )
         .first();
       alreadyInOrg = !!link;
     }
 
-    const needsConfirmForExistingUser = !!(
-      existingConvexUser && !alreadyInOrg
-    );
+    const needsConfirmForExistingUser = !!(existingConvexUser && !alreadyInOrg);
 
     let employeeWillBeRenamedToMatchAccount = false;
     if (args.employeeId && existingConvexUser && !alreadyInOrg) {
@@ -763,6 +744,26 @@ export const acceptInvitation = mutation({
       throw new Error("Invitation has expired");
     }
 
+    const organization = await ctx.db.get(
+      invitation.organizationId as Id<"organizations">,
+    );
+    if (!organization || organization.status === "archived") {
+      throw new Error("Invitation is no longer eligible");
+    }
+    if (invitation.employeeId) {
+      const employee = await ctx.db.get(
+        invitation.employeeId as Id<"employees">,
+      );
+      if (
+        !employee ||
+        employee.organizationId !== invitation.organizationId ||
+        employee.archivedAt !== undefined ||
+        employee.employment.status !== "active"
+      ) {
+        throw new Error("Invitation is no longer eligible");
+      }
+    }
+
     // Try to get authenticated user (may not be authenticated yet for new users)
     const authUser = await authComponent.getAuthUser(ctx).catch(() => null);
 
@@ -777,8 +778,7 @@ export const acceptInvitation = mutation({
 
     const now = Date.now();
 
-    const nameToSet =
-      (invitation as any).inviteeName ?? args.name ?? undefined;
+    const nameToSet = (invitation as any).inviteeName ?? args.name ?? undefined;
 
     const existingConvexUser = await findUserByEmailLoose(
       ctx,
@@ -802,33 +802,24 @@ export const acceptInvitation = mutation({
     // Add user to organization
     const existingUserOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userId).eq("organizationId", invitation.organizationId)
+        q.eq("userId", userId).eq("organizationId", invitation.organizationId),
       )
       .first();
 
-    if (!existingUserOrg) {
-      await ctx.db.insert("userOrganizations", {
-        userId: userId,
-        organizationId: invitation.organizationId,
-        role: invitation.role,
-        employeeId: invitation.employeeId,
-        accessStatus: "active",
-        accessUpdatedAt: now,
-        accessUpdatedBy: userId,
-        joinedAt: now,
-        updatedAt: now,
-      });
-    } else {
-      // Update existing relationship
-      await ctx.db.patch(existingUserOrg._id, {
-        role: invitation.role,
-        employeeId: invitation.employeeId,
-        accessStatus: "active",
-        accessUpdatedAt: now,
-        accessUpdatedBy: userId,
-        updatedAt: now,
-      });
+    if (existingUserOrg) {
+      throw new Error("Invitation is no longer eligible");
     }
+    await ctx.db.insert("userOrganizations", {
+      userId: userId,
+      organizationId: invitation.organizationId,
+      role: invitation.role,
+      employeeId: invitation.employeeId,
+      accessStatus: "active",
+      accessUpdatedAt: now,
+      accessUpdatedBy: userId,
+      joinedAt: now,
+      updatedAt: now,
+    });
 
     // Keep users.organizationId and users.role in sync for backward compatibility / display
     const userPatch: Record<string, unknown> = {
@@ -863,23 +854,15 @@ export const getInvitations = query({
     organizationId: v.id("organizations"),
   },
   handler: async (ctx, args) => {
-    const userRecord = await getUserRecord(ctx);
-
-    // Check authorization
-    const userOrg = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
-      )
-      .first();
+    const { membership: userOrg } = await requireActiveMembership(
+      ctx,
+      args.organizationId,
+    );
 
     const isAuthorized =
       userOrg?.role === "owner" ||
       userOrg?.role === "admin" ||
-      userOrg?.role === "hr" ||
-      (userRecord.organizationId === args.organizationId &&
-        (userRecord.role === "owner" ||
-          userRecord.role === "admin" ||
-          userRecord.role === "hr"));
+      userOrg.role === "hr";
 
     if (!isAuthorized) {
       throw new Error("Not authorized");
@@ -887,7 +870,7 @@ export const getInvitations = query({
 
     const memberLinks = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .collect();
 
@@ -903,12 +886,12 @@ export const getInvitations = query({
 
     const invitations = await (ctx.db.query("invitations") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .collect();
 
     const sorted = invitations.sort(
-      (a: any, b: any) => b.createdAt - a.createdAt
+      (a: any, b: any) => b.createdAt - a.createdAt,
     );
 
     return sorted.map((inv: any) => ({
@@ -931,7 +914,7 @@ export const createUserForEmployee = mutation({
       v.literal("hr"),
       v.literal("manager"),
       v.literal("employee"),
-      v.literal("accounting")
+      v.literal("accounting"),
     ),
     confirmInviteToExistingPlinthUser: v.optional(v.boolean()),
   },
@@ -964,14 +947,20 @@ export const createUserForEmployee = mutation({
 
     // Cannot invite yourself (employee email matches current user)
     const inviterEmail = (userRecord as any).email;
-    if (inviterEmail && (employee.personalInfo as any).email?.toLowerCase() === inviterEmail.toLowerCase()) {
-      throw new Error("You cannot send an invitation to your own email address.");
+    if (
+      inviterEmail &&
+      (employee.personalInfo as any).email?.toLowerCase() ===
+        inviterEmail.toLowerCase()
+    ) {
+      throw new Error(
+        "You cannot send an invitation to your own email address.",
+      );
     }
 
     // Check if employee already has a user account
     const existingUserOrg = await (ctx.db.query("userOrganizations") as any)
       .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+        q.eq("organizationId", args.organizationId),
       )
       .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
       .first();
@@ -994,13 +983,13 @@ export const createUserForEmployee = mutation({
         .withIndex("by_user_organization", (q: any) =>
           q
             .eq("userId", existingUser._id)
-            .eq("organizationId", args.organizationId)
+            .eq("organizationId", args.organizationId),
         )
         .first();
 
       if (existingUserOrgCheck) {
         throw new Error(
-          "A user with this email is already in the organization"
+          "A user with this email is already in the organization",
         );
       }
 
@@ -1052,7 +1041,9 @@ export const createUserForEmployee = mutation({
       }
     }
 
-    const employeeAfter = (await ctx.db.get(args.employeeId)) as typeof employee;
+    const employeeAfter = (await ctx.db.get(
+      args.employeeId,
+    )) as typeof employee;
 
     // Build invitee name from employee record so we can set it on accept without asking
     const p = employeeAfter.personalInfo as {
@@ -1101,25 +1092,13 @@ export const cancelInvitation = mutation({
     invitationId: v.id("invitations"),
   },
   handler: async (ctx, args) => {
-    const userRecord = await getUserRecord(ctx);
-
     const invitation = await ctx.db.get(args.invitationId);
     if (!invitation) throw new Error("Invitation not found");
-
-    // Check authorization
-    const userOrg = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_user_organization", (q: any) =>
-        q
-          .eq("userId", userRecord._id)
-          .eq("organizationId", invitation.organizationId)
-      )
-      .first();
-
-    const userRole =
-      userOrg?.role ||
-      (userRecord.organizationId === invitation.organizationId
-        ? userRecord.role
-        : null);
+    const { membership } = await requireActiveMembership(
+      ctx,
+      invitation.organizationId,
+    );
+    const userRole = membership.role;
 
     // Owner has all admin privileges - treat owner the same as admin
     const isOwnerOrAdmin = userRole === "admin" || userRole === "owner";
