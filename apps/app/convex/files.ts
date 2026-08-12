@@ -1,9 +1,11 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { requireIdentity } from "./access";
 
 // Generate upload URL for file uploads
 export const generateUploadUrl = mutation({
   handler: async (ctx) => {
+    await requireIdentity(ctx);
     return await ctx.storage.generateUploadUrl();
   },
 });
@@ -14,6 +16,7 @@ export const getFileUrl = query({
     storageId: v.id("_storage"),
   },
   handler: async (ctx, args) => {
+    await requireIdentity(ctx);
     return await ctx.storage.getUrl(args.storageId);
   },
 });
@@ -24,9 +27,10 @@ export const getFileUrlAndType = query({
     storageId: v.id("_storage"),
   },
   handler: async (ctx, args) => {
+    await requireIdentity(ctx);
     const [url, meta] = await Promise.all([
       ctx.storage.getUrl(args.storageId),
-      ctx.db.system.get("_storage" as any, args.storageId),
+      ctx.db.system.get("_storage", args.storageId),
     ]);
     return {
       url: url ?? null,

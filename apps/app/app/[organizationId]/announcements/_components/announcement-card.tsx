@@ -36,6 +36,7 @@ import { getAnnouncementAttachmentUrl } from "@/actions/files";
 import { useOrganization } from "@/hooks/organization-context";
 import { useEmployeeView } from "@/hooks/employee-view-context";
 import { acknowledgeMemo } from "@/actions/memos";
+import { TiptapViewer } from "@/components/tiptap-viewer";
 
 interface AnnouncementCardProps {
   announcement: any;
@@ -438,77 +439,6 @@ export function AnnouncementCard({
     }
   };
 
-  const renderContent = () => {
-    try {
-      const content = JSON.parse(announcement.content);
-      const renderNode = (node: any): string => {
-        if (node.type === "paragraph") {
-          const text = node.content
-            ? node.content.map((c: any) => renderNode(c)).join("")
-            : "";
-          return `<p>${text}</p>`;
-        }
-        if (node.type === "heading") {
-          const level = node.attrs?.level || 1;
-          const text = node.content
-            ? node.content.map((c: any) => renderNode(c)).join("")
-            : "";
-          return `<h${level}>${text}</h${level}>`;
-        }
-        if (node.type === "bulletList") {
-          const items = node.content
-            ? node.content.map((c: any) => renderNode(c)).join("")
-            : "";
-          return `<ul>${items}</ul>`;
-        }
-        if (node.type === "orderedList") {
-          const items = node.content
-            ? node.content.map((c: any) => renderNode(c)).join("")
-            : "";
-          return `<ol>${items}</ol>`;
-        }
-        if (node.type === "listItem") {
-          const text = node.content
-            ? node.content.map((c: any) => renderNode(c)).join("")
-            : "";
-          return `<li>${text}</li>`;
-        }
-        if (node.type === "text") {
-          let text = node.text || "";
-          if (node.marks) {
-            node.marks.forEach((mark: any) => {
-              if (mark.type === "bold") {
-                text = `<strong>${text}</strong>`;
-              } else if (mark.type === "italic") {
-                text = `<em>${text}</em>`;
-              } else if (mark.type === "link") {
-                text = `<a href="${mark.attrs?.href || "#"}" target="_blank" class="text-purple-600 underline">${text}</a>`;
-              }
-            });
-          }
-          return text;
-        }
-        if (node.content) {
-          return node.content.map((c: any) => renderNode(c)).join("");
-        }
-        return "";
-      };
-      const html = content.content
-        ? content.content.map((node: any) => renderNode(node)).join("")
-        : "<p>No content</p>";
-      return (
-        <div
-          dangerouslySetInnerHTML={{
-            __html: html || "<p>No content</p>",
-          }}
-        />
-      );
-    } catch (error) {
-      console.error("Error rendering content:", error);
-      return <p className="text-gray-500">Error rendering content</p>;
-    }
-  };
-
   const authorNameFromUser = author?.name || author?.email || "Unknown";
   const displayAuthorName =
     announcement.authorDisplayName === "Admin"
@@ -587,7 +517,10 @@ export function AnnouncementCard({
           )}
         </div>
 
-        <div className="prose max-w-none mb-3 text-sm">{renderContent()}</div>
+        <TiptapViewer
+          content={announcement.content}
+          className="mb-3 text-sm"
+        />
 
         {/* File Attachments (images & videos – preview + full-screen on click) */}
         {announcement.attachments && announcement.attachments.length > 0 && (

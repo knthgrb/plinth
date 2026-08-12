@@ -1,7 +1,10 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { randomBytes } from "@noble/ciphers/utils.js";
 import { authComponent } from "./auth";
 import { getAssignableOrganizationRoleOptions } from "@/utils/organization-roles";
+import { requireActiveMembership, requireIdentity } from "./access";
+import { bytesToBase64 } from "./binaryBase64";
 
 // Helper to get user record
 async function getUserRecord(ctx: any) {
@@ -19,6 +22,13 @@ async function getUserRecord(ctx: any) {
 
 function normalizeInviteEmail(email: string): string {
   return email.trim().toLowerCase();
+}
+
+function createInvitationToken(): string {
+  return bytesToBase64(randomBytes(32))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/, "");
 }
 
 /** Convex `users.email` is indexed exactly; try common variants for case mismatches. */
@@ -354,7 +364,7 @@ async function tryCreateOrgInvitationSoft(
     };
   }
 
-  const token = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+  const token = createInvitationToken();
   const expiresAt = now + 7 * 24 * 60 * 60 * 1000;
 
   const invitationId = await ctx.db.insert("invitations", {
@@ -542,6 +552,18 @@ export const getInvitationById = query({
     const invitation = await ctx.db.get(args.invitationId);
     if (!invitation) return null;
 
+    const { membership } = await requireActiveMembership(
+      ctx,
+      invitation.organizationId,
+    );
+    if (
+      membership.role !== "owner" &&
+      membership.role !== "admin" &&
+      membership.role !== "hr"
+    ) {
+      throw new Error("Not authorized");
+    }
+
     const organization = await ctx.db.get(invitation.organizationId);
     const inviter = (await ctx.db.get(invitation.invitedBy)) as any;
 
@@ -604,6 +626,13 @@ export const checkUserExists = query({
     email: v.string(),
   },
   handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx);
+    if (
+      !identity.email ||
+      normalizeInviteEmail(identity.email) !== normalizeInviteEmail(args.email)
+    ) {
+      throw new Error("Not authorized");
+    }
     const user = await findUserByEmailLoose(ctx, args.email);
     return !!user;
   },
@@ -1058,7 +1087,7 @@ export const createUserForEmployee = mutation({
       undefined;
 
     // Create invitation for the employee
-    const token = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+    const token = createInvitationToken();
     const expiresAt = now + 7 * 24 * 60 * 60 * 1000; // 7 days
 
     const invitationId = await ctx.db.insert("invitations", {

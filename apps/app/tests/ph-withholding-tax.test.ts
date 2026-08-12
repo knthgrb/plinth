@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  computeAnnualTaxFromBasic,
   getTaxDeductionAmount,
   getWithholdingTaxCutoffForEmployee,
 } from "@/lib/ph-withholding-tax";
@@ -10,6 +11,17 @@ function manilaMidnightUtc(year: number, monthIndex: number, day: number) {
 }
 
 describe("withholding tax cutoff routing", () => {
+  it.each([
+    [250_000, 0],
+    [400_000, 22_500],
+    [800_000, 102_500],
+    [2_000_000, 402_500],
+    [8_000_000, 2_202_500],
+    [9_000_000, 2_552_500],
+  ])("uses the BIR 2023-onward annual table at ₱%i", (income, expected) => {
+    expect(computeAnnualTaxFromBasic(income)).toBe(expected);
+  });
+
   it("treats Manila 16th as the second semi-monthly cutoff", () => {
     const cutoffStart = manilaMidnightUtc(2026, 4, 16);
 
@@ -76,6 +88,6 @@ describe("withholding tax cutoff routing", () => {
       taxableGrossForCutoff: 30_000,
     });
 
-    expect(tax).toBe(4_183.34);
+    expect(tax).toBe(3_284.17);
   });
 });

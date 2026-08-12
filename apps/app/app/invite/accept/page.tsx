@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
-import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
@@ -27,14 +26,11 @@ function normEmail(s: string | null | undefined): string {
 
 export default function AcceptInvitationPage() {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const token = searchParams.get("token");
 
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState("");
-  const [isExistingUser, setIsExistingUser] = useState<boolean | null>(null);
   const [currentSessionEmail, setCurrentSessionEmail] = useState<string | null>(
     null
   );
@@ -44,11 +40,6 @@ export default function AcceptInvitationPage() {
   const invitation = useQuery(
     (api as any).invitations.getInvitationByToken,
     token ? { token } : "skip"
-  );
-
-  const checkUserExists = useQuery(
-    (api as any).invitations.checkUserExists,
-    invitation?.email ? { email: invitation.email } : "skip"
   );
 
   const acceptInvitationMutation = useMutation(
@@ -90,21 +81,12 @@ export default function AcceptInvitationPage() {
     }
   }, [invitation?.email]);
 
-  // Check if user exists when invitation loads
-  useEffect(() => {
-    if (checkUserExists !== undefined) {
-      setIsExistingUser(checkUserExists);
-    }
-  }, [checkUserExists]);
-
   const handleSwitchAccount = async () => {
     try {
       await authClient.signOut();
       setCurrentSessionEmail(null);
       setShowSwitchAccountDialog(false);
-      // Clear form
       setPassword("");
-      setConfirmPassword("");
     } catch (error: any) {
       setError(error.message || "Failed to sign out");
     }
@@ -159,84 +141,37 @@ export default function AcceptInvitationPage() {
         return;
       }
 
-      // If new user, require password confirmation
-      if (!isExistingUser) {
-        if (password !== confirmPassword) {
-          setError("Passwords do not match");
-          setIsProcessing(false);
-          return;
-        }
+      if (
+        currentSessionEmail &&
+        normEmail(currentSessionEmail) !== normEmail(invitation.email)
+      ) {
+        await authClient.signOut();
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
-      // If user doesn't exist, create account first (name comes from employee record)
-      if (!isExistingUser) {
+      const signInResult = await authClient.signIn.email({
+        email: invitation.email,
+        password,
+      });
+
+      if (signInResult.error) {
         const signUpResult = await authClient.signUp.email({
           email: invitation.email,
           password,
-          name: (invitation as any).inviteeName ?? invitation.email.split("@")[0],
+          name:
+            (invitation as any).inviteeName ??
+            invitation.email.split("@")[0],
         });
 
         if (signUpResult.error) {
-          setError(signUpResult.error.message || "Failed to create account");
+          setError(
+            "Unable to continue with this password. Check it or reset your password before trying again.",
+          );
           setIsProcessing(false);
           return;
         }
 
-        // Wait for Better Auth to complete
         await new Promise((resolve) => setTimeout(resolve, 500));
-      } else {
-        // User exists in Convex database, but may not have Better Auth account yet
-        // If there's a different session, sign out first
-        if (
-          currentSessionEmail &&
-          normEmail(currentSessionEmail) !== normEmail(invitation.email)
-        ) {
-          await authClient.signOut();
-          await new Promise((resolve) => setTimeout(resolve, 300));
-        }
-
-        // Try to sign in first (user may already have an account)
-        const signInResult = await authClient.signIn.email({
-          email: invitation.email,
-          password,
-        });
-
-        if (signInResult.error) {
-          // Sign in failed - could be:
-          // 1. User doesn't have Better Auth account yet (first time setting password)
-          // 2. Wrong password
-
-          // Try to create account - this will work if they don't have Better Auth account
-          // If they do have an account, this will fail and we know password is wrong
-          const signUpResult = await authClient.signUp.email({
-            email: invitation.email,
-            password,
-            name: (invitation as any).inviteeName ?? invitation.email.split("@")[0],
-          });
-
-          if (signUpResult.error) {
-            // Signup failed - user likely has an account but password is wrong
-            // Check if error is about existing account
-            if (
-              signUpResult.error.message?.toLowerCase().includes("already") ||
-              signUpResult.error.message?.toLowerCase().includes("exists")
-            ) {
-              setError(
-                "An account with this email already exists. Please enter your existing password."
-              );
-            } else {
-              setError(
-                signUpResult.error.message ||
-                  "Invalid password. Please enter your existing password."
-              );
-            }
-            setIsProcessing(false);
-            return;
-          }
-
-          // Account created successfully - wait for Better Auth to complete
-          await new Promise((resolve) => setTimeout(resolve, 500));
-        }
       }
 
       // Wait for session to propagate (needed for acceptInvitation auth check when email matches)
@@ -287,7 +222,6 @@ export default function AcceptInvitationPage() {
     );
   }
 
-  // Only wait for invitation query; isExistingUser can resolve after (we treat null as false for form)
   if (invitation === undefined) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50">
@@ -406,32 +340,10 @@ export default function AcceptInvitationPage() {
                     {isProcessing ? "Processing..." : "Accept invitation"}
                   </Button>
                 </>
-              ) : !currentSessionEmail && isExistingUser === true ? (
-                <>
-                  <p className="text-sm text-muted-foreground">
-                    An account already exists for{" "}
-                    <strong>{invitation.email}</strong>. Sign in with that
-                    account to accept this invitation. You will not create a new
-                    account.
-                  </p>
-                  <Button asChild className="w-full">
-                    <Link
-                      href={
-                        token
-                          ? `/login?email=${encodeURIComponent(invitation.email)}&redirect=${encodeURIComponent(`/invite/accept?token=${token}`)}`
-                          : `/login?email=${encodeURIComponent(invitation.email)}`
-                      }
-                    >
-                      Log in to accept
-                    </Link>
-                  </Button>
-                </>
               ) : (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="password">
-                      {isExistingUser ? "Password *" : "Create Password *"}
-                    </Label>
+                    <Label htmlFor="password">Password *</Label>
                     <Input
                       id="password"
                       type="password"
@@ -439,11 +351,7 @@ export default function AcceptInvitationPage() {
                       onChange={(e) => setPassword(e.target.value)}
                       required
                       minLength={6}
-                      placeholder={
-                        isExistingUser
-                          ? "Enter your password (or set a new one if first time)"
-                          : "Create a password (at least 6 characters)"
-                      }
+                      placeholder="Enter your password or create one"
                       disabled={
                         !!(
                           currentSessionEmail &&
@@ -452,40 +360,11 @@ export default function AcceptInvitationPage() {
                         )
                       }
                     />
-                    {isExistingUser ? (
-                      <p className="text-xs text-gray-500">
-                        If this is your first time, the password you enter will be
-                        set as your account password. Otherwise, enter your existing
-                        password.
-                      </p>
-                    ) : (
-                      <p className="text-xs text-gray-500">
-                        Password must be at least 6 characters long
-                      </p>
-                    )}
+                    <p className="text-xs text-gray-500">
+                      Enter your existing password, or choose one if this is your
+                      first Plinth invitation.
+                    </p>
                   </div>
-
-                  {!isExistingUser && (
-                    <div className="space-y-2">
-                      <Label htmlFor="confirmPassword">Confirm Password <span className="text-red-500">*</span></Label>
-                      <Input
-                        id="confirmPassword"
-                        type="password"
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        required
-                        minLength={6}
-                        placeholder="Confirm your password"
-                        disabled={
-                          !!(
-                            currentSessionEmail &&
-                            normEmail(currentSessionEmail) !==
-                              normEmail(invitation.email)
-                          )
-                        }
-                      />
-                    </div>
-                  )}
 
                   {error && (
                     <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
@@ -499,7 +378,6 @@ export default function AcceptInvitationPage() {
                     disabled={
                       isProcessing ||
                       !password ||
-                      (!isExistingUser && !confirmPassword) ||
                       !!(
                         currentSessionEmail &&
                         normEmail(currentSessionEmail) !==
@@ -509,9 +387,7 @@ export default function AcceptInvitationPage() {
                   >
                     {isProcessing
                       ? "Processing..."
-                      : isExistingUser
-                        ? "Continue & Accept Invitation"
-                        : "Create Account & Accept Invitation"}
+                      : "Continue & Accept Invitation"}
                   </Button>
                 </>
               )}

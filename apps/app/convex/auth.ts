@@ -36,17 +36,19 @@ export const createAuth = (ctx: GenericCtx<DataModel>) => {
     emailAndPassword: {
       enabled: true,
       requireEmailVerification: false,
-      sendResetPassword: async ({ user, url, token }, request) => {
-        // Call our API route to send the password reset email
-        // Don't await to prevent timing attacks
-        void fetch(`${siteUrl}/api/auth/send-password-reset`, {
+      sendResetPassword: async ({ user, url }) => {
+        const webhookSecret = process.env.AUTH_EMAIL_WEBHOOK_SECRET;
+        if (!webhookSecret) {
+          throw new Error("Password reset email service is not configured");
+        }
+
+        await fetch(`${siteUrl}/api/auth/send-password-reset`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            "x-auth-email-secret": webhookSecret,
           },
-          body: JSON.stringify({ user, url, token }),
-        }).catch((error) => {
-          console.error("Failed to send password reset email:", error);
+          body: JSON.stringify({ user: { email: user.email }, url }),
         });
       },
     },

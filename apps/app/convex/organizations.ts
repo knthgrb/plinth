@@ -12,6 +12,7 @@ import {
   canUseFullOrganizationAccess,
   normalizeOrgMembershipAccessStatus,
 } from "@/utils/org-membership-lifecycle";
+import { requireActiveMembership } from "./access";
 
 const defaultRequirementValidator = v.object({
   type: v.string(),
@@ -411,31 +412,31 @@ export const updateLastActiveOrganization = mutation({
 export const getUserById = query({
   args: {
     userId: v.id("users"),
-    organizationId: v.optional(v.id("organizations")),
+    organizationId: v.id("organizations"),
   },
   handler: async (ctx, args) => {
+    await requireActiveMembership(ctx, args.organizationId);
     const user = await ctx.db.get(args.userId);
     if (!user) return null;
 
-    // If organizationId is provided, also get the user's role in that organization
-    if (args.organizationId) {
-      const userOrg = await (ctx.db.query("userOrganizations") as any)
-        .withIndex("by_user_organization", (q: any) =>
-          q.eq("userId", args.userId).eq("organizationId", args.organizationId),
-        )
-        .first();
-
-      let role: string | undefined = userOrg?.role;
-
-      // Fallback to legacy role if userOrg doesn't exist
-      if (!role && user.organizationId === args.organizationId) {
-        role = user.role;
-      }
-
-      return { ...user, role };
+    const userOrg = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_user_organization", (query) =>
+        query
+          .eq("userId", args.userId)
+          .eq("organizationId", args.organizationId),
+      )
+      .unique();
+    if (!userOrg || (userOrg.accessStatus ?? "active") !== "active") {
+      throw new Error("Not authorized");
     }
 
-    return user;
+    return {
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      role: userOrg.role,
+    };
   },
 });
 

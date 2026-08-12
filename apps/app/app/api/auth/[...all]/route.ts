@@ -1,3 +1,4 @@
-import { handler } from "@/lib/auth-server";
+import { forwardAuthRequest } from "@/lib/convex-auth-proxy";
 
-export const { GET, POST } = handler;
+export const GET = forwardAuthRequest;
+export const POST = forwardAuthRequest;

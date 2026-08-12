@@ -40,6 +40,27 @@ function buildRequirementFromDefault(req: any, now = Date.now()) {
   };
 }
 
+function toEmployeeDirectoryEntry(employee: any) {
+  return {
+    _id: employee._id,
+    organizationId: employee.organizationId,
+    personalInfo: {
+      firstName: employee.personalInfo.firstName,
+      lastName: employee.personalInfo.lastName,
+      middleName: employee.personalInfo.middleName,
+      email: employee.personalInfo.email,
+    },
+    employment: {
+      employeeId: employee.employment.employeeId,
+      position: employee.employment.position,
+      department: employee.employment.department,
+      employmentType: employee.employment.employmentType,
+      hireDate: employee.employment.hireDate,
+      status: employee.employment.status,
+    },
+  };
+}
+
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 function toManilaDayStartUtcMs(ts: number): number {
@@ -220,6 +241,10 @@ export const getEmployees = query({
       const bFirst = (b?.personalInfo?.firstName ?? "").toLowerCase();
       return aFirst.localeCompare(bFirst);
     });
+
+    if (userRecord.role === "employee") {
+      return employees.map(toEmployeeDirectoryEntry);
+    }
 
     return employees.map((e: any) => decryptEmployeeFromDb(e));
   },
@@ -1076,17 +1101,63 @@ export const updateEmployee = mutation({
     // not the user's global Plinth account.
     if (args.employment?.status) {
       const newStatus = args.employment.status;
-      const linkedMemberships = await (ctx.db.query("userOrganizations") as any)
+      let linkedMemberships = await (ctx.db.query("userOrganizations") as any)
         .withIndex("by_organization", (q: any) =>
           q.eq("organizationId", employee.organizationId),
         )
         .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
         .collect();
+
+      if (linkedMemberships.length === 0) {
+        let linkedUser = await ctx.db
+          .query("users")
+          .withIndex("by_employee", (query) =>
+            query.eq("employeeId", args.employeeId),
+          )
+          .unique();
+
+        if (!linkedUser) {
+          linkedUser = await ctx.db
+            .query("users")
+            .withIndex("by_email", (query) =>
+              query.eq("email", employee.personalInfo.email),
+            )
+            .unique();
+        }
+
+        if (linkedUser) {
+          const membership = await ctx.db
+            .query("userOrganizations")
+            .withIndex("by_user_organization", (query) =>
+              query
+                .eq("userId", linkedUser._id)
+                .eq("organizationId", employee.organizationId),
+            )
+            .unique();
+
+          if (!membership) {
+            throw new Error(
+              "Employee account is not linked to this organization membership",
+            );
+          }
+          linkedMemberships = [membership];
+        }
+      }
+
+      if (linkedMemberships.length > 1) {
+        throw new Error("Employee has multiple organization memberships");
+      }
+
       const accessStatus = deriveAccessStatusForEmploymentStatus(newStatus);
       const now = Date.now();
       for (const membership of linkedMemberships) {
-        if (membership.role === "owner") continue;
+        if (membership.role === "owner" && accessStatus !== "active") {
+          throw new Error(
+            "Transfer organization ownership before separating this employee",
+          );
+        }
         await ctx.db.patch(membership._id, {
+          employeeId: args.employeeId,
           accessStatus,
           accessUpdatedAt: now,
           accessUpdatedBy: userRecord._id,

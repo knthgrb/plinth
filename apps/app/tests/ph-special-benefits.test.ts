@@ -22,10 +22,10 @@ describe("Philippine special benefit tax handling", () => {
     const tax = computeSupplementalWithholdingTaxForSpecialBenefit({
       ytdTaxableGross: 1_000_000,
       ytdMandatoryContributions: 50_000,
-      ytdWithholdingTax: 175_000,
+      ytdWithholdingTax: 140_000,
       taxableBenefit: 40_000,
     });
 
-    expect(tax).toBe(12_000);
+    expect(tax).toBe(10_000);
   });
 });

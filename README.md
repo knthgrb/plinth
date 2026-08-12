@@ -114,7 +114,12 @@ pnpm install
    ```env
    NEXT_PUBLIC_CONVEX_URL=your_convex_url
    SITE_URL=http://localhost:3001
+   AUTH_EMAIL_WEBHOOK_SECRET=replace_with_a_random_32_byte_secret
    ```
+
+   Set the same `AUTH_EMAIL_WEBHOOK_SECRET` in both the app runtime and the
+   Convex deployment. Convex uses it to authenticate password-reset email
+   requests sent to the app API.
 
    - **Marketing** (optional, for “Log in” / “Get Started” links to the app):
 
@@ -258,11 +263,13 @@ All database schemas are defined in `convex/schema.ts`. The schema includes:
 3. Add environment variables:
    - `NEXT_PUBLIC_CONVEX_URL`
    - `SITE_URL`
+   - `AUTH_EMAIL_WEBHOOK_SECRET`
 4. Deploy
 
 ### Deploy Convex
 
-Convex automatically deploys when you run `npx convex deploy` or through the Convex dashboard.
+Set `AUTH_EMAIL_WEBHOOK_SECRET` in the Convex deployment to the same value used
+by the app, then deploy with `npx convex deploy` or through the Convex dashboard.
 
 ## Notes
 

@@ -20,6 +20,16 @@ interface TiptapViewerProps {
   className?: string;
 }
 
+function isAllowedViewerLink(value: string) {
+  if (value.startsWith("/") || value.startsWith("#")) return true;
+
+  try {
+    return ["http:", "https:", "mailto:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
 export function TiptapViewer({ content, className }: TiptapViewerProps) {
   const parsedContent = useMemo(() => {
     if (typeof content === "string") {
@@ -40,8 +50,11 @@ export function TiptapViewer({ content, className }: TiptapViewerProps) {
       }),
       Link.configure({
         openOnClick: true,
+        isAllowedUri: (url) => isAllowedViewerLink(url),
         HTMLAttributes: {
           class: "text-blue-600 underline",
+          target: "_blank",
+          rel: "noopener noreferrer",
         },
       }),
       Table.configure({

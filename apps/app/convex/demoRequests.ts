@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { requireMasterAdmin } from "./access";
 
 /**
  * Set a user as super_admin. Run from Convex dashboard:
@@ -9,6 +10,8 @@ import { authComponent } from "./auth";
 export const setSuperAdmin = mutation({
   args: { email: v.string() },
   handler: async (ctx, args) => {
+    await requireMasterAdmin(ctx);
+
     const userRecord = await ctx.db
       .query("users")
       .withIndex("by_email", (q) => q.eq("email", args.email))
@@ -59,7 +62,7 @@ export const isSuperAdmin = query({
       .withIndex("by_email", (q) => q.eq("email", user.email))
       .first();
 
-    return (userRecord as any)?.masterRole === "super_admin";
+    return userRecord?.masterRole === "super_admin";
   },
 });
 
@@ -77,7 +80,7 @@ export const list = query({
       .withIndex("by_email", (q) => q.eq("email", user.email))
       .first();
 
-    if (!userRecord || (userRecord as any).masterRole !== "super_admin") {
+    if (!userRecord || userRecord.masterRole !== "super_admin") {
       return null;
     }
 

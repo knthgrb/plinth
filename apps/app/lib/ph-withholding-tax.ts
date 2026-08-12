@@ -16,24 +16,24 @@ function round2(n: number): number {
 }
 
 /**
- * TRAIN Law individual income tax table (2025 rates).
+ * TRAIN Law individual income tax table effective January 1, 2023 onward.
  * Taxable income = gross income - mandatory contributions (SSS, PhilHealth, Pag-IBIG).
  */
 export function computeAnnualTaxFromBasic(annualTaxableIncome: number): number {
   if (annualTaxableIncome <= 250_000) return 0;
   if (annualTaxableIncome <= 400_000) {
-    return 0.2 * (annualTaxableIncome - 250_000);
+    return 0.15 * (annualTaxableIncome - 250_000);
   }
   if (annualTaxableIncome <= 800_000) {
-    return 30_000 + 0.25 * (annualTaxableIncome - 400_000);
+    return 22_500 + 0.2 * (annualTaxableIncome - 400_000);
   }
   if (annualTaxableIncome <= 2_000_000) {
-    return 130_000 + 0.3 * (annualTaxableIncome - 800_000);
+    return 102_500 + 0.25 * (annualTaxableIncome - 800_000);
   }
   if (annualTaxableIncome <= 8_000_000) {
-    return 490_000 + 0.32 * (annualTaxableIncome - 2_000_000);
+    return 402_500 + 0.3 * (annualTaxableIncome - 2_000_000);
   }
-  return 2_410_000 + 0.35 * (annualTaxableIncome - 8_000_000);
+  return 2_202_500 + 0.35 * (annualTaxableIncome - 8_000_000);
 }
 
 type PayFrequency = "monthly" | "bimonthly";

@@ -3,7 +3,10 @@
 import { ConvexReactClient, useConvexAuth } from "convex/react";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { authClient } from "@/lib/auth-client";
-import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
+import {
+  type AuthClient,
+  ConvexBetterAuthProvider,
+} from "@convex-dev/better-auth/react";
 import {
   ConvexErrorBoundary,
   GlobalErrorHandler,
@@ -15,6 +18,10 @@ const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL!, {
   // expectAuth: false allows invite/accept and login/signup to run queries when unauthenticated
   expectAuth: false,
 });
+
+// @convex-dev/better-auth 0.12.5 infers `useSession().data` as `never`
+// against Better Auth 1.6, although this client uses its required Convex plugin.
+const convexAuthClient = authClient as unknown as AuthClient;
 
 /**
  * After refresh, Better Auth can report a session before Convex has attached the JWT.
@@ -87,7 +94,7 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
   return (
     <GlobalErrorHandler>
       <ConvexErrorBoundary>
-        <ConvexBetterAuthProvider client={convex} authClient={authClient}>
+        <ConvexBetterAuthProvider client={convex} authClient={convexAuthClient}>
           <LoaderOverlayProvider>
             <ConvexSessionReadyGate>{children}</ConvexSessionReadyGate>
           </LoaderOverlayProvider>

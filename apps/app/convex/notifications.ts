@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { authComponent } from "./auth";
 import type { Id } from "./_generated/dataModel";
 import { runOrgQuery } from "./queryAuthGrace";
+import { requireActiveMembership } from "./access";
 
 /** Types shown in employee experience (self payslip / own leave outcomes). Approver inbox is staff-only. */
 const forEmployeeExperienceFilter = (q: any) =>
@@ -13,28 +13,11 @@ const forEmployeeExperienceFilter = (q: any) =>
   );
 
 async function checkAuth(ctx: any, organizationId: Id<"organizations">) {
-  const user = await authComponent.getAuthUser(ctx);
-  if (!user) throw new Error("Not authenticated");
-
-  const userRecord = await ctx.db
-    .query("users")
-    .withIndex("by_email", (q: any) => q.eq("email", user.email))
-    .first();
-  if (!userRecord) {
-    throw new Error("User record not found. Please complete your account setup.");
-  }
-  const userOrg = await (ctx.db.query("userOrganizations") as any)
-    .withIndex("by_user_organization", (q: any) =>
-      q.eq("userId", userRecord._id).eq("organizationId", organizationId),
-    )
-    .first();
-  const hasAccess =
-    userOrg ||
-    (userRecord.organizationId === organizationId && userRecord.role);
-  if (!hasAccess) {
-    throw new Error("User is not a member of this organization");
-  }
-  return { ...userRecord, role: userOrg?.role ?? userRecord.role };
+  const { user, membership } = await requireActiveMembership(
+    ctx,
+    organizationId,
+  );
+  return { ...user, role: membership.role };
 }
 
 export const getUnreadNotificationCount = query({
