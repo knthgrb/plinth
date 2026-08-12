@@ -237,6 +237,83 @@ describe("full schema cleanup readiness", () => {
     );
   });
 
+  it("treats a clean run at the history sentinel as overflow evidence", async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const cleanRunId = await ctx.db.insert("migrationRuns", {
+        key: "schema-normalization-release-1",
+        version: 1,
+        dryRun: false,
+        status: "completed",
+        phase: "organizations",
+        batchSize: 20,
+        counters: {
+          scanned: 0,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 1,
+        updatedAt: 1,
+        completedAt: 1,
+      });
+      await ctx.db.insert("migrationAudits", {
+        migrationRunId: cleanRunId,
+        status: "completed",
+        phase: "requirements",
+        batchSize: 5,
+        organizations: 0,
+        destination: {
+          expected: 0,
+          matching: 0,
+          missing: 0,
+          duplicate: 0,
+          mismatched: 0,
+          unexpected: 0,
+          totalRows: 0,
+        },
+        duplicateLegacySettings: 0,
+        sourceConflicts: 0,
+        auditTruncated: false,
+        startedAt: 1,
+        updatedAt: 1,
+        completedAt: 1,
+      });
+      for (let startedAt = 2; startedAt <= 101; startedAt += 1) {
+        await ctx.db.insert("migrationRuns", {
+          key: "schema-normalization-release-1",
+          version: 1,
+          dryRun: false,
+          status: "completed",
+          phase: "organizations",
+          batchSize: 20,
+          counters: {
+            scanned: 0,
+            changed: 0,
+            unchanged: 0,
+            skipped: 0,
+            conflicts: 0,
+            errors: 1,
+          },
+          startedAt,
+          updatedAt: startedAt,
+          completedAt: startedAt,
+        });
+      }
+    });
+
+    const readiness = await t.query(getFullSchemaCleanupReadiness, {});
+    expect(readiness.domains).toContainEqual(
+      expect.objectContaining({
+        domain: "organization_configuration",
+        status: "blocked",
+        blockers: ["MIGRATION_RUN_HISTORY_TRUNCATED"],
+      }),
+    );
+  });
+
   it.each([
     {
       name: "stale migration version",

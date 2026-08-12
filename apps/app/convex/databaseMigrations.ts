@@ -37,6 +37,20 @@ const MAX_DESTINATION_ROWS_PER_ORGANIZATION = 500;
 // Readiness is fail-closed when a migration key's recent history exceeds this bound.
 const MAX_FULL_SCHEMA_MIGRATION_RUN_LOOKBACK = 100;
 
+type FullSchemaCleanupReadinessRegistration = {
+  domain: string;
+  migrationKey: string;
+  migrationVersion: number;
+  implementation: "compatibility" | "not_started";
+};
+
+type FullSchemaCleanupReadinessDomain = Omit<
+  FullSchemaDomainReadiness,
+  "domain"
+> & {
+  domain: string;
+};
+
 function addCounters(
   current: SchemaCleanupCounters,
   increment: Partial<SchemaCleanupCounters>,
@@ -1081,7 +1095,9 @@ async function getLatestConflictFreeWriteRun(
     .withIndex("by_key_started", (q) => q.eq("key", migrationKey))
     .order("desc")
     .take(MAX_FULL_SCHEMA_MIGRATION_RUN_LOOKBACK + 1);
-  const run = runs.find(hasConflictFreeCompletedWriteRun);
+  const run = runs
+    .slice(0, MAX_FULL_SCHEMA_MIGRATION_RUN_LOOKBACK)
+    .find(hasConflictFreeCompletedWriteRun);
   if (run) return { status: "found" as const, run };
   if (runs.length > MAX_FULL_SCHEMA_MIGRATION_RUN_LOOKBACK) {
     return { status: "truncated" as const };
@@ -1107,11 +1123,8 @@ function auditBlockers(audit: Doc<"migrationAudits">) {
 
 async function getOrganizationConfigurationReadiness(
   ctx: Pick<QueryCtx, "db">,
-  registration: Extract<
-    (typeof FULL_SCHEMA_CLEANUP_DOMAINS)[number],
-    { domain: "organization_configuration" }
-  >,
-): Promise<FullSchemaDomainReadiness> {
+  registration: FullSchemaCleanupReadinessRegistration,
+): Promise<FullSchemaCleanupReadinessDomain> {
   const runLookup = await getLatestConflictFreeWriteRun(
     ctx,
     registration.migrationKey,
@@ -1200,6 +1213,35 @@ async function getOrganizationConfigurationReadiness(
   };
 }
 
+async function getFullSchemaDomainReadiness(
+  ctx: Pick<QueryCtx, "db">,
+  registration: FullSchemaCleanupReadinessRegistration,
+): Promise<FullSchemaCleanupReadinessDomain> {
+  if (registration.implementation === "not_started") {
+    return {
+      domain: registration.domain,
+      status: "not_started",
+      migrationKey: registration.migrationKey,
+      migrationVersion: registration.migrationVersion,
+      blockers: ["DOMAIN_IMPLEMENTATION_NOT_DEPLOYED"],
+    };
+  }
+  if (
+    registration.domain === "organization_configuration" &&
+    registration.migrationKey === SCHEMA_CLEANUP_MIGRATION_KEY &&
+    registration.migrationVersion === SCHEMA_CLEANUP_VERSION
+  ) {
+    return getOrganizationConfigurationReadiness(ctx, registration);
+  }
+  return {
+    domain: registration.domain,
+    status: "blocked",
+    migrationKey: registration.migrationKey,
+    migrationVersion: registration.migrationVersion,
+    blockers: ["DOMAIN_IMPLEMENTATION_UNSUPPORTED"],
+  };
+}
+
 export const getFullSchemaInventory = internalQuery({
   args: {},
   handler: async () => ({
@@ -1217,18 +1259,9 @@ export const getFullSchemaCleanupReadiness = internalQuery({
   args: {},
   handler: async (ctx) => {
     const domains = await Promise.all(
-      FULL_SCHEMA_CLEANUP_DOMAINS.map(async (registration) => {
-        if (registration.domain === "organization_configuration") {
-          return getOrganizationConfigurationReadiness(ctx, registration);
-        }
-        return {
-          domain: registration.domain,
-          status: "not_started" as const,
-          migrationKey: registration.migrationKey,
-          migrationVersion: registration.migrationVersion,
-          blockers: ["DOMAIN_IMPLEMENTATION_NOT_DEPLOYED"],
-        };
-      }),
+      FULL_SCHEMA_CLEANUP_DOMAINS.map((registration) =>
+        getFullSchemaDomainReadiness(ctx, registration),
+      ),
     );
     return {
       programKey: FULL_SCHEMA_CLEANUP_PROGRAM_KEY,
