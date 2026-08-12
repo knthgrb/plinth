@@ -24,9 +24,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 6800,
+      "totalMatches": 6802,
       "fileCount": 227,
-      "fingerprint": "57d0816e9a6a901b58a2e70891d3d37a1ae4a57b6345294408623fc6322737f7",
+      "fingerprint": "63648dc112a18eab521a98979f99a31c03993340ad35e341bcf05c5f8c34add9",
       "symbols": [
         {
           "symbol": "acknowledgedBy",
@@ -340,7 +340,7 @@
         },
         {
           "symbol": "token",
-          "matches": 115,
+          "matches": 117,
           "files": 20
         },
         {

@@ -5,6 +5,7 @@ import { authComponent } from "./auth";
 import { getAssignableOrganizationRoleOptions } from "@/utils/organization-roles";
 import { requireActiveMembership, requireIdentity } from "./access";
 import { bytesToBase64 } from "./binaryBase64";
+import { hashInvitationToken } from "./invitationTokenHash";
 
 // Helper to get user record
 async function getUserRecord(ctx: any) {
@@ -365,6 +366,7 @@ async function tryCreateOrgInvitationSoft(
   }
 
   const token = createInvitationToken();
+  const tokenHash = hashInvitationToken(token);
   const expiresAt = now + 7 * 24 * 60 * 60 * 1000;
 
   const invitationId = await ctx.db.insert("invitations", {
@@ -373,6 +375,7 @@ async function tryCreateOrgInvitationSoft(
     role,
     invitedBy: userRecord._id,
     token,
+    tokenHash,
     status: "pending",
     expiresAt,
     createdAt: now,
@@ -407,14 +410,8 @@ export const createInvitation = mutation({
     confirmInviteToExistingPlinthUser: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const userRecord = await getUserRecord(ctx);
-
-    // Check if current user is admin or hr in the organization
-    const userOrg = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
-      )
-      .first();
+    const { user: userRecord, membership: userOrg } =
+      await requireActiveMembership(ctx, args.organizationId);
 
     const actorRole = getActorOrganizationRole(
       userRecord,
@@ -479,13 +476,8 @@ export const batchCreateInvitations = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const userRecord = await getUserRecord(ctx);
-
-    const userOrg = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId),
-      )
-      .first();
+    const { user: userRecord, membership: userOrg } =
+      await requireActiveMembership(ctx, args.organizationId);
 
     const actorRole = getActorOrganizationRole(
       userRecord,
@@ -944,14 +936,8 @@ export const createUserForEmployee = mutation({
     confirmInviteToExistingPlinthUser: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const userRecord = await getUserRecord(ctx);
-
-    // Check authorization - admin, hr, or owner can create user accounts
-    const userOrg = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_user_organization", (q: any) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
-      )
-      .first();
+    const { user: userRecord, membership: userOrg } =
+      await requireActiveMembership(ctx, args.organizationId);
 
     const userRole = getActorOrganizationRole(
       userRecord,
@@ -1088,6 +1074,7 @@ export const createUserForEmployee = mutation({
 
     // Create invitation for the employee
     const token = createInvitationToken();
+    const tokenHash = hashInvitationToken(token);
     const expiresAt = now + 7 * 24 * 60 * 60 * 1000; // 7 days
 
     const invitationId = await ctx.db.insert("invitations", {
@@ -1096,6 +1083,7 @@ export const createUserForEmployee = mutation({
       role: args.role,
       invitedBy: userRecord._id,
       token,
+      tokenHash,
       status: "pending",
       expiresAt,
       employeeId: args.employeeId,

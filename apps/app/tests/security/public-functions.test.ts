@@ -177,6 +177,25 @@ describe("public Convex security boundaries", () => {
     ).rejects.toThrow("Not authenticated");
   });
 
+  it("rejects unauthenticated invitation creation", async () => {
+    const t = convexTest(schema, modules);
+    const organizationId = await t.run((ctx) =>
+      ctx.db.insert("organizations", {
+        name: "Private Org",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+
+    await expect(
+      t.mutation(api.invitations.createInvitation, {
+        organizationId,
+        email: "invitee@example.com",
+        role: "employee",
+      }),
+    ).rejects.toThrow("Not authenticated");
+  });
+
   it("rejects super-admin elevation by a normal authenticated user", async () => {
     const t = convexTest(schema, modules);
     const actorEmail = "actor@example.com";
