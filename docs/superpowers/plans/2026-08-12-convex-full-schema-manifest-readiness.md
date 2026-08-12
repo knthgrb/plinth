@@ -833,7 +833,7 @@ git commit -m "test: report legacy schema references"
 - Documents deployment, inventory/readiness commands, expected blockers, rollback, and the next identity-domain plan.
 - Release 1B performs no backfill, clearing, or contraction.
 
-- [ ] **Step 1: Write the operator runbook**
+- [x] **Step 1: Write the operator runbook**
 
 Document these exact production commands:
 
@@ -849,7 +849,7 @@ pnpm --filter app exec convex run --prod \
 
 The runbook must require `currentTableCount: 44`, exactly one row per current table policy, organization configuration `status: "ready"`, all undeployed domains `status: "not_started"`, and `readyForRelease3: false`. Explain that false is the correct safe result until every domain wave is deployed and audited. Rollback is application redeployment only because this checkpoint changes no production rows.
 
-- [ ] **Step 2: Run full verification**
+- [x] **Step 2: Run full verification**
 
 ```bash
 pnpm --filter app schema:inventory
@@ -864,7 +864,7 @@ pnpm --filter app exec next build --webpack
 
 Expected: inventory, all application tests, TypeScript, focused lint, dependency audit, formatting, diff hygiene, and production build pass.
 
-- [ ] **Step 3: Review checkpoint invariants**
+- [x] **Step 3: Review checkpoint invariants**
 
 Confirm the implementation:
 
@@ -876,7 +876,7 @@ Confirm the implementation:
 - makes no schema contraction or data mutation;
 - leaves Release 3 readiness false.
 
-- [ ] **Step 4: Commit the Release 1B checkpoint**
+- [x] **Step 4: Commit the Release 1B checkpoint**
 
 ```bash
 git add docs/runbooks/full-schema-cleanup-release-1b.md docs/superpowers/plans/2026-08-12-convex-full-schema-manifest-readiness.md
