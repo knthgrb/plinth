@@ -7,7 +7,17 @@ export type SchemaReferenceMatch = {
   line: number;
 };
 
-const SOURCE_ROOTS = ["app", "components", "convex", "lib", "utils"];
+export const SCHEMA_REFERENCE_SOURCE_ROOTS = [
+  "actions",
+  "app",
+  "components",
+  "convex",
+  "helpers",
+  "hooks",
+  "lib",
+  "services",
+  "utils",
+] as const;
 const SOURCE_EXTENSIONS = new Set([
   ".cjs",
   ".cts",
@@ -72,7 +82,7 @@ const sourceFiles = (root: string, exclusions: readonly RegExp[]): string[] => {
     }
   };
 
-  for (const sourceRoot of SOURCE_ROOTS) {
+  for (const sourceRoot of SCHEMA_REFERENCE_SOURCE_ROOTS) {
     const directory = resolve(root, sourceRoot);
     try {
       visit(directory);

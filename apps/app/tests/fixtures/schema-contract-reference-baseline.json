@@ -24,9 +24,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 6030,
-      "fileCount": 184,
-      "fingerprint": "1d9003400d690611016d9e1b35879c7b5ff057dc05195dc044811267e9362ddf",
+      "totalMatches": 6807,
+      "fileCount": 227,
+      "fingerprint": "5bcd5bf9349db8e9fc93cead3f3e93bc780cbb0beaaa8f5b8c3202739526186c",
       "symbols": [
         {
           "symbol": "acknowledgedBy",
@@ -40,23 +40,23 @@
         },
         {
           "symbol": "annualSil",
-          "matches": 42,
-          "files": 9
+          "matches": 46,
+          "files": 11
         },
         {
           "symbol": "assignedReviewerIds",
-          "matches": 13,
-          "files": 2
-        },
-        {
-          "symbol": "attachmentContentTypes",
-          "matches": 11,
+          "matches": 19,
           "files": 4
         },
         {
+          "symbol": "attachmentContentTypes",
+          "matches": 17,
+          "files": 6
+        },
+        {
           "symbol": "attachments",
-          "matches": 81,
-          "files": 17
+          "matches": 108,
+          "files": 26
         },
         {
           "symbol": "attendanceSettings",
@@ -65,8 +65,8 @@
         },
         {
           "symbol": "customFields",
-          "matches": 20,
-          "files": 9
+          "matches": 22,
+          "files": 11
         },
         {
           "symbol": "cutoffDates",
@@ -75,8 +75,8 @@
         },
         {
           "symbol": "deductions",
-          "matches": 283,
-          "files": 25
+          "matches": 295,
+          "files": 27
         },
         {
           "symbol": "defaultRequirements",
@@ -85,8 +85,8 @@
         },
         {
           "symbol": "departments",
-          "matches": 138,
-          "files": 19
+          "matches": 153,
+          "files": 26
         },
         {
           "symbol": "editHistory",
@@ -95,8 +95,8 @@
         },
         {
           "symbol": "employeeId",
-          "matches": 1034,
-          "files": 78
+          "matches": 1190,
+          "files": 104
         },
         {
           "symbol": "enableAnniversaryLeave",
@@ -110,18 +110,18 @@
         },
         {
           "symbol": "firstPayDate",
-          "matches": 30,
-          "files": 6
+          "matches": 31,
+          "files": 7
         },
         {
           "symbol": "frequencyMonths",
-          "matches": 5,
-          "files": 1
+          "matches": 10,
+          "files": 3
         },
         {
           "symbol": "grantLeaveUponRegularization",
-          "matches": 53,
-          "files": 10
+          "matches": 57,
+          "files": 12
         },
         {
           "symbol": "history",
@@ -130,8 +130,8 @@
         },
         {
           "symbol": "incentives",
-          "matches": 197,
-          "files": 15
+          "matches": 218,
+          "files": 17
         },
         {
           "symbol": "interviewSchedules",
@@ -140,8 +140,8 @@
         },
         {
           "symbol": "isActive",
-          "matches": 47,
-          "files": 15
+          "matches": 49,
+          "files": 17
         },
         {
           "symbol": "leaveAccrualFrequency",
@@ -160,8 +160,8 @@
         },
         {
           "symbol": "leaveRequestFormTemplate",
-          "matches": 13,
-          "files": 4
+          "matches": 17,
+          "files": 6
         },
         {
           "symbol": "leaveRequestPdfLayout",
@@ -195,8 +195,8 @@
         },
         {
           "symbol": "maintenanceHistory",
-          "matches": 15,
-          "files": 2
+          "matches": 19,
+          "files": 4
         },
         {
           "symbol": "maxConvertibleLeaveDays",
@@ -205,8 +205,8 @@
         },
         {
           "symbol": "notes",
-          "matches": 154,
-          "files": 19
+          "matches": 185,
+          "files": 27
         },
         {
           "symbol": "offerApproval",
@@ -215,8 +215,8 @@
         },
         {
           "symbol": "organizationId",
-          "matches": 1370,
-          "files": 112
+          "matches": 1644,
+          "files": 152
         },
         {
           "symbol": "paidLeaveRequiresRegularization",
@@ -230,8 +230,8 @@
         },
         {
           "symbol": "payrollSettings",
-          "matches": 83,
-          "files": 10
+          "matches": 86,
+          "files": 12
         },
         {
           "symbol": "payslipPdfPassword",
@@ -255,8 +255,8 @@
         },
         {
           "symbol": "proratedLeave",
-          "matches": 53,
-          "files": 13
+          "matches": 57,
+          "files": 15
         },
         {
           "symbol": "reactions",
@@ -270,8 +270,8 @@
         },
         {
           "symbol": "receipts",
-          "matches": 21,
-          "files": 4
+          "matches": 27,
+          "files": 6
         },
         {
           "symbol": "recruitmentTableColumns",
@@ -280,8 +280,8 @@
         },
         {
           "symbol": "requirements",
-          "matches": 135,
-          "files": 16
+          "matches": 144,
+          "files": 21
         },
         {
           "symbol": "requirementsTableColumns",
@@ -290,13 +290,13 @@
         },
         {
           "symbol": "role",
-          "matches": 495,
-          "files": 68
+          "matches": 551,
+          "files": 78
         },
         {
           "symbol": "salaryPaymentFrequency",
-          "matches": 36,
-          "files": 7
+          "matches": 37,
+          "files": 8
         },
         {
           "symbol": "scorecards",
@@ -305,8 +305,8 @@
         },
         {
           "symbol": "secondPayDate",
-          "matches": 31,
-          "files": 6
+          "matches": 32,
+          "files": 7
         },
         {
           "symbol": "settingsChangeLog",
@@ -320,38 +320,38 @@
         },
         {
           "symbol": "sharedWith",
-          "matches": 5,
-          "files": 1
+          "matches": 11,
+          "files": 3
         },
         {
           "symbol": "specificEmployees",
-          "matches": 43,
-          "files": 5
+          "matches": 55,
+          "files": 9
         },
         {
           "symbol": "status",
-          "matches": 768,
-          "files": 72
+          "matches": 805,
+          "files": 85
         },
         {
           "symbol": "supportingDocuments",
-          "matches": 3,
-          "files": 2
+          "matches": 6,
+          "files": 4
         },
         {
           "symbol": "token",
-          "matches": 57,
-          "files": 12
+          "matches": 112,
+          "files": 19
         },
         {
           "symbol": "visibleDepartments",
-          "matches": 6,
-          "files": 1
+          "matches": 10,
+          "files": 3
         },
         {
           "symbol": "visibleEmployeeIds",
-          "matches": 7,
-          "files": 1
+          "matches": 13,
+          "files": 3
         }
       ]
     }

@@ -10,6 +10,7 @@ import {
 import baseline from "./fixtures/schema-contract-reference-baseline.json";
 import {
   DEFAULT_SCHEMA_REFERENCE_EXCLUSIONS,
+  SCHEMA_REFERENCE_SOURCE_ROOTS,
   scanSchemaReferences,
 } from "./helpers/schema-reference-scan";
 import { summarizeSchemaReferences } from "./helpers/schema-reference-summary";
@@ -114,6 +115,41 @@ describe("schema contract references", () => {
     ).toEqual([{ symbol: "legacyField", file: "convex/live.ts", line: 1 }]);
   });
 
+  it("scans every reviewed production root and ignores non-production roots", () => {
+    const root = createFixture();
+    const productionRoots = [
+      "actions",
+      "app",
+      "components",
+      "convex",
+      "helpers",
+      "hooks",
+      "lib",
+      "services",
+      "utils",
+    ];
+    const ignoredRoots = [
+      "tests",
+      "docs",
+      "public",
+      "config",
+      "build",
+      "node_modules",
+    ];
+    for (const sourceRoot of [...productionRoots, ...ignoredRoots]) {
+      writeFixture(root, `${sourceRoot}/reference.ts`, "legacyField;\n");
+    }
+
+    expect(SCHEMA_REFERENCE_SOURCE_ROOTS).toEqual(productionRoots);
+    expect(scanSchemaReferences(root, ["legacyField"], [])).toEqual(
+      productionRoots.map((sourceRoot) => ({
+        symbol: "legacyField",
+        file: `${sourceRoot}/reference.ts`,
+        line: 1,
+      })),
+    );
+  });
+
   it("applies complete exclusions within intended source roots", () => {
     const root = createFixture();
     const excludedFiles = [
@@ -166,7 +202,7 @@ describe("schema contract references", () => {
     ]);
   });
 
-  it("places every legacy policy symbol in exactly one evidence tier", () => {
+  it("keeps every undotted legacy symbol in informational discovery only", () => {
     const tieredOverrides = [
       ...referenceTiers.enforceable,
       ...referenceTiers.discovery,
