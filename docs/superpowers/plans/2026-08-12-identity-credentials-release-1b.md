@@ -40,7 +40,7 @@
 - Removes the unused public function `users:syncUser`.
 - Does not replace it; account creation remains owned by Better Auth and invitation acceptance.
 
-- [ ] **Step 1: Add a failing public-boundary regression**
+- [x] **Step 1: Add a failing public-boundary regression**
 
 Use a literal function reference so the test remains valid after the generated public binding disappears:
 
@@ -75,7 +75,7 @@ it("does not expose the legacy user-role synchronization mutation", async () => 
 });
 ```
 
-- [ ] **Step 2: Verify RED, then remove the function**
+- [x] **Step 2: Verify RED, then remove the function**
 
 Run:
 
@@ -85,7 +85,7 @@ pnpm --filter app test -- tests/security/public-functions.test.ts
 
 Expected RED: the current public mutation succeeds. Delete `convex/users.ts`; do not internalize an unused bypass.
 
-- [ ] **Step 3: Regenerate bindings and verify security**
+- [x] **Step 3: Regenerate bindings and verify security**
 
 ```bash
 pnpm --dir apps/app exec convex codegen --typecheck disable
@@ -95,7 +95,7 @@ pnpm --filter app exec tsc --noEmit --pretty false
 
 Expected: the public mutation cannot resolve; existing lifecycle tests pass; `api.d.ts` no longer exposes `users`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/app/convex/users.ts apps/app/convex/_generated/api.d.ts apps/app/tests/security/public-functions.test.ts
@@ -122,7 +122,7 @@ git commit -m "fix: remove unsafe user role synchronization"
 - Extends migration phases for the identity wave while preserving existing rows.
 - Keeps the `identity_credentials` release wave `not_started` until Task 5 deploys the run/audit implementation.
 
-- [ ] **Step 1: Write failing schema integration tests**
+- [x] **Step 1: Write failing schema integration tests**
 
 Create `identity-credentials-schema.test.ts` and assert:
 
@@ -165,7 +165,7 @@ it("stores private payslip credentials and hashed invitation compatibility data"
 
 Also query the new membership and invitation indexes and prove `.take(2)` works.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 ```bash
 pnpm --filter app test -- tests/identity-credentials-schema.test.ts tests/schema-inventory-coverage.test.ts
@@ -173,7 +173,7 @@ pnpm --filter app test -- tests/identity-credentials-schema.test.ts tests/schema
 
 Expected: missing table/field/index failures.
 
-- [ ] **Step 3: Extend the schema additively**
+- [x] **Step 3: Extend the schema additively**
 
 Add:
 
@@ -233,7 +233,7 @@ and add `.index("by_audit", ["auditId", "createdAt"])`.
 
 Do not weaken the validators to arbitrary strings.
 
-- [ ] **Step 4: Extend the manifest and reviewed schema gate**
+- [x] **Step 4: Extend the manifest and reviewed schema gate**
 
 - Add `payslipCredentials` to `CURRENT_SCHEMA_TABLES` and `FULL_SCHEMA_TABLE_POLICIES` under `employee_core_credentials`, disposition `retain`, default classification `normalized_target`.
 - Keep `employees.payslipPinHash` as `compatibility_read`, now targeting `payslipCredentials.credentialHash`.
@@ -242,7 +242,7 @@ Do not weaken the validators to arbitrary strings.
 - Regenerate the reviewed inventory digest intentionally. The expected current count becomes 45 tables.
 - Update all exact `44` assertions that represent current source schema to `45`; do not alter historical production evidence text for the already-run 44-table checkpoint without explaining the expansion.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 pnpm --filter app test -- tests/identity-credentials-schema.test.ts tests/schema-inventory-coverage.test.ts tests/full-schema-readiness.test.ts
@@ -268,7 +268,7 @@ git commit -m "feat: expand identity credential schema"
 - Produces redacted issue codes and pure planners for users, credentials, and invitations.
 - Produces `hashInvitationToken(token): string` using domain-separated SHA-256.
 
-- [ ] **Step 1: Write failing planner/hash tests**
+- [x] **Step 1: Write failing planner/hash tests**
 
 Cover at least:
 
@@ -307,13 +307,13 @@ Invitation planner cases:
 - mismatched hash or duplicate destination hash → conflict;
 - no token → issue, never hash an empty string.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 ```bash
 pnpm --filter app test -- tests/identity-migration-planner.test.ts
 ```
 
-- [ ] **Step 3: Implement token hashing**
+- [x] **Step 3: Implement token hashing**
 
 Use Convex-runtime-safe noble hashes:
 
@@ -330,7 +330,7 @@ export function hashInvitationToken(token: string): string {
 
 Never log or return the input token from migration helpers.
 
-- [ ] **Step 4: Implement planner result types**
+- [x] **Step 4: Implement planner result types**
 
 Use a shared result shape:
 
@@ -353,7 +353,7 @@ type IdentityMigrationIssue = {
 
 No issue includes email, token, role value, credential, or hash.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ```bash
 pnpm --filter app test -- tests/identity-migration-planner.test.ts
@@ -378,7 +378,7 @@ git commit -m "feat: plan identity credential migration"
 - Existing lookup and acceptance remain plaintext-first in Release 1B; hash-first lookup and plaintext retirement belong to Release 2/3.
 - The raw token remains available only to the existing authorized server email path during this compatibility release.
 
-- [ ] **Step 1: Add failing creation-path tests**
+- [x] **Step 1: Add failing creation-path tests**
 
 Cover both invitation creation paths (`createInvitation`/batch helper and `createUserForEmployee`) and assert:
 
@@ -389,13 +389,13 @@ expect(invitation.tokenHash).not.toBe(invitation.token);
 
 Also assert unauthenticated and inactive membership callers cannot create invitations.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 ```bash
 pnpm --filter app test -- tests/invitation-token-compatibility.test.ts tests/security/public-functions.test.ts tests/security/lifecycle-access.test.ts
 ```
 
-- [ ] **Step 3: Add atomic compatibility writes**
+- [x] **Step 3: Add atomic compatibility writes**
 
 At every `ctx.db.insert("invitations", ...)` creation site:
 
@@ -412,7 +412,7 @@ await ctx.db.insert("invitations", {
 
 Do not introduce a second mutation or post-insert patch that could leave half-written rows.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 pnpm --filter app test -- tests/invitation-token-compatibility.test.ts tests/security/public-functions.test.ts tests/security/lifecycle-access.test.ts
@@ -445,7 +445,7 @@ git commit -m "feat: hash newly issued invitation tokens"
 - Uses key `full-schema-identity-credentials`, version `1`.
 - Phases execute in order: `identity_users`, `identity_credentials`, `identity_invitations`.
 
-- [ ] **Step 1: Write failing orchestration tests**
+- [x] **Step 1: Write failing orchestration tests**
 
 Test:
 
@@ -461,13 +461,13 @@ Test:
 - write execution is idempotent; a second dry-run after write reports zero changes;
 - any planner conflict blocks `canStartWrite`.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 ```bash
 pnpm --filter app test -- tests/identity-migrations.test.ts tests/data-migrations.test.ts
 ```
 
-- [ ] **Step 3: Implement phase pagination and writes**
+- [x] **Step 3: Implement phase pagination and writes**
 
 For `identity_users`, paginate `users`; load candidate membership rows with `by_user_organization.take(2)`, validate organization/employee tenant, and insert only when the planner returns `create` and `dryRun` is false.
 
@@ -484,7 +484,7 @@ Every phase increments shared counters consistently:
 - `conflicts`: redacted planner issues;
 - `errors`: caught batch/system failures only.
 
-- [ ] **Step 4: Implement safe issue persistence**
+- [x] **Step 4: Implement safe issue persistence**
 
 Persist only source IDs already safe for operator correlation:
 
@@ -502,7 +502,7 @@ await ctx.db.insert("migrationIssues", {
 
 Never store email/token/hash/role/employee name in an issue.
 
-- [ ] **Step 5: Regenerate, verify, and commit**
+- [x] **Step 5: Regenerate, verify, and commit**
 
 ```bash
 pnpm --dir apps/app exec convex codegen --typecheck disable
@@ -538,7 +538,7 @@ git commit -m "feat: backfill identity credential targets"
 - Changes registry implementation for `identity_credentials` from `not_started` to `migration`.
 - Global readiness reports identity as ready only for the newest safe write attempt and its newest clean audit.
 
-- [ ] **Step 1: Extend registry typing with failing tests**
+- [x] **Step 1: Extend registry typing with failing tests**
 
 Change implementation union to:
 
@@ -548,7 +548,7 @@ implementation: "compatibility" | "migration" | "not_started";
 
 Update dispatch tests so `identity_credentials` maps to an explicit supported identity migration mode; unknown migration implementations return `DOMAIN_IMPLEMENTATION_UNSUPPORTED`.
 
-- [ ] **Step 2: Add failing audit tests**
+- [x] **Step 2: Add failing audit tests**
 
 Cover:
 
@@ -565,7 +565,7 @@ Cover:
 - second write produces zero changes and a repeat audit remains ready;
 - audit/status output never contains token or credential material.
 
-- [ ] **Step 3: Implement persisted audit**
+- [x] **Step 3: Implement persisted audit**
 
 Reuse `migrationAudits` with the identity phases. For compatibility with existing required fields:
 
@@ -577,7 +577,7 @@ Reuse `migrationAudits` with the identity phases. For compatibility with existin
 
 Audit target rows in separate phases so unexpected destinations are counted without unbounded collection.
 
-- [ ] **Step 4: Integrate fail-closed global readiness**
+- [x] **Step 4: Integrate fail-closed global readiness**
 
 The `identity_credentials` readiness resolver must:
 
@@ -589,7 +589,7 @@ The `identity_credentials` readiness resolver must:
 
 The other four undeployed waves remain `not_started`; global `readyForRelease3` remains false.
 
-- [ ] **Step 5: Regenerate, verify, and commit**
+- [x] **Step 5: Regenerate, verify, and commit**
 
 ```bash
 pnpm --dir apps/app exec convex codegen --typecheck disable
@@ -613,7 +613,7 @@ git commit -m "feat: audit identity credential migration"
 - Documents deploy → dry-run → inspect all issues → write → audit → idempotency dry-run → readiness.
 - Performs no production operation during implementation.
 
-- [ ] **Step 1: Write the operator runbook**
+- [x] **Step 1: Write the operator runbook**
 
 Document exact `--prod` commands for:
 
@@ -641,7 +641,7 @@ Require:
 
 Rollback is application redeployment only before write mode. After write mode, leave additive target rows in place and redeploy the prior application; do not delete backfilled data.
 
-- [ ] **Step 2: Run the full release gate**
+- [x] **Step 2: Run the full release gate**
 
 ```bash
 pnpm --filter app schema:inventory
@@ -656,7 +656,7 @@ pnpm --filter app exec next build --webpack
 
 If `convex/users.ts` was deleted, omit that path from the ESLint command rather than recreating an empty module.
 
-- [ ] **Step 3: Review invariants and commit**
+- [x] **Step 3: Review invariants and commit**
 
 Confirm:
 
