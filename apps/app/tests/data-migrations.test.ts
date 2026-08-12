@@ -1,6 +1,6 @@
 import { convexTest } from "convex-test";
 import { makeFunctionReference } from "convex/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Id } from "../convex/_generated/dataModel";
 import schema from "../convex/schema";
 
@@ -28,6 +28,45 @@ const processSchemaCleanupBatch = makeFunctionReference<
     };
   }
 >("databaseMigrations:processSchemaCleanupBatch");
+
+const startSchemaCleanup = makeFunctionReference<
+  "mutation",
+  {
+    dryRun: boolean;
+    dryRunId?: Id<"migrationRuns">;
+    batchSize?: number;
+  },
+  {
+    runId: Id<"migrationRuns">;
+    key: string;
+    version: number;
+    dryRun: boolean;
+  }
+>("databaseMigrations:startSchemaCleanup");
+
+const getSchemaCleanupRun = makeFunctionReference<
+  "query",
+  { runId: Id<"migrationRuns"> },
+  {
+    run: {
+      status: "queued" | "running" | "completed" | "failed";
+      counters: {
+        scanned: number;
+        changed: number;
+        unchanged: number;
+        skipped: number;
+        conflicts: number;
+        errors: number;
+      };
+    };
+    issues: Array<{ code: string; field: string }>;
+    canStartWrite: boolean;
+  }
+>("databaseMigrations:getSchemaCleanupRun");
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("database migration schema", () => {
   it("stores normalized organization configuration and migration state", async () => {
@@ -403,5 +442,114 @@ describe("database migration schema", () => {
       departments: 2,
       requirements: 1,
     });
+  });
+
+  it("guards schema cleanup start arguments and active runs", async () => {
+    const t = convexTest(schema, modules);
+
+    await expect(
+      t.mutation(startSchemaCleanup, { dryRun: true, batchSize: 0 }),
+    ).rejects.toThrow("Batch size must be between 1 and 50");
+    await expect(
+      t.mutation(startSchemaCleanup, { dryRun: true, batchSize: 51 }),
+    ).rejects.toThrow("Batch size must be between 1 and 50");
+    await expect(
+      t.mutation(startSchemaCleanup, { dryRun: false }),
+    ).rejects.toThrow("Completed dry-run is required");
+
+    const incompleteDryRunId = await t.run((ctx) =>
+      ctx.db.insert("migrationRuns", {
+        key: "schema-normalization-release-1",
+        version: 1,
+        dryRun: true,
+        status: "failed",
+        phase: "organizations",
+        batchSize: 20,
+        counters: {
+          scanned: 0,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    await expect(
+      t.mutation(startSchemaCleanup, {
+        dryRun: false,
+        dryRunId: incompleteDryRunId,
+      }),
+    ).rejects.toThrow("Completed dry-run is required");
+    await t.run((ctx) =>
+      ctx.db.insert("migrationRuns", {
+        key: "schema-normalization-release-1",
+        version: 1,
+        dryRun: true,
+        status: "running",
+        phase: "organizations",
+        batchSize: 20,
+        counters: {
+          scanned: 0,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 2,
+        updatedAt: 2,
+      }),
+    );
+    await expect(
+      t.mutation(startSchemaCleanup, { dryRun: true }),
+    ).rejects.toThrow("A schema cleanup run is already active");
+  });
+
+  it("runs all organizations in scheduled batches and reports status", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      for (let index = 1; index <= 3; index += 1) {
+        await ctx.db.insert("organizations", {
+          name: `Organization ${index}`,
+          createdAt: index,
+          updatedAt: index,
+        });
+      }
+    });
+
+    const started = await t.mutation(startSchemaCleanup, {
+      dryRun: true,
+      batchSize: 1,
+    });
+    expect(started).toMatchObject({
+      key: "schema-normalization-release-1",
+      version: 1,
+      dryRun: true,
+    });
+
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+    await expect(
+      t.query(getSchemaCleanupRun, { runId: started.runId }),
+    ).resolves.toMatchObject({
+      run: {
+        status: "completed",
+        counters: { scanned: 3, changed: 0, conflicts: 0, errors: 0 },
+      },
+      issues: [],
+      canStartWrite: true,
+    });
+    const destinationCounts = await t.run(async (ctx) => ({
+      payroll: (await ctx.db.query("organizationPayrollSettings").collect())
+        .length,
+      attendance: (
+        await ctx.db.query("organizationAttendanceSettings").collect()
+      ).length,
+    }));
+    expect(destinationCounts).toEqual({ payroll: 0, attendance: 0 });
   });
 });

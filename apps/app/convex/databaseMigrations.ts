@@ -1,5 +1,10 @@
 import { v } from "convex/values";
-import { internalMutation, type MutationCtx } from "./_generated/server";
+import { makeFunctionReference } from "convex/server";
+import {
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+} from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import {
   normalizeDepartmentName,
@@ -9,6 +14,11 @@ import {
 import type {
   SchemaCleanupCounters,
   SchemaCleanupIssue,
+} from "./databaseMigrationTypes";
+import {
+  EMPTY_SCHEMA_CLEANUP_COUNTERS,
+  SCHEMA_CLEANUP_MIGRATION_KEY,
+  SCHEMA_CLEANUP_VERSION,
 } from "./databaseMigrationTypes";
 
 function addCounters(
@@ -73,10 +83,11 @@ async function recordIssue(
   });
 }
 
-export const processSchemaCleanupBatch = internalMutation({
-  args: { runId: v.id("migrationRuns") },
-  handler: async (ctx, args) => {
-    const run = await ctx.db.get(args.runId);
+async function runSchemaCleanupBatch(
+  ctx: MutationCtx,
+  runId: Id<"migrationRuns">,
+) {
+    const run = await ctx.db.get(runId);
     if (!run || run.key !== "schema-normalization-release-1") {
       throw new Error("Schema cleanup run was not found");
     }
@@ -337,6 +348,136 @@ export const processSchemaCleanupBatch = internalMutation({
       done,
       cursor: done ? null : page.continueCursor,
       counters,
+    };
+}
+
+export const processSchemaCleanupBatch = internalMutation({
+  args: { runId: v.id("migrationRuns") },
+  handler: (ctx, args) => runSchemaCleanupBatch(ctx, args.runId),
+});
+
+const continueSchemaCleanupReference = makeFunctionReference<
+  "mutation",
+  { runId: Id<"migrationRuns"> }
+>("databaseMigrations:continueSchemaCleanup");
+
+export const startSchemaCleanup = internalMutation({
+  args: {
+    dryRun: v.boolean(),
+    dryRunId: v.optional(v.id("migrationRuns")),
+    batchSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const batchSize = args.batchSize ?? 20;
+    if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 50) {
+      throw new Error("Batch size must be between 1 and 50");
+    }
+
+    const activeRuns = [
+      ...(await ctx.db
+        .query("migrationRuns")
+        .withIndex("by_key_status", (q) =>
+          q.eq("key", SCHEMA_CLEANUP_MIGRATION_KEY).eq("status", "queued"),
+        )
+        .collect()),
+      ...(await ctx.db
+        .query("migrationRuns")
+        .withIndex("by_key_status", (q) =>
+          q.eq("key", SCHEMA_CLEANUP_MIGRATION_KEY).eq("status", "running"),
+        )
+        .collect()),
+    ];
+    if (activeRuns.length > 0) {
+      throw new Error("A schema cleanup run is already active");
+    }
+
+    let requiredDryRunId: Id<"migrationRuns"> | undefined;
+    if (!args.dryRun) {
+      if (!args.dryRunId) throw new Error("Completed dry-run is required");
+      const dryRun = await ctx.db.get(args.dryRunId);
+      if (
+        !dryRun ||
+        !dryRun.dryRun ||
+        dryRun.key !== SCHEMA_CLEANUP_MIGRATION_KEY ||
+        dryRun.version !== SCHEMA_CLEANUP_VERSION ||
+        dryRun.status !== "completed" ||
+        dryRun.counters.errors > 0
+      ) {
+        throw new Error("Completed dry-run is required");
+      }
+      requiredDryRunId = dryRun._id;
+    }
+
+    const now = Date.now();
+    const runId = await ctx.db.insert("migrationRuns", {
+      key: SCHEMA_CLEANUP_MIGRATION_KEY,
+      version: SCHEMA_CLEANUP_VERSION,
+      dryRun: args.dryRun,
+      status: "queued",
+      phase: "organizations",
+      batchSize,
+      counters: EMPTY_SCHEMA_CLEANUP_COUNTERS,
+      ...(requiredDryRunId ? { requiredDryRunId } : {}),
+      startedAt: now,
+      updatedAt: now,
+    });
+    await ctx.scheduler.runAfter(0, continueSchemaCleanupReference, { runId });
+
+    return {
+      runId,
+      key: SCHEMA_CLEANUP_MIGRATION_KEY,
+      version: SCHEMA_CLEANUP_VERSION,
+      dryRun: args.dryRun,
+    };
+  },
+});
+
+export const continueSchemaCleanup = internalMutation({
+  args: { runId: v.id("migrationRuns") },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run) throw new Error("Schema cleanup run was not found");
+    if (run.status === "queued") {
+      await ctx.db.patch(run._id, { status: "running", updatedAt: Date.now() });
+    } else if (run.status !== "running") {
+      return { done: true };
+    }
+
+    const result = await runSchemaCleanupBatch(ctx, args.runId);
+    if (!result.done) {
+      await ctx.scheduler.runAfter(0, continueSchemaCleanupReference, {
+        runId: args.runId,
+      });
+    }
+    return { done: result.done };
+  },
+});
+
+export const getSchemaCleanupRun = internalQuery({
+  args: { runId: v.id("migrationRuns") },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.key !== SCHEMA_CLEANUP_MIGRATION_KEY) {
+      throw new Error("Schema cleanup run was not found");
+    }
+    const issues = await ctx.db
+      .query("migrationIssues")
+      .withIndex("by_run", (q) => q.eq("runId", run._id))
+      .collect();
+    return {
+      run,
+      issues: issues.map(({ code, field, entityType, entityId, createdAt }) => ({
+        code,
+        field,
+        entityType,
+        entityId,
+        createdAt,
+      })),
+      canStartWrite:
+        run.dryRun &&
+        run.version === SCHEMA_CLEANUP_VERSION &&
+        run.status === "completed" &&
+        run.counters.errors === 0,
     };
   },
 });
