@@ -230,6 +230,205 @@ describe("full schema cleanup readiness", () => {
     );
   });
 
+  it.each([
+    {
+      name: "queued write",
+      writeStatus: "queued" as const,
+      errors: 0,
+      conflicts: 0,
+      expectedStatus: "running",
+      expectedBlocker: "MIGRATION_WRITE_NOT_COMPLETED",
+    },
+    {
+      name: "running write",
+      writeStatus: "running" as const,
+      errors: 0,
+      conflicts: 0,
+      expectedStatus: "running",
+      expectedBlocker: "MIGRATION_WRITE_NOT_COMPLETED",
+    },
+    {
+      name: "failed write",
+      writeStatus: "failed" as const,
+      errors: 0,
+      conflicts: 0,
+      expectedStatus: "failed",
+      expectedBlocker: "MIGRATION_WRITE_FAILED",
+    },
+    {
+      name: "completed write with errors",
+      writeStatus: "completed" as const,
+      errors: 1,
+      conflicts: 0,
+      expectedStatus: "blocked",
+      expectedBlocker: "MIGRATION_WRITE_ERRORS",
+    },
+    {
+      name: "completed write with conflicts",
+      writeStatus: "completed" as const,
+      errors: 0,
+      conflicts: 1,
+      expectedStatus: "blocked",
+      expectedBlocker: "MIGRATION_WRITE_CONFLICTS",
+    },
+  ])(
+    "does not search past a newer $name",
+    async ({ writeStatus, errors, conflicts, expectedStatus, expectedBlocker }) => {
+      const t = convexTest(schema, modules);
+      await t.run(async (ctx) => {
+        const cleanRunId = await ctx.db.insert("migrationRuns", {
+          key: "schema-normalization-release-1",
+          version: 1,
+          dryRun: false,
+          status: "completed",
+          phase: "organizations",
+          batchSize: 20,
+          counters: {
+            scanned: 0,
+            changed: 0,
+            unchanged: 0,
+            skipped: 0,
+            conflicts: 0,
+            errors: 0,
+          },
+          startedAt: 1,
+          updatedAt: 1,
+          completedAt: 1,
+        });
+        await ctx.db.insert("migrationAudits", {
+          migrationRunId: cleanRunId,
+          status: "completed",
+          phase: "requirements",
+          batchSize: 5,
+          organizations: 0,
+          destination: {
+            expected: 0,
+            matching: 0,
+            missing: 0,
+            duplicate: 0,
+            mismatched: 0,
+            unexpected: 0,
+            totalRows: 0,
+          },
+          duplicateLegacySettings: 0,
+          sourceConflicts: 0,
+          auditTruncated: false,
+          startedAt: 2,
+          updatedAt: 2,
+          completedAt: 2,
+        });
+        await ctx.db.insert("migrationRuns", {
+          key: "schema-normalization-release-1",
+          version: 1,
+          dryRun: false,
+          status: writeStatus,
+          phase: "organizations",
+          batchSize: 20,
+          counters: {
+            scanned: 0,
+            changed: 0,
+            unchanged: 0,
+            skipped: 0,
+            conflicts,
+            errors,
+          },
+          startedAt: 3,
+          updatedAt: 3,
+          completedAt:
+            writeStatus === "completed" || writeStatus === "failed"
+              ? 3
+              : undefined,
+        });
+      });
+
+      const readiness = await t.query(getFullSchemaCleanupReadiness, {});
+      const organization = readiness.domains.find(
+        ({ domain }) => domain === "organization_configuration",
+      );
+      expect(organization).toMatchObject({
+        status: expectedStatus,
+        blockers: [expectedBlocker],
+      });
+      expect(organization?.auditId).toBeUndefined();
+    },
+  );
+
+  it("ignores a newer dry run when resolving the latest write attempt", async () => {
+    const t = convexTest(schema, modules);
+    const cleanAuditId = await t.run(async (ctx) => {
+      const cleanRunId = await ctx.db.insert("migrationRuns", {
+        key: "schema-normalization-release-1",
+        version: 1,
+        dryRun: false,
+        status: "completed",
+        phase: "organizations",
+        batchSize: 20,
+        counters: {
+          scanned: 0,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 1,
+        updatedAt: 1,
+        completedAt: 1,
+      });
+      const auditId = await ctx.db.insert("migrationAudits", {
+        migrationRunId: cleanRunId,
+        status: "completed",
+        phase: "requirements",
+        batchSize: 5,
+        organizations: 0,
+        destination: {
+          expected: 0,
+          matching: 0,
+          missing: 0,
+          duplicate: 0,
+          mismatched: 0,
+          unexpected: 0,
+          totalRows: 0,
+        },
+        duplicateLegacySettings: 0,
+        sourceConflicts: 0,
+        auditTruncated: false,
+        startedAt: 2,
+        updatedAt: 2,
+        completedAt: 2,
+      });
+      await ctx.db.insert("migrationRuns", {
+        key: "schema-normalization-release-1",
+        version: 1,
+        dryRun: true,
+        status: "running",
+        phase: "organizations",
+        batchSize: 20,
+        counters: {
+          scanned: 0,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 3,
+        updatedAt: 3,
+      });
+      return auditId;
+    });
+
+    const readiness = await t.query(getFullSchemaCleanupReadiness, {});
+    expect(readiness.domains).toContainEqual(
+      expect.objectContaining({
+        domain: "organization_configuration",
+        status: "ready",
+        blockers: [],
+        auditId: cleanAuditId,
+      }),
+    );
+  });
+
   it("blocks readiness when the migration history lookback is exhausted", async () => {
     const t = convexTest(schema, modules);
     await t.run(async (ctx) => {
@@ -237,7 +436,7 @@ describe("full schema cleanup readiness", () => {
         await ctx.db.insert("migrationRuns", {
           key: "schema-normalization-release-1",
           version: 1,
-          dryRun: false,
+          dryRun: true,
           status: "completed",
           phase: "organizations",
           batchSize: 20,
@@ -314,7 +513,7 @@ describe("full schema cleanup readiness", () => {
         await ctx.db.insert("migrationRuns", {
           key: "schema-normalization-release-1",
           version: 1,
-          dryRun: false,
+          dryRun: true,
           status: "completed",
           phase: "organizations",
           batchSize: 20,

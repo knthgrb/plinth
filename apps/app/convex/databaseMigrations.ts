@@ -1085,7 +1085,7 @@ function hasCleanCompletedSchemaCleanupAudit(
   );
 }
 
-async function getLatestConflictFreeWriteRun(
+async function getLatestWriteAttempt(
   ctx: Pick<QueryCtx, "db">,
   migrationKey: string,
 ) {
@@ -1096,7 +1096,7 @@ async function getLatestConflictFreeWriteRun(
     .take(MAX_FULL_SCHEMA_MIGRATION_RUN_LOOKBACK + 1);
   const run = runs
     .slice(0, MAX_FULL_SCHEMA_MIGRATION_RUN_LOOKBACK)
-    .find(hasConflictFreeCompletedWriteRun);
+    .find((candidate) => !candidate.dryRun);
   if (run) return { status: "found" as const, run };
   if (runs.length > MAX_FULL_SCHEMA_MIGRATION_RUN_LOOKBACK) {
     return { status: "truncated" as const };
@@ -1124,7 +1124,7 @@ async function getOrganizationConfigurationReadiness(
   ctx: Pick<QueryCtx, "db">,
   registration: FullSchemaCleanupReadinessRegistration,
 ): Promise<FullSchemaDomainReadiness> {
-  const runLookup = await getLatestConflictFreeWriteRun(
+  const runLookup = await getLatestWriteAttempt(
     ctx,
     registration.migrationKey,
   );
@@ -1154,6 +1154,37 @@ async function getOrganizationConfigurationReadiness(
       migrationKey: registration.migrationKey,
       migrationVersion: registration.migrationVersion,
       blockers: ["MIGRATION_VERSION_STALE"],
+    };
+  }
+  if (run.status === "failed") {
+    return {
+      domain: registration.domain,
+      status: "failed",
+      migrationKey: registration.migrationKey,
+      migrationVersion: registration.migrationVersion,
+      blockers: ["MIGRATION_WRITE_FAILED"],
+    };
+  }
+  if (run.status !== "completed") {
+    return {
+      domain: registration.domain,
+      status: "running",
+      migrationKey: registration.migrationKey,
+      migrationVersion: registration.migrationVersion,
+      blockers: ["MIGRATION_WRITE_NOT_COMPLETED"],
+    };
+  }
+  const writeBlockers = [
+    ...(run.counters.errors > 0 ? ["MIGRATION_WRITE_ERRORS"] : []),
+    ...(run.counters.conflicts > 0 ? ["MIGRATION_WRITE_CONFLICTS"] : []),
+  ];
+  if (writeBlockers.length > 0) {
+    return {
+      domain: registration.domain,
+      status: "blocked",
+      migrationKey: registration.migrationKey,
+      migrationVersion: registration.migrationVersion,
+      blockers: writeBlockers,
     };
   }
 
