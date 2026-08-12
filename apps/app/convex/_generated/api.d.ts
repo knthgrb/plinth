@@ -57,7 +57,6 @@ import type * as settings from "../settings.js";
 import type * as shifts from "../shifts.js";
 import type * as sss from "../sss.js";
 import type * as storageMigrations from "../storageMigrations.js";
-import type * as users from "../users.js";
 
 import type {
   ApiFromModules,
@@ -115,7 +114,6 @@ declare const fullApi: ApiFromModules<{
   shifts: typeof shifts;
   sss: typeof sss;
   storageMigrations: typeof storageMigrations;
-  users: typeof users;
 }>;
 
 /**

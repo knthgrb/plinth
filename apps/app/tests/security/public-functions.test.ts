@@ -1,6 +1,8 @@
+import { makeFunctionReference } from "convex/server";
 import { convexTest } from "convex-test";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../../convex/_generated/api";
+import type { Id } from "../../convex/_generated/dataModel";
 import schema from "../../convex/schema";
 
 vi.mock("../../convex/auth", () => ({
@@ -19,7 +21,36 @@ const modules = Object.fromEntries(
   ]),
 );
 
+const legacySyncUser = makeFunctionReference<
+  "mutation",
+  {
+    email: string;
+    organizationId?: Id<"organizations">;
+    role?: "owner" | "admin" | "hr" | "manager" | "employee" | "accounting";
+  },
+  Id<"users">
+>("users:syncUser");
+
 describe("public Convex security boundaries", () => {
+  it("does not expose the legacy user-role synchronization mutation", async () => {
+    const t = convexTest(schema, modules);
+    const organizationId = await t.run((ctx) =>
+      ctx.db.insert("organizations", {
+        name: "Protected organization",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+
+    await expect(
+      t.mutation(legacySyncUser, {
+        email: "attacker@example.com",
+        organizationId,
+        role: "owner",
+      }),
+    ).rejects.toThrow();
+  });
+
   it("rejects unauthenticated super-admin elevation", async () => {
     const t = convexTest(schema, modules);
     const email = "target@example.com";
