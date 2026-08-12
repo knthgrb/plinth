@@ -68,6 +68,8 @@ const getSchemaCleanupAudit = makeFunctionReference<
   "query",
   { runId: Id<"migrationRuns"> },
   {
+    _id: Id<"migrationAudits">;
+    status: "queued" | "running" | "completed" | "failed";
     ready: boolean;
     organizations: number;
     destination: {
@@ -1217,6 +1219,70 @@ describe("database migration schema", () => {
         mismatched: 0,
         unexpected: 0,
         totalRows: 3,
+      },
+    });
+  });
+
+  it("repeats completed audits, returns the newest audit, and rejects overlap", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("organizations", {
+        name: "Repeat audit organization",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+
+    const dryRun = await t.mutation(startSchemaCleanup, {
+      dryRun: true,
+      batchSize: 1,
+    });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    const writeRun = await t.mutation(startSchemaCleanup, {
+      dryRun: false,
+      dryRunId: dryRun.runId,
+      batchSize: 1,
+    });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+    const firstAudit = await t.mutation(startSchemaCleanupAudit, {
+      runId: writeRun.runId,
+      batchSize: 1,
+    });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    await t.run(async (ctx) => {
+      const payrollRows = await ctx.db
+        .query("organizationPayrollSettings")
+        .collect();
+      for (const payroll of payrollRows) {
+        await ctx.db.patch(payroll._id, {
+          migrationVersion: 2,
+          updatedAt: Date.now(),
+        });
+      }
+    });
+
+    const secondAudit = await t.mutation(startSchemaCleanupAudit, {
+      runId: writeRun.runId,
+      batchSize: 1,
+    });
+    expect(secondAudit.auditId).not.toBe(firstAudit.auditId);
+    await expect(
+      t.mutation(startSchemaCleanupAudit, { runId: writeRun.runId }),
+    ).rejects.toThrow("Schema cleanup audit is already active");
+
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    await expect(
+      t.query(getSchemaCleanupAudit, { runId: writeRun.runId }),
+    ).resolves.toMatchObject({
+      _id: secondAudit.auditId,
+      status: "completed",
+      ready: true,
+      destination: {
+        expected: 1,
+        matching: 1,
+        mismatched: 0,
       },
     });
   });

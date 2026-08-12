@@ -4,7 +4,7 @@ import {
   normalizeDepartmentName,
   planOrganizationNormalization,
 } from "../convex/databaseMigrationPlanner";
-import { RELEASE_1_SCHEMA_FIELD_MANIFEST } from "../convex/schemaFieldManifest";
+import { ORGANIZATION_CONFIGURATION_FIELD_MANIFEST } from "../convex/schemaFieldManifest";
 
 describe("database migration planner", () => {
   it("keeps active organization payroll cadence and reports a legacy conflict", () => {
@@ -53,13 +53,28 @@ describe("database migration planner", () => {
   });
 
   it("classifies compatibility, historical, and removable schema fields", () => {
-    expect(RELEASE_1_SCHEMA_FIELD_MANIFEST).toEqual(
+    expect(ORGANIZATION_CONFIGURATION_FIELD_MANIFEST).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           table: "organizations",
           field: "salaryPaymentFrequency",
           classification: "compatibility_read",
           target: "organizationPayrollSettings.salaryPaymentFrequency",
+          releaseGate: "release_3_zero_legacy_fallbacks",
+        }),
+        expect.objectContaining({
+          table: "settings",
+          field: "payrollSettings",
+          classification: "compatibility_read",
+          target: "organizationPayrollSettings.payrollSettings",
+          releaseGate: "release_3_zero_legacy_fallbacks",
+        }),
+        expect.objectContaining({
+          table: "settings",
+          field: "cutoffDates",
+          classification: "compatibility_read",
+          target: "organizationPayrollSettings.cutoffDates",
+          releaseGate: "release_3_zero_legacy_fallbacks",
         }),
         expect.objectContaining({
           table: "payslips",
@@ -96,6 +111,13 @@ describe("database migration planner", () => {
         }),
       ]),
     );
+    expect(
+      ORGANIZATION_CONFIGURATION_FIELD_MANIFEST.filter(
+        (entry) => entry.classification === "compatibility_read",
+      ).every(
+        (entry) => entry.releaseGate === "release_3_zero_legacy_fallbacks",
+      ),
+    ).toBe(true);
   });
 
   it("uses stable payroll defaults without inventing issues", () => {

@@ -13,48 +13,62 @@ export type SchemaFieldManifestEntry = {
   releaseGate: string;
 };
 
-export const RELEASE_1_SCHEMA_FIELD_MANIFEST = [
+export const ORGANIZATION_CONFIGURATION_FIELD_MANIFEST = [
   {
     table: "organizations",
     field: "firstPayDate",
     classification: "compatibility_read",
     target: "organizationPayrollSettings.firstPayDate",
-    releaseGate: "release_2_read_switch_and_zero_fallbacks",
+    releaseGate: "release_3_zero_legacy_fallbacks",
   },
   {
     table: "organizations",
     field: "secondPayDate",
     classification: "compatibility_read",
     target: "organizationPayrollSettings.secondPayDate",
-    releaseGate: "release_2_read_switch_and_zero_fallbacks",
+    releaseGate: "release_3_zero_legacy_fallbacks",
   },
   {
     table: "organizations",
     field: "salaryPaymentFrequency",
     classification: "compatibility_read",
     target: "organizationPayrollSettings.salaryPaymentFrequency",
-    releaseGate: "release_2_read_switch_and_zero_fallbacks",
+    releaseGate: "release_3_zero_legacy_fallbacks",
   },
   {
     table: "organizations",
     field: "defaultRequirements",
     classification: "compatibility_read",
     target: "organizationRequirementDefinitions",
-    releaseGate: "release_2_read_switch_and_zero_fallbacks",
+    releaseGate: "release_3_zero_legacy_fallbacks",
+  },
+  {
+    table: "settings",
+    field: "payrollSettings",
+    classification: "compatibility_read",
+    target: "organizationPayrollSettings.payrollSettings",
+    releaseGate: "release_3_zero_legacy_fallbacks",
+  },
+  {
+    table: "settings",
+    field: "cutoffDates",
+    classification: "compatibility_read",
+    target: "organizationPayrollSettings.cutoffDates",
+    releaseGate: "release_3_zero_legacy_fallbacks",
   },
   {
     table: "settings",
     field: "attendanceSettings",
     classification: "compatibility_read",
     target: "organizationAttendanceSettings.attendanceSettings",
-    releaseGate: "release_2_read_switch_and_zero_fallbacks",
+    releaseGate: "release_3_zero_legacy_fallbacks",
   },
   {
     table: "settings",
     field: "departments",
     classification: "compatibility_read",
     target: "organizationDepartments",
-    releaseGate: "release_2_stable_department_id_migration",
+    releaseGate: "release_3_zero_legacy_fallbacks",
   },
   {
     table: "settings",

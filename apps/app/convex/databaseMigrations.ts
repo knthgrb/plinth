@@ -5,6 +5,7 @@ import {
   internalMutation,
   internalQuery,
   type MutationCtx,
+  type QueryCtx,
 } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -19,7 +20,7 @@ import {
   type SchemaCleanupCounters,
   type SchemaCleanupIssue,
 } from "./databaseMigrationTypes";
-import { RELEASE_1_SCHEMA_FIELD_MANIFEST } from "./schemaFieldManifest";
+import { ORGANIZATION_CONFIGURATION_FIELD_MANIFEST } from "./schemaFieldManifest";
 
 const MAX_STATUS_ISSUES = 200;
 const MAX_DESTINATION_ROWS_PER_ORGANIZATION = 500;
@@ -55,9 +56,16 @@ function destinationResult(
 ): DestinationResult {
   if (rows.length === 0) return "changed";
   if (rows.length > 1) return "conflict";
+  const ignoredFields = [
+    "_id",
+    "_creationTime",
+    "createdAt",
+    "updatedAt",
+    "migrationVersion",
+  ];
   return valuesEqual(
-    comparableRow(rows[0], ["_id", "_creationTime", "createdAt", "updatedAt"]),
-    expected,
+    comparableRow(rows[0], ignoredFields),
+    comparableRow(expected, ignoredFields),
   )
     ? "unchanged"
     : "conflict";
@@ -1007,6 +1015,17 @@ const failAuditReference = makeFunctionReference<
   { auditId: Id<"migrationAudits">; failureCode: string }
 >("databaseMigrations:failSchemaCleanupAudit");
 
+async function getLatestSchemaCleanupAudit(
+  ctx: Pick<QueryCtx, "db">,
+  runId: Id<"migrationRuns">,
+) {
+  return ctx.db
+    .query("migrationAudits")
+    .withIndex("by_run", (q) => q.eq("migrationRunId", runId))
+    .order("desc")
+    .first();
+}
+
 export const startSchemaCleanupAudit = internalMutation({
   args: {
     runId: v.id("migrationRuns"),
@@ -1029,11 +1048,10 @@ export const startSchemaCleanupAudit = internalMutation({
     ) {
       throw new Error("Conflict-free completed write run is required");
     }
-    const existing = await ctx.db
-      .query("migrationAudits")
-      .withIndex("by_run", (q) => q.eq("migrationRunId", run._id))
-      .unique();
-    if (existing) throw new Error("Schema cleanup audit already exists");
+    const existing = await getLatestSchemaCleanupAudit(ctx, run._id);
+    if (existing?.status === "queued" || existing?.status === "running") {
+      throw new Error("Schema cleanup audit is already active");
+    }
 
     const now = Date.now();
     const auditId = await ctx.db.insert("migrationAudits", {
@@ -1108,10 +1126,7 @@ export const resumeSchemaCleanupAudit = internalMutation({
     ) {
       throw new Error("Conflict-free completed write run is required");
     }
-    const audit = await ctx.db
-      .query("migrationAudits")
-      .withIndex("by_run", (q) => q.eq("migrationRunId", run._id))
-      .unique();
+    const audit = await getLatestSchemaCleanupAudit(ctx, run._id);
     if (!audit) throw new Error("Schema cleanup audit was not found");
     if (audit.status === "completed") {
       throw new Error("Completed schema cleanup audit cannot resume");
@@ -1144,10 +1159,7 @@ export const getSchemaCleanupAudit = internalQuery({
     ) {
       throw new Error("Schema cleanup run was not found");
     }
-    const audit = await ctx.db
-      .query("migrationAudits")
-      .withIndex("by_run", (q) => q.eq("migrationRunId", run._id))
-      .unique();
+    const audit = await getLatestSchemaCleanupAudit(ctx, run._id);
     if (!audit) return { status: "not_started" as const, ready: false };
     const ready =
       !run.dryRun &&
@@ -1165,7 +1177,7 @@ export const getSchemaCleanupAudit = internalQuery({
     return {
       ...audit,
       ready,
-      fieldManifest: RELEASE_1_SCHEMA_FIELD_MANIFEST,
+      fieldManifest: ORGANIZATION_CONFIGURATION_FIELD_MANIFEST,
     };
   },
 });
