@@ -14,6 +14,21 @@ export const IDENTITY_CREDENTIALS_MIGRATION_KEY =
   "full-schema-identity-credentials";
 export const IDENTITY_CREDENTIALS_MIGRATION_VERSION = 1;
 
+type EmployeeLifecycleStatus =
+  | "active"
+  | "inactive"
+  | "resigned"
+  | "terminated";
+
+function accessStatusForEmployee(
+  status: EmployeeLifecycleStatus | undefined,
+): PlannedUserMembership["accessStatus"] {
+  if (status === "inactive") return "suspended";
+  if (status === "resigned") return "alumni";
+  if (status === "terminated") return "disabled";
+  return "active";
+}
+
 function conflict<T>(
   code: IdentityMigrationIssue["code"],
   field: string,
@@ -25,7 +40,11 @@ export function planLegacyUserMembership(args: {
   user: LegacyUserIdentity;
   memberships: ExistingUserMembership[];
   organizationExists: boolean;
-  employee: { id: string; organizationId: string } | null;
+  employee: {
+    id: string;
+    organizationId: string;
+    employmentStatus?: EmployeeLifecycleStatus;
+  } | null;
   lastActiveOrganizationExists: boolean;
 }): IdentityPlan<PlannedUserMembership> {
   const { user } = args;
@@ -64,8 +83,11 @@ export function planLegacyUserMembership(args: {
   }
 
   const existing = matchingMemberships[0];
+  const expectedAccessStatus = accessStatusForEmployee(
+    args.employee?.employmentStatus,
+  );
   if (!existing) {
-    if (user.isActive === false) {
+    if (user.isActive === false && expectedAccessStatus === "active") {
       return conflict("AMBIGUOUS_GLOBAL_INACTIVE_USER", "isActive");
     }
     return {
@@ -74,7 +96,7 @@ export function planLegacyUserMembership(args: {
         organizationId: user.organizationId,
         role: user.role,
         ...(user.employeeId ? { employeeId: user.employeeId } : {}),
-        accessStatus: "active",
+        accessStatus: expectedAccessStatus,
       },
     };
   }
@@ -83,6 +105,12 @@ export function planLegacyUserMembership(args: {
   }
   if (existing.employeeId !== user.employeeId) {
     return conflict("MEMBERSHIP_EMPLOYEE_MISMATCH", "employeeId");
+  }
+  if (
+    args.employee?.employmentStatus &&
+    (existing.accessStatus ?? "active") !== expectedAccessStatus
+  ) {
+    return conflict("MEMBERSHIP_ACCESS_STATUS_MISMATCH", "accessStatus");
   }
   if (user.isActive === false) {
     if (existing.accessStatus && existing.accessStatus !== "active") {

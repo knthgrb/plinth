@@ -40,7 +40,11 @@ describe("identity migration planner", () => {
         },
         memberships: [],
         organizationExists: true,
-        employee: { id: employeeId, organizationId },
+        employee: {
+          id: employeeId,
+          organizationId,
+          employmentStatus: "active",
+        },
         lastActiveOrganizationExists: true,
       }),
     ).toEqual({
@@ -51,6 +55,60 @@ describe("identity migration planner", () => {
         employeeId,
         accessStatus: "active",
       },
+    });
+  });
+
+  it.each([
+    ["inactive", "suspended"],
+    ["resigned", "alumni"],
+    ["terminated", "disabled"],
+  ] as const)(
+    "creates %s employee membership with %s access",
+    (employmentStatus, accessStatus) => {
+      expect(
+        planLegacyUserMembership({
+          user: {
+            organizationId,
+            role: "employee",
+            employeeId,
+            isActive: false,
+          },
+          memberships: [],
+          organizationExists: true,
+          employee: {
+            id: employeeId,
+            organizationId,
+            employmentStatus,
+          },
+          lastActiveOrganizationExists: true,
+        }),
+      ).toEqual({
+        outcome: "create",
+        value: { organizationId, role: "employee", employeeId, accessStatus },
+      });
+    },
+  );
+
+  it("rejects an access status that conflicts with employee lifecycle", () => {
+    expect(
+      planLegacyUserMembership({
+        user: { organizationId, role: "employee", employeeId },
+        memberships: [
+          { organizationId, role: "employee", employeeId, accessStatus: "active" },
+        ],
+        organizationExists: true,
+        employee: {
+          id: employeeId,
+          organizationId,
+          employmentStatus: "resigned",
+        },
+        lastActiveOrganizationExists: true,
+      }),
+    ).toEqual({
+      outcome: "conflict",
+      issues: [
+        { code: "MEMBERSHIP_ACCESS_STATUS_MISMATCH", field: "accessStatus" },
+      ],
     });
   });
 

@@ -42,12 +42,13 @@ type FullSchemaCleanupReadinessRegistration = {
   domain: FullSchemaCleanupDomain;
   migrationKey: string;
   migrationVersion: number;
-  implementation: "compatibility" | "not_started";
+  implementation: "compatibility" | "migration" | "not_started";
 };
 
 type FullSchemaCleanupReadinessMode =
   | "not_started"
   | "organization_configuration"
+  | "identity_credentials"
   | "unsupported";
 
 function addCounters(
@@ -1089,6 +1090,26 @@ function hasCleanCompletedSchemaCleanupAudit(
   );
 }
 
+function hasCleanCompletedDomainAudit(
+  registration: FullSchemaCleanupReadinessRegistration,
+  run: Doc<"migrationRuns">,
+  audit: Doc<"migrationAudits">,
+) {
+  return (
+    run.key === registration.migrationKey &&
+    run.version === registration.migrationVersion &&
+    hasConflictFreeCompletedWriteRun(run) &&
+    audit.status === "completed" &&
+    !audit.auditTruncated &&
+    audit.sourceConflicts === 0 &&
+    audit.destination.missing === 0 &&
+    audit.destination.duplicate === 0 &&
+    audit.destination.mismatched === 0 &&
+    audit.destination.unexpected === 0 &&
+    audit.destination.matching === audit.destination.expected
+  );
+}
+
 async function getLatestWriteAttempt(
   ctx: Pick<QueryCtx, "db">,
   migrationKey: string,
@@ -1227,7 +1248,7 @@ async function getOrganizationConfigurationReadiness(
       ...auditMetadata,
     };
   }
-  if (!hasCleanCompletedSchemaCleanupAudit(run, audit)) {
+  if (!hasCleanCompletedDomainAudit(registration, run, audit)) {
     return {
       domain: registration.domain,
       status: "blocked",
@@ -1258,6 +1279,14 @@ export function resolveFullSchemaCleanupReadinessMode(
   ) {
     return "organization_configuration";
   }
+  if (
+    registration.implementation === "migration" &&
+    registration.domain === "identity_credentials" &&
+    registration.migrationKey === "full-schema-identity-credentials" &&
+    registration.migrationVersion === 1
+  ) {
+    return "identity_credentials";
+  }
   return "unsupported";
 }
 
@@ -1275,6 +1304,8 @@ async function getFullSchemaDomainReadiness(
         blockers: ["DOMAIN_IMPLEMENTATION_NOT_DEPLOYED"],
       };
     case "organization_configuration":
+      return getOrganizationConfigurationReadiness(ctx, registration);
+    case "identity_credentials":
       return getOrganizationConfigurationReadiness(ctx, registration);
     case "unsupported":
       return {

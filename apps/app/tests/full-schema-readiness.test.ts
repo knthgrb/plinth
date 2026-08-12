@@ -119,6 +119,12 @@ describe("full schema cleanup readiness", () => {
     expect(
       resolveFullSchemaCleanupReadinessMode({
         ...identityCredentials,
+        implementation: "migration",
+      }),
+    ).toBe("identity_credentials");
+    expect(
+      resolveFullSchemaCleanupReadinessMode({
+        ...identityCredentials,
         implementation: "compatibility",
       }),
     ).toBe("unsupported");
@@ -127,7 +133,7 @@ describe("full schema cleanup readiness", () => {
     ).toBe("organization_configuration");
   });
 
-  it("reports every table and blocks unimplemented domains", async () => {
+  it("reports every table and waits for the identity migration", async () => {
     const t = convexTest(schema, modules);
 
     const inventory = await t.query(getFullSchemaInventory, {});
@@ -167,7 +173,140 @@ describe("full schema cleanup readiness", () => {
       expect.objectContaining({
         domain: "identity_credentials",
         status: "not_started",
-        blockers: ["DOMAIN_IMPLEMENTATION_NOT_DEPLOYED"],
+        blockers: ["COMPLETED_WRITE_RUN_NOT_FOUND"],
+      }),
+    );
+  });
+
+  it("marks identity credentials ready from the newest clean write audit", async () => {
+    const t = convexTest(schema, modules);
+    const auditId = await t.run(async (ctx) => {
+      const runId = await ctx.db.insert("migrationRuns", {
+        key: "full-schema-identity-credentials",
+        version: 1,
+        dryRun: false,
+        status: "completed",
+        phase: "identity_invitations",
+        batchSize: 20,
+        counters: {
+          scanned: 3,
+          changed: 3,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 1,
+        updatedAt: 1,
+        completedAt: 1,
+      });
+      return ctx.db.insert("migrationAudits", {
+        migrationRunId: runId,
+        status: "completed",
+        phase: "identity_invitations",
+        batchSize: 5,
+        organizations: 0,
+        destination: {
+          expected: 3,
+          matching: 3,
+          missing: 0,
+          duplicate: 0,
+          mismatched: 0,
+          unexpected: 0,
+          totalRows: 3,
+        },
+        duplicateLegacySettings: 0,
+        sourceConflicts: 0,
+        auditTruncated: false,
+        startedAt: 2,
+        updatedAt: 2,
+        completedAt: 2,
+      });
+    });
+
+    const readiness = await t.query(getFullSchemaCleanupReadiness, {});
+    expect(readiness.readyForRelease3).toBe(false);
+    expect(readiness.domains).toContainEqual(
+      expect.objectContaining({
+        domain: "identity_credentials",
+        status: "ready",
+        blockers: [],
+        auditId,
+        auditedAt: 2,
+      }),
+    );
+  });
+
+  it("does not search past a newer unsafe identity write", async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const cleanRunId = await ctx.db.insert("migrationRuns", {
+        key: "full-schema-identity-credentials",
+        version: 1,
+        dryRun: false,
+        status: "completed",
+        phase: "identity_invitations",
+        batchSize: 20,
+        counters: {
+          scanned: 0,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 1,
+        updatedAt: 1,
+        completedAt: 1,
+      });
+      await ctx.db.insert("migrationAudits", {
+        migrationRunId: cleanRunId,
+        status: "completed",
+        phase: "identity_invitations",
+        batchSize: 5,
+        organizations: 0,
+        destination: {
+          expected: 0,
+          matching: 0,
+          missing: 0,
+          duplicate: 0,
+          mismatched: 0,
+          unexpected: 0,
+          totalRows: 0,
+        },
+        duplicateLegacySettings: 0,
+        sourceConflicts: 0,
+        auditTruncated: false,
+        startedAt: 2,
+        updatedAt: 2,
+        completedAt: 2,
+      });
+      await ctx.db.insert("migrationRuns", {
+        key: "full-schema-identity-credentials",
+        version: 1,
+        dryRun: false,
+        status: "running",
+        phase: "identity_users",
+        batchSize: 20,
+        counters: {
+          scanned: 0,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 3,
+        updatedAt: 3,
+      });
+    });
+
+    const readiness = await t.query(getFullSchemaCleanupReadiness, {});
+    expect(readiness.domains).toContainEqual(
+      expect.objectContaining({
+        domain: "identity_credentials",
+        status: "running",
+        blockers: ["MIGRATION_WRITE_NOT_COMPLETED"],
       }),
     );
   });

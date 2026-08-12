@@ -19,6 +19,7 @@ export type IdentityMigrationIssueCode =
   | "INVITATION_TOKEN_HASH_MISMATCH"
   | "LAST_ACTIVE_ORGANIZATION_NOT_FOUND"
   | "MEMBERSHIP_EMPLOYEE_MISMATCH"
+  | "MEMBERSHIP_ACCESS_STATUS_MISMATCH"
   | "MEMBERSHIP_ROLE_MISMATCH"
   | "MISSING_INVITATION_TOKEN"
   | "MISSING_LEGACY_ROLE"
@@ -56,7 +57,7 @@ export type PlannedUserMembership = {
   organizationId: string;
   role: OrganizationRole;
   employeeId?: string;
-  accessStatus: "active";
+  accessStatus: "active" | "suspended" | "alumni" | "disabled";
 };
 
 export type PayslipCredentialDestination = {

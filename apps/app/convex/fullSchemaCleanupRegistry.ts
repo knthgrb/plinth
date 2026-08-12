@@ -10,7 +10,7 @@ type FullSchemaCleanupDomainRegistration = {
   domain: string;
   migrationKey: string;
   migrationVersion: number;
-  implementation: "compatibility" | "not_started";
+  implementation: "compatibility" | "migration" | "not_started";
   policyDomains: readonly FullSchemaPolicyDomain[];
 };
 
@@ -30,7 +30,7 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     domain: "identity_credentials",
     migrationKey: "full-schema-identity-credentials",
     migrationVersion: 1,
-    implementation: "not_started",
+    implementation: "migration",
     policyDomains: ["identity_membership", "employee_core_credentials"],
   },
   {

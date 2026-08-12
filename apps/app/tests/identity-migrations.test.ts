@@ -91,6 +91,56 @@ const resumeMigration = makeFunctionReference<
   { resumed: boolean; runId: Id<"migrationRuns"> }
 >("identityMigrations:resumeIdentityCredentialsMigration");
 
+const startAudit = makeFunctionReference<
+  "mutation",
+  { runId: Id<"migrationRuns">; batchSize?: number },
+  { auditId: Id<"migrationAudits">; runId: Id<"migrationRuns"> }
+>("identityMigrations:startIdentityCredentialsAudit");
+
+const getAudit = makeFunctionReference<
+  "query",
+  { runId: Id<"migrationRuns"> },
+  {
+    _id?: Id<"migrationAudits">;
+    status: "not_started" | "queued" | "running" | "completed" | "failed";
+    ready: boolean;
+    sourceConflicts?: number;
+    destination?: {
+      expected: number;
+      matching: number;
+      missing: number;
+      duplicate: number;
+      mismatched: number;
+      unexpected: number;
+      totalRows: number;
+    };
+  }
+>("identityMigrations:getIdentityCredentialsAudit");
+
+const resumeAudit = makeFunctionReference<
+  "mutation",
+  { runId: Id<"migrationRuns"> },
+  { resumed: boolean; auditId: Id<"migrationAudits"> }
+>("identityMigrations:resumeIdentityCredentialsAudit");
+
+const listAuditIssues = makeFunctionReference<
+  "query",
+  {
+    auditId: Id<"migrationAudits">;
+    paginationOpts: { numItems: number; cursor: string | null };
+  },
+  {
+    page: Array<{
+      code: string;
+      field: string;
+      entityType: string;
+      entityId?: string;
+    }>;
+    isDone: boolean;
+    continueCursor: string;
+  }
+>("identityMigrations:listIdentityCredentialsAuditIssues");
+
 const insertEmployee = async (
   ctx: MutationCtx,
   organizationId: Id<"organizations">,
@@ -309,6 +359,58 @@ describe("identity credentials migration", () => {
     ).resolves.toMatchObject({
       run: { counters: { changed: 0, unchanged: 3, conflicts: 0 } },
       canStartWrite: true,
+    });
+  });
+
+  it("backfills resigned employees as alumni without granting active access", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { organizationId, userId } = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Former Employer",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const employeeId = await insertEmployee(ctx, organizationId);
+      const employee = await ctx.db.get(employeeId);
+      await ctx.db.patch(employeeId, {
+        employment: {
+          ...employee!.employment,
+          status: "resigned",
+          separationDate: 2,
+        },
+      });
+      const userId = await ctx.db.insert("users", {
+        email: "former-employee@example.com",
+        organizationId,
+        role: "employee",
+        employeeId,
+        isActive: false,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return { organizationId, userId };
+    });
+    const dryRun = await t.mutation(startMigration, { dryRun: true });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    const write = await t.mutation(startMigration, {
+      dryRun: false,
+      dryRunId: dryRun.runId,
+    });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+    await expect(
+      t.run((ctx) =>
+        ctx.db
+          .query("userOrganizations")
+          .withIndex("by_user_organization", (query) =>
+            query.eq("userId", userId).eq("organizationId", organizationId),
+          )
+          .unique(),
+      ),
+    ).resolves.toMatchObject({ accessStatus: "alumni" });
+    await expect(t.query(getRun, { runId: write.runId })).resolves.toMatchObject({
+      run: { status: "completed", counters: { conflicts: 0 } },
     });
   });
 
@@ -534,5 +636,237 @@ describe("identity credentials migration", () => {
     await expect(
       t.query(getRun, { runId: wrongVersionRunId }),
     ).rejects.toThrow("Identity credentials migration run was not found");
+  });
+
+  it("audits a completed write with bounded persisted phases", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    await t.run(insertMigrationSources);
+    const dryRun = await t.mutation(startMigration, { dryRun: true });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    const write = await t.mutation(startMigration, {
+      dryRun: false,
+      dryRunId: dryRun.runId,
+    });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+    await expect(
+      t.mutation(startAudit, { runId: write.runId, batchSize: 0 }),
+    ).rejects.toThrow("Audit batch size must be between 1 and 10");
+    const started = await t.mutation(startAudit, {
+      runId: write.runId,
+      batchSize: 1,
+    });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+    await expect(t.query(getAudit, { runId: write.runId })).resolves.toMatchObject({
+      _id: started.auditId,
+      status: "completed",
+      ready: true,
+      sourceConflicts: 0,
+      destination: {
+        expected: 3,
+        matching: 3,
+        missing: 0,
+        duplicate: 0,
+        mismatched: 0,
+        unexpected: 0,
+        totalRows: 3,
+      },
+    });
+  });
+
+  it("rejects audit without a conflict-free completed write", async () => {
+    const t = convexTest(schema, modules);
+    const dryRun = await t.mutation(startMigration, { dryRun: true });
+
+    await expect(
+      t.mutation(startAudit, { runId: dryRun.runId }),
+    ).rejects.toThrow("Conflict-free completed write run is required");
+  });
+
+  it("reports missing and unexpected identity destinations without secrets", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const fixture = await t.run(insertMigrationSources);
+    const writeRunId = await t.run(async (ctx) => {
+      const sourceLessEmployeeId = await insertEmployee(ctx, fixture.organizationId);
+      await ctx.db.insert("payslipCredentials", {
+        organizationId: fixture.organizationId,
+        employeeId: sourceLessEmployeeId,
+        credentialHash: "must-not-appear-in-audit",
+        credentialVersion: 1,
+        migrationVersion: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return ctx.db.insert("migrationRuns", {
+        key: "full-schema-identity-credentials",
+        version: 1,
+        dryRun: false,
+        status: "completed",
+        phase: "identity_invitations",
+        batchSize: 20,
+        counters: {
+          scanned: 3,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 1,
+        updatedAt: 1,
+        completedAt: 1,
+      });
+    });
+
+    await t.mutation(startAudit, { runId: writeRunId, batchSize: 1 });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    const audit = await t.query(getAudit, { runId: writeRunId });
+    expect(audit).toMatchObject({
+      status: "completed",
+      ready: false,
+      destination: { missing: 3, unexpected: 1 },
+    });
+    expect(JSON.stringify(audit)).not.toContain("must-not-appear-in-audit");
+    expect(JSON.stringify(audit)).not.toContain("legacy-credential-hash");
+    expect(JSON.stringify(audit)).not.toContain("legacy-invitation-token");
+  });
+
+  it("audits duplicate memberships and isolates issues by audit", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const runId = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Duplicate Membership Org",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const employeeId = await insertEmployee(ctx, organizationId);
+      const userId = await ctx.db.insert("users", {
+        email: "duplicate-secret@example.com",
+        organizationId,
+        role: "employee",
+        employeeId,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      for (let index = 0; index < 2; index += 1) {
+        await ctx.db.insert("userOrganizations", {
+          userId,
+          organizationId,
+          employeeId,
+          role: "employee",
+          accessStatus: "active",
+          joinedAt: index + 1,
+          updatedAt: index + 1,
+        });
+      }
+      return ctx.db.insert("migrationRuns", {
+        key: "full-schema-identity-credentials",
+        version: 1,
+        dryRun: false,
+        status: "completed",
+        phase: "identity_invitations",
+        batchSize: 20,
+        counters: {
+          scanned: 1,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 1,
+        updatedAt: 1,
+        completedAt: 1,
+      });
+    });
+
+    const first = await t.mutation(startAudit, { runId, batchSize: 1 });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    const firstIssues = await t.query(listAuditIssues, {
+      auditId: first.auditId,
+      paginationOpts: { numItems: 20, cursor: null },
+    });
+    expect(firstIssues.page).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "DUPLICATE_USER_MEMBERSHIP" }),
+        expect.objectContaining({
+          code: "DUPLICATE_ORGANIZATION_EMPLOYEE_MEMBERSHIP",
+        }),
+      ]),
+    );
+    expect(JSON.stringify(firstIssues)).not.toContain("duplicate-secret@example.com");
+
+    const second = await t.mutation(startAudit, { runId, batchSize: 1 });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    const secondIssues = await t.query(listAuditIssues, {
+      auditId: second.auditId,
+      paginationOpts: { numItems: 20, cursor: null },
+    });
+    expect(secondIssues.page).toHaveLength(firstIssues.page.length);
+    expect(second.auditId).not.toBe(first.auditId);
+  });
+
+  it("resumes a failed identity audit but not a completed audit", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const runId = await t.run((ctx) =>
+      ctx.db.insert("migrationRuns", {
+        key: "full-schema-identity-credentials",
+        version: 1,
+        dryRun: false,
+        status: "completed",
+        phase: "identity_invitations",
+        batchSize: 20,
+        counters: {
+          scanned: 0,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 1,
+        updatedAt: 1,
+        completedAt: 1,
+      }),
+    );
+    const failedAuditId = await t.run((ctx) =>
+      ctx.db.insert("migrationAudits", {
+        migrationRunId: runId,
+        status: "failed",
+        phase: "identity_users",
+        batchSize: 5,
+        organizations: 0,
+        destination: {
+          expected: 0,
+          matching: 0,
+          missing: 0,
+          duplicate: 0,
+          mismatched: 0,
+          unexpected: 0,
+          totalRows: 0,
+        },
+        duplicateLegacySettings: 0,
+        sourceConflicts: 0,
+        auditTruncated: false,
+        startedAt: 1,
+        updatedAt: 1,
+        completedAt: 1,
+        failureCode: "AUDIT_BATCH_FAILED",
+      }),
+    );
+
+    await expect(t.mutation(resumeAudit, { runId })).resolves.toEqual({
+      resumed: true,
+      auditId: failedAuditId,
+    });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    await expect(t.mutation(resumeAudit, { runId })).rejects.toThrow(
+      "Completed identity credentials audit cannot resume",
+    );
   });
 });
