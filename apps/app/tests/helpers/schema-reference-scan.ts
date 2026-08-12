@@ -8,8 +8,25 @@ export type SchemaReferenceMatch = {
 };
 
 const SOURCE_ROOTS = ["app", "components", "convex", "lib", "utils"];
-const SOURCE_EXTENSIONS = new Set([".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"]);
-const IDENTIFIER_CHARACTER = "A-Za-z0-9_$";
+const SOURCE_EXTENSIONS = new Set([
+  ".cjs",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".mts",
+  ".ts",
+  ".tsx",
+]);
+const IDENTIFIER_CONTINUATION = "\\p{ID_Continue}$";
+
+export const DEFAULT_SCHEMA_REFERENCE_EXCLUSIONS: readonly RegExp[] = [
+  /(?:^|\/)schema\.ts$/,
+  /(?:^|\/)(?:schemaFieldManifest|fullSchemaInventory|fullSchemaCleanupRegistry)\.ts$/,
+  /(?:^|\/)(?:_generated|generated)(?:\/|$)/,
+  /(?:^|\/)(?:[^/]*Migration(?:s)?[^/]*|(?:migration|migrations)(?:[._-][^/]*)?|[^/]*[._-](?:migration|migrations)(?:[._-][^/]*)?)\.(?:[cm]?[jt]sx?)$/,
+  /(?:^|\/)(?:tests|docs)(?:\/|$)/,
+];
 
 const escapeRegularExpression = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -18,8 +35,8 @@ const symbolPattern = (symbol: string): RegExp => {
   const segments = symbol.split(".").map(escapeRegularExpression);
   const dottedPath = segments.join("\\s*\\??\\.\\s*");
   return new RegExp(
-    `(?<![${IDENTIFIER_CHARACTER}])${dottedPath}(?![${IDENTIFIER_CHARACTER}])`,
-    "g",
+    `(?<![${IDENTIFIER_CONTINUATION}])${dottedPath}(?![${IDENTIFIER_CONTINUATION}])`,
+    "gu",
   );
 };
 

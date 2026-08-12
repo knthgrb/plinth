@@ -7,7 +7,11 @@ import {
   FULL_SCHEMA_FIELD_OVERRIDES,
   type SchemaItemClassification,
 } from "../convex/fullSchemaInventory";
-import { scanSchemaReferences } from "./helpers/schema-reference-scan";
+import baseline from "./fixtures/schema-contract-reference-baseline.json";
+import {
+  DEFAULT_SCHEMA_REFERENCE_EXCLUSIONS,
+  scanSchemaReferences,
+} from "./helpers/schema-reference-scan";
 
 const fixtureRoots: string[] = [];
 
@@ -75,33 +79,60 @@ describe("schema contract references", () => {
     ]);
   });
 
-  it("scans only intended source roots and applies exclusions to relative paths", () => {
+  it("does not match symbols inside Unicode identifiers", () => {
     const root = createFixture();
-    writeFixture(root, "convex/live.ts", "legacyField;\n");
-    writeFixture(root, "convex/excluded.ts", "legacyField;\n");
-    writeFixture(root, "tests/legacy.test.ts", "legacyField;\n");
-    writeFixture(root, "services/legacy.ts", "legacyField;\n");
+    writeFixture(root, "convex/tokens.ts", "const πtoken = 1;\nconst token = 2;\n");
+
+    expect(scanSchemaReferences(root, ["token"], [])).toEqual([
+      { symbol: "token", file: "convex/tokens.ts", line: 2 },
+    ]);
+  });
+
+  it("deduplicates duplicate input symbols and same-line matches", () => {
+    const root = createFixture();
+    writeFixture(root, "convex/live.ts", "legacyField + legacyField;\n");
 
     expect(
-      scanSchemaReferences(root, ["legacyField"], [/^convex\/excluded\.ts$/]),
+      scanSchemaReferences(root, ["legacyField", "legacyField"], []),
     ).toEqual([{ symbol: "legacyField", file: "convex/live.ts", line: 1 }]);
   });
 
-  it("covers every legacy policy symbol and produces a deterministic baseline", () => {
-    const root = fileURLToPath(new URL("../", import.meta.url));
+  it("applies the complete default policy only within intended source roots", () => {
+    const root = createFixture();
+    const excludedFiles = [
+      "convex/schema.ts",
+      "convex/schemaFieldManifest.ts",
+      "convex/fullSchemaInventory.ts",
+      "convex/fullSchemaCleanupRegistry.ts",
+      "convex/_generated/api.ts",
+      "convex/databaseMigrationPlanner.ts",
+      "convex/databaseMigrationTypes.ts",
+      "convex/databaseMigrations.ts",
+      "convex/dataMigrations.ts",
+      "convex/payslipSecurityMigrations.ts",
+      "convex/storageMigrations.ts",
+      "tests/legacy.test.ts",
+      "docs/legacy.ts",
+      "services/legacy.ts",
+    ];
+    for (const file of excludedFiles) {
+      writeFixture(root, file, "legacyField;\n");
+    }
+    writeFixture(root, "convex/live.ts", "legacyField;\n");
+
+    expect(
+      scanSchemaReferences(
+        root,
+        ["legacyField"],
+        DEFAULT_SCHEMA_REFERENCE_EXCLUSIONS,
+      ),
+    ).toEqual([{ symbol: "legacyField", file: "convex/live.ts", line: 1 }]);
+  });
+
+  it("covers every legacy policy symbol", () => {
     const symbols = FULL_SCHEMA_FIELD_OVERRIDES.filter(({ classification }) =>
       legacyClassifications.includes(classification),
     ).map(({ field }) => field);
-    const exclusions = [
-      /(^|\/)schema\.ts$/,
-      /(^|\/)fullSchemaInventory\.ts$/,
-      /(^|\/)databaseMigrations\.ts$/,
-      /(^|\/)dataMigrations\.ts$/,
-      /(^|\/)migrations?(\/|$)/,
-      /(^|\/)_(generated)(\/|$)/,
-      /(^|\/)tests(\/|$)/,
-      /(^|\/)docs(\/|$)/,
-    ];
 
     expect(symbols).toHaveLength(
       FULL_SCHEMA_FIELD_OVERRIDES.filter(({ classification }) =>
@@ -109,8 +140,21 @@ describe("schema contract references", () => {
       ).length,
     );
     expect(symbols.every((symbol) => symbol.length > 0)).toBe(true);
-    expect(scanSchemaReferences(root, symbols, exclusions)).toEqual(
-      scanSchemaReferences(root, symbols, exclusions),
+  });
+
+  it("matches the reviewed nonempty Release 1B reference baseline", () => {
+    const root = fileURLToPath(new URL("../", import.meta.url));
+    const symbols = FULL_SCHEMA_FIELD_OVERRIDES.filter(({ classification }) =>
+      legacyClassifications.includes(classification),
+    ).map(({ field }) => field);
+
+    const matches = scanSchemaReferences(
+      root,
+      symbols,
+      DEFAULT_SCHEMA_REFERENCE_EXCLUSIONS,
     );
+
+    expect(matches).not.toHaveLength(0);
+    expect(matches).toEqual(baseline);
   });
 });
