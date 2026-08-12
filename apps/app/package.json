@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "schema:inventory": "vitest run tests/schema-inventory-coverage.test.ts tests/schema-contract-references.test.ts tests/full-schema-readiness.test.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
