@@ -1,3 +1,4 @@
+import type { Doc, Id } from "./_generated/dataModel";
 import type { SchemaCleanupIssue } from "./databaseMigrationTypes";
 
 const DEPARTMENT_COLORS = [
@@ -26,14 +27,13 @@ type DepartmentSource =
   | {
       name: string;
       color: string;
-      departmentHeadUserId?: string;
+      departmentHeadUserId?: Id<"users">;
       costCenter?: string;
       location?: string;
       parentDepartmentName?: string;
     };
 
 type OrganizationSource = {
-  _id: string;
   firstPayDate?: number;
   secondPayDate?: number;
   salaryPaymentFrequency?: "monthly" | "bimonthly";
@@ -41,11 +41,10 @@ type OrganizationSource = {
 };
 
 type LegacySettingsSource = {
-  _id: string;
-  payrollFrequency?: "weekly" | "semi-monthly" | "monthly";
-  cutoffDates?: { firstCutoff: number; secondCutoff: number };
-  payrollSettings?: Record<string, unknown>;
-  attendanceSettings?: Record<string, unknown>;
+  payrollFrequency?: Doc<"settings">["payrollFrequency"];
+  cutoffDates?: Doc<"settings">["cutoffDates"];
+  payrollSettings?: Doc<"settings">["payrollSettings"];
+  attendanceSettings?: Doc<"settings">["attendanceSettings"];
   departments?: DepartmentSource[];
 };
 
@@ -54,14 +53,14 @@ export type PlannedPayrollSettings = {
   firstPayDate: number;
   secondPayDate: number;
   cutoffDates?: { firstCutoff: number; secondCutoff: number };
-  payrollSettings?: Record<string, unknown>;
+  payrollSettings?: Doc<"settings">["payrollSettings"];
 };
 
 export type PlannedDepartment = {
   name: string;
   normalizedName: string;
   color: string;
-  departmentHeadUserId?: string;
+  departmentHeadUserId?: Id<"users">;
   costCenter?: string;
   location?: string;
   parentDepartmentName?: string;
@@ -73,11 +72,27 @@ export type PlannedRequirement = RequirementSource & {
 
 export type OrganizationNormalizationPlan = {
   payroll: PlannedPayrollSettings;
-  attendance: Record<string, unknown> | null;
+  attendance: Doc<"settings">["attendanceSettings"] | null;
   departments: PlannedDepartment[];
   requirements: PlannedRequirement[];
   issues: SchemaCleanupIssue[];
 };
+
+function sortValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortValue);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, sortValue(nested)]),
+    );
+  }
+  return value;
+}
+
+export function valuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(sortValue(left)) === JSON.stringify(sortValue(right));
+}
 
 export function normalizeDepartmentName(name: string): string {
   return name.trim().toLocaleLowerCase("en-US");

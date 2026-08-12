@@ -9,14 +9,12 @@ describe("database migration planner", () => {
   it("keeps active organization payroll cadence and reports a legacy conflict", () => {
     const plan = planOrganizationNormalization({
       organization: {
-        _id: "organization-1",
         firstPayDate: 25,
         secondPayDate: 30,
         salaryPaymentFrequency: "monthly",
         defaultRequirements: [],
       },
       legacySettings: {
-        _id: "settings-1",
         payrollFrequency: "semi-monthly",
         cutoffDates: { firstCutoff: 10, secondCutoff: 25 },
         payrollSettings: { nightDiffPercent: 1.1 },
@@ -40,7 +38,7 @@ describe("database migration planner", () => {
 
   it("uses stable payroll defaults without inventing issues", () => {
     const plan = planOrganizationNormalization({
-      organization: { _id: "organization-1", defaultRequirements: [] },
+      organization: { defaultRequirements: [] },
       legacySettings: null,
     });
 
@@ -55,9 +53,8 @@ describe("database migration planner", () => {
 
   it("normalizes departments and reports duplicate names without values", () => {
     const plan = planOrganizationNormalization({
-      organization: { _id: "organization-1", defaultRequirements: [] },
+      organization: { defaultRequirements: [] },
       legacySettings: {
-        _id: "settings-1",
         departments: [
           " Operations ",
           { name: "operations", color: "#000000", costCenter: "OPS" },
@@ -89,7 +86,6 @@ describe("database migration planner", () => {
   it("copies unique requirement definitions and reports duplicate types", () => {
     const plan = planOrganizationNormalization({
       organization: {
-        _id: "organization-1",
         defaultRequirements: [
           { type: "NBI Clearance", isRequired: true },
           { type: " nbi clearance ", requiresVerification: true },

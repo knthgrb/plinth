@@ -1,5 +1,7 @@
 import { convexTest } from "convex-test";
+import { makeFunctionReference } from "convex/server";
 import { describe, expect, it } from "vitest";
+import type { Id } from "../convex/_generated/dataModel";
 import schema from "../convex/schema";
 
 const rawModules = import.meta.glob("../convex/**/*.ts");
@@ -9,6 +11,23 @@ const modules = Object.fromEntries(
     loader,
   ]),
 );
+
+const processSchemaCleanupBatch = makeFunctionReference<
+  "mutation",
+  { runId: Id<"migrationRuns"> },
+  {
+    done: boolean;
+    cursor: string | null;
+    counters: {
+      scanned: number;
+      changed: number;
+      unchanged: number;
+      skipped: number;
+      conflicts: number;
+      errors: number;
+    };
+  }
+>("databaseMigrations:processSchemaCleanupBatch");
 
 describe("database migration schema", () => {
   it("stores normalized organization configuration and migration state", async () => {
@@ -162,5 +181,227 @@ describe("database migration schema", () => {
     expect(result.requirement?._id).toBe(result.requirementId);
     expect(result.run?._id).toBe(result.runId);
     expect(result.issues.map((issue) => issue._id)).toEqual([result.issueId]);
+  });
+
+  it("dry-runs one bounded organization batch without destination writes", async () => {
+    const t = convexTest(schema, modules);
+    const { runId, firstOrganizationId } = await t.run(async (ctx) => {
+      const firstOrganizationId = await ctx.db.insert("organizations", {
+        name: "First organization",
+        salaryPaymentFrequency: "monthly",
+        firstPayDate: 25,
+        secondPayDate: 30,
+        defaultRequirements: [{ type: "NBI", isRequired: true }],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("settings", {
+        organizationId: firstOrganizationId,
+        payrollFrequency: "semi-monthly",
+        attendanceSettings: { graceMinutes: 5 },
+        departments: ["Operations"],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("organizations", {
+        name: "Second organization",
+        createdAt: 2,
+        updatedAt: 2,
+      });
+      const runId = await ctx.db.insert("migrationRuns", {
+        key: "schema-normalization-release-1",
+        version: 1,
+        dryRun: true,
+        status: "running",
+        phase: "organizations",
+        batchSize: 1,
+        counters: {
+          scanned: 0,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 3,
+        updatedAt: 3,
+      });
+      return { runId, firstOrganizationId };
+    });
+
+    await expect(
+      t.mutation(processSchemaCleanupBatch, { runId }),
+    ).resolves.toMatchObject({
+      done: false,
+      counters: { scanned: 1, changed: 0, conflicts: 1 },
+    });
+
+    const state = await t.run(async (ctx) => ({
+      run: await ctx.db.get(runId),
+      payroll: await ctx.db.query("organizationPayrollSettings").collect(),
+      attendance: await ctx.db
+        .query("organizationAttendanceSettings")
+        .collect(),
+      departments: await ctx.db.query("organizationDepartments").collect(),
+      requirements: await ctx.db
+        .query("organizationRequirementDefinitions")
+        .collect(),
+      issues: await ctx.db
+        .query("migrationIssues")
+        .withIndex("by_run", (q) => q.eq("runId", runId))
+        .collect(),
+    }));
+
+    expect(state.run?.status).toBe("running");
+    expect(state.run?.cursor).toEqual(expect.any(String));
+    expect(state.payroll).toEqual([]);
+    expect(state.attendance).toEqual([]);
+    expect(state.departments).toEqual([]);
+    expect(state.requirements).toEqual([]);
+    expect(state.issues).toEqual([
+      expect.objectContaining({
+        organizationId: firstOrganizationId,
+        entityType: "organization",
+        field: "salaryPaymentFrequency",
+        code: "PAYROLL_FREQUENCY_CONFLICT",
+      }),
+    ]);
+    expect(JSON.stringify(state.issues)).not.toContain("semi-monthly");
+  });
+
+  it("backfills normalized rows once and is idempotent on a second run", async () => {
+    const t = convexTest(schema, modules);
+    const { firstWriteRunId, dryRunId, organizationId } = await t.run(
+      async (ctx) => {
+        const organizationId = await ctx.db.insert("organizations", {
+          name: "Backfill organization",
+          salaryPaymentFrequency: "monthly",
+          firstPayDate: 25,
+          secondPayDate: 30,
+          defaultRequirements: [{ type: "NBI", isRequired: true }],
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        await ctx.db.insert("settings", {
+          organizationId,
+          payrollFrequency: "monthly",
+          cutoffDates: { firstCutoff: 10, secondCutoff: 25 },
+          payrollSettings: { nightDiffPercent: 1.1 },
+          attendanceSettings: { graceMinutes: 5 },
+          departments: ["Operations", "People"],
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        const counters = {
+          scanned: 0,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        };
+        const dryRunId = await ctx.db.insert("migrationRuns", {
+          key: "schema-normalization-release-1",
+          version: 1,
+          dryRun: true,
+          status: "completed",
+          phase: "organizations",
+          batchSize: 20,
+          counters,
+          startedAt: 2,
+          updatedAt: 2,
+          completedAt: 2,
+        });
+        const firstWriteRunId = await ctx.db.insert("migrationRuns", {
+          key: "schema-normalization-release-1",
+          version: 1,
+          dryRun: false,
+          status: "running",
+          phase: "organizations",
+          batchSize: 20,
+          counters,
+          requiredDryRunId: dryRunId,
+          startedAt: 3,
+          updatedAt: 3,
+        });
+        return { firstWriteRunId, dryRunId, organizationId };
+      },
+    );
+
+    await expect(
+      t.mutation(processSchemaCleanupBatch, { runId: firstWriteRunId }),
+    ).resolves.toMatchObject({
+      done: true,
+      counters: { scanned: 1, changed: 5, unchanged: 0, conflicts: 0 },
+    });
+
+    const firstState = await t.run(async (ctx) => ({
+      payroll: await ctx.db.query("organizationPayrollSettings").collect(),
+      attendance: await ctx.db
+        .query("organizationAttendanceSettings")
+        .collect(),
+      departments: await ctx.db.query("organizationDepartments").collect(),
+      requirements: await ctx.db
+        .query("organizationRequirementDefinitions")
+        .collect(),
+    }));
+    expect(firstState.payroll).toHaveLength(1);
+    expect(firstState.attendance).toHaveLength(1);
+    expect(firstState.departments).toHaveLength(2);
+    expect(firstState.requirements).toHaveLength(1);
+    expect(firstState.payroll[0]).toMatchObject({
+      organizationId,
+      salaryPaymentFrequency: "monthly",
+      firstPayDate: 25,
+      secondPayDate: 30,
+      cutoffDates: { firstCutoff: 10, secondCutoff: 25 },
+    });
+
+    const secondWriteRunId = await t.run((ctx) =>
+      ctx.db.insert("migrationRuns", {
+        key: "schema-normalization-release-1",
+        version: 1,
+        dryRun: false,
+        status: "running",
+        phase: "organizations",
+        batchSize: 20,
+        counters: {
+          scanned: 0,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        requiredDryRunId: dryRunId,
+        startedAt: 4,
+        updatedAt: 4,
+      }),
+    );
+    await expect(
+      t.mutation(processSchemaCleanupBatch, { runId: secondWriteRunId }),
+    ).resolves.toMatchObject({
+      done: true,
+      counters: { scanned: 1, changed: 0, unchanged: 5, conflicts: 0 },
+    });
+
+    const secondCounts = await t.run(async (ctx) => ({
+      payroll: (await ctx.db.query("organizationPayrollSettings").collect())
+        .length,
+      attendance: (
+        await ctx.db.query("organizationAttendanceSettings").collect()
+      ).length,
+      departments: (await ctx.db.query("organizationDepartments").collect())
+        .length,
+      requirements: (
+        await ctx.db.query("organizationRequirementDefinitions").collect()
+      ).length,
+    }));
+    expect(secondCounts).toEqual({
+      payroll: 1,
+      attendance: 1,
+      departments: 2,
+      requirements: 1,
+    });
   });
 });
