@@ -7,17 +7,17 @@ writes.
 
 ## Before running
 
-1. Deploy the Release 1B application and Convex code first. Do not run these
-   checks against a deployment that does not contain the inventory and readiness
-   queries.
-2. Run commands from the Plinth repository root and confirm the Convex CLI is
-   linked to the intended production deployment.
-3. This is an inventory checkpoint, not a migration. Do not start, resume, or
-   otherwise invoke a migration from this runbook.
-4. Run `pnpm --filter app schema:inventory`. The command must pass before
+1. Run `pnpm --filter app schema:inventory`. The command must pass before
    deployment. It compares every parsed table field path and index name with
    the checked-in reviewed SHA-256 inventory. Any schema-item drift requires an
    intentional review and fixture update.
+2. Deploy the Release 1B application and Convex code. Do not run the production
+   checks against a deployment that does not contain the inventory and readiness
+   queries.
+3. Run commands from the Plinth repository root and confirm the Convex CLI is
+   linked to the intended production deployment.
+4. This is an inventory checkpoint, not a migration. Do not start, resume, or
+   otherwise invoke a migration from this runbook.
 
 Every Convex command below uses `--prod`, which selects the linked production
 deployment even if local environment variables point to development. Both
