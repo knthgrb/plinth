@@ -53,8 +53,11 @@ describe("schema source inventory", () => {
 
   it("finds all current Convex tables", () => {
     const inventory = parseSchemaSourceInventory(schemaSource);
-    expect(inventory.tables).toHaveLength(44);
+    expect(inventory.tables).toHaveLength(45);
     expect(inventory.tables.map(({ name }) => name)).toContain("assets");
+    expect(inventory.tables.map(({ name }) => name)).toContain(
+      "payslipCredentials",
+    );
   });
 
   it("matches the reviewed schema-item inventory exactly", () => {
@@ -118,6 +121,16 @@ describe("schema source inventory", () => {
     expect(
       resolveSchemaFieldPolicy("payslips", "employeeSnapshot")?.classification,
     ).toBe("historical_snapshot");
+    expect(resolveSchemaFieldPolicy("employees", "payslipPinHash")).toEqual({
+      table: "employees",
+      field: "payslipPinHash",
+      classification: "compatibility_read",
+      target: "payslipCredentials.credentialHash",
+      releaseGate: "release_3b_credentials_contract",
+    });
+    expect(resolveSchemaFieldPolicy("invitations", "token")?.target).toBe(
+      "invitations.tokenHash",
+    );
   });
 
   it("fails closed for unknown tables", () => {

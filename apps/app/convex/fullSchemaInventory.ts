@@ -72,6 +72,7 @@ export const CURRENT_SCHEMA_TABLES = [
   "storageObjects",
   "notifications",
   "employees",
+  "payslipCredentials",
   "payslipPinResets",
   "payslipPinAttempts",
   "employeeScheduleHistory",
@@ -176,6 +177,11 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "employee_core_credentials",
     "normalize_children",
     "canonical_embedded",
+  ),
+  payslipCredentials: tablePolicy(
+    "employee_core_credentials",
+    "retain",
+    "normalized_target",
   ),
   payslipPinResets: tablePolicy(
     "employee_core_credentials",
@@ -426,7 +432,7 @@ export const FULL_SCHEMA_FIELD_OVERRIDES = [
     "employees",
     "payslipPinHash",
     "compatibility_read",
-    "payslipCredentials",
+    "payslipCredentials.credentialHash",
     "release_3b_credentials_contract",
   ),
   override(

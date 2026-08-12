@@ -1,5 +1,5 @@
 {
-  "tableCount": 44,
+  "tableCount": 45,
   "tables": [
     {
       "name": "accountingCostItems",
@@ -115,10 +115,10 @@
     },
     {
       "name": "invitations",
-      "fieldCount": 11,
-      "fieldsSha256": "69a5255ab6b5a8ed942d88a94d078cdee3008d15f86661e682c91737b26764d4",
-      "indexCount": 3,
-      "indexesSha256": "e4a1d9a79da279370ce18336756d3f0899106e8e7d3a6e22c1551e58df5189b2"
+      "fieldCount": 12,
+      "fieldsSha256": "70084e43e10e7f27fbb1c77df153ba900d0dd0e7ccfcedd603a46441516e7e78",
+      "indexCount": 4,
+      "indexesSha256": "cfd4f759e3acea054dac2d630c2c1dc7bcb9c285b78b31da245df8440801e108"
     },
     {
       "name": "jobs",
@@ -171,10 +171,10 @@
     },
     {
       "name": "migrationIssues",
-      "fieldCount": 8,
-      "fieldsSha256": "7d4ba4516dcef2550acbb027025b9393c07c5a7713e117b5fc3c5fff380690cc",
-      "indexCount": 1,
-      "indexesSha256": "67b569c91d30df47e434e0d710316c6a3a04bba84d61dadce907e9a7a6b78be7"
+      "fieldCount": 9,
+      "fieldsSha256": "4cd48065c56c87e1bce1fbbd0da10c97b0486ea6f8556b14b33355815866c15b",
+      "indexCount": 2,
+      "indexesSha256": "e74361d07197cdcadce08752468a595ee32b0cf1daffa5c0d3155c10988dda49"
     },
     {
       "name": "migrationRuns",
@@ -240,6 +240,13 @@
       "indexesSha256": "6ed8d3fc865ae0f506effe8150372b949d0445a35823a4a07457d2172b9ec3c3"
     },
     {
+      "name": "payslipCredentials",
+      "fieldCount": 7,
+      "fieldsSha256": "2ce8bdcc75674ae38e2dc9e513867fef1d06e8a1ebf1ac1e9d69905dd3dd9bb8",
+      "indexCount": 2,
+      "indexesSha256": "db8b6c9f85a3a577e91fab98f3c43a9212989281de1060e869a0f6a6f952e859"
+    },
+    {
       "name": "payslipPinAttempts",
       "fieldCount": 7,
       "fieldsSha256": "d64aafc0ea8963e16191ab0fd598f2ec7bf00d27b7e86b9d7a53fa78216663ef",
@@ -299,8 +306,8 @@
       "name": "userOrganizations",
       "fieldCount": 9,
       "fieldsSha256": "229ce8e59d510d0b686b91bbbae90c3e793d730d8fc74cfd4b7e9ec6289a16bf",
-      "indexCount": 3,
-      "indexesSha256": "bfc760c31b8599a4b0a2ce79da02f670904a7d759943e31c00b59588e43f34f4"
+      "indexCount": 4,
+      "indexesSha256": "a47803db3a2d91d2dfe40ca16714ed7c35a736b5d32488ae7c17d59f1ba2aecf"
     },
     {
       "name": "users",

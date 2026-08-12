@@ -183,7 +183,12 @@ export default defineSchema({
       v.literal("completed"),
       v.literal("failed"),
     ),
-    phase: v.literal("organizations"),
+    phase: v.union(
+      v.literal("organizations"),
+      v.literal("identity_users"),
+      v.literal("identity_credentials"),
+      v.literal("identity_invitations"),
+    ),
     cursor: v.optional(v.string()),
     batchSize: v.number(),
     counters: v.object({
@@ -205,6 +210,7 @@ export default defineSchema({
 
   migrationIssues: defineTable({
     runId: v.id("migrationRuns"),
+    auditId: v.optional(v.id("migrationAudits")),
     organizationId: v.optional(v.id("organizations")),
     entityType: v.string(),
     entityId: v.optional(v.string()),
@@ -212,7 +218,9 @@ export default defineSchema({
     code: v.string(),
     createdAt: v.number(),
     resolvedAt: v.optional(v.number()),
-  }).index("by_run", ["runId", "createdAt"]),
+  })
+    .index("by_run", ["runId", "createdAt"])
+    .index("by_audit", ["auditId", "createdAt"]),
 
   migrationAudits: defineTable({
     migrationRunId: v.id("migrationRuns"),
@@ -228,6 +236,11 @@ export default defineSchema({
       v.literal("attendance_settings"),
       v.literal("departments"),
       v.literal("requirements"),
+      v.literal("identity_users"),
+      v.literal("identity_memberships"),
+      v.literal("identity_credentials"),
+      v.literal("identity_credential_targets"),
+      v.literal("identity_invitations"),
     ),
     cursor: v.optional(v.string()),
     batchSize: v.number(),
@@ -316,7 +329,8 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_organization", ["organizationId"])
-    .index("by_user_organization", ["userId", "organizationId"]),
+    .index("by_user_organization", ["userId", "organizationId"])
+    .index("by_organization_employee", ["organizationId", "employeeId"]),
 
   storageUploadIntents: defineTable({
     organizationId: v.id("organizations"),
@@ -667,6 +681,18 @@ export default defineSchema({
   })
     .index("by_user_employee", ["userId", "employeeId"])
     .index("by_locked_until", ["lockedUntil"]),
+
+  payslipCredentials: defineTable({
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    credentialHash: v.string(),
+    credentialVersion: v.number(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_employee", ["employeeId"])
+    .index("by_organization", ["organizationId"]),
 
   // Employee schedule history (effective-dated snapshots).
   // Used so attendance/payroll resolve the schedule that was active on a specific date.
@@ -2087,6 +2113,7 @@ export default defineSchema({
     employeeId: v.optional(v.id("employees")), // Link to employee if applicable
     inviteeName: v.optional(v.string()), // Name from employee record for pre-filled user on accept
     token: v.string(), // Unique token for invitation acceptance
+    tokenHash: v.optional(v.string()),
     status: v.union(
       v.literal("pending"),
       v.literal("accepted"),
@@ -2099,7 +2126,8 @@ export default defineSchema({
   })
     .index("by_organization", ["organizationId"])
     .index("by_email", ["email"])
-    .index("by_token", ["token"]),
+    .index("by_token", ["token"])
+    .index("by_token_hash", ["tokenHash"]),
 
   // Documents
   documents: defineTable({

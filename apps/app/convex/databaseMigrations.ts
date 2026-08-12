@@ -921,6 +921,10 @@ async function paginateAuditPhase(
       return ctx.db
         .query("organizationRequirementDefinitions")
         .paginate(options);
+    default:
+      throw new Error(
+        `Unsupported organization schema cleanup audit phase: ${phase}`,
+      );
   }
 }
 
