@@ -77,6 +77,7 @@ Gemini examines every worksheet and identifies attendance-like rows or row group
 - explicit Time In, when present
 - explicit Time Out, when present
 - all punch times associated with the employee and date
+- attendance status, when explicitly present
 - notes or remarks, when present
 - extraction issues, when the source is incomplete or ambiguous
 
@@ -88,8 +89,9 @@ Gemini is instructed to:
 2. When explicit fields are absent, collect all punches belonging to the same employee and date, even when punches are arranged vertically or across rows.
 3. Preserve incomplete attendance-looking rows with empty values and an issue rather than silently dropping them.
 4. Extract notes when present without inventing notes.
-5. Return times using 12-hour format with `AM` or `PM`.
-6. Avoid guessing an ambiguous employee or date.
+5. Preserve an explicitly supplied attendance status without inventing one.
+6. Return times using 12-hour format with `AM` or `PM`.
+7. Avoid guessing an ambiguous employee or date.
 
 These prompt rules improve extraction, but server normalization remains authoritative.
 
