@@ -190,3 +190,177 @@ describe("bulk attendance tenant boundary", () => {
       .toBe(true);
   });
 });
+
+describe("bulk attendance exact overwrite approval", () => {
+  it("updates only the exact approved attendance record", async () => {
+    const { t, actor, organizationId, employeeId } = await setup();
+    const date = Date.UTC(2026, 7, 17);
+    const attendanceId = await insertAttendance(
+      t,
+      organizationId,
+      employeeId,
+      date,
+    );
+
+    await actor.mutation(api.attendance.bulkCreateAttendance, {
+      entries: [
+        {
+          ...entry(organizationId, employeeId, date),
+          actualIn: "08:30",
+          overwriteAttendanceId: attendanceId,
+        },
+      ],
+    });
+
+    const record = await t.run((ctx) => ctx.db.get(attendanceId));
+    expect(record?.actualIn).toBe("08:30");
+  });
+
+  it("rejects an approved record for the wrong employee or day", async () => {
+    const { t, actor, organizationId, employeeId, secondEmployeeId } =
+      await setup();
+    const date = Date.UTC(2026, 7, 17);
+    const otherEmployeeAttendanceId = await insertAttendance(
+      t,
+      organizationId,
+      secondEmployeeId,
+      date,
+    );
+    const otherDayAttendanceId = await insertAttendance(
+      t,
+      organizationId,
+      employeeId,
+      Date.UTC(2026, 7, 18),
+    );
+
+    for (const overwriteAttendanceId of [
+      otherEmployeeAttendanceId,
+      otherDayAttendanceId,
+    ]) {
+      await expect(
+        actor.mutation(api.attendance.bulkCreateAttendance, {
+          entries: [
+            {
+              ...entry(organizationId, employeeId, date),
+              overwriteAttendanceId,
+            },
+          ],
+        }),
+      ).rejects.toThrow("stale");
+    }
+  });
+
+  it("rejects an approved attendance record from another organization", async () => {
+    const {
+      t,
+      actor,
+      organizationId,
+      foreignOrganizationId,
+      employeeId,
+      foreignEmployeeId,
+    } = await setup();
+    const foreignAttendanceId = await insertAttendance(
+      t,
+      foreignOrganizationId,
+      foreignEmployeeId,
+      Date.UTC(2026, 7, 17),
+    );
+
+    await expect(
+      actor.mutation(api.attendance.bulkCreateAttendance, {
+        entries: [
+          {
+            ...entry(
+              organizationId,
+              employeeId,
+              Date.UTC(2026, 7, 17),
+            ),
+            overwriteAttendanceId: foreignAttendanceId,
+          },
+        ],
+      }),
+    ).rejects.toThrow("stale");
+  });
+
+  it("rejects a removed approval even when a replacement exists on the day", async () => {
+    const { t, actor, organizationId, employeeId } = await setup();
+    const date = Date.UTC(2026, 7, 17);
+    const removedAttendanceId = await insertAttendance(
+      t,
+      organizationId,
+      employeeId,
+      date,
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.delete(removedAttendanceId);
+    });
+    const replacementId = await insertAttendance(
+      t,
+      organizationId,
+      employeeId,
+      date,
+    );
+
+    await expect(
+      actor.mutation(api.attendance.bulkCreateAttendance, {
+        entries: [
+          {
+            ...entry(organizationId, employeeId, date),
+            overwriteAttendanceId: removedAttendanceId,
+          },
+        ],
+      }),
+    ).rejects.toThrow("stale");
+
+    const replacement = await t.run((ctx) => ctx.db.get(replacementId));
+    expect(replacement?.actualIn).toBe("09:00");
+  });
+
+  it("rejects duplicate employee-day entries even with exact approval", async () => {
+    const { t, actor, organizationId, employeeId } = await setup();
+    const date = Date.UTC(2026, 7, 17);
+    const attendanceId = await insertAttendance(
+      t,
+      organizationId,
+      employeeId,
+      date,
+    );
+
+    await expect(
+      actor.mutation(api.attendance.bulkCreateAttendance, {
+        entries: [
+          {
+            ...entry(organizationId, employeeId, date),
+            overwriteAttendanceId: attendanceId,
+          },
+          {
+            ...entry(organizationId, employeeId, date),
+            overwriteAttendanceId: attendanceId,
+          },
+        ],
+      }),
+    ).rejects.toThrow("Duplicate dates");
+  });
+});
+
+async function insertAttendance(
+  t: ReturnType<typeof convexTest>,
+  organizationId: Id<"organizations">,
+  employeeId: Id<"employees">,
+  date: number,
+): Promise<Id<"attendance">> {
+  return t.run((ctx) =>
+    ctx.db.insert("attendance", {
+      organizationId,
+      employeeId,
+      date,
+      scheduleIn: "09:00",
+      scheduleOut: "18:00",
+      actualIn: "09:00",
+      actualOut: "18:00",
+      status: "present",
+      createdAt: 1,
+      updatedAt: 1,
+    }),
+  );
+}

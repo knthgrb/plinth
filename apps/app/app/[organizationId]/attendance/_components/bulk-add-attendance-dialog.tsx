@@ -512,7 +512,10 @@ export function BulkAddAttendanceDialog({
         actualOut: r.actualOut,
         status: r.status,
         remarks: r.notes || undefined,
-        overwrite: r.existingAttendanceId ? true : undefined,
+        overwriteAttendanceId:
+          r.overwriteExisting && r.existingAttendanceId
+            ? r.existingAttendanceId
+            : undefined,
       }));
       await bulkCreateMutation({ entries });
       setIsBulkDialogOpen(false);
@@ -832,6 +835,7 @@ export function BulkAddAttendanceDialog({
           undertime?: number;
           remarks?: string;
           status: "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay" | "no_work";
+          overwriteAttendanceId?: string;
         } = {
           organizationId: currentOrganizationId,
           employeeId: bulkSelectedEmployee,
@@ -856,8 +860,9 @@ export function BulkAddAttendanceDialog({
           entry.remarks = dayTimes.notes.trim();
         }
 
-        if (getExistingIdForDay(dateInfo.timestamp)) {
-          (entry as { overwrite?: boolean }).overwrite = true;
+        const existingAttendanceId = getExistingIdForDay(dateInfo.timestamp);
+        if (existingAttendanceId) {
+          entry.overwriteAttendanceId = existingAttendanceId;
         }
 
         entries.push(entry);

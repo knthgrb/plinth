@@ -82,7 +82,7 @@ export async function bulkCreateAttendance(
       | "leave_with_pay"
       | "leave_without_pay"
       | "no_work";
-    overwrite?: boolean;
+    overwriteAttendanceId?: string;
   }>
 ) {
   return AttendanceService.bulkCreateAttendance(entries);

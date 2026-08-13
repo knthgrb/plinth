@@ -29,8 +29,8 @@ export class AttendanceService {
     overwriteAttendanceId?: string;
   }) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).attendance.createAttendance,
+    return await convex.mutation(
+      api.attendance.createAttendance,
       {
         ...data,
         organizationId: data.organizationId as Id<"organizations">,
@@ -66,8 +66,8 @@ export class AttendanceService {
     },
   ) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).attendance.updateAttendance,
+    return await convex.mutation(
+      api.attendance.updateAttendance,
       {
         attendanceId: attendanceId as Id<"attendance">,
         ...data,
@@ -104,17 +104,20 @@ export class AttendanceService {
         | "leave_with_pay"
         | "leave_without_pay"
         | "no_work";
-      overwrite?: boolean;
+      overwriteAttendanceId?: string;
     }>,
   ) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).attendance.bulkCreateAttendance,
+    return await convex.mutation(
+      api.attendance.bulkCreateAttendance,
       {
-        entries: entries.map((e: any) => ({
+        entries: entries.map((e) => ({
           ...e,
           organizationId: e.organizationId as Id<"organizations">,
           employeeId: e.employeeId as Id<"employees">,
+          overwriteAttendanceId: e.overwriteAttendanceId
+            ? (e.overwriteAttendanceId as Id<"attendance">)
+            : undefined,
         })),
       },
     );
@@ -127,8 +130,8 @@ export class AttendanceService {
     endDate?: number;
   }) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).attendance.recalculateEmployeeAttendance,
+    return await convex.mutation(
+      api.attendance.recalculateEmployeeAttendance,
       {
         organizationId: data.organizationId as Id<"organizations">,
         employeeId: data.employeeId as Id<"employees">,
@@ -143,8 +146,8 @@ export class AttendanceService {
     action: "in" | "out";
   }) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).attendance.punchSelfAttendance,
+    return await convex.mutation(
+      api.attendance.punchSelfAttendance,
       {
         organizationId: data.organizationId as Id<"organizations">,
         action: data.action,

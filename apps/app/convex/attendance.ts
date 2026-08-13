@@ -176,21 +176,24 @@ function getManilaTodayDateUtcMs() {
 }
 
 async function findAttendanceOnManilaDay(
-  ctx: any,
-  employeeId: any,
+  ctx: Pick<QueryCtx | MutationCtx, "db">,
+  employeeId: Id<"employees">,
   dateTs: number,
-) {
-  const records = await (ctx.db.query("attendance") as any)
-    .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
+): Promise<Doc<"attendance">[]> {
+  const records = await ctx.db
+    .query("attendance")
+    .withIndex("by_employee", (q) => q.eq("employeeId", employeeId))
     .collect();
-  return records.filter((r: any) => sameManilaCalendarDay(r.date, dateTs));
+  return records.filter((record) =>
+    sameManilaCalendarDay(record.date, dateTs),
+  );
 }
 
 async function deleteDuplicateAttendanceOnDay(
-  ctx: any,
-  records: { _id: any }[],
-  keepId: any,
-) {
+  ctx: Pick<MutationCtx, "db">,
+  records: readonly Pick<Doc<"attendance">, "_id">[],
+  keepId: Id<"attendance">,
+): Promise<void> {
   for (const r of records) {
     if (r._id !== keepId) {
       await ctx.db.delete(r._id);
@@ -961,7 +964,7 @@ export const bulkCreateAttendance = mutation({
           v.literal("leave_without_pay"),
           v.literal("no_work"),
         ),
-        overwrite: v.optional(v.boolean()),
+        overwriteAttendanceId: v.optional(v.id("attendance")),
       }),
     ),
   },
@@ -999,6 +1002,41 @@ export const bulkCreateAttendance = mutation({
       employeesById.set(employee._id, employee);
     }
 
+    const normalizedDates = args.entries.map((entry) =>
+      normalizeAttendanceDateMs(entry.date),
+    );
+    const batchSeen = new Set<string>();
+
+    for (const [index, entry] of args.entries.entries()) {
+      const normalizedDate = normalizedDates[index];
+      const batchKey = `${entry.employeeId}:${normalizedDate}`;
+
+      if (batchSeen.has(batchKey)) {
+        throw new Error(
+          "Duplicate dates in this batch. Resolve conflicts before submitting.",
+        );
+      }
+
+      batchSeen.add(batchKey);
+
+      if (!entry.overwriteAttendanceId) {
+        continue;
+      }
+
+      const approvedAttendance = await ctx.db.get(entry.overwriteAttendanceId);
+
+      if (
+        !approvedAttendance ||
+        approvedAttendance.organizationId !== organizationId ||
+        approvedAttendance.employeeId !== entry.employeeId ||
+        !sameManilaCalendarDay(approvedAttendance.date, normalizedDate)
+      ) {
+        throw new Error(
+          "Attendance overwrite approval is stale. Review conflicts again.",
+        );
+      }
+    }
+
     const holidays = await ctx.db
       .query("holidays")
       .withIndex("by_organization", (q) =>
@@ -1006,30 +1044,29 @@ export const bulkCreateAttendance = mutation({
       )
       .collect();
 
-    const batchSeen = new Set<string>();
+    for (const [index, entry] of args.entries.entries()) {
+      const normalizedDate = normalizedDates[index];
 
-    for (const entry of args.entries) {
-      const normalizedDate = normalizeAttendanceDateMs(entry.date);
-      const batchKey = `${entry.employeeId}:${normalizedDate}`;
-      if (batchSeen.has(batchKey) && !entry.overwrite) {
-        throw new Error(
-          "Duplicate dates in this batch. Resolve conflicts before submitting.",
-        );
-      }
-      if (!batchSeen.has(batchKey)) {
-        batchSeen.add(batchKey);
-      }
-
-      const existingOnDay = await findAttendanceOnManilaDay(
+      const existingOnDay = (await findAttendanceOnManilaDay(
         ctx,
         entry.employeeId,
         normalizedDate,
-      );
-      const existing = existingOnDay[0] ?? null;
+      )).filter((record) => record.organizationId === organizationId);
+      const existing = entry.overwriteAttendanceId
+        ? existingOnDay.find(
+            (record) => record._id === entry.overwriteAttendanceId,
+          ) ?? null
+        : null;
 
-      if (existingOnDay.length > 0 && !entry.overwrite) {
+      if (entry.overwriteAttendanceId && !existing) {
         throw new Error(
-          "Attendance already exists for one or more dates. Mark rows to overwrite or exclude them.",
+          "Attendance overwrite approval is stale. Review conflicts again.",
+        );
+      }
+
+      if (existingOnDay.length > 0 && !entry.overwriteAttendanceId) {
+        throw new Error(
+          "Attendance already exists for one or more dates. Review conflicts before submitting.",
         );
       }
 
@@ -1067,7 +1104,25 @@ export const bulkCreateAttendance = mutation({
       const lunchMinutes = scheduleWithLunch?.lunchMinutes ?? 0;
 
       if (existing) {
-        const updates: any = { updatedAt: now };
+        const updates: Partial<
+          Pick<
+            Doc<"attendance">,
+            | "actualIn"
+            | "actualOut"
+            | "overtime"
+            | "isHoliday"
+            | "holidayType"
+            | "remarks"
+            | "status"
+            | "scheduleIn"
+            | "scheduleOut"
+            | "lunchStart"
+            | "lunchEnd"
+            | "undertime"
+            | "late"
+            | "date"
+          >
+        > & { updatedAt: number } = { updatedAt: now };
         if (entry.actualIn !== undefined) updates.actualIn = entry.actualIn;
         if (entry.actualOut !== undefined) updates.actualOut = entry.actualOut;
         if (entry.overtime !== undefined) updates.overtime = entry.overtime;
@@ -1164,25 +1219,30 @@ export const bulkCreateAttendance = mutation({
             holidayType = holidayEntry.type as "regular" | "special" | "special_working";
           }
         }
-        const insertPayload: Record<string, unknown> = {
-          ...entry,
+        const insertPayload: Omit<
+          Doc<"attendance">,
+          "_id" | "_creationTime"
+        > = {
+          organizationId: entry.organizationId,
+          employeeId: entry.employeeId,
           date: normalizedDate,
           scheduleIn,
           scheduleOut,
+          actualIn: entry.actualIn,
+          actualOut: entry.actualOut,
+          overtime: entry.overtime,
           status: resolvedStatus,
           late: calculatedLate > 0 ? calculatedLate : 0,
           undertime: calculatedUndertime > 0 ? calculatedUndertime : 0,
           isHoliday,
           holidayType,
+          remarks: entry.remarks,
           createdAt: now,
           updatedAt: now,
         };
         if (lunchStart != null) insertPayload.lunchStart = lunchStart;
         if (lunchEnd != null) insertPayload.lunchEnd = lunchEnd;
-        const attendanceId = await ctx.db.insert(
-          "attendance",
-          insertPayload as any,
-        );
+        const attendanceId = await ctx.db.insert("attendance", insertPayload);
         results.push({ id: attendanceId, action: "created" });
       }
     }
