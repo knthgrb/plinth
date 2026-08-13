@@ -43,6 +43,7 @@ type FullSchemaCleanupReadinessRegistration = {
   migrationKey: string;
   migrationVersion: number;
   implementation: "compatibility" | "migration" | "not_started";
+  compatibility?: "switched" | "pending";
 };
 
 type FullSchemaCleanupReadinessMode =
@@ -1375,6 +1376,28 @@ export const getFullSchemaInventory = internalQuery({
   }),
 });
 
+export function resolveFullSchemaProgramReadiness(
+  domains: readonly FullSchemaDomainReadiness[],
+): {
+  readyForRelease2: boolean;
+  readyForRelease3: boolean;
+  release3Blockers: string[];
+} {
+  const readyForRelease2 = domains.every(({ status }) => status === "ready");
+  const release3Blockers = [
+    ...(!readyForRelease2 ? ["ADDITIVE_MIGRATIONS_NOT_READY"] : []),
+    ...FULL_SCHEMA_CLEANUP_DOMAINS.filter(
+      ({ compatibility }) => compatibility !== "switched",
+    ).map(({ domain }) => `COMPATIBILITY_SWITCH_PENDING:${domain}`),
+    "COMPATIBILITY_WINDOW_NOT_COMPLETED",
+  ];
+  return {
+    readyForRelease2,
+    readyForRelease3: release3Blockers.length === 0,
+    release3Blockers,
+  };
+}
+
 export const getFullSchemaCleanupReadiness = internalQuery({
   args: {},
   handler: async (ctx) => {
@@ -1383,10 +1406,11 @@ export const getFullSchemaCleanupReadiness = internalQuery({
         getFullSchemaDomainReadiness(ctx, registration),
       ),
     );
+    const programReadiness = resolveFullSchemaProgramReadiness(domains);
     return {
       programKey: FULL_SCHEMA_CLEANUP_PROGRAM_KEY,
       programVersion: FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
-      readyForRelease3: domains.every(({ status }) => status === "ready"),
+      ...programReadiness,
       domains,
     };
   },

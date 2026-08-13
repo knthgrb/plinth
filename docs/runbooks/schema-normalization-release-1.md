@@ -164,7 +164,7 @@ copying data back. Keep the legacy fields in place, stop before Release 2, and
 inspect or correct the new rows. Do not delete normalized or legacy data as an
 ad-hoc rollback.
 
-## What Release 1 does not do
+## What Release 1 did not do at deployment time
 
 - It does not remove organization payroll fields.
 - It does not remove the legacy mixed `settings` fields.
@@ -174,7 +174,11 @@ ad-hoc rollback.
 - It does not make the application read from the new tables yet.
 
 Those changes require later releases after this production audit reports full
-equality.
+equality. Releases 1B–1F have since completed their additive production gates.
+Use
+[`release-2b-identity-credentials-compatibility.md`](./release-2b-identity-credentials-compatibility.md)
+for the first behavior-switch release; do not infer Release 3 approval from
+this historical Release 1 runbook.
 
 The returned field manifest covers Release 1 fields and preserved payroll
 snapshots. Later normalization tranches extend it before their own contract

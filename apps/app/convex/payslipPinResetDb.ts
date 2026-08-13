@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { requireUserRecord } from "./access";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 
 const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
@@ -29,8 +29,7 @@ async function authorizeEmployeePinAccess(
     throw new Error("Not authorized");
   }
   const accessStatus = membership.accessStatus ?? "active";
-  const isSelf =
-    membership.employeeId === employeeId || user.employeeId === employeeId;
+  const isSelf = membership.employeeId === employeeId;
   const selfCanAccess =
     isSelf && (accessStatus === "active" || accessStatus === "alumni");
   const privilegedCanAccess =
@@ -43,17 +42,84 @@ async function authorizeEmployeePinAccess(
   return { employee, user };
 }
 
+async function getPayslipCredential(
+  ctx: QueryCtx | MutationCtx,
+  employeeId: Id<"employees">,
+) {
+  const credentials = await ctx.db
+    .query("payslipCredentials")
+    .withIndex("by_employee", (q) => q.eq("employeeId", employeeId))
+    .take(2);
+  if (credentials.length > 1) {
+    throw new Error("Payslip credential is not unique");
+  }
+  return credentials[0] ?? null;
+}
+
+export async function loadPayslipCredentialHash(
+  ctx: QueryCtx | MutationCtx,
+  employee: Doc<"employees">,
+): Promise<string | null> {
+  const credential = await getPayslipCredential(
+    ctx,
+    employee._id,
+  );
+  if (credential) {
+    if (credential.organizationId !== employee.organizationId) {
+      throw new Error("Payslip credential organization mismatch");
+    }
+    return credential.credentialHash;
+  }
+  return employee.payslipPinHash ?? null;
+}
+
+async function writePayslipCredential(
+  ctx: MutationCtx,
+  employee: Doc<"employees">,
+  credentialHash: string,
+  now: number,
+) {
+  const employeeId = employee._id;
+  const credential = await getPayslipCredential(ctx, employeeId);
+  if (credential && credential.organizationId !== employee.organizationId) {
+    throw new Error("Payslip credential organization mismatch");
+  }
+  if (credential) {
+    await ctx.db.patch(credential._id, {
+      credentialHash,
+      credentialVersion: 1,
+      migrationVersion: 1,
+      updatedAt: now,
+    });
+  } else {
+    await ctx.db.insert("payslipCredentials", {
+      organizationId: employee.organizationId,
+      employeeId,
+      credentialHash,
+      credentialVersion: 1,
+      migrationVersion: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+  await ctx.db.patch(employeeId, {
+    payslipPinHash: credentialHash,
+    updatedAt: now,
+  });
+}
+
 export const storePayslipPinCredential = internalMutation({
   args: {
     employeeId: v.id("employees"),
     credential: v.string(),
   },
   handler: async (ctx, args) => {
-    const { user } = await authorizeEmployeePinAccess(ctx, args.employeeId, true);
-    await ctx.db.patch(args.employeeId, {
-      payslipPinHash: args.credential,
-      updatedAt: Date.now(),
-    });
+    const { employee, user } = await authorizeEmployeePinAccess(
+      ctx,
+      args.employeeId,
+      false,
+    );
+    await writePayslipCredential(ctx, employee, args.credential, Date.now());
     const attempt = await ctx.db
       .query("payslipPinAttempts")
       .withIndex("by_user_employee", (q) =>
@@ -116,7 +182,10 @@ export const beginPayslipPinVerification = internalMutation({
       });
     }
 
-    return { credential: employee.payslipPinHash ?? null, locked: false };
+    return {
+      credential: await loadPayslipCredentialHash(ctx, employee),
+      locked: false,
+    };
   },
 });
 
@@ -126,12 +195,18 @@ export const completePayslipPinVerification = internalMutation({
     upgradedCredential: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { user } = await authorizeEmployeePinAccess(ctx, args.employeeId, false);
+    const { employee, user } = await authorizeEmployeePinAccess(
+      ctx,
+      args.employeeId,
+      false,
+    );
     if (args.upgradedCredential) {
-      await ctx.db.patch(args.employeeId, {
-        payslipPinHash: args.upgradedCredential,
-        updatedAt: Date.now(),
-      });
+      await writePayslipCredential(
+        ctx,
+        employee,
+        args.upgradedCredential,
+        Date.now(),
+      );
     }
     const attempt = await ctx.db
       .query("payslipPinAttempts")
@@ -212,16 +287,13 @@ export const consumeResetAndSetCredential = internalMutation({
     if (!reset || reset.usedAt || reset.expiresAt <= Date.now()) {
       throw new Error("Reset link is invalid or has expired");
     }
-    const { user } = await authorizeEmployeePinAccess(
+    const { employee, user } = await authorizeEmployeePinAccess(
       ctx,
       reset.employeeId,
       false,
     );
     const now = Date.now();
-    await ctx.db.patch(reset.employeeId, {
-      payslipPinHash: args.credential,
-      updatedAt: now,
-    });
+    await writePayslipCredential(ctx, employee, args.credential, now);
     await ctx.db.patch(reset._id, { usedAt: now });
     const attempt = await ctx.db
       .query("payslipPinAttempts")

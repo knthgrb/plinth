@@ -90,7 +90,7 @@ const setupActor = async (accessStatus: "active" | "alumni") => {
 describe("invitation token compatibility writes", () => {
   it("atomically hashes tokens created through the general invitation path", async () => {
     const { t, actor, organizationId } = await setupActor("active");
-    const invitationId = await actor.mutation(
+    const created = await actor.mutation(
       api.invitations.createInvitation,
       {
         organizationId,
@@ -100,10 +100,93 @@ describe("invitation token compatibility writes", () => {
     );
 
     const invitation = await t.run((ctx) =>
-      ctx.db.get(invitationId as Id<"invitations">),
+      ctx.db.get(created.invitationId as Id<"invitations">),
     );
+    expect(created.token).toBe(invitation?.token);
     expect(invitation?.tokenHash).toBe(hashInvitationToken(invitation!.token));
     expect(invitation?.tokenHash).not.toBe(invitation?.token);
+  });
+
+  it("uses token hashes first and never falls back for a hashed row", async () => {
+    const { t, organizationId } = await setupActor("active");
+    const fixture = await t.run(async (ctx) => {
+      const inviter = await ctx.db.query("users").first();
+      if (!inviter) throw new Error("Inviter fixture was not found");
+      const currentToken = "current-token";
+      const legacyToken = "legacy-token-that-must-not-work";
+      await ctx.db.insert("invitations", {
+        organizationId,
+        email: "hash-first@example.com",
+        role: "employee",
+        invitedBy: inviter._id,
+        token: legacyToken,
+        tokenHash: hashInvitationToken(currentToken),
+        status: "pending",
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1,
+      });
+      return { currentToken, legacyToken };
+    });
+
+    await expect(
+      t.query(api.invitations.getInvitationByToken, {
+        token: fixture.legacyToken,
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      t.query(api.invitations.getInvitationByToken, {
+        token: fixture.currentToken,
+      }),
+    ).resolves.toMatchObject({ email: "hash-first@example.com" });
+  });
+
+  it("keeps plaintext lookup only for rows that have no token hash", async () => {
+    const { t, organizationId } = await setupActor("active");
+    const token = "legacy-only-token";
+    await t.run(async (ctx) => {
+      const inviter = await ctx.db.query("users").first();
+      if (!inviter) throw new Error("Inviter fixture was not found");
+      await ctx.db.insert("invitations", {
+        organizationId,
+        email: "legacy-only@example.com",
+        role: "employee",
+        invitedBy: inviter._id,
+        token,
+        status: "pending",
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1,
+      });
+    });
+
+    await expect(
+      t.query(api.invitations.getInvitationByToken, { token }),
+    ).resolves.toMatchObject({ email: "legacy-only@example.com" });
+  });
+
+  it("redacts stored bearer tokens and rotates them for resend", async () => {
+    const { t, actor, organizationId } = await setupActor("active");
+    const created = await actor.mutation(api.invitations.createInvitation, {
+      organizationId,
+      email: "rotate@example.com",
+      role: "employee",
+    });
+
+    const details = await actor.query(api.invitations.getInvitationById, {
+      invitationId: created.invitationId,
+    });
+    expect(details).not.toHaveProperty("token");
+    expect(details).not.toHaveProperty("tokenHash");
+
+    const rotated = await actor.mutation(api.invitations.resendInvitation, {
+      invitationId: created.invitationId,
+    });
+    expect(rotated.token).not.toBe(created.token);
+    await expect(
+      t.query(api.invitations.getInvitationByToken, { token: created.token }),
+    ).resolves.toBeNull();
+    await expect(
+      t.query(api.invitations.getInvitationByToken, { token: rotated.token }),
+    ).resolves.toMatchObject({ email: "rotate@example.com" });
   });
 
   it("atomically hashes tokens created for an employee", async () => {

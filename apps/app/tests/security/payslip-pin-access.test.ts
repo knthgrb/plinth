@@ -38,6 +38,12 @@ const consumeReset = makeFunctionReference<
   { success: boolean }
 >("payslipPinResetDb:consumeResetAndSetCredential");
 
+const completeVerification = makeFunctionReference<
+  "mutation",
+  { employeeId: Id<"employees">; upgradedCredential?: string },
+  { success: boolean }
+>("payslipPinResetDb:completePayslipPinVerification");
+
 const exposedCredentialQuery = makeFunctionReference<
   "query",
   { employeeId: Id<"employees"> },
@@ -119,6 +125,73 @@ describe("payslip PIN access", () => {
     ).rejects.toThrow(/no such export|there is no such export/i);
   });
 
+  it("does not use the legacy user employee link for self authorization", async () => {
+    const { t, email, employeeId } = await createFixture();
+    await t.run(async (ctx) => {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", email))
+        .unique();
+      if (!user) throw new Error("User fixture was not found");
+      const membership = await ctx.db
+        .query("userOrganizations")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .unique();
+      if (!membership) throw new Error("Membership fixture was not found");
+      await ctx.db.patch(membership._id, { employeeId: undefined });
+    });
+
+    await expect(
+      t.withIdentity({ email }).mutation(beginVerification, { employeeId }),
+    ).rejects.toThrow("Not authorized");
+  });
+
+  it("prefers the normalized credential over a conflicting legacy hash", async () => {
+    const { t, email, employeeId } = await createFixture();
+    await t.run(async (ctx) => {
+      const employee = await ctx.db.get(employeeId);
+      if (!employee) throw new Error("Employee fixture was not found");
+      await ctx.db.patch(employeeId, { payslipPinHash: "legacy-hash" });
+      await ctx.db.insert("payslipCredentials", {
+        organizationId: employee.organizationId,
+        employeeId,
+        credentialHash: "normalized-hash",
+        credentialVersion: 1,
+        migrationVersion: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+
+    await expect(
+      t.withIdentity({ email }).mutation(beginVerification, { employeeId }),
+    ).resolves.toEqual({ credential: "normalized-hash", locked: false });
+  });
+
+  it("dual-writes new and upgraded credentials", async () => {
+    const { t, email, employeeId } = await createFixture();
+    const actor = t.withIdentity({ email });
+    await actor.mutation(storeCredential, {
+      employeeId,
+      credential: "scrypt$v1$initial",
+    });
+    await actor.mutation(completeVerification, {
+      employeeId,
+      upgradedCredential: "scrypt$v1$upgraded",
+    });
+
+    const state = await t.run(async (ctx) => ({
+      employee: await ctx.db.get(employeeId),
+      credentials: await ctx.db
+        .query("payslipCredentials")
+        .withIndex("by_employee", (q) => q.eq("employeeId", employeeId))
+        .collect(),
+    }));
+    expect(state.employee?.payslipPinHash).toBe("scrypt$v1$upgraded");
+    expect(state.credentials).toHaveLength(1);
+    expect(state.credentials[0]?.credentialHash).toBe("scrypt$v1$upgraded");
+  });
+
   it("locks the sixth verification attempt within the window", async () => {
     const { t, email, employeeId } = await createFixture();
     const actor = t.withIdentity({ email });
@@ -167,6 +240,16 @@ describe("payslip PIN access", () => {
 
     const employee = await t.run((ctx) => ctx.db.get(employeeId));
     expect(employee?.payslipPinHash).toBe("scrypt$v1$new-credential");
+    const credentials = await t.run((ctx) =>
+      ctx.db
+        .query("payslipCredentials")
+        .withIndex("by_employee", (q) => q.eq("employeeId", employeeId))
+        .collect(),
+    );
+    expect(credentials).toHaveLength(1);
+    expect(credentials[0]?.credentialHash).toBe(
+      "scrypt$v1$new-credential",
+    );
   });
 
   it("allows an alumni employee to verify their historical-payslip PIN", async () => {
@@ -178,5 +261,18 @@ describe("payslip PIN access", () => {
     await expect(
       t.withIdentity({ email }).mutation(beginVerification, { employeeId }),
     ).resolves.toEqual({ credential: "scrypt$v1$credential", locked: false });
+  });
+
+  it("blocks PIN access after the organization is archived", async () => {
+    const { t, email, employeeId } = await createFixture("alumni");
+    await t.run(async (ctx) => {
+      const employee = await ctx.db.get(employeeId);
+      if (!employee) throw new Error("Employee fixture was not found");
+      await ctx.db.patch(employee.organizationId, { status: "archived" });
+    });
+
+    await expect(
+      t.withIdentity({ email }).mutation(beginVerification, { employeeId }),
+    ).rejects.toThrow("Not authorized");
   });
 });

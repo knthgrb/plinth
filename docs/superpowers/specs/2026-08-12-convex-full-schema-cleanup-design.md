@@ -214,25 +214,47 @@ Release 2 compatibility mode while the remaining domains advance.
   storage metadata integrity.
 - Preserve payroll snapshots, accounting breakdowns, and current asset state.
 
-### Release 1G: Global expansion audit
+Each Release 1 wave ends with its own source/destination audit, complete issue
+review, and zero-change idempotency run. When Release 1F is ready, the global
+expansion gate is satisfied and Release 2 may begin; there is no Release 1G.
 
-- Audit all legacy sources against every normalized destination.
-- Verify source/destination and parent/tenant row counts.
-- Run idempotency writes with zero changes.
-- Resolve all conflicts before any remaining domain switches.
+### Release 2B: Identity and credentials compatibility switch
 
-### Release 2B–2D: Domain compatibility switches
+- Make `userOrganizations` the only organization authorization, role, and
+  employee-identity source.
+- Switch payslip PIN credentials to normalized-first reads and transactional
+  dual writes.
+- Switch invitation tokens to hash-first lookup and transactional token/hash
+  issuance and rotation.
+- Keep legacy identity and credential projections solely for rollback.
 
-- Switch each expanded domain to normalized-first reads.
+### Release 2C: Leave and employee-child compatibility switch
+
+- Switch leave configuration, balances, employee requirements, deductions,
+  incentives, schedule overrides, and custom fields to normalized-first reads.
 - Dual-write normalized and legacy locations in the same Convex transaction.
-- Expose fallback-source telemetry and repeatable equality audits.
-- Compare payroll, leave, employee, recruitment, communication, and document
-  results before and after each switch.
+
+### Release 2D: Workflow compatibility switch
+
+- Switch recruitment and evaluation child data to normalized-first reads.
+- Dual-write normalized and legacy locations in the same Convex transaction.
+
+### Release 2E: Communications and documents compatibility switch
+
+- Switch memo, chat, document access, storage-link, and attachment data to
+  normalized-first reads.
+- Dual-write normalized and legacy locations in the same Convex transaction.
+
+### Release 2F: Assets, accounting, and payroll compatibility switch
+
+- Switch asset events, accounting receipt links, and payroll-run child data to
+  normalized-first reads.
+- Dual-write normalized and legacy locations in the same Convex transaction.
 
 Each Release 2 wave is independently deployable and reversible. A failure in a
 later domain does not require rolling back domains that completed their audit.
 
-### Release 2E: Full compatibility window
+### Release 2 compatibility window
 
 - Keep every remaining fallback and dual write active for at least one complete
   production payroll cycle.

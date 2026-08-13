@@ -7,7 +7,10 @@ import {
   FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
   type FullSchemaDomainReadiness,
 } from "../convex/fullSchemaCleanupRegistry";
-import { resolveFullSchemaCleanupReadinessMode } from "../convex/databaseMigrations";
+import {
+  resolveFullSchemaCleanupReadinessMode,
+  resolveFullSchemaProgramReadiness,
+} from "../convex/databaseMigrations";
 import { FULL_SCHEMA_TABLE_POLICIES } from "../convex/fullSchemaInventory";
 import schema from "../convex/schema";
 
@@ -36,7 +39,9 @@ const getFullSchemaCleanupReadiness = makeFunctionReference<
   {
     programKey: string;
     programVersion: number;
+    readyForRelease2: boolean;
     readyForRelease3: boolean;
+    release3Blockers: string[];
     domains: Array<{
       domain: string;
       status: string;
@@ -97,6 +102,30 @@ describe("full schema cleanup readiness", () => {
   it("uses a stable full-schema program identity", () => {
     expect(FULL_SCHEMA_CLEANUP_PROGRAM_KEY).toBe("convex-full-schema-cleanup");
     expect(FULL_SCHEMA_CLEANUP_PROGRAM_VERSION).toBe(1);
+  });
+
+  it("separates additive readiness from compatibility removal readiness", () => {
+    const additiveDomains = FULL_SCHEMA_CLEANUP_DOMAINS.map(
+      ({ domain, migrationKey, migrationVersion }) => ({
+        domain,
+        status: "ready" as const,
+        migrationKey,
+        migrationVersion,
+        blockers: [],
+      }),
+    );
+
+    expect(resolveFullSchemaProgramReadiness(additiveDomains)).toEqual({
+      readyForRelease2: true,
+      readyForRelease3: false,
+      release3Blockers: [
+        "COMPATIBILITY_SWITCH_PENDING:leave_employee_children",
+        "COMPATIBILITY_SWITCH_PENDING:workflow_events",
+        "COMPATIBILITY_SWITCH_PENDING:communications_documents",
+        "COMPATIBILITY_SWITCH_PENDING:assets_payroll_compatibility",
+        "COMPATIBILITY_WINDOW_NOT_COMPLETED",
+      ],
+    });
   });
 
   it("dispatches readiness by implementation before compatibility identity", () => {
@@ -162,7 +191,12 @@ describe("full schema cleanup readiness", () => {
     expect(readiness).toMatchObject({
       programKey: FULL_SCHEMA_CLEANUP_PROGRAM_KEY,
       programVersion: FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
+      readyForRelease2: false,
       readyForRelease3: false,
+      release3Blockers: expect.arrayContaining([
+        "ADDITIVE_MIGRATIONS_NOT_READY",
+        "COMPATIBILITY_WINDOW_NOT_COMPLETED",
+      ]),
     });
     expect(readiness.domains).toHaveLength(6);
     expect(

@@ -1,12 +1,12 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { randomBytes } from "@noble/ciphers/utils.js";
 import { authComponent } from "./auth";
 import { getAssignableOrganizationRoleOptions } from "@/utils/organization-roles";
 import { requireActiveMembership, requireIdentity } from "./access";
 import { bytesToBase64 } from "./binaryBase64";
 import { hashInvitationToken } from "./invitationTokenHash";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 
 function normalizeInviteEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -20,7 +20,10 @@ function createInvitationToken(): string {
 }
 
 /** Convex `users.email` is indexed exactly; try common variants for case mismatches. */
-async function findUserByEmailLoose(ctx: any, email: string) {
+async function findUserByEmailLoose(
+  ctx: QueryCtx | MutationCtx,
+  email: string,
+): Promise<Doc<"users"> | null> {
   const trimmed = email.trim();
   const norm = normalizeInviteEmail(email);
   const variants = Array.from(
@@ -29,23 +32,11 @@ async function findUserByEmailLoose(ctx: any, email: string) {
   for (const variant of variants) {
     const u = await ctx.db
       .query("users")
-      .withIndex("by_email", (q: any) => q.eq("email", variant))
+      .withIndex("by_email", (q) => q.eq("email", variant))
       .first();
     if (u) return u;
   }
   return null;
-}
-
-function getActorOrganizationRole(
-  userRecord: any,
-  userOrg: any,
-  organizationId: any,
-): string | null {
-  return (
-    userOrg?.role ||
-    (userRecord.organizationId === organizationId ? userRecord.role : null) ||
-    null
-  );
 }
 
 function assertCanInviteRole(actorRole: string | null, nextRole: string) {
@@ -119,20 +110,25 @@ function accountDisplayNameDiffersFromEmployeeRecord(
 const CONFIRM_EXISTING_PLINTH_USER = "CONFIRM_EXISTING_PLINTH_USER";
 
 type SoftInviteResult =
-  | { kind: "created"; invitationId: any; email: string }
+  | {
+      kind: "created";
+      invitationId: Id<"invitations">;
+      email: string;
+      token: string;
+    }
   | { kind: "skipped"; email: string; reason: string }
   | { kind: "needs_confirm"; email: string };
 
 async function tryCreateOrgInvitationSoft(
-  ctx: any,
+  ctx: MutationCtx,
   params: {
-    organizationId: any;
-    role: string;
-    userRecord: any;
+    organizationId: Id<"organizations">;
+    role: Doc<"invitations">["role"];
+    userRecord: Doc<"users">;
     email: string;
-    employeeId?: any;
+    employeeId?: Id<"employees">;
     confirmInviteToExistingPlinthUser?: boolean;
-    existingInvitations: any[];
+    existingInvitations: Doc<"invitations">[];
     pendingEmailsThisBatch: Set<string>;
   },
 ): Promise<SoftInviteResult> {
@@ -161,7 +157,7 @@ async function tryCreateOrgInvitationSoft(
         reason: "Employee not found",
       };
     }
-    const empEmail = String((employee.personalInfo as any).email ?? "").trim();
+    const empEmail = employee.personalInfo.email.trim();
     if (!empEmail) {
       return {
         kind: "skipped",
@@ -178,13 +174,12 @@ async function tryCreateOrgInvitationSoft(
     }
     email = empEmail;
 
-    const existingUserOrgForEmployee = await (
-      ctx.db.query("userOrganizations") as any
-    )
-      .withIndex("by_organization", (q: any) =>
+    const existingUserOrgForEmployee = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", organizationId),
       )
-      .filter((q: any) => q.eq(q.field("employeeId"), employeeId))
+      .filter((q) => q.eq(q.field("employeeId"), employeeId))
       .first();
 
     if (existingUserOrgForEmployee) {
@@ -195,7 +190,7 @@ async function tryCreateOrgInvitationSoft(
       };
     }
 
-    const inviterEmail = (userRecord as any).email;
+    const inviterEmail = userRecord.email;
     if (
       inviterEmail &&
       normalizeInviteEmail(email) === normalizeInviteEmail(inviterEmail)
@@ -214,7 +209,7 @@ async function tryCreateOrgInvitationSoft(
         reason: "Email is required",
       };
     }
-    const inviterEmail = (userRecord as any).email;
+    const inviterEmail = userRecord.email;
     if (
       inviterEmail &&
       normalizeInviteEmail(email) === normalizeInviteEmail(inviterEmail)
@@ -240,8 +235,9 @@ async function tryCreateOrgInvitationSoft(
   const existingUser = await findUserByEmailLoose(ctx, email);
 
   if (existingUser) {
-    const existingUserOrg = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_user_organization", (q: any) =>
+    const existingUserOrg = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_user_organization", (q) =>
         q.eq("userId", existingUser._id).eq("organizationId", organizationId),
       )
       .first();
@@ -263,24 +259,9 @@ async function tryCreateOrgInvitationSoft(
       if (!employeeDoc) {
         return { kind: "skipped", email, reason: "Employee not found" };
       }
-      const pi = (employeeDoc as any).personalInfo as {
-        firstName: string;
-        lastName: string;
-        middleName?: string;
-        email: string;
-        phone?: string;
-        address?: string;
-        province?: string;
-        dateOfBirth?: number;
-        civilStatus?: string;
-        emergencyContact?: {
-          name: string;
-          relationship: string;
-          phone: string;
-        };
-      };
+      const pi = employeeDoc.personalInfo;
 
-      const accountNameRaw = String((existingUser as any).name ?? "");
+      const accountNameRaw = String(existingUser.name ?? "");
       if (
         accountDisplayNameDiffersFromEmployeeRecord(accountNameRaw, {
           firstName: pi.firstName,
@@ -290,7 +271,7 @@ async function tryCreateOrgInvitationSoft(
       ) {
         const parts = employeePersonalFromAccountDisplayName(
           accountNameRaw,
-          String((existingUser as any).email ?? email),
+          existingUser.email,
         );
         const piRest = { ...pi };
         delete (piRest as { middleName?: string }).middleName;
@@ -307,11 +288,10 @@ async function tryCreateOrgInvitationSoft(
       }
 
       const employeeAfter = await ctx.db.get(resolvedEmployeeId);
-      const p = (employeeAfter as any).personalInfo as {
-        firstName: string;
-        lastName: string;
-        middleName?: string;
-      };
+      if (!employeeAfter) {
+        return { kind: "skipped", email, reason: "Employee not found" };
+      }
+      const p = employeeAfter.personalInfo;
       const inviteeNameFromEmployee = [p.firstName, p.middleName, p.lastName]
         .filter(Boolean)
         .join(" ")
@@ -325,11 +305,7 @@ async function tryCreateOrgInvitationSoft(
   } else if (resolvedEmployeeId) {
     const employeeDoc = await ctx.db.get(resolvedEmployeeId);
     if (employeeDoc) {
-      const p = (employeeDoc as any).personalInfo as {
-        firstName: string;
-        lastName: string;
-        middleName?: string;
-      };
+      const p = employeeDoc.personalInfo;
       inviteeName =
         [p.firstName, p.middleName, p.lastName]
           .filter(Boolean)
@@ -339,7 +315,7 @@ async function tryCreateOrgInvitationSoft(
   }
 
   const existingInvitation = existingInvitations.find(
-    (inv: any) =>
+    (inv) =>
       normalizeInviteEmail(inv.email) === inviteNorm &&
       inv.status === "pending" &&
       inv.organizationId === organizationId,
@@ -372,13 +348,7 @@ async function tryCreateOrgInvitationSoft(
   });
 
   pendingEmailsThisBatch.add(inviteNorm);
-  existingInvitations.push({
-    email,
-    status: "pending",
-    organizationId,
-  });
-
-  return { kind: "created", invitationId, email };
+  return { kind: "created", invitationId, email, token };
 }
 
 // Create invitation (mutation - email will be sent from server action)
@@ -401,11 +371,7 @@ export const createInvitation = mutation({
     const { user: userRecord, membership: userOrg } =
       await requireActiveMembership(ctx, args.organizationId);
 
-    const actorRole = getActorOrganizationRole(
-      userRecord,
-      userOrg,
-      args.organizationId,
-    );
+    const actorRole = userOrg.role;
 
     const isAuthorized =
       actorRole === "owner" || actorRole === "admin" || actorRole === "hr";
@@ -415,8 +381,9 @@ export const createInvitation = mutation({
     }
     assertCanInviteRole(actorRole, args.role);
 
-    const existingInvitations = await (ctx.db.query("invitations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const existingInvitations = await ctx.db
+      .query("invitations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
@@ -440,7 +407,11 @@ export const createInvitation = mutation({
     if (result.kind === "skipped") {
       throw new Error(result.reason);
     }
-    return result.invitationId;
+    return {
+      invitationId: result.invitationId,
+      email: result.email,
+      token: result.token,
+    };
   },
 });
 
@@ -467,11 +438,7 @@ export const batchCreateInvitations = mutation({
     const { user: userRecord, membership: userOrg } =
       await requireActiveMembership(ctx, args.organizationId);
 
-    const actorRole = getActorOrganizationRole(
-      userRecord,
-      userOrg,
-      args.organizationId,
-    );
+    const actorRole = userOrg.role;
 
     const isAuthorized =
       actorRole === "owner" || actorRole === "admin" || actorRole === "hr";
@@ -481,14 +448,19 @@ export const batchCreateInvitations = mutation({
     }
     assertCanInviteRole(actorRole, args.role);
 
-    const existingInvitations = await (ctx.db.query("invitations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const existingInvitations = await ctx.db
+      .query("invitations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
 
     const pendingEmailsThisBatch = new Set<string>();
-    const created: { invitationId: any; email: string }[] = [];
+    const created: {
+      invitationId: Id<"invitations">;
+      email: string;
+      token: string;
+    }[] = [];
     const skipped: { email: string; reason: string }[] = [];
     const needsConfirmForEmails: string[] = [];
 
@@ -511,6 +483,7 @@ export const batchCreateInvitations = mutation({
         created.push({
           invitationId: result.invitationId,
           email: result.email,
+          token: result.token,
         });
       } else if (result.kind === "skipped") {
         skipped.push({ email: result.email, reason: result.reason });
@@ -522,6 +495,43 @@ export const batchCreateInvitations = mutation({
     return { created, skipped, needsConfirmForEmails };
   },
 });
+
+async function findInvitationByRawToken(
+  ctx: QueryCtx | MutationCtx,
+  token: string,
+): Promise<Doc<"invitations"> | null> {
+  const hashedMatches = await ctx.db
+    .query("invitations")
+    .withIndex("by_token_hash", (q) =>
+      q.eq("tokenHash", hashInvitationToken(token)),
+    )
+    .take(2);
+  if (hashedMatches.length > 1) {
+    throw new Error("Invalid invitation token");
+  }
+  if (hashedMatches[0]) return hashedMatches[0];
+
+  const legacyMatches = await ctx.db
+    .query("invitations")
+    .withIndex("by_token", (q) => q.eq("token", token))
+    .take(2);
+  const eligibleLegacyMatches = legacyMatches.filter(
+    (invitation) => invitation.tokenHash === undefined,
+  );
+  if (eligibleLegacyMatches.length > 1) {
+    throw new Error("Invalid invitation token");
+  }
+  return eligibleLegacyMatches[0] ?? null;
+}
+
+function redactInvitationToken(
+  invitation: Doc<"invitations">,
+): Omit<Doc<"invitations">, "token" | "tokenHash"> {
+  const { token: _token, tokenHash: _tokenHash, ...redacted } = invitation;
+  void _token;
+  void _tokenHash;
+  return redacted;
+}
 
 // Get invitation by ID (for server action to send email)
 export const getInvitationById = query({
@@ -547,10 +557,10 @@ export const getInvitationById = query({
     const organization = await ctx.db.get(
       invitation.organizationId as import("./_generated/dataModel").Id<"organizations">,
     );
-    const inviter = (await ctx.db.get(invitation.invitedBy)) as any;
+    const inviter = await ctx.db.get(invitation.invitedBy);
 
     return {
-      ...invitation,
+      ...redactInvitationToken(invitation),
       organization,
       inviter:
         inviter && "email" in inviter
@@ -563,15 +573,40 @@ export const getInvitationById = query({
   },
 });
 
+export const resendInvitation = mutation({
+  args: { invitationId: v.id("invitations") },
+  handler: async (ctx, args) => {
+    const invitation = await ctx.db.get(args.invitationId);
+    if (!invitation) throw new Error("Invitation not found");
+    const { membership } = await requireActiveMembership(
+      ctx,
+      invitation.organizationId,
+    );
+    if (!["owner", "admin", "hr"].includes(membership.role)) {
+      throw new Error("Not authorized");
+    }
+    if (invitation.status !== "pending") {
+      throw new Error("Can only resend pending invitations");
+    }
+
+    const token = createInvitationToken();
+    const now = Date.now();
+    await ctx.db.patch(invitation._id, {
+      token,
+      tokenHash: hashInvitationToken(token),
+      expiresAt: now + 7 * 24 * 60 * 60 * 1000,
+    });
+    return { token, email: invitation.email };
+  },
+});
+
 // Get invitation by token
 export const getInvitationByToken = query({
   args: {
     token: v.string(),
   },
   handler: async (ctx, args) => {
-    const invitation = await (ctx.db.query("invitations") as any)
-      .withIndex("by_token", (q: any) => q.eq("token", args.token))
-      .first();
+    const invitation = await findInvitationByRawToken(ctx, args.token);
 
     if (!invitation) {
       return null;
@@ -586,10 +621,10 @@ export const getInvitationByToken = query({
 
     // Get organization and inviter details
     const organization = await ctx.db.get(invitation.organizationId);
-    const inviter = (await ctx.db.get(invitation.invitedBy)) as any;
+    const inviter = await ctx.db.get(invitation.invitedBy);
 
     return {
-      ...invitation,
+      ...redactInvitationToken(invitation),
       organization,
       inviter:
         inviter && "email" in inviter
@@ -674,8 +709,9 @@ export const getInviteRecipientPreview = query({
 
     let alreadyInOrg = false;
     if (existingConvexUser) {
-      const link = await (ctx.db.query("userOrganizations") as any)
-        .withIndex("by_user_organization", (q: any) =>
+      const link = await ctx.db
+        .query("userOrganizations")
+        .withIndex("by_user_organization", (q) =>
           q
             .eq("userId", existingConvexUser._id)
             .eq("organizationId", args.organizationId),
@@ -697,7 +733,7 @@ export const getInviteRecipientPreview = query({
         };
         employeeWillBeRenamedToMatchAccount =
           accountDisplayNameDiffersFromEmployeeRecord(
-            String((existingConvexUser as any).name ?? ""),
+            String(existingConvexUser.name ?? ""),
             ep,
           );
       }
@@ -707,9 +743,8 @@ export const getInviteRecipientPreview = query({
       inviteEmail,
       existingConvexUser: existingConvexUser
         ? {
-            name:
-              ((existingConvexUser as any).name as string | undefined) ?? null,
-            email: (existingConvexUser as any).email as string,
+            name: existingConvexUser.name ?? null,
+            email: existingConvexUser.email,
           }
         : null,
       alreadyInOrg,
@@ -727,9 +762,7 @@ export const acceptInvitation = mutation({
     name: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const invitation = await (ctx.db.query("invitations") as any)
-      .withIndex("by_token", (q: any) => q.eq("token", args.token))
-      .first();
+    const invitation = await findInvitationByRawToken(ctx, args.token);
 
     if (!invitation) {
       throw new Error("Invalid invitation token");
@@ -778,14 +811,14 @@ export const acceptInvitation = mutation({
 
     const now = Date.now();
 
-    const nameToSet = (invitation as any).inviteeName ?? args.name ?? undefined;
+    const nameToSet = invitation.inviteeName ?? args.name ?? undefined;
 
     const existingConvexUser = await findUserByEmailLoose(
       ctx,
       invitation.email,
     );
 
-    let userId: any;
+    let userId: Id<"users">;
 
     if (!existingConvexUser) {
       userId = await ctx.db.insert("users", {
@@ -800,8 +833,9 @@ export const acceptInvitation = mutation({
     }
 
     // Add user to organization
-    const existingUserOrg = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_user_organization", (q: any) =>
+    const existingUserOrg = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_user_organization", (q) =>
         q.eq("userId", userId).eq("organizationId", invitation.organizationId),
       )
       .first();
@@ -868,34 +902,32 @@ export const getInvitations = query({
       throw new Error("Not authorized");
     }
 
-    const memberLinks = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const memberLinks = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
 
     const memberEmailsLower = new Set<string>();
     for (const link of memberLinks) {
-      const member = (await ctx.db.get(link.userId)) as {
-        email?: string;
-      } | null;
+      const member = await ctx.db.get(link.userId);
       if (member?.email) {
         memberEmailsLower.add(normalizeInviteEmail(member.email));
       }
     }
 
-    const invitations = await (ctx.db.query("invitations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const invitations = await ctx.db
+      .query("invitations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
 
-    const sorted = invitations.sort(
-      (a: any, b: any) => b.createdAt - a.createdAt,
-    );
+    const sorted = invitations.sort((a, b) => b.createdAt - a.createdAt);
 
-    return sorted.map((inv: any) => ({
-      ...inv,
+    return sorted.map((inv) => ({
+      ...redactInvitationToken(inv),
       pendingNeedsAction:
         inv.status === "pending" &&
         !memberEmailsLower.has(normalizeInviteEmail(inv.email)),
@@ -922,11 +954,7 @@ export const createUserForEmployee = mutation({
     const { user: userRecord, membership: userOrg } =
       await requireActiveMembership(ctx, args.organizationId);
 
-    const userRole = getActorOrganizationRole(
-      userRecord,
-      userOrg,
-      args.organizationId,
-    );
+    const userRole = userOrg.role;
 
     // Owner has all admin privileges - treat owner the same as admin
     const isOwnerOrAdmin = userRole === "admin" || userRole === "owner";
@@ -946,10 +974,10 @@ export const createUserForEmployee = mutation({
     const now = Date.now();
 
     // Cannot invite yourself (employee email matches current user)
-    const inviterEmail = (userRecord as any).email;
+    const inviterEmail = userRecord.email;
     if (
       inviterEmail &&
-      (employee.personalInfo as any).email?.toLowerCase() ===
+      employee.personalInfo.email.toLowerCase() ===
         inviterEmail.toLowerCase()
     ) {
       throw new Error(
@@ -958,11 +986,12 @@ export const createUserForEmployee = mutation({
     }
 
     // Check if employee already has a user account
-    const existingUserOrg = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const existingUserOrg = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
-      .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
+      .filter((q) => q.eq(q.field("employeeId"), args.employeeId))
       .first();
 
     if (existingUserOrg) {
@@ -977,10 +1006,9 @@ export const createUserForEmployee = mutation({
 
     if (existingUser) {
       // Check if this user is already in the organization
-      const existingUserOrgCheck = await (
-        ctx.db.query("userOrganizations") as any
-      )
-        .withIndex("by_user_organization", (q: any) =>
+      const existingUserOrgCheck = await ctx.db
+        .query("userOrganizations")
+        .withIndex("by_user_organization", (q) =>
           q
             .eq("userId", existingUser._id)
             .eq("organizationId", args.organizationId),
@@ -1014,7 +1042,7 @@ export const createUserForEmployee = mutation({
         };
       };
 
-      const accountNameRaw = String((existingUser as any).name ?? "");
+      const accountNameRaw = String(existingUser.name ?? "");
       if (
         accountDisplayNameDiffersFromEmployeeRecord(accountNameRaw, {
           firstName: pi.firstName,
@@ -1024,7 +1052,7 @@ export const createUserForEmployee = mutation({
       ) {
         const parts = employeePersonalFromAccountDisplayName(
           accountNameRaw,
-          String((existingUser as any).email ?? employee.personalInfo.email),
+          existingUser.email,
         );
         const piRest = { ...pi };
         delete (piRest as { middleName?: string }).middleName;
@@ -1041,9 +1069,8 @@ export const createUserForEmployee = mutation({
       }
     }
 
-    const employeeAfter = (await ctx.db.get(
-      args.employeeId,
-    )) as typeof employee;
+    const employeeAfter = await ctx.db.get(args.employeeId);
+    if (!employeeAfter) throw new Error("Employee not found");
 
     // Build invitee name from employee record so we can set it on accept without asking
     const p = employeeAfter.personalInfo as {
@@ -1057,7 +1084,7 @@ export const createUserForEmployee = mutation({
       .trim();
     const accountDisplay =
       existingUser && args.confirmInviteToExistingPlinthUser
-        ? String((existingUser as any).name ?? "").trim()
+        ? String(existingUser.name ?? "").trim()
         : "";
     const inviteeName =
       (accountDisplay.length > 0 ? accountDisplay : inviteeNameFromEmployee) ||
@@ -1082,7 +1109,7 @@ export const createUserForEmployee = mutation({
       createdAt: now,
     });
 
-    return { invitationId, email: employee.personalInfo.email };
+    return { invitationId, email: employee.personalInfo.email, token };
   },
 });
 

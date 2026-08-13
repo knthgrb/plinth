@@ -1,6 +1,7 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import { authComponent } from "./auth";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { requireActiveMembership } from "./access";
 import { runOrgQuery } from "./queryAuthGrace";
 
 const templateSectionValidator = v.object({
@@ -22,30 +23,15 @@ const managerReviewValidator = v.object({
 });
 
 // Helper to enforce org + elevated people role
-async function checkOrgHrAdmin(ctx: any, organizationId: any) {
-  const user = await authComponent.getAuthUser(ctx);
-  if (!user) throw new Error("Not authenticated");
-
-  const userRecord = await ctx.db
-    .query("users")
-    .withIndex("by_email", (q: any) => q.eq("email", user.email))
-    .first();
-
-  if (!userRecord) throw new Error("User not found");
-
-  const userOrg = await (ctx.db.query("userOrganizations") as any)
-    .withIndex("by_user_organization", (q: any) =>
-      q.eq("userId", userRecord._id).eq("organizationId", organizationId)
-    )
-    .first();
-
-  const role = userOrg?.role || userRecord.role;
-  if (
-    userOrg?.organizationId !== organizationId &&
-    userRecord.organizationId !== organizationId
-  ) {
-    throw new Error("User is not a member of this organization");
-  }
+async function checkOrgHrAdmin(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+) {
+  const { user, membership } = await requireActiveMembership(
+    ctx,
+    organizationId,
+  );
+  const role = membership.role;
   if (
     role !== "owner" &&
     role !== "admin" &&
@@ -56,7 +42,7 @@ async function checkOrgHrAdmin(ctx: any, organizationId: any) {
     throw new Error("Not authorized");
   }
 
-  return { userRecord, role };
+  return { userRecord: user, role };
 }
 
 function appendEvaluationHistory(

@@ -2,10 +2,9 @@
 
 import { EmployeesService } from "@/services/employees-service";
 import { ChatService } from "@/services/chat-service";
-import { InvitationsService } from "@/services/invitations-service";
 import { getAuthedConvexClient } from "@/lib/convex-client";
 import { api } from "@/convex/_generated/api";
-import { Id } from "@/convex/_generated/dataModel";
+import type { Id } from "@/convex/_generated/dataModel";
 import type { OrganizationRole } from "@/utils/organization-roles";
 
 export async function createEmployee(data: {
@@ -158,7 +157,7 @@ export async function updateEmployee(
       }>;
     };
     shiftId?: Id<"shifts"> | null;
-    customFields?: Record<string, any>;
+    customFields?: Record<string, unknown>;
   },
 ) {
   return EmployeesService.updateEmployee(employeeId, data);
@@ -182,8 +181,8 @@ export async function checkEmployeeHasUserAccount(data: {
   employeeId: string;
 }) {
   const convex = await getAuthedConvexClient();
-  return await (convex.query as any)(
-    (api as any).employees.employeeHasUserAccount,
+  return await convex.query(
+    api.employees.employeeHasUserAccount,
     {
       organizationId: data.organizationId as Id<"organizations">,
       employeeId: data.employeeId as Id<"employees">,
@@ -201,8 +200,8 @@ export async function createUserForEmployee(data: {
   const convex = await getAuthedConvexClient();
 
   // Create invitation in Convex (this creates the invitation record)
-  const result = await (convex.mutation as any)(
-    (api as any).invitations.createUserForEmployee,
+  const result = await convex.mutation(
+    api.invitations.createUserForEmployee,
     {
       organizationId: data.organizationId as Id<"organizations">,
       employeeId: data.employeeId as Id<"employees">,
@@ -213,18 +212,18 @@ export async function createUserForEmployee(data: {
   );
 
   // Get invitation details to send email
-  const invitation = await (convex.query as any)(
-    (api as any).invitations.getInvitationById,
+  const invitation = await convex.query(
+    api.invitations.getInvitationById,
     { invitationId: result.invitationId as Id<"invitations"> },
   );
 
-  if (invitation) {
+  if (invitation?.organization && invitation.inviter) {
     // Generate invitation link
     const baseUrl =
       process.env.NEXT_PUBLIC_SITE_URL ||
       process.env.SITE_URL ||
       "http://localhost:3000";
-    const invitationLink = `${baseUrl}/invite/accept?token=${invitation.token}`;
+    const invitationLink = `${baseUrl}/invite/accept?token=${result.token}`;
 
     // Send email directly (invitation is already created)
     const { generateInvitationEmail } =
@@ -245,7 +244,7 @@ export async function createUserForEmployee(data: {
         html: emailContent.html,
         text: emailContent.text,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to send invitation email:", error);
       // Don't throw - invitation is created, email failure is logged
     }

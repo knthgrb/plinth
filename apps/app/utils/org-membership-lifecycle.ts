@@ -26,7 +26,7 @@ export function normalizeOrgMembershipAccessStatus(
   const normalized = status.toLowerCase();
   return ACCESS_STATUSES.includes(normalized as OrgMembershipAccessStatus)
     ? (normalized as OrgMembershipAccessStatus)
-    : "active";
+    : "suspended";
 }
 
 export function canUseFullOrganizationAccess(

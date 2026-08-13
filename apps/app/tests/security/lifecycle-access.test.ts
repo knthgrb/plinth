@@ -32,6 +32,76 @@ const defaultSchedule = {
 };
 
 describe("employee lifecycle access", () => {
+  it("does not authorize a user from legacy organization and role columns", async () => {
+    const t = convexTest(schema, modules);
+    const email = "legacy-admin@example.com";
+    const organizationId = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Canonical membership organization",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("users", {
+        email,
+        organizationId,
+        role: "admin",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return organizationId;
+    });
+
+    await expect(
+      t.withIdentity({ email }).query(api.settings.getSettings, {
+        organizationId,
+      }),
+    ).rejects.toThrow("Organization access is limited or inactive");
+    await expect(
+      t.withIdentity({ email }).query(api.organizations.getUserOrganizations, {}),
+    ).resolves.toEqual([]);
+    await expect(
+      t.withIdentity({ email }).mutation(api.organizations.updateOrganization, {
+        organizationId,
+        name: "Unauthorized rename",
+      }),
+    ).rejects.toThrow("Not authorized");
+  });
+
+  it("uses the membership role instead of a privileged legacy user role", async () => {
+    const t = convexTest(schema, modules);
+    const email = "membership-employee@example.com";
+    const organizationId = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Membership role organization",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const userId = await ctx.db.insert("users", {
+        email,
+        organizationId,
+        role: "admin",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId,
+        organizationId,
+        role: "employee",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      return organizationId;
+    });
+
+    await expect(
+      t.withIdentity({ email }).mutation(api.settings.updatePayrollSettings, {
+        organizationId,
+        payrollSettings: { nightDiffPercent: 2 },
+      }),
+    ).rejects.toThrow("Not authorized");
+  });
+
   it("blocks alumni members from reading or changing organization settings", async () => {
     const t = convexTest(schema, modules);
     const alumniEmail = "former-hr@example.com";
@@ -110,7 +180,7 @@ describe("employee lifecycle access", () => {
           firstPayDate: 28,
           secondPayDate: 28,
         }),
-    ).rejects.toThrow("Only admins or accounting can update organization");
+    ).rejects.toThrow("Not authorized");
 
     await expect(
       t.run((ctx) => ctx.db.get(organizationId)),

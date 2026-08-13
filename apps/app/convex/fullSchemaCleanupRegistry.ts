@@ -11,6 +11,7 @@ type FullSchemaCleanupDomainRegistration = {
   migrationKey: string;
   migrationVersion: number;
   implementation: "compatibility" | "migration" | "not_started";
+  compatibility: "switched" | "pending";
   policyDomains: readonly FullSchemaPolicyDomain[];
 };
 
@@ -20,6 +21,7 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     migrationKey: "schema-normalization-release-1",
     migrationVersion: 1,
     implementation: "compatibility",
+    compatibility: "switched",
     policyDomains: [
       "organization_configuration",
       "migration_control",
@@ -31,6 +33,7 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     migrationKey: "full-schema-identity-credentials",
     migrationVersion: 1,
     implementation: "migration",
+    compatibility: "switched",
     policyDomains: ["identity_membership", "employee_core_credentials"],
   },
   {
@@ -38,6 +41,7 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     migrationKey: "full-schema-leave-employee-children",
     migrationVersion: 1,
     implementation: "migration",
+    compatibility: "pending",
     policyDomains: ["leave", "time_holidays", "employee_children"],
   },
   {
@@ -45,6 +49,7 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     migrationKey: "full-schema-workflow-events",
     migrationVersion: 1,
     implementation: "migration",
+    compatibility: "pending",
     policyDomains: ["performance", "recruitment"],
   },
   {
@@ -52,6 +57,7 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     migrationKey: "full-schema-communications-documents",
     migrationVersion: 1,
     implementation: "migration",
+    compatibility: "pending",
     policyDomains: [
       "storage",
       "notifications",
@@ -65,6 +71,7 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     migrationKey: "full-schema-assets-payroll",
     migrationVersion: 1,
     implementation: "migration",
+    compatibility: "pending",
     policyDomains: ["payroll_offboarding", "accounting", "assets"],
   },
 ] as const satisfies readonly FullSchemaCleanupDomainRegistration[];

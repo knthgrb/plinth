@@ -13,11 +13,13 @@ import {
 import { bytesToBase64 } from "./binaryBase64";
 import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
 import { requireActiveMembership } from "./access";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { canUseFullOrganizationAccess } from "@/utils/org-membership-lifecycle";
 
 // Helper to check authorization with organization context
 async function checkAuth(
-  ctx: any,
+  ctx: QueryCtx | MutationCtx,
   organizationId: Id<"organizations">,
   requiredRole?: "owner" | "admin" | "hr" | "manager" | "accounting" | "employee"
 ) {
@@ -40,12 +42,19 @@ async function checkAuth(
   }
   // If no requiredRole specified, allow all authenticated users (read access)
 
-  return { ...user, role: userRole, organizationId };
+  return {
+    _id: user._id,
+    email: user.email,
+    name: user.name,
+    role: userRole,
+    organizationId,
+    employeeId: membership.employeeId,
+  };
 }
 
 async function checkAuthForQuery(
-  ctx: any,
-  organizationId: any,
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
   requiredRole?: "owner" | "admin" | "hr" | "manager" | "accounting" | "employee",
 ) {
   try {
@@ -55,7 +64,10 @@ async function checkAuthForQuery(
     throw e;
   }
 }
-function buildReplyToPreview(replyMsg: any, replySender: any) {
+function buildReplyToPreview(
+  replyMsg: Doc<"messages"> | null,
+  replySender: Doc<"users"> | null,
+) {
   const replySenderName =
     replySender?.name || replySender?.email || "Unknown";
   if (!replyMsg || typeof replyMsg.content !== "string") {
@@ -92,26 +104,32 @@ export const getUserByEmployeeId = query({
       return null;
     }
 
-    // Find user linked to this employee
-    const user = await (ctx.db.query("users") as any)
-      .withIndex("by_employee", (q: any) => q.eq("employeeId", args.employeeId))
-      .first();
-
-    // Also check userOrganizations for employeeId
-    if (!user) {
-      const userOrg = await (ctx.db.query("userOrganizations") as any)
-        .withIndex("by_organization", (q: any) =>
-          q.eq("organizationId", args.organizationId)
-        )
-        .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
-        .first();
-
-      if (userOrg) {
-        return await ctx.db.get(userOrg.userId);
+    const memberships = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .filter((q) => q.eq(q.field("employeeId"), args.employeeId))
+      .take(2);
+    if (memberships.length > 1) {
+      throw new Error("Employee has multiple organization memberships");
+    }
+    if (memberships[0]) {
+      if (!canUseFullOrganizationAccess(memberships[0].accessStatus)) {
+        return null;
       }
+      return await ctx.db.get(memberships[0].userId);
     }
 
-    return user;
+    const legacyUser = await ctx.db
+      .query("users")
+      .withIndex("by_employee", (q) => q.eq("employeeId", args.employeeId))
+      .unique();
+
+    return legacyUser?.organizationId === args.organizationId &&
+      legacyUser.isActive !== false
+      ? legacyUser
+      : null;
   },
 });
 
@@ -124,31 +142,69 @@ export const getPayrollAppealRecipient = query({
   handler: async (ctx, args) => {
     if (!(await checkAuthForQuery(ctx, args.organizationId))) return null;
 
-    const userOrgs = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .collect();
+    const userOrgs = (
+      await ctx.db
+        .query("userOrganizations")
+        .withIndex("by_organization", (q) =>
+          q.eq("organizationId", args.organizationId),
+        )
+        .collect()
+    ).filter((membership) =>
+      canUseFullOrganizationAccess(membership.accessStatus),
+    );
 
     const priority = ["owner", "admin", "hr"] as const;
     for (const role of priority) {
-      const row = userOrgs.find(
-        (u: any) =>
-          u.role === role &&
-          (!args.excludeUserId || u.userId !== args.excludeUserId),
+      const candidates = userOrgs.filter(
+        (membership) =>
+          membership.role === role &&
+          (!args.excludeUserId || membership.userId !== args.excludeUserId),
       );
-      if (row) {
-        return { userId: row.userId, role: row.role as string };
+      for (const candidate of candidates) {
+        const user = await ctx.db.get(candidate.userId);
+        if (user && user.isActive !== false) {
+          return { userId: candidate.userId, role: candidate.role as string };
+        }
       }
     }
     return null;
   },
 });
 
-function normalizedDirectKind(conv: any): "standard" | "staff_as_admin" {
-  return conv.directThreadKind === "staff_as_admin"
+function normalizedDirectKind(
+  conversation: Doc<"conversations">,
+): "standard" | "staff_as_admin" {
+  return conversation.directThreadKind === "staff_as_admin"
     ? "staff_as_admin"
     : "standard";
+}
+
+async function assertActiveChatParticipants(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  participantIds: readonly Id<"users">[],
+) {
+  for (const participantId of new Set(participantIds)) {
+    const [user, membership] = await Promise.all([
+      ctx.db.get(participantId),
+      ctx.db
+        .query("userOrganizations")
+        .withIndex("by_user_organization", (q) =>
+          q
+            .eq("userId", participantId)
+            .eq("organizationId", organizationId),
+        )
+        .unique(),
+    ]);
+    if (
+      !user ||
+      user.isActive === false ||
+      !membership ||
+      !canUseFullOrganizationAccess(membership.accessStatus)
+    ) {
+      throw new Error("Chat participant is not active in this organization");
+    }
+  }
 }
 
 // Get or create a direct conversation between two users
@@ -162,6 +218,9 @@ export const getOrCreateConversation = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
+    await assertActiveChatParticipants(ctx, args.organizationId, [
+      args.participantId,
+    ]);
 
     const requestedKind = args.directThreadKind ?? "standard";
 
@@ -177,13 +236,14 @@ export const getOrCreateConversation = mutation({
       }
     }
 
-    const existingConversations = await (ctx.db.query("conversations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const existingConversations = await ctx.db
+      .query("conversations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
 
-    const existing = existingConversations.find((conv: any) => {
+    const existing = existingConversations.find((conv) => {
       if (
         conv.type !== "direct" ||
         conv.participants.length !== 2 ||
@@ -205,19 +265,19 @@ export const getOrCreateConversation = mutation({
     }
 
     const now = Date.now();
-    const doc: Record<string, unknown> = {
+    const conversationId = await ctx.db.insert("conversations", {
       organizationId: args.organizationId,
       participants: [userRecord._id, args.participantId],
       type: "direct",
+      ...(requestedKind === "staff_as_admin"
+        ? {
+            directThreadKind: "staff_as_admin" as const,
+            adminPersonaUserId: userRecord._id,
+          }
+        : {}),
       createdAt: now,
       updatedAt: now,
-    };
-    if (requestedKind === "staff_as_admin") {
-      doc.directThreadKind = "staff_as_admin";
-      doc.adminPersonaUserId = userRecord._id;
-    }
-
-    const conversationId = await ctx.db.insert("conversations", doc as any);
+    });
 
     return conversationId;
   },
@@ -241,33 +301,35 @@ export const getConversations = query({
     }
     const limit = args.limit || 20;
 
-    const conversations = await (ctx.db.query("conversations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const conversations = await ctx.db
+      .query("conversations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId)
       )
       .collect();
 
     // Filter conversations where user is a participant
-    let userConversations = conversations.filter((conv: any) =>
+    const userConversations = conversations.filter((conv) =>
       conv.participants.includes(userRecord._id)
     );
 
     // Enrich with participant details and last message
     let enriched = await Promise.all(
-      userConversations.map(async (conv: any) => {
+      userConversations.map(async (conv) => {
         // Get other participants (not current user)
         const otherParticipants = conv.participants.filter(
-          (id: any) => id !== userRecord._id
+          (id) => id !== userRecord._id,
         );
 
         // Get participant user records
         const participantUsers = await Promise.all(
-          otherParticipants.map((id: any) => ctx.db.get(id))
+          otherParticipants.map((id) => ctx.db.get(id)),
         );
 
         // Get last message
-        const lastMessage = await (ctx.db.query("messages") as any)
-          .withIndex("by_conversation", (q: any) =>
+        const lastMessage = await ctx.db
+          .query("messages")
+          .withIndex("by_conversation", (q) =>
             q.eq("conversationId", conv._id)
           )
           .order("desc")
@@ -282,7 +344,7 @@ export const getConversations = query({
     );
 
     // Sort by last message time
-    enriched.sort((a: any, b: any) => {
+    enriched.sort((a, b) => {
       const aTime = a.lastMessage?.createdAt || a.createdAt;
       const bTime = b.lastMessage?.createdAt || b.createdAt;
       return bTime - aTime;
@@ -291,7 +353,7 @@ export const getConversations = query({
     // Apply cursor if provided
     if (args.cursor) {
       const cursorTime = parseInt(args.cursor);
-      enriched = enriched.filter((conv: any) => {
+      enriched = enriched.filter((conv) => {
         const convTime = conv.lastMessage?.createdAt || conv.createdAt;
         return convTime < cursorTime;
       });
@@ -337,8 +399,9 @@ export const getMessages = query({
     }
 
     const limit = args.limit || 50;
-    let query = (ctx.db.query("messages") as any)
-      .withIndex("by_conversation", (q: any) =>
+    const messageQuery = ctx.db
+      .query("messages")
+      .withIndex("by_conversation", (q) =>
         q.eq("conversationId", args.conversationId)
       )
       .order("desc");
@@ -346,25 +409,21 @@ export const getMessages = query({
     // If beforeTimestamp is provided, filter messages before that time
     if (args.beforeTimestamp !== undefined) {
       // We need to get all and filter, as Convex doesn't support range queries directly
-      const allMessages = await query.collect();
+      const allMessages = await messageQuery.collect();
       const filtered = allMessages.filter(
-        (msg: any) => msg.createdAt < args.beforeTimestamp!
+        (msg) => msg.createdAt < args.beforeTimestamp!,
       );
       const messages = filtered.slice(0, limit);
 
       // Enrich with sender details and replyTo
       const enriched = await Promise.all(
-        messages.map(async (msg: any) => {
-          const sender = (await ctx.db.get(msg.senderId)) as any;
+        messages.map(async (msg) => {
+          const sender = await ctx.db.get(msg.senderId);
           let replyTo = null;
           if (msg.replyToMessageId) {
-            const replyMsg = (await ctx.db.get(
-              msg.replyToMessageId,
-            )) as any;
+            const replyMsg = await ctx.db.get(msg.replyToMessageId);
             if (replyMsg) {
-              const replySender = (await ctx.db.get(
-                replyMsg.senderId as any,
-              )) as any;
+              const replySender = await ctx.db.get(replyMsg.senderId);
               replyTo = buildReplyToPreview(replyMsg, replySender);
             }
           }
@@ -394,20 +453,19 @@ export const getMessages = query({
       };
     } else {
       // Initial load - take limit+1 in one go so we can detect hasMore without chaining the query again
-      const fetched = await query.take(limit + 1);
+      const fetched = await messageQuery.take(limit + 1);
       const hasMore = fetched.length > limit;
       const messages = fetched.slice(0, limit);
 
       // Enrich with sender details and replyTo
       const enriched = await Promise.all(
-        messages.map(async (msg: any) => {
-          const sender = (await ctx.db.get(msg.senderId)) as any;
+        messages.map(async (msg) => {
+          const sender = await ctx.db.get(msg.senderId);
           let replyTo = null;
           if (msg.replyToMessageId) {
-            const rawReplyMsg = await ctx.db.get(msg.replyToMessageId);
-            const replyMsg = rawReplyMsg as any;
+            const replyMsg = await ctx.db.get(msg.replyToMessageId);
             if (replyMsg) {
-              const replySender = await ctx.db.get(replyMsg.senderId as any);
+              const replySender = await ctx.db.get(replyMsg.senderId);
               replyTo = buildReplyToPreview(replyMsg, replySender);
             }
           }
@@ -481,7 +539,7 @@ export const sendMessage = mutation({
     const now = Date.now();
     const messageType = args.messageType || "text";
 
-    let conv = conversation as any;
+    let conv = conversation;
     if (
       getChatMasterSecret() &&
       messageType !== "system" &&
@@ -530,11 +588,7 @@ export const sendMessage = mutation({
     if (args.payslipId) {
       const payslip = await ctx.db.get(args.payslipId);
       if (payslip) {
-        const currentSummary =
-          (payslip as any).concernSummary &&
-          typeof (payslip as any).concernSummary === "object"
-            ? (payslip as any).concernSummary
-            : null;
+        const currentSummary = payslip.concernSummary ?? null;
         const currentCount =
           typeof currentSummary?.messageCount === "number"
             ? currentSummary.messageCount
@@ -590,7 +644,7 @@ export const forwardMessage = mutation({
         ? args.content
         : `Forwarded: ${args.content}`;
 
-    let targetConv = target as any;
+    let targetConv = target;
     if (
       getChatMasterSecret() &&
       messageType !== "system" &&
@@ -694,11 +748,12 @@ export const getConversationById = query({
 
     // Return all participants (including current user) so members count and list are correct
     const participantUsers = await Promise.all(
-      conv.participants.map((id: any) => ctx.db.get(id))
+      conv.participants.map((id) => ctx.db.get(id)),
     );
 
-    const lastMessage = await (ctx.db.query("messages") as any)
-      .withIndex("by_conversation", (q: any) =>
+    const lastMessage = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation", (q) =>
         q.eq("conversationId", conv._id)
       )
       .order("desc")
@@ -722,21 +777,22 @@ export const getConversationByParticipant = query({
     const userRecord = await checkAuthForQuery(ctx, args.organizationId);
     if (!userRecord) return null;
 
-    const conversations = await (ctx.db.query("conversations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const conversations = await ctx.db
+      .query("conversations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId)
       )
       .collect();
 
     const dms = conversations.filter(
-      (conv: any) =>
+      (conv) =>
         conv.type === "direct" &&
         conv.participants.length === 2 &&
         conv.participants.includes(userRecord._id) &&
         conv.participants.includes(args.participantId),
     );
     const standard = dms.find(
-      (conv: any) => normalizedDirectKind(conv) === "standard",
+      (conv) => normalizedDirectKind(conv) === "standard",
     );
     return standard ?? dms[0] ?? null;
   },
@@ -752,17 +808,22 @@ export const getOrganizationUsers = query({
     if (!userRecord) return [];
 
     // Get all user-organization relationships for this org
-    const userOrgs = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
-      )
-      .collect();
+    const userOrgs = (
+      await ctx.db
+        .query("userOrganizations")
+        .withIndex("by_organization", (q) =>
+          q.eq("organizationId", args.organizationId),
+        )
+        .collect()
+    ).filter((membership) =>
+      canUseFullOrganizationAccess(membership.accessStatus),
+    );
 
     // Get user records
     const users = await Promise.all(
-      userOrgs.map(async (userOrg: any) => {
-        const user = (await ctx.db.get(userOrg.userId)) as any;
-        if (!user || !("email" in user)) return null;
+      userOrgs.map(async (userOrg) => {
+        const user = await ctx.db.get(userOrg.userId);
+        if (!user || user.isActive === false) return null;
         return {
           _id: user._id,
           name: user.name || user.email,
@@ -788,6 +849,11 @@ export const createGroupChat = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
+    await assertActiveChatParticipants(
+      ctx,
+      args.organizationId,
+      args.participantIds,
+    );
 
     // Ensure creator is included in participants
     const allParticipants = [
@@ -887,23 +953,26 @@ export const listChannels = query({
     const userRecord = await checkAuthForQuery(ctx, args.organizationId);
     if (!userRecord) return [];
 
-    const allChannels = await (ctx.db.query("conversations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const allChannels = await ctx.db
+      .query("conversations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId)
       )
       .collect();
 
-    const channels = allChannels.filter((c: any) => c.type === "channel");
+    const channels = allChannels.filter((conversation) =>
+      conversation.type === "channel",
+    );
 
-    return channels.map((c: any) => ({
-      _id: c._id,
-      name: c.name,
-      channelScope: c.channelScope,
-      createdBy: c.createdBy,
-      participantCount: c.participants.length,
-      joined: c.participants.includes(userRecord._id),
-      lastMessageAt: c.lastMessageAt,
-      createdAt: c.createdAt,
+    return channels.map((conversation) => ({
+      _id: conversation._id,
+      name: conversation.name,
+      channelScope: conversation.channelScope,
+      createdBy: conversation.createdBy,
+      participantCount: conversation.participants.length,
+      joined: conversation.participants.includes(userRecord._id),
+      lastMessageAt: conversation.lastMessageAt,
+      createdAt: conversation.createdAt,
     }));
   },
 });
@@ -939,6 +1008,12 @@ export const addMembersToGroup = mutation({
     if (newParticipants.length === 0) {
       return { success: true, added: 0 };
     }
+
+    await assertActiveChatParticipants(
+      ctx,
+      conversation.organizationId,
+      newParticipants,
+    );
 
     await ctx.db.patch(args.conversationId, {
       participants: [...conversation.participants, ...newParticipants],
@@ -1008,8 +1083,9 @@ export const togglePinConversation = mutation({
     const userRecord = await checkAuth(ctx, args.organizationId);
 
     // Get or create user chat preferences
-    let preferences = await (ctx.db.query("userChatPreferences") as any)
-      .withIndex("by_user_organization", (q: any) =>
+    const preferences = await ctx.db
+      .query("userChatPreferences")
+      .withIndex("by_user_organization", (q) =>
         q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
       )
       .first();
@@ -1020,7 +1096,7 @@ export const togglePinConversation = mutation({
     if (pinned.includes(args.conversationId)) {
       // Unpin
       const updatedPinned = pinned.filter(
-        (id: any) => id !== args.conversationId
+        (id) => id !== args.conversationId,
       );
       if (preferences) {
         await ctx.db.patch(preferences._id, {
@@ -1066,8 +1142,9 @@ export const deleteConversation = mutation({
     }
 
     // Delete all messages in this conversation
-    const messages = await (ctx.db.query("messages") as any)
-      .withIndex("by_conversation", (q: any) =>
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation", (q) =>
         q.eq("conversationId", args.conversationId)
       )
       .collect();
@@ -1083,7 +1160,7 @@ export const deleteConversation = mutation({
         (prefs.pinnedConversations || []).includes(args.conversationId)
       ) {
         const updated = (prefs.pinnedConversations || []).filter(
-          (id: any) => id !== args.conversationId
+          (id) => id !== args.conversationId,
         );
         await ctx.db.patch(prefs._id, {
           pinnedConversations: updated,
@@ -1106,8 +1183,9 @@ export const getPinnedConversations = query({
     const userRecord = await checkAuthForQuery(ctx, args.organizationId);
     if (!userRecord) return [];
 
-    const preferences = await (ctx.db.query("userChatPreferences") as any)
-      .withIndex("by_user_organization", (q: any) =>
+    const preferences = await ctx.db
+      .query("userChatPreferences")
+      .withIndex("by_user_organization", (q) =>
         q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
       )
       .first();
@@ -1125,26 +1203,28 @@ export const getUnreadCounts = query({
     const userRecord = await checkAuthForQuery(ctx, args.organizationId);
     if (!userRecord) return {};
 
-    const conversations = await (ctx.db.query("conversations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const conversations = await ctx.db
+      .query("conversations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
 
-    const userConvs = conversations.filter((c: any) =>
-      c.participants.includes(userRecord._id),
+    const userConvs = conversations.filter((conversation) =>
+      conversation.participants.includes(userRecord._id),
     );
 
     const counts: Record<string, number> = {};
 
     for (const conv of userConvs) {
-      const messages = await (ctx.db.query("messages") as any)
-        .withIndex("by_conversation", (q: any) =>
+      const messages = await ctx.db
+        .query("messages")
+        .withIndex("by_conversation", (q) =>
           q.eq("conversationId", conv._id),
         )
         .collect();
 
-      const unread = messages.filter((msg: any) => {
+      const unread = messages.filter((msg) => {
         const readBy = msg.readBy || [];
         return msg.senderId !== userRecord._id && !readBy.includes(userRecord._id);
       });
@@ -1164,19 +1244,21 @@ export const markAllConversationsAsRead = mutation({
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
 
-    const conversations = await (ctx.db.query("conversations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const conversations = await ctx.db
+      .query("conversations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId)
       )
       .collect();
 
-    const userConvs = conversations.filter((c: any) =>
-      c.participants.includes(userRecord._id)
+    const userConvs = conversations.filter((conversation) =>
+      conversation.participants.includes(userRecord._id),
     );
 
     for (const conv of userConvs) {
-      const messages = await (ctx.db.query("messages") as any)
-        .withIndex("by_conversation", (q: any) =>
+      const messages = await ctx.db
+        .query("messages")
+        .withIndex("by_conversation", (q) =>
           q.eq("conversationId", conv._id)
         )
         .collect();
@@ -1226,8 +1308,9 @@ export const listChatSessionKeysForOrganization = query({
     const userRecord = await checkAuthForQuery(ctx, args.organizationId);
     if (!userRecord) return {};
     if (!getChatMasterSecret()) return {};
-    const conversations = await (ctx.db.query("conversations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const conversations = await ctx.db
+      .query("conversations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();

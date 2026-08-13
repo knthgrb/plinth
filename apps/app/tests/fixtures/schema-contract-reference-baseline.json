@@ -24,9 +24,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 6881,
+      "totalMatches": 6762,
       "fileCount": 227,
-      "fingerprint": "ed2391dd5385dce3677a4de467913d357ba6ffa18b6924398f7524baeb137678",
+      "fingerprint": "9e9d9c5335a12f473ed12b7f28848fc4fc9cd3cf564a9d1589fe66a16628f772",
       "symbols": [
         {
           "symbol": "acknowledgedBy",
@@ -115,8 +115,8 @@
         },
         {
           "symbol": "employeeId",
-          "matches": 1191,
-          "files": 104
+          "matches": 1203,
+          "files": 105
         },
         {
           "symbol": "enableAnniversaryLeave",
@@ -160,7 +160,7 @@
         },
         {
           "symbol": "isActive",
-          "matches": 49,
+          "matches": 52,
           "files": 17
         },
         {
@@ -235,7 +235,7 @@
         },
         {
           "symbol": "organizationId",
-          "matches": 1637,
+          "matches": 1564,
           "files": 151
         },
         {
@@ -260,8 +260,8 @@
         },
         {
           "symbol": "payslipPinHash",
-          "matches": 6,
-          "files": 3
+          "matches": 3,
+          "files": 2
         },
         {
           "symbol": "pinnedConversations",
@@ -320,7 +320,7 @@
         },
         {
           "symbol": "role",
-          "matches": 539,
+          "matches": 462,
           "files": 77
         },
         {
@@ -361,7 +361,7 @@
         {
           "symbol": "status",
           "matches": 807,
-          "files": 85
+          "files": 83
         },
         {
           "symbol": "supportingDocuments",
@@ -370,7 +370,7 @@
         },
         {
           "symbol": "token",
-          "matches": 117,
+          "matches": 136,
           "files": 20
         },
         {

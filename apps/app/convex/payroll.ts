@@ -1,6 +1,8 @@
 import { ConvexError, v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { authComponent } from "./auth";
+import { requireActiveMembership, requirePayslipMembership } from "./access";
 import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
 import { decryptUtf8, isEncryptedPayload } from "./chatMessageBodyCrypto";
 import { getChatMasterSecret, unwrapSessionKey } from "./chatSessionKey";
@@ -851,63 +853,46 @@ function deriveAccountingCostItemStatus(
   return "partial";
 }
 
-async function resolveOrganizationMembership(ctx: any, organizationId: any) {
-  const user = await authComponent.getAuthUser(ctx);
-  if (!user) throw new Error("Not authenticated");
-
-  const userRecord = await ctx.db
-    .query("users")
-    .withIndex("by_email", (q: any) => q.eq("email", user.email))
-    .first();
-
-  if (!userRecord) throw new Error("User not found");
-
-  if (!organizationId) {
-    throw new Error("Organization ID is required");
-  }
-
-  // Check user's role in the specific organization
-  const userOrg = await (ctx.db.query("userOrganizations") as any)
-    .withIndex("by_user_organization", (q: any) =>
-      q.eq("userId", userRecord._id).eq("organizationId", organizationId),
-    )
-    .first();
-
-  // Fallback to legacy organizationId/role fields for backward compatibility
-  let userRole: string | undefined = userOrg?.role;
-  const hasAccess =
-    userOrg ||
-    (userRecord.organizationId === organizationId && userRecord.role);
-
-  if (!hasAccess) {
-    throw new Error("User is not a member of this organization");
-  }
-
-  // Use legacy role if userOrg doesn't exist
-  if (!userRole && userRecord.organizationId === organizationId) {
-    userRole = userRecord.role;
-  }
-
+async function resolveOrganizationMembership(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+) {
+  const { user, membership } = await requireActiveMembership(
+    ctx,
+    organizationId,
+  );
   return {
-    userRecord,
-    userOrg,
-    userRole,
-    employeeId: userOrg?.employeeId ?? userRecord.employeeId,
+    userRecord: user,
+    userOrg: membership,
+    userRole: membership.role,
+    employeeId: membership.employeeId,
+  };
+}
+
+async function resolvePayslipMembership(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+) {
+  const { user, membership } = await requirePayslipMembership(
+    ctx,
+    organizationId,
+  );
+  return {
+    userRecord: user,
+    userOrg: membership,
+    userRole: membership.role,
+    employeeId: membership.employeeId,
   };
 }
 
 // Helper to check payroll staff authorization with organization context.
 async function checkAuth(
-  ctx: any,
-  organizationId: any,
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
   requiredRole?: "owner" | "admin" | "hr" | "accounting",
 ) {
   const { userRecord, userOrg, userRole, employeeId } =
     await resolveOrganizationMembership(ctx, organizationId);
-
-  if (userOrg && !canUseFullOrganizationAccess(userOrg.accessStatus)) {
-    throw new Error("Organization access is limited or inactive");
-  }
 
   const allowedRoles = ["owner", "admin", "hr", "accounting"];
   if (!allowedRoles.includes(userRole || "")) {
@@ -923,13 +908,12 @@ async function checkAuth(
   };
 }
 
-async function checkPayslipViewerAuth(ctx: any, organizationId: any) {
+async function checkPayslipViewerAuth(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+) {
   const { userRecord, userOrg, userRole, employeeId } =
-    await resolveOrganizationMembership(ctx, organizationId);
-
-  if (userOrg && !canUseAlumniPayslipAccess(userOrg.accessStatus)) {
-    throw new Error("Organization access is limited or inactive");
-  }
+    await resolvePayslipMembership(ctx, organizationId);
 
   return {
     ...userRecord,

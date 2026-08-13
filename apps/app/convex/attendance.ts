@@ -1,8 +1,8 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import { authComponent } from "./auth";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { requireActiveMembership } from "./access";
 import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
-import { canUseFullOrganizationAccess } from "@/utils/org-membership-lifecycle";
 import { canUseEmployeeSelfService } from "@/utils/employee-lifecycle";
 import { holidayAppliesToEmployee } from "@/lib/payroll-calculations";
 import {
@@ -99,49 +99,15 @@ const STATUSES_PRESERVED_ON_HOLIDAY_NO_TIME = new Set([
 
 // Helper to check authorization with organization context
 async function checkAuth(
-  ctx: any,
-  organizationId: any,
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
   requiredRole?: "owner" | "admin" | "hr",
 ) {
-  const user = await authComponent.getAuthUser(ctx);
-  if (!user) throw new Error("Not authenticated");
-
-  const userRecord = await ctx.db
-    .query("users")
-    .withIndex("by_email", (q: any) => q.eq("email", user.email))
-    .first();
-
-  if (!userRecord) throw new Error("User not found");
-
-  if (!organizationId) {
-    throw new Error("Organization ID is required");
-  }
-
-  // Check user's role in the specific organization
-  const userOrg = await (ctx.db.query("userOrganizations") as any)
-    .withIndex("by_user_organization", (q: any) =>
-      q.eq("userId", userRecord._id).eq("organizationId", organizationId),
-    )
-    .first();
-
-  // Fallback to legacy organizationId/role fields for backward compatibility
-  let userRole: string | undefined = userOrg?.role;
-  const hasAccess =
-    userOrg ||
-    (userRecord.organizationId === organizationId && userRecord.role);
-
-  if (!hasAccess) {
-    throw new Error("User is not a member of this organization");
-  }
-
-  // Use legacy role if userOrg doesn't exist
-  if (!userRole && userRecord.organizationId === organizationId) {
-    userRole = userRecord.role;
-  }
-
-  if (userOrg && !canUseFullOrganizationAccess(userOrg.accessStatus)) {
-    throw new Error("Organization access is limited or inactive");
-  }
+  const { user, membership } = await requireActiveMembership(
+    ctx,
+    organizationId,
+  );
+  const userRole = membership.role;
 
   // Owner has all admin privileges - treat owner the same as admin
   const isOwnerOrAdmin = userRole === "owner" || userRole === "admin";
@@ -168,7 +134,13 @@ async function checkAuth(
     }
   }
 
-  return { ...userRecord, role: userRole, organizationId };
+  return {
+    ...user,
+    role: userRole,
+    organizationId,
+    employeeId: membership.employeeId,
+    accessStatus: membership.accessStatus,
+  };
 }
 
 async function checkAuthForQuery(
@@ -186,44 +158,9 @@ async function checkAuthForQuery(
 
 /** Resolves the employee id for the current user in this org (payslips / employee-view + punch). */
 async function resolveSelfEmployeeIdForOrg(
-  ctx: any,
-  userRecord: { _id: any; email?: string; employeeId?: any; role?: string },
-  organizationId: any,
-) {
-  const userOrg = await (ctx.db.query("userOrganizations") as any)
-    .withIndex("by_user_organization", (q: any) =>
-      q.eq("userId", userRecord._id).eq("organizationId", organizationId),
-    )
-    .first();
-
-  const fromLink = userOrg?.employeeId ?? userRecord.employeeId ?? null;
-  const orgRole = (userOrg?.role ?? userRecord.role ?? "").toLowerCase();
-  const elevated = ["owner", "admin", "hr", "manager", "accounting"].includes(orgRole);
-
-  const findByEmail = async () => {
-    const emailNorm = (userRecord.email || "").trim().toLowerCase();
-    if (!emailNorm) return null;
-    const emps = await (ctx.db.query("employees") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", organizationId),
-      )
-      .collect();
-    const m = emps.find(
-      (e: any) =>
-        (e.personalInfo?.email || "").trim().toLowerCase() === emailNorm,
-    );
-    return m?._id ?? null;
-  };
-
-  if (orgRole === "employee") {
-    if (fromLink) return fromLink;
-    return await findByEmail();
-  }
-  if (elevated) {
-    const byEmail = await findByEmail();
-    return byEmail ?? fromLink;
-  }
-  return fromLink;
+  userRecord: { employeeId?: Id<"employees"> },
+): Promise<Id<"employees"> | null> {
+  return userRecord.employeeId ?? null;
 }
 
 function getManilaNowHHmm() {
@@ -336,9 +273,7 @@ export const getEmployeeAttendance = query({
 
     if (userRecord.role === "employee") {
       const selfId = await resolveSelfEmployeeIdForOrg(
-        ctx,
         userRecord,
-        employee.organizationId,
       );
       if (!selfId || selfId !== args.employeeId) {
         throw new Error("Not authorized");
@@ -808,9 +743,7 @@ export const punchSelfAttendance = mutation({
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
     const employeeId = await resolveSelfEmployeeIdForOrg(
-      ctx,
       userRecord,
-      args.organizationId,
     );
     if (!employeeId) {
       throw new Error(

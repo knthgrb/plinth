@@ -1328,6 +1328,69 @@ export const getIdentityCredentialsAudit = internalQuery({
   },
 });
 
+export const getIdentityCredentialsCompatibilityStatus = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const recentRuns = await ctx.db
+      .query("migrationRuns")
+      .withIndex("by_key_started", (query) =>
+        query.eq("key", IDENTITY_CREDENTIALS_MIGRATION_KEY),
+      )
+      .order("desc")
+      .take(100);
+    const run = recentRuns.find(
+      (candidate) =>
+        candidate.version === IDENTITY_CREDENTIALS_MIGRATION_VERSION &&
+        !candidate.dryRun,
+    );
+    const base = {
+      normalizedReadsEnabled: true,
+      dualWritesEnabled: true,
+      legacyFallbacksEnabled: true,
+    };
+    if (!run) {
+      return {
+        ...base,
+        equalityEvidenceReady: false,
+        blockers: ["COMPLETED_WRITE_RUN_NOT_FOUND"],
+      };
+    }
+    if (run.status !== "completed") {
+      return {
+        ...base,
+        equalityEvidenceReady: false,
+        blockers: ["MIGRATION_WRITE_NOT_COMPLETED"],
+        runId: run._id,
+      };
+    }
+    if (run.counters.errors > 0 || run.counters.conflicts > 0) {
+      return {
+        ...base,
+        equalityEvidenceReady: false,
+        blockers: ["MIGRATION_WRITE_NOT_CLEAN"],
+        runId: run._id,
+      };
+    }
+    const audit = await getLatestIdentityAudit(ctx, run._id);
+    if (!audit || !hasCleanIdentityAudit(run, audit)) {
+      return {
+        ...base,
+        equalityEvidenceReady: false,
+        blockers: ["CLEAN_AUDIT_NOT_FOUND"],
+        runId: run._id,
+        ...(audit ? { auditId: audit._id } : {}),
+      };
+    }
+    return {
+      ...base,
+      equalityEvidenceReady: true,
+      blockers: [],
+      runId: run._id,
+      auditId: audit._id,
+    };
+  },
+});
+
 export const listIdentityCredentialsAuditIssues = internalQuery({
   args: {
     auditId: v.id("migrationAudits"),

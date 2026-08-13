@@ -1,6 +1,7 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import { authComponent } from "./auth";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { requireActiveMembership } from "./access";
 import { runOrgQuery } from "./queryAuthGrace";
 
 const assetConditionValidator = v.optional(
@@ -27,45 +28,15 @@ const maintenanceHistoryValidator = v.optional(
 
 // Helper to check authorization with organization context
 async function checkAuth(
-  ctx: any,
-  organizationId: any,
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
   requiredRole?: "owner" | "admin" | "hr" | "accounting"
 ) {
-  const user = await authComponent.getAuthUser(ctx);
-  if (!user) throw new Error("Not authenticated");
-
-  const userRecord = await ctx.db
-    .query("users")
-    .withIndex("by_email", (q: any) => q.eq("email", user.email))
-    .first();
-
-  if (!userRecord) throw new Error("User not found");
-
-  if (!organizationId) {
-    throw new Error("Organization ID is required");
-  }
-
-  // Check user's role in the specific organization
-  const userOrg = await (ctx.db.query("userOrganizations") as any)
-    .withIndex("by_user_organization", (q: any) =>
-      q.eq("userId", userRecord._id).eq("organizationId", organizationId)
-    )
-    .first();
-
-  // Fallback to legacy organizationId/role fields for backward compatibility
-  let userRole: string | undefined = userOrg?.role;
-  const hasAccess =
-    userOrg ||
-    (userRecord.organizationId === organizationId && userRecord.role);
-
-  if (!hasAccess) {
-    throw new Error("User is not a member of this organization");
-  }
-
-  // Use legacy role if userOrg doesn't exist
-  if (!userRole && userRecord.organizationId === organizationId) {
-    userRole = userRecord.role;
-  }
+  const { user, membership } = await requireActiveMembership(
+    ctx,
+    organizationId,
+  );
+  const userRole = membership.role;
 
   // Owner and admin have access to everything
   // For read operations, allow accounting and hr roles
@@ -90,7 +61,13 @@ async function checkAuth(
     }
   }
 
-  return { ...userRecord, role: userRole, organizationId };
+  return {
+    ...user,
+    role: userRole,
+    organizationId,
+    employeeId: membership.employeeId,
+    accessStatus: membership.accessStatus,
+  };
 }
 
 // Get all assets for an organization

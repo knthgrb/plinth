@@ -1,6 +1,10 @@
 import type { UserIdentity } from "convex/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import {
+  canUseAlumniPayslipAccess,
+  canUseFullOrganizationAccess,
+} from "@/utils/org-membership-lifecycle";
 
 type AuthenticatedContext = Pick<QueryCtx | MutationCtx, "auth">;
 type DatabaseContext = Pick<QueryCtx | MutationCtx, "auth" | "db">;
@@ -23,10 +27,11 @@ export async function requireUserRecord(
   if (!identity.email) {
     throw new Error("Authenticated identity is missing an email address");
   }
+  const email = identity.email;
 
   const user = await ctx.db
     .query("users")
-    .withIndex("by_email", (query) => query.eq("email", identity.email!))
+    .withIndex("by_email", (query) => query.eq("email", email))
     .unique();
   if (!user || user.isActive === false) {
     throw new Error("Not authorized");
@@ -52,6 +57,7 @@ export async function requireActiveMembership(
 ): Promise<{
   user: Doc<"users">;
   membership: Doc<"userOrganizations">;
+  organization: Doc<"organizations">;
 }> {
   const user = await requireUserRecord(ctx);
   const membership = await ctx.db
@@ -61,7 +67,7 @@ export async function requireActiveMembership(
     )
     .unique();
 
-  if (!membership || (membership.accessStatus ?? "active") !== "active") {
+  if (!membership || !canUseFullOrganizationAccess(membership.accessStatus)) {
     throw new Error("Not authorized");
   }
 
@@ -70,5 +76,35 @@ export async function requireActiveMembership(
     throw new Error("Not authorized");
   }
 
-  return { user, membership };
+  return { user, membership, organization };
+}
+
+export async function requirePayslipMembership(
+  ctx: DatabaseContext,
+  organizationId: Id<"organizations">,
+): Promise<{
+  user: Doc<"users">;
+  membership: Doc<"userOrganizations">;
+  organization: Doc<"organizations">;
+}> {
+  const user = await requireUserRecord(ctx);
+  const membership = await ctx.db
+    .query("userOrganizations")
+    .withIndex("by_user_organization", (query) =>
+      query.eq("userId", user._id).eq("organizationId", organizationId),
+    )
+    .unique();
+  if (
+    !membership ||
+    !canUseAlumniPayslipAccess(membership.accessStatus)
+  ) {
+    throw new Error("Not authorized");
+  }
+
+  const organization = await ctx.db.get(organizationId);
+  if (!organization || organization.status === "archived") {
+    throw new Error("Not authorized");
+  }
+
+  return { user, membership, organization };
 }

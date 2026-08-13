@@ -1,40 +1,30 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import { authComponent } from "./auth";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { requireActiveMembership } from "./access";
 import { getEffectiveAttendanceSettings } from "./organizationConfiguration";
 import { runOrgQuery } from "./queryAuthGrace";
 
 async function checkAuth(
-  ctx: any,
-  organizationId: any,
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
   requiredRole?: "owner" | "admin" | "hr",
 ) {
-  const user = await authComponent.getAuthUser(ctx);
-  if (!user) throw new Error("Not authenticated");
-  const userRecord = await ctx.db
-    .query("users")
-    .withIndex("by_email", (q: any) => q.eq("email", user.email))
-    .first();
-  if (!userRecord) throw new Error("User not found");
-  if (!organizationId) throw new Error("Organization ID is required");
-  const userOrg = await (ctx.db.query("userOrganizations") as any)
-    .withIndex("by_user_organization", (q: any) =>
-      q.eq("userId", userRecord._id).eq("organizationId", organizationId),
-    )
-    .first();
-  const hasAccess =
-    userOrg ||
-    (userRecord.organizationId === organizationId && userRecord.role);
-  if (!hasAccess) throw new Error("User is not a member of this organization");
-  const userRole =
-    userOrg?.role ??
-    (userRecord.organizationId === organizationId
-      ? userRecord.role
-      : undefined);
+  const { user, membership } = await requireActiveMembership(
+    ctx,
+    organizationId,
+  );
+  const userRole = membership.role;
   const isOwnerOrAdmin = userRole === "owner" || userRole === "admin";
   if (requiredRole && userRole !== requiredRole && !isOwnerOrAdmin)
     throw new Error("Not authorized");
-  return { ...userRecord, role: userRole, organizationId };
+  return {
+    ...user,
+    role: userRole,
+    organizationId,
+    employeeId: membership.employeeId,
+    accessStatus: membership.accessStatus,
+  };
 }
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;

@@ -2,42 +2,57 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { runOrgQuery } from "./queryAuthGrace";
 import { requireActiveMembership } from "./access";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
+
+type AnnouncementAudience = Pick<
+  Doc<"memos">,
+  "organizationId" | "targetAudience" | "departments" | "specificEmployees"
+>;
 
 // Helper to check authorization - allows all authenticated users
 async function checkAuth(
-  ctx: any,
+  ctx: QueryCtx | MutationCtx,
   organizationId: Id<"organizations">,
 ) {
   const { user, membership } = await requireActiveMembership(
     ctx,
     organizationId,
   );
-  return { ...user, role: membership.role, organizationId };
+  return {
+    _id: user._id,
+    role: membership.role,
+    employeeId: membership.employeeId,
+    organizationId,
+  };
 }
 
-async function getAnnouncementAudienceEmployeeIds(ctx: any, announcement: any) {
-  const employees = await (ctx.db.query("employees") as any)
-    .withIndex("by_organization", (q: any) =>
+async function getAnnouncementAudienceEmployeeIds(
+  ctx: QueryCtx | MutationCtx,
+  announcement: AnnouncementAudience,
+) {
+  const employees = await ctx.db
+    .query("employees")
+    .withIndex("by_organization", (q) =>
       q.eq("organizationId", announcement.organizationId),
     )
     .collect();
 
   if (announcement.targetAudience === "all") {
     return employees
-      .filter((employee: any) => employee.employment?.status === "active")
-      .map((employee: any) => employee._id);
+      .filter((employee) => employee.employment.status === "active")
+      .map((employee) => employee._id);
   }
 
   if (announcement.targetAudience === "department") {
     const departments = new Set(announcement.departments ?? []);
     return employees
       .filter(
-        (employee: any) =>
-          employee.employment?.status === "active" &&
-          departments.has(employee.employment?.department),
+        (employee) =>
+          employee.employment.status === "active" &&
+          departments.has(employee.employment.department),
       )
-      .map((employee: any) => employee._id);
+      .map((employee) => employee._id);
   }
 
   if (announcement.targetAudience === "specific-employees") {
@@ -47,7 +62,7 @@ async function getAnnouncementAudienceEmployeeIds(ctx: any, announcement: any) {
   return [];
 }
 
-function sortAnnouncementsForDisplay(a: any, b: any) {
+function sortAnnouncementsForDisplay(a: Doc<"memos">, b: Doc<"memos">) {
   if (Boolean(a.isPinned) !== Boolean(b.isPinned)) {
     return a.isPinned ? -1 : 1;
   }
@@ -97,36 +112,40 @@ export const getAnnouncements = query({
     return runOrgQuery(async () => {
       const userRecord = await checkAuth(ctx, args.organizationId);
 
-      let announcements = await (ctx.db.query("memos") as any)
-        .withIndex("by_organization", (q: any) =>
+      let announcements = await ctx.db
+        .query("memos")
+        .withIndex("by_organization", (q) =>
           q.eq("organizationId", args.organizationId),
         )
         .collect();
 
       const now = Date.now();
       announcements = announcements.filter(
-        (m: any) =>
+        (m) =>
           m.type === "announcement" &&
           m.publishedDate <= now &&
           (!m.expiryDate || m.expiryDate >= now),
       );
 
-      if (userRecord.role === "employee" && args.employeeId) {
-        const employee = await ctx.db.get(args.employeeId);
-        if (employee) {
-          announcements = announcements.filter((m: any) => {
-            if (m.targetAudience === "all") return true;
-            if (m.targetAudience === "department") {
-              const dept = employee.employment?.department;
-              if (dept == null) return false;
-              return m.departments?.includes(dept) ?? false;
-            }
-            if (m.targetAudience === "specific-employees") {
-              return m.specificEmployees?.includes(args.employeeId!);
-            }
-            return false;
-          });
-        }
+      if (userRecord.role === "employee") {
+        const employee = userRecord.employeeId
+          ? await ctx.db.get(userRecord.employeeId)
+          : null;
+        announcements = announcements.filter((m) => {
+          if (m.targetAudience === "all") return true;
+          if (m.targetAudience === "department") {
+            const department = employee?.employment?.department;
+            return department
+              ? (m.departments?.includes(department) ?? false)
+              : false;
+          }
+          if (m.targetAudience === "specific-employees") {
+            return userRecord.employeeId
+              ? (m.specificEmployees?.includes(userRecord.employeeId) ?? false)
+              : false;
+          }
+          return false;
+        });
       }
 
       announcements.sort(sortAnnouncementsForDisplay);
@@ -145,46 +164,51 @@ export const getUnreadAnnouncementsCount = query({
     return runOrgQuery(async () => {
       const userRecord = await checkAuth(ctx, args.organizationId);
 
-      const lastSeen = await (ctx.db.query("announcementLastSeen") as any)
-        .withIndex("by_user_organization", (q: any) =>
+      const lastSeen = await ctx.db
+        .query("announcementLastSeen")
+        .withIndex("by_user_organization", (q) =>
           q.eq("userId", userRecord._id).eq("organizationId", args.organizationId),
         )
         .first();
 
-      let announcements = await (ctx.db.query("memos") as any)
-        .withIndex("by_organization", (q: any) =>
+      let announcements = await ctx.db
+        .query("memos")
+        .withIndex("by_organization", (q) =>
           q.eq("organizationId", args.organizationId),
         )
         .collect();
 
       const now = Date.now();
       announcements = announcements.filter(
-        (m: any) =>
+        (m) =>
           m.type === "announcement" &&
           m.publishedDate <= now &&
           (!m.expiryDate || m.expiryDate >= now),
       );
 
-      if (userRecord.role === "employee" && args.employeeId) {
-        const employee = await ctx.db.get(args.employeeId);
-        if (employee) {
-          announcements = announcements.filter((m: any) => {
-            if (m.targetAudience === "all") return true;
-            if (m.targetAudience === "department") {
-              const dept = employee.employment?.department;
-              if (dept == null) return false;
-              return m.departments?.includes(dept) ?? false;
-            }
-            if (m.targetAudience === "specific-employees") {
-              return m.specificEmployees?.includes(args.employeeId!);
-            }
-            return false;
-          });
-        }
+      if (userRecord.role === "employee") {
+        const employee = userRecord.employeeId
+          ? await ctx.db.get(userRecord.employeeId)
+          : null;
+        announcements = announcements.filter((m) => {
+          if (m.targetAudience === "all") return true;
+          if (m.targetAudience === "department") {
+            const department = employee?.employment?.department;
+            return department
+              ? (m.departments?.includes(department) ?? false)
+              : false;
+          }
+          if (m.targetAudience === "specific-employees") {
+            return userRecord.employeeId
+              ? (m.specificEmployees?.includes(userRecord.employeeId) ?? false)
+              : false;
+          }
+          return false;
+        });
       }
 
       const after = lastSeen?.lastSeenAt ?? 0;
-      return announcements.filter((m: any) => m.publishedDate > after).length;
+      return announcements.filter((m) => m.publishedDate > after).length;
     }, 0);
   },
 });
@@ -198,8 +222,9 @@ export const setAnnouncementsLastSeen = mutation({
     const userRecord = await checkAuth(ctx, args.organizationId);
     const now = Date.now();
 
-    const existing = await (ctx.db.query("announcementLastSeen") as any)
-      .withIndex("by_user_organization", (q: any) =>
+    const existing = await ctx.db
+      .query("announcementLastSeen")
+      .withIndex("by_user_organization", (q) =>
         q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
       )
       .first();
@@ -351,7 +376,7 @@ export const updateAnnouncement = mutation({
       throw new Error("Only the author can update this announcement");
     }
 
-    const updateData: any = {
+    const updateData: Partial<Doc<"memos">> = {
       updatedAt: Date.now(),
     };
 
@@ -475,12 +500,12 @@ export const sendAnnouncementAcknowledgementReminders = mutation({
       announcement,
     );
     const acknowledged = new Set(
-      (announcement.acknowledgedBy ?? []).map((entry: any) =>
+      (announcement.acknowledgedBy ?? []).map((entry) =>
         String(entry.employeeId),
       ),
     );
     const pendingEmployeeIds = audienceEmployeeIds.filter(
-      (employeeId: any) => !acknowledged.has(String(employeeId)),
+      (employeeId) => !acknowledged.has(String(employeeId)),
     );
     const now = Date.now();
 
@@ -523,7 +548,7 @@ export const addReaction = mutation({
 
     // Remove existing reaction from this user if any
     const filteredReactions = reactions.filter(
-      (r: any) => r.userId !== userRecord._id
+      (reaction) => reaction.userId !== userRecord._id,
     );
 
     // Add new reaction
@@ -558,7 +583,7 @@ export const removeReaction = mutation({
 
     const reactions = announcement.reactions || [];
     const filteredReactions = reactions.filter(
-      (r: any) => r.userId !== userRecord._id
+      (reaction) => reaction.userId !== userRecord._id,
     );
 
     await ctx.db.patch(args.announcementId, {
@@ -585,31 +610,32 @@ export const getComments = query({
         return [];
       }
 
-      const comments = await (ctx.db.query("announcementComments") as any)
-        .withIndex("by_announcement", (q: any) =>
+      const comments = await ctx.db
+        .query("announcementComments")
+        .withIndex("by_announcement", (q) =>
           q.eq("announcementId", args.announcementId),
         )
         .collect();
 
-      comments.sort((a: any, b: any) => a.createdAt - b.createdAt);
+      comments.sort((a, b) => a.createdAt - b.createdAt);
 
       const withAuthors = await Promise.all(
-        comments.map(async (c: any) => {
-          const author = await ctx.db.get(c.author);
+        comments.map(async (comment) => {
+          const author = await ctx.db.get(comment.author);
           const authorName =
-            c.authorDisplayName ??
-            (author && "name" in author ? (author as any).name : undefined) ??
-            (author && "email" in author ? (author as any).email : undefined) ??
+            comment.authorDisplayName ??
+            author?.name ??
+            author?.email ??
             "Unknown";
           return {
-            _id: c._id,
-            announcementId: c.announcementId,
-            organizationId: c.organizationId,
-            author: c.author,
+            _id: comment._id,
+            announcementId: comment.announcementId,
+            organizationId: comment.organizationId,
+            author: comment.author,
             authorName,
-            content: c.content,
-            createdAt: c.createdAt,
-            updatedAt: c.updatedAt,
+            content: comment.content,
+            createdAt: comment.createdAt,
+            updatedAt: comment.updatedAt,
           };
         }),
       );

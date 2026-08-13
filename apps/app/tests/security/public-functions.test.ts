@@ -328,7 +328,7 @@ describe("public Convex security boundaries", () => {
     });
 
     const asActor = t.withIdentity({ email: actorEmail });
-    const invitationId = await asActor.mutation(
+    const created = await asActor.mutation(
       api.invitations.createInvitation,
       {
         organizationId,
@@ -338,9 +338,11 @@ describe("public Convex security boundaries", () => {
     );
     const invitation = await asActor.query(
       api.invitations.getInvitationById,
-      { invitationId },
+      { invitationId: created.invitationId },
     );
 
-    expect(invitation?.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(created.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(invitation).not.toHaveProperty("token");
+    expect(invitation).not.toHaveProperty("tokenHash");
   });
 });

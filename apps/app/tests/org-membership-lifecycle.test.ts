@@ -20,6 +20,11 @@ describe("organization membership lifecycle", () => {
     expect(canUseFullOrganizationAccess(undefined)).toBe(true);
   });
 
+  it("fails closed for an unrecognized membership access status", () => {
+    expect(normalizeOrgMembershipAccessStatus("unexpected")).toBe("suspended");
+    expect(canUseFullOrganizationAccess("unexpected")).toBe(false);
+  });
+
   it("limits alumni members to historical payslip and document access", () => {
     expect(canAccessRoute("/payslips", "employee", "alumni")).toBe(true);
     expect(canAccessRoute("/documents", "employee", "alumni")).toBe(true);

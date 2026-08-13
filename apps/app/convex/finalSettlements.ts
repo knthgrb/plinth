@@ -1,6 +1,7 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import { authComponent } from "./auth";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { requireActiveMembership } from "./access";
 import {
   buildFinalSettlementPayrollDeductions,
   computeFinalSettlementSummary,
@@ -10,7 +11,6 @@ import {
   type FinalSettlementCustomDeduction,
   type FinalSettlementLoanPayoff,
 } from "@/utils/final-settlement";
-import { canUseFullOrganizationAccess } from "@/utils/org-membership-lifecycle";
 
 const clearanceStatusValidator = v.union(
   v.literal("pending"),
@@ -39,43 +39,25 @@ const customDeductionTypeValidator = v.union(
   v.literal("other"),
 );
 
-async function checkAuth(ctx: any, organizationId: any) {
-  const user = await authComponent.getAuthUser(ctx);
-  if (!user) throw new Error("Not authenticated");
-
-  const userRecord = await ctx.db
-    .query("users")
-    .withIndex("by_email", (q: any) => q.eq("email", user.email))
-    .first();
-  if (!userRecord) throw new Error("User not found");
-
-  const userOrg = await (ctx.db.query("userOrganizations") as any)
-    .withIndex("by_user_organization", (q: any) =>
-      q.eq("userId", userRecord._id).eq("organizationId", organizationId),
-    )
-    .first();
-
-  let userRole: string | undefined = userOrg?.role;
-  const hasAccess =
-    userOrg ||
-    (userRecord.organizationId === organizationId && userRecord.role);
-  if (!hasAccess) throw new Error("User is not a member of this organization");
-
-  if (!userRole && userRecord.organizationId === organizationId) {
-    userRole = userRecord.role;
-  }
-  if (userOrg && !canUseFullOrganizationAccess(userOrg.accessStatus)) {
-    throw new Error("Organization access is limited or inactive");
-  }
+async function checkAuth(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+) {
+  const { user, membership } = await requireActiveMembership(
+    ctx,
+    organizationId,
+  );
+  const userRole = membership.role;
   if (!["owner", "admin", "hr", "accounting"].includes(userRole || "")) {
     throw new Error("Not authorized");
   }
 
   return {
-    ...userRecord,
+    ...user,
     role: userRole,
     organizationId,
-    accessStatus: userOrg?.accessStatus ?? "active",
+    employeeId: membership.employeeId,
+    accessStatus: membership.accessStatus ?? "active",
   };
 }
 

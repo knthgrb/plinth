@@ -1,14 +1,12 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import { authComponent } from "./auth";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { requireActiveMembership } from "./access";
 import {
   encryptCompensationForDb,
   decryptEmployeeFromDb,
 } from "./employeeCompensationCrypto";
-import {
-  canUseFullOrganizationAccess,
-  deriveAccessStatusForEmploymentStatus,
-} from "@/utils/org-membership-lifecycle";
+import { deriveAccessStatusForEmploymentStatus } from "@/utils/org-membership-lifecycle";
 import { getEffectiveRequirementDefinitions } from "./organizationConfiguration";
 
 function assertHireDateIsNotFuture(hireDate: number) {
@@ -79,56 +77,15 @@ function toManilaDayStartUtcMs(ts: number): number {
 
 // Helper to check authorization with organization context
 async function checkAuth(
-  ctx: any,
-  organizationId: any,
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
   requiredRole?: "owner" | "admin" | "hr",
 ) {
-  const user = await authComponent.getAuthUser(ctx);
-  if (!user) throw new Error("Not authenticated");
-
-  // Use the same getUserRecord logic as organizations.ts for consistency
-  let userRecord = await ctx.db
-    .query("users")
-    .withIndex("by_email", (q: any) => q.eq("email", user.email))
-    .first();
-
-  // If user record doesn't exist, it means they haven't completed setup yet
-  // This can happen right after signup before ensureUserRecord is called
-  if (!userRecord) {
-    throw new Error(
-      "User record not found. Please complete your account setup.",
-    );
-  }
-
-  if (!organizationId) {
-    throw new Error("Organization ID is required");
-  }
-
-  // Check user's role in the specific organization
-  const userOrg = await (ctx.db.query("userOrganizations") as any)
-    .withIndex("by_user_organization", (q: any) =>
-      q.eq("userId", userRecord._id).eq("organizationId", organizationId),
-    )
-    .first();
-
-  // Fallback to legacy organizationId/role fields for backward compatibility
-  let userRole: string | undefined = userOrg?.role;
-  const hasAccess =
-    userOrg ||
-    (userRecord.organizationId === organizationId && userRecord.role);
-
-  if (!hasAccess) {
-    throw new Error("User is not a member of this organization");
-  }
-
-  // Use legacy role if userOrg doesn't exist
-  if (!userRole && userRecord.organizationId === organizationId) {
-    userRole = userRecord.role;
-  }
-
-  if (userOrg && !canUseFullOrganizationAccess(userOrg.accessStatus)) {
-    throw new Error("Organization access is limited or inactive");
-  }
+  const { user, membership } = await requireActiveMembership(
+    ctx,
+    organizationId,
+  );
+  const userRole = membership.role;
 
   // HR routes: no access for accounting role (employees list is HR-only)
   if (userRole === "accounting") {
@@ -160,7 +117,13 @@ async function checkAuth(
     }
   }
 
-  return { ...userRecord, role: userRole, organizationId };
+  return {
+    ...user,
+    role: userRole,
+    organizationId,
+    employeeId: membership.employeeId,
+    accessStatus: membership.accessStatus,
+  };
 }
 
 // Get all employees for organization
@@ -888,19 +851,42 @@ export const updateEmployee = mutation({
       // If employee has a linked user account, email cannot be changed (auth is tied to it)
       const existingPersonal = (employee as any).personalInfo || {};
       let personalInfoUpdate = { ...existingPersonal, ...args.personalInfo };
-      let linkedUser = await (ctx.db.query("users") as any)
-        .withIndex("by_employee", (q: any) =>
-          q.eq("employeeId", args.employeeId),
+      const canonicalMemberships = await ctx.db
+        .query("userOrganizations")
+        .withIndex("by_organization", (q) =>
+          q.eq("organizationId", employee.organizationId),
         )
-        .first();
-      if (!linkedUser) {
-        const userOrg = await (ctx.db.query("userOrganizations") as any)
-          .withIndex("by_organization", (q: any) =>
-            q.eq("organizationId", employee.organizationId),
+        .filter((q) => q.eq(q.field("employeeId"), args.employeeId))
+        .take(2);
+      if (canonicalMemberships.length > 1) {
+        throw new Error("Employee has multiple organization memberships");
+      }
+      let linkedUser = canonicalMemberships[0]
+        ? await ctx.db.get(canonicalMemberships[0].userId)
+        : null;
+      if (!linkedUser && canonicalMemberships.length === 0) {
+        const legacyUser = await ctx.db
+          .query("users")
+          .withIndex("by_employee", (q) =>
+            q.eq("employeeId", args.employeeId),
           )
-          .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
-          .first();
-        if (userOrg) linkedUser = await ctx.db.get(userOrg.userId);
+          .unique();
+        if (legacyUser?.organizationId === employee.organizationId) {
+          linkedUser = legacyUser;
+        }
+      }
+      if (linkedUser) {
+        const exactMembership = await ctx.db
+          .query("userOrganizations")
+          .withIndex("by_user_organization", (q) =>
+            q
+              .eq("userId", linkedUser._id)
+              .eq("organizationId", employee.organizationId),
+          )
+          .unique();
+        if (canonicalMemberships.length > 0 && !exactMembership) {
+          throw new Error("Employee membership link is inconsistent");
+        }
       }
       if (linkedUser) {
         personalInfoUpdate.email = existingPersonal.email;
@@ -978,11 +964,12 @@ export const updateEmployee = mutation({
     // not the user's global Plinth account.
     if (args.employment?.status) {
       const newStatus = args.employment.status;
-      let linkedMemberships = await (ctx.db.query("userOrganizations") as any)
-        .withIndex("by_organization", (q: any) =>
+      let linkedMemberships = await ctx.db
+        .query("userOrganizations")
+        .withIndex("by_organization", (q) =>
           q.eq("organizationId", employee.organizationId),
         )
-        .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
+        .filter((q) => q.eq(q.field("employeeId"), args.employeeId))
         .collect();
 
       if (linkedMemberships.length === 0) {

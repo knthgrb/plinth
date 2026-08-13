@@ -117,6 +117,20 @@ const getAudit = makeFunctionReference<
   }
 >("identityMigrations:getIdentityCredentialsAudit");
 
+const getCompatibilityStatus = makeFunctionReference<
+  "query",
+  Record<string, never>,
+  {
+    normalizedReadsEnabled: boolean;
+    dualWritesEnabled: boolean;
+    legacyFallbacksEnabled: boolean;
+    equalityEvidenceReady: boolean;
+    blockers: string[];
+    runId?: Id<"migrationRuns">;
+    auditId?: Id<"migrationAudits">;
+  }
+>("identityMigrations:getIdentityCredentialsCompatibilityStatus");
+
 const resumeAudit = makeFunctionReference<
   "mutation",
   { runId: Id<"migrationRuns"> },
@@ -217,6 +231,72 @@ afterEach(() => {
 });
 
 describe("identity credentials migration", () => {
+  it("reports compatibility behavior separately from equality evidence", async () => {
+    const t = convexTest(schema, modules);
+    const initial = await t.query(getCompatibilityStatus, {});
+    expect(initial).toEqual({
+      normalizedReadsEnabled: true,
+      dualWritesEnabled: true,
+      legacyFallbacksEnabled: true,
+      equalityEvidenceReady: false,
+      blockers: ["COMPLETED_WRITE_RUN_NOT_FOUND"],
+    });
+
+    const fixture = await t.run(async (ctx) => {
+      const runId = await ctx.db.insert("migrationRuns", {
+        key: "full-schema-identity-credentials",
+        version: 1,
+        dryRun: false,
+        status: "completed",
+        phase: "identity_invitations",
+        batchSize: 20,
+        counters: {
+          scanned: 0,
+          changed: 0,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 1,
+        updatedAt: 1,
+        completedAt: 1,
+      });
+      const auditId = await ctx.db.insert("migrationAudits", {
+        migrationRunId: runId,
+        status: "completed",
+        phase: "identity_invitations",
+        batchSize: 5,
+        organizations: 0,
+        destination: {
+          expected: 0,
+          matching: 0,
+          missing: 0,
+          duplicate: 0,
+          mismatched: 0,
+          unexpected: 0,
+          totalRows: 0,
+        },
+        duplicateLegacySettings: 0,
+        sourceConflicts: 0,
+        auditTruncated: false,
+        startedAt: 2,
+        updatedAt: 2,
+        completedAt: 2,
+      });
+      return { runId, auditId };
+    });
+
+    await expect(t.query(getCompatibilityStatus, {})).resolves.toEqual({
+      normalizedReadsEnabled: true,
+      dualWritesEnabled: true,
+      legacyFallbacksEnabled: true,
+      equalityEvidenceReady: true,
+      blockers: [],
+      ...fixture,
+    });
+  });
+
   it("dry-runs every phase without changing business rows", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
