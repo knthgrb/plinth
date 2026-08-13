@@ -72,32 +72,31 @@ function resolveAttendanceEmployee(
     return { employee: null, isAmbiguous: false };
   }
 
-  const employeeIdMatches = employees.filter(
-    (employee) => normalizeEmployeeKey(employee.employment.employeeId) === normalizedKey,
-  );
+  const matchingEmployees = new Map<Id<"employees">, AttendanceImportEmployee>();
 
-  if (employeeIdMatches.length === 1) {
-    return { employee: employeeIdMatches[0], isAmbiguous: false };
+  for (const employee of employees) {
+    const firstName = normalizeEmployeeKey(employee.personalInfo.firstName);
+    const lastName = normalizeEmployeeKey(employee.personalInfo.lastName);
+    const firstLast = `${firstName} ${lastName}`.trim();
+    const lastFirst = `${lastName}, ${firstName}`.trim();
+    const employeeId = normalizeEmployeeKey(employee.employment.employeeId);
+
+    if (
+      normalizedKey === employeeId ||
+      normalizedKey === firstLast ||
+      normalizedKey === lastFirst
+    ) {
+      matchingEmployees.set(employee._id, employee);
+    }
   }
 
-  if (employeeIdMatches.length > 1) {
-    return { employee: null, isAmbiguous: true };
+  const matches = [...matchingEmployees.values()];
+
+  if (matches.length === 1) {
+    return { employee: matches[0], isAmbiguous: false };
   }
 
-  const employeeNameMatches = employees.filter((employee) => {
-      const firstName = normalizeEmployeeKey(employee.personalInfo.firstName);
-      const lastName = normalizeEmployeeKey(employee.personalInfo.lastName);
-      const firstLast = `${firstName} ${lastName}`.trim();
-      const lastFirst = `${lastName}, ${firstName}`.trim();
-
-      return normalizedKey === firstLast || normalizedKey === lastFirst;
-    });
-
-  if (employeeNameMatches.length === 1) {
-    return { employee: employeeNameMatches[0], isAmbiguous: false };
-  }
-
-  return { employee: null, isAmbiguous: employeeNameMatches.length > 1 };
+  return { employee: null, isAmbiguous: matches.length > 1 };
 }
 
 export function attendanceTimeToHHmm(value: string | undefined): string | undefined {

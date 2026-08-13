@@ -81,6 +81,20 @@ const duplicateNameFixture = {
   },
 } satisfies AttendanceImportEmployee;
 
+const crossFieldCollisionEmployee = {
+  ...employeeFixture,
+  _id: "employee-cross-field" as Id<"employees">,
+  personalInfo: {
+    ...employeeFixture.personalInfo,
+    firstName: "John",
+    lastName: "Smith",
+  },
+  employment: {
+    ...employeeFixture.employment,
+    employeeId: "Jane Doe",
+  },
+} satisfies AttendanceImportEmployee;
+
 const invalidScheduleEmployee = {
   ...employeeFixture,
   _id: "employee-invalid-schedule" as Id<"employees">,
@@ -163,6 +177,22 @@ describe("attendance import preview mapping", () => {
     const [row] = buildAttendanceImportPreview([candidate], employees, []);
 
     expect(findAttendanceEmployee("jane doe", employees)).toBeNull();
+    expect(row).toMatchObject({
+      employeeId: null,
+      error: "Employee match is ambiguous",
+      includeInImport: false,
+    });
+  });
+
+  it("rejects a key that matches one employee ID and another employee name", () => {
+    const employees = [employeeFixture, crossFieldCollisionEmployee];
+    const [row] = buildAttendanceImportPreview(
+      [{ ...validCandidate, employeeKey: "Jane Doe" }],
+      employees,
+      [],
+    );
+
+    expect(findAttendanceEmployee("Jane Doe", employees)).toBeNull();
     expect(row).toMatchObject({
       employeeId: null,
       error: "Employee match is ambiguous",
@@ -266,6 +296,16 @@ describe("attendance import preview mapping", () => {
       error: "No work is only allowed on holiday dates for this employee",
       includeInImport: false,
     });
+  });
+
+  it("allows no_work for an applicable special holiday", () => {
+    const [row] = buildAttendanceImportPreview(
+      [{ ...validCandidate, status: "no_work", timeIn: undefined, timeOut: undefined }],
+      [employeeFixture],
+      [{ ...holidayFixture, type: "special" }],
+    );
+
+    expect(row).toMatchObject({ error: null, includeInImport: true });
   });
 
   it("retains invalid source values and combines all issue messages for display", () => {
