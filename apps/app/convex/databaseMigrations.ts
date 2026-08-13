@@ -27,6 +27,7 @@ import {
   type FullSchemaCleanupDomain,
   type FullSchemaDomainReadiness,
 } from "./fullSchemaCleanupRegistry";
+import { resolveRelease3ProgramReadiness } from "./release3Contract";
 import {
   CURRENT_SCHEMA_TABLES,
   FULL_SCHEMA_TABLE_POLICIES,
@@ -1378,23 +1379,27 @@ export const getFullSchemaInventory = internalQuery({
 
 export function resolveFullSchemaProgramReadiness(
   domains: readonly FullSchemaDomainReadiness[],
+  cleanupAuditReady = false,
 ): {
   readyForRelease2: boolean;
   readyForRelease3: boolean;
+  readyForRelease3B: boolean;
   release3Blockers: string[];
 } {
   const readyForRelease2 = domains.every(({ status }) => status === "ready");
-  const release3Blockers = [
-    ...(!readyForRelease2 ? ["ADDITIVE_MIGRATIONS_NOT_READY"] : []),
-    ...FULL_SCHEMA_CLEANUP_DOMAINS.filter(
-      ({ compatibility }) => compatibility !== "switched",
-    ).map(({ domain }) => `COMPATIBILITY_SWITCH_PENDING:${domain}`),
-    "COMPATIBILITY_WINDOW_NOT_COMPLETED",
-  ];
+  const compatibilitySwitched = FULL_SCHEMA_CLEANUP_DOMAINS.every(
+    ({ compatibility }) => compatibility === "switched",
+  );
+  const contract = resolveRelease3ProgramReadiness({
+    domainsReady: readyForRelease2,
+    compatibilitySwitched,
+    cleanupAuditReady,
+  });
   return {
     readyForRelease2,
-    readyForRelease3: release3Blockers.length === 0,
-    release3Blockers,
+    readyForRelease3: contract.readyForRelease3B,
+    readyForRelease3B: contract.readyForRelease3B,
+    release3Blockers: contract.blockers,
   };
 }
 

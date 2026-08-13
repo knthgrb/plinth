@@ -118,7 +118,15 @@ describe("full schema cleanup readiness", () => {
     expect(resolveFullSchemaProgramReadiness(additiveDomains)).toEqual({
       readyForRelease2: true,
       readyForRelease3: false,
-      release3Blockers: ["COMPATIBILITY_WINDOW_NOT_COMPLETED"],
+      readyForRelease3B: false,
+      release3Blockers: ["RELEASE_3_CONTRACT_AUDIT_NOT_READY"],
+    });
+
+    expect(resolveFullSchemaProgramReadiness(additiveDomains, true)).toEqual({
+      readyForRelease2: true,
+      readyForRelease3: true,
+      readyForRelease3B: true,
+      release3Blockers: [],
     });
   });
 
@@ -187,9 +195,10 @@ describe("full schema cleanup readiness", () => {
       programVersion: FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
       readyForRelease2: false,
       readyForRelease3: false,
+      readyForRelease3B: false,
       release3Blockers: expect.arrayContaining([
         "ADDITIVE_MIGRATIONS_NOT_READY",
-        "COMPATIBILITY_WINDOW_NOT_COMPLETED",
+        "RELEASE_3_CONTRACT_AUDIT_NOT_READY",
       ]),
     });
     expect(readiness.domains).toHaveLength(6);
