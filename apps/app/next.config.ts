@@ -3,7 +3,7 @@ const nextConfig = {
   /* config options here */
   allowedDevOrigins: ["http://localhost:3000", "http://localhost:3001"],
   reactStrictMode: false,
-  serverExternalPackages: ["pdfkit"],
+  serverExternalPackages: ["pdfkit", "read-excel-file"],
 };
 
 export default nextConfig;
