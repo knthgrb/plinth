@@ -1,6 +1,11 @@
+import {
+  DOMParser,
+  type Document as XmlDocument,
+  type Element as XmlElement,
+} from "@xmldom/xmldom";
 import readXlsxFile from "read-excel-file/node";
 
-import { validateXlsxArchive } from "@/lib/attendance-import/archive";
+import { extractValidatedXlsxArchive } from "@/lib/attendance-import/archive";
 import { ATTENDANCE_IMPORT_LIMITS } from "@/lib/attendance-import/types";
 
 export type WorkbookCell = string | number | boolean | null;
@@ -24,6 +29,7 @@ export interface WorkbookData {
 interface ParsedWorkbookSheet {
   sheet: string;
   data: unknown[][];
+  rowNumbers?: number[];
 }
 
 export interface AttendanceWorkbookDependencies {
@@ -47,12 +53,16 @@ export async function readAttendanceWorkbook(
   const extension = file.name.toLowerCase().split(".").at(-1);
 
   if (extension === "csv") {
-    return convertSheets([{ sheet: file.name, data: parseCsv(bytes) }]);
+    const parsedCsv = parseCsv(bytes);
+    return convertSheets([{ sheet: file.name, ...parsedCsv }]);
   }
 
   if (extension === "xlsx") {
-    validateXlsxArchive(bytes);
-    const parsedSheets = await (dependencies.readSheets ?? readSheetsWithLibrary)(bytes);
+    const archive = await extractValidatedXlsxArchive(bytes);
+    preflightXlsxContents(archive.entries);
+    const parsedSheets = await (dependencies.readSheets ?? readSheetsWithLibrary)(
+      archive.sanitizedBytes,
+    );
     return convertSheets(parsedSheets);
   }
 
@@ -65,7 +75,12 @@ async function readSheetsWithLibrary(bytes: Uint8Array): Promise<ParsedWorkbookS
   );
 }
 
-function parseCsv(bytes: Uint8Array): string[][] {
+interface ParsedCsv {
+  data: string[][];
+  rowNumbers: number[];
+}
+
+function parseCsv(bytes: Uint8Array): ParsedCsv {
   if (bytes.includes(0)) {
     throw new Error("CSV files must not contain NUL bytes.");
   }
@@ -79,16 +94,18 @@ function parseCsv(bytes: Uint8Array): string[][] {
   }
 
   if (!text) {
-    return [];
+    return { data: [], rowNumbers: [] };
   }
 
   const rows: string[][] = [];
+  const rowNumbers: number[] = [];
   let row: string[] = [];
   let cell = "";
   let inQuotes = false;
   let afterClosingQuote = false;
   let endedWithRowDelimiter = false;
   let cellCount = 0;
+  let physicalRowNumber = 1;
 
   const appendCharacter = (character: string): void => {
     cell += character;
@@ -103,24 +120,31 @@ function parseCsv(bytes: Uint8Array): string[][] {
       throw new Error("A workbook row exceeds the 100 columns limit.");
     }
 
-    cellCount += 1;
-
-    if (cellCount > ATTENDANCE_IMPORT_LIMITS.maxCells) {
-      throw new Error("The workbook exceeds the 500,000 cells limit.");
-    }
-
     row.push(cell);
     cell = "";
     afterClosingQuote = false;
   };
 
   const finishRow = (): void => {
-    if (rows.length >= ATTENDANCE_IMPORT_LIMITS.maxRows) {
-      throw new Error("The workbook exceeds the 10,000 rows limit.");
+    const nonemptyCells = row.filter(isNonemptyCell).length;
+
+    if (nonemptyCells > 0) {
+      if (rows.length >= ATTENDANCE_IMPORT_LIMITS.maxRows) {
+        throw new Error("The workbook exceeds the 10,000 nonempty rows limit.");
+      }
+
+      cellCount += nonemptyCells;
+
+      if (cellCount > ATTENDANCE_IMPORT_LIMITS.maxCells) {
+        throw new Error("The workbook exceeds the 500,000 nonempty cells limit.");
+      }
+
+      rows.push(row);
+      rowNumbers.push(physicalRowNumber);
     }
 
-    rows.push(row);
     row = [];
+    physicalRowNumber += 1;
   };
 
   for (let index = 0; index < text.length; index += 1) {
@@ -188,7 +212,257 @@ function parseCsv(bytes: Uint8Array): string[][] {
     finishRow();
   }
 
-  return rows;
+  return { data: rows, rowNumbers };
+}
+
+function preflightXlsxContents(entries: ReadonlyMap<string, Uint8Array>): void {
+  const contentTypes = parseXmlEntry(entries, "[Content_Types].xml");
+  const packageRelationships = parseXmlEntry(entries, "_rels/.rels");
+  const workbook = parseXmlEntry(entries, "xl/workbook.xml");
+  const relationships = parseXmlEntry(entries, "xl/_rels/workbook.xml.rels");
+
+  if (contentTypes.documentElement?.localName !== "Types") {
+    throw new Error("The XLSX content-types document is invalid.");
+  }
+
+  const workbookOverrides = elementsByLocalName(contentTypes, "Override").filter(
+    (element) =>
+      element.getAttribute("PartName") === "/xl/workbook.xml" &&
+      element.getAttribute("ContentType")?.includes("spreadsheetml.sheet.main"),
+  );
+
+  if (
+    workbookOverrides.length !== 1 ||
+    workbook.documentElement?.localName !== "workbook"
+  ) {
+    throw new Error("The XLSX workbook structure is invalid.");
+  }
+
+  const officeDocumentRelationships = elementsByLocalName(
+    packageRelationships,
+    "Relationship",
+  ).filter(
+    (element) =>
+      element.getAttribute("Type")?.endsWith("/officeDocument") &&
+      element.getAttribute("Target") === "xl/workbook.xml",
+  );
+
+  if (officeDocumentRelationships.length !== 1) {
+    throw new Error("The XLSX package does not reference its workbook.");
+  }
+
+  const sheets = elementsByLocalName(workbook, "sheet");
+
+  if (sheets.length === 0 || sheets.length > ATTENDANCE_IMPORT_LIMITS.maxSheets) {
+    throw new Error("The workbook exceeds the 20 worksheets limit or has no worksheets.");
+  }
+
+  const worksheetRelationships = elementsByLocalName(relationships, "Relationship").filter(
+    (element) => element.getAttribute("Type")?.endsWith("/worksheet"),
+  );
+
+  if (worksheetRelationships.length !== sheets.length) {
+    throw new Error("The XLSX worksheet relationships are invalid.");
+  }
+
+  const relationshipTargets = new Map<string, string>();
+
+  for (const relationship of worksheetRelationships) {
+    const id = relationship.getAttribute("Id");
+    const target = relationship.getAttribute("Target");
+
+    if (!id || !target || relationshipTargets.has(id)) {
+      throw new Error("The XLSX worksheet relationships are invalid.");
+    }
+
+    relationshipTargets.set(id, resolveWorksheetTarget(target));
+  }
+
+  const worksheetPaths = new Set<string>();
+
+  for (const sheet of sheets) {
+    const relationshipId = sheet.getAttribute("r:id");
+    const path = relationshipId ? relationshipTargets.get(relationshipId) : undefined;
+
+    if (!path || worksheetPaths.has(path) || !entries.has(path)) {
+      throw new Error("The XLSX workbook references an invalid worksheet.");
+    }
+
+    worksheetPaths.add(path);
+  }
+
+  const declaredWorksheetPaths = new Set(
+    elementsByLocalName(contentTypes, "Override")
+      .filter((element) =>
+        element.getAttribute("ContentType")?.includes("spreadsheetml.worksheet"),
+      )
+      .map((element) => element.getAttribute("PartName"))
+      .filter((path): path is string => Boolean(path))
+      .map((path) => (path.startsWith("/") ? path.slice(1) : path)),
+  );
+
+  if (
+    declaredWorksheetPaths.size !== worksheetPaths.size ||
+    [...worksheetPaths].some((path) => !declaredWorksheetPaths.has(path))
+  ) {
+    throw new Error("The XLSX content types do not match its worksheets.");
+  }
+
+  let physicalCellCount = 0;
+
+  for (const path of worksheetPaths) {
+    physicalCellCount = preflightWorksheet(
+      parseXmlEntry(entries, path),
+      physicalCellCount,
+    );
+  }
+}
+
+function parseXmlEntry(
+  entries: ReadonlyMap<string, Uint8Array>,
+  path: string,
+): XmlDocument {
+  const bytes = entries.get(path);
+
+  if (!bytes) {
+    throw new Error(`The XLSX archive is missing required OOXML entry ${path}.`);
+  }
+
+  let source: string;
+
+  try {
+    source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error(`The XLSX OOXML entry ${path} is not valid UTF-8.`);
+  }
+
+  try {
+    return new DOMParser({
+      onError: (level, message) => {
+        if (level !== "warning") {
+          throw new Error(message);
+        }
+      },
+    }).parseFromString(source, "application/xml");
+  } catch {
+    throw new Error(`The XLSX OOXML entry ${path} is malformed.`);
+  }
+}
+
+function elementsByLocalName(
+  document: XmlDocument,
+  localName: string,
+): XmlElement[] {
+  return Array.from(document.getElementsByTagNameNS("*", localName));
+}
+
+function resolveWorksheetTarget(target: string): string {
+  const path = target.startsWith("/") ? target.slice(1) : `xl/${target}`;
+  const segments = path.split("/");
+
+  if (
+    segments.some((segment) => !segment || segment === "." || segment === "..") ||
+    !path.startsWith("xl/worksheets/")
+  ) {
+    throw new Error("The XLSX workbook contains an unsafe worksheet target.");
+  }
+
+  return path;
+}
+
+function preflightWorksheet(document: XmlDocument, priorCellCount: number): number {
+  if (document.documentElement?.localName !== "worksheet") {
+    throw new Error("The XLSX worksheet structure is invalid.");
+  }
+
+  const dimensions = elementsByLocalName(document, "dimension");
+
+  if (dimensions.length > 1) {
+    throw new Error("The XLSX worksheet dimension is invalid.");
+  }
+
+  if (dimensions[0]) {
+    validateWorksheetRange(dimensions[0].getAttribute("ref"));
+  }
+
+  for (const row of elementsByLocalName(document, "row")) {
+    const rowNumber = row.getAttribute("r");
+
+    if (rowNumber && !isBoundedRowNumber(rowNumber)) {
+      throw new Error("The XLSX worksheet row coordinate exceeds safe bounds.");
+    }
+  }
+
+  const cells = elementsByLocalName(document, "c");
+  const totalCellCount = priorCellCount + cells.length;
+
+  if (totalCellCount > ATTENDANCE_IMPORT_LIMITS.maxCells) {
+    throw new Error("The XLSX worksheet contains too many physical cells.");
+  }
+
+  for (const cell of cells) {
+    validateWorksheetCoordinate(cell.getAttribute("r"));
+  }
+
+  return totalCellCount;
+}
+
+function validateWorksheetRange(reference: string | null): void {
+  if (!reference) {
+    throw new Error("The XLSX worksheet dimension is invalid.");
+  }
+
+  const coordinates = reference.split(":");
+
+  if (coordinates.length > 2) {
+    throw new Error("The XLSX worksheet dimension is invalid.");
+  }
+
+  const start = parseWorksheetCoordinate(coordinates[0]);
+  const end = parseWorksheetCoordinate(coordinates[1] ?? coordinates[0]);
+
+  if (start.row > end.row || start.column > end.column) {
+    throw new Error("The XLSX worksheet dimension is invalid.");
+  }
+}
+
+function validateWorksheetCoordinate(reference: string | null): void {
+  if (!reference) {
+    throw new Error("The XLSX worksheet cell coordinate is missing.");
+  }
+
+  parseWorksheetCoordinate(reference);
+}
+
+function parseWorksheetCoordinate(reference: string): {
+  row: number;
+  column: number;
+} {
+  const match = /^([A-Z]{1,3})([1-9]\d*)$/.exec(reference);
+
+  if (!match) {
+    throw new Error("The XLSX worksheet coordinate is invalid.");
+  }
+
+  const row = Number(match[2]);
+  let column = 0;
+
+  for (const character of match[1]) {
+    column = column * 26 + character.charCodeAt(0) - 64;
+  }
+
+  if (
+    row > ATTENDANCE_IMPORT_LIMITS.maxRows ||
+    column > ATTENDANCE_IMPORT_LIMITS.maxColumns
+  ) {
+    throw new Error("The XLSX worksheet dimension exceeds safe bounds.");
+  }
+
+  return { row, column };
+}
+
+function isBoundedRowNumber(value: string): boolean {
+  return /^[1-9]\d*$/.test(value) && Number(value) <= ATTENDANCE_IMPORT_LIMITS.maxRows;
 }
 
 function convertSheets(parsedSheets: ParsedWorkbookSheet[]): WorkbookData {
@@ -210,21 +484,28 @@ function convertSheets(parsedSheets: ParsedWorkbookSheet[]): WorkbookData {
         throw new Error("A workbook row exceeds the 100 columns limit.");
       }
 
+      const cells = sourceCells.map(normalizeCell);
+      const nonemptyCells = cells.filter(isNonemptyCell).length;
+
+      if (nonemptyCells === 0) {
+        continue;
+      }
+
       rowCount += 1;
 
       if (rowCount > ATTENDANCE_IMPORT_LIMITS.maxRows) {
-        throw new Error("The workbook exceeds the 10,000 rows limit.");
+        throw new Error("The workbook exceeds the 10,000 nonempty rows limit.");
       }
 
-      cellCount += sourceCells.length;
+      cellCount += nonemptyCells;
 
       if (cellCount > ATTENDANCE_IMPORT_LIMITS.maxCells) {
-        throw new Error("The workbook exceeds the 500,000 cells limit.");
+        throw new Error("The workbook exceeds the 500,000 nonempty cells limit.");
       }
 
       rows.push({
-        rowNumber: rowIndex + 1,
-        cells: sourceCells.map(normalizeCell),
+        rowNumber: parsedSheet.rowNumbers?.[rowIndex] ?? rowIndex + 1,
+        cells,
       });
     }
 
@@ -234,7 +515,7 @@ function convertSheets(parsedSheets: ParsedWorkbookSheet[]): WorkbookData {
   const workbook: WorkbookData = { sheets, rowCount, cellCount };
 
   if (
-    JSON.stringify(workbook).length >
+    Buffer.byteLength(JSON.stringify(workbook), "utf8") >
     ATTENDANCE_IMPORT_LIMITS.maxSerializedCharacters
   ) {
     throw new Error("The serialized workbook exceeds the 4 MB limit.");
@@ -249,9 +530,9 @@ function normalizeCell(value: unknown): WorkbookCell {
       return null;
     }
 
-    const year = value.getFullYear();
-    const month = String(value.getMonth() + 1).padStart(2, "0");
-    const day = String(value.getDate()).padStart(2, "0");
+    const year = value.getUTCFullYear();
+    const month = String(value.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(value.getUTCDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
   }
 
@@ -272,4 +553,8 @@ function normalizeCell(value: unknown): WorkbookCell {
   }
 
   return null;
+}
+
+function isNonemptyCell(value: WorkbookCell): boolean {
+  return value !== null && value !== "";
 }

@@ -114,6 +114,9 @@ importers:
       '@tiptap/starter-kit':
         specifier: ^2.8.0
         version: 2.27.2
+      '@xmldom/xmldom':
+        specifier: 0.9.11
+        version: 0.9.11
       better-auth:
         specifier: ^1.6.22
         version: 1.6.22(next@16.3.0(@babel/core@7.29.6)(@types/node@20.19.34)(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(vitest@4.1.0(@types/node@20.19.34)(vite@7.3.5(@types/node@20.19.34)(jiti@2.6.1)(lightningcss@1.31.1)))

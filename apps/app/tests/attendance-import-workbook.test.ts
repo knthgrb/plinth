@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { readAttendanceWorkbook } from "@/lib/attendance-import/workbook";
-import { makeCentralDirectoryArchive } from "./helpers/zip-fixture";
+import {
+  makeTwoSheetXlsx,
+  makeWorksheetXml,
+} from "./helpers/zip-fixture";
 
 function makeValidatedXlsxFile(): File {
-  const bytes = makeCentralDirectoryArchive([
-    { name: "[Content_Types].xml", uncompressedSize: 200 },
-    { name: "xl/workbook.xml", uncompressedSize: 200 },
-  ]);
+  const bytes = makeTwoSheetXlsx();
 
   return new File(
     [new Uint8Array(bytes)],
@@ -116,17 +116,72 @@ describe("attendance workbook ingestion", () => {
     expect(workbook.cellCount).toBe(8);
   });
 
-  it("normalizes XLSX dates to calendar-only ISO text", async () => {
+  it("parses a real minimal two-sheet OOXML workbook through the production parser", async () => {
+    const workbook = await readAttendanceWorkbook(makeValidatedXlsxFile());
+
+    expect(workbook.sheets.map((sheet) => sheet.name)).toEqual(["Manila", "Cebu"]);
+    expect(workbook.sheets[0]?.rows[1]).toEqual({
+      rowNumber: 2,
+      cells: ["Ana", "2026-08-13"],
+    });
+    expect(workbook.sheets[1]?.rows[1]).toEqual({
+      rowNumber: 2,
+      cells: ["Ben", "2026-08-13"],
+    });
+  });
+
+  it("rejects hostile worksheet dimensions before invoking read-excel-file", async () => {
+    const bytes = makeTwoSheetXlsx({
+      Manila: makeWorksheetXml("A1:XFD1048576", [["Name"]]),
+    });
+    let parserWasCalled = false;
+
+    await expect(
+      readAttendanceWorkbook(new File([new Uint8Array(bytes)], "hostile.xlsx"), {
+        readSheets: async () => {
+          parserWasCalled = true;
+          return [];
+        },
+      }),
+    ).rejects.toThrow(/worksheet dimension/i);
+    expect(parserWasCalled).toBe(false);
+  });
+
+  it("normalizes XLSX dates to UTC calendar-only ISO text", async () => {
     const workbook = await readAttendanceWorkbook(makeValidatedXlsxFile(), {
       readSheets: async () => [
         {
           sheet: "Dates",
-          data: [[new Date(2026, 7, 13)]],
+          data: [[new Date("2026-08-13T23:30:00.000Z")]],
         },
       ],
     });
 
     expect(workbook.sheets[0]?.rows[0]?.cells).toEqual(["2026-08-13"]);
+  });
+
+  it("counts only nonempty CSV rows and cells while retaining source row numbers", async () => {
+    const workbook = await readAttendanceWorkbook(
+      new File(["Name\n\n\nAna"], "sparse.csv"),
+    );
+
+    expect(workbook.rowCount).toBe(2);
+    expect(workbook.cellCount).toBe(2);
+    expect(workbook.sheets[0]?.rows.map((row) => row.rowNumber)).toEqual([1, 4]);
+  });
+
+  it("counts only nonempty XLSX rows and cells", async () => {
+    const workbook = await readAttendanceWorkbook(makeValidatedXlsxFile(), {
+      readSheets: async () => [
+        { sheet: "Sparse", data: [[null, null], ["Ana", null], []] },
+      ],
+    });
+
+    expect(workbook.rowCount).toBe(1);
+    expect(workbook.cellCount).toBe(1);
+    expect(workbook.sheets[0]?.rows).toEqual([
+      { rowNumber: 2, cells: ["Ana", null] },
+    ]);
   });
 
   it("turns unsupported XLSX parser objects into empty cells", async () => {
@@ -216,6 +271,17 @@ describe("attendance workbook ingestion", () => {
     await expect(
       readAttendanceWorkbook(makeValidatedXlsxFile(), {
         readSheets: async () => [{ sheet: "Serialized", data }],
+      }),
+    ).rejects.toThrow(/serialized/i);
+  });
+
+  it("measures serialized workbook limits in UTF-8 bytes", async () => {
+    const row = Array.from({ length: 100 }, () => "😀".repeat(15));
+    const data = Array.from({ length: 1_000 }, () => row);
+
+    await expect(
+      readAttendanceWorkbook(makeValidatedXlsxFile(), {
+        readSheets: async () => [{ sheet: "Utf8", data }],
       }),
     ).rejects.toThrow(/serialized/i);
   });

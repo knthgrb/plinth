@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { validateXlsxArchive } from "@/lib/attendance-import/archive";
+import {
+  extractValidatedXlsxArchive,
+  validateXlsxArchive,
+} from "@/lib/attendance-import/archive";
 import { makeCentralDirectoryArchive } from "./helpers/zip-fixture";
 
 const REQUIRED_ENTRIES = [
@@ -121,7 +124,7 @@ describe("XLSX archive validation", () => {
             REQUIRED_ENTRIES[1],
           ]),
         ),
-      ).toThrow(/local header|zip64/i);
+      ).toThrow(/local header|local-record coverage|zip64/i);
     },
   );
 
@@ -161,5 +164,34 @@ describe("XLSX archive validation", () => {
         ]),
       ),
     ).toThrow(/utf-8/i);
+  });
+
+  it("rejects an unindexed local entry that would bypass central-directory limits", () => {
+    expect(() =>
+      validateXlsxArchive(
+        makeCentralDirectoryArchive(REQUIRED_ENTRIES, {
+          unindexedLocalEntries: [
+            { name: "xl/worksheets/hidden.xml", flags: 1, data: "secret" },
+          ],
+        }),
+      ),
+    ).toThrow(/local-record coverage/i);
+  });
+
+  it("rejects actual inflated output that exceeds its declared bound", async () => {
+    const bytes = makeCentralDirectoryArchive([
+      { name: "[Content_Types].xml", data: "x" },
+      { name: "xl/workbook.xml", data: "x" },
+      {
+        name: "xl/worksheets/bomb.xml",
+        compressionMethod: 8,
+        data: "x".repeat(1024 * 1024),
+        uncompressedSize: 1,
+      },
+    ]);
+
+    await expect(extractValidatedXlsxArchive(bytes)).rejects.toThrow(
+      /inflated.*declared/i,
+    );
   });
 });
