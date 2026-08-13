@@ -2808,7 +2808,7 @@ export default defineSchema({
     invitedBy: v.id("users"),
     employeeId: v.optional(v.id("employees")), // Link to employee if applicable
     inviteeName: v.optional(v.string()), // Name from employee record for pre-filled user on accept
-    token: v.string(), // Unique token for invitation acceptance
+    token: v.optional(v.string()),
     tokenHash: v.optional(v.string()),
     status: v.union(
       v.literal("pending"),

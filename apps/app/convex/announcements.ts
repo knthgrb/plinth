@@ -605,10 +605,7 @@ export const addReaction = mutation({
       { reactions: filteredReactions },
       now,
     );
-    await ctx.db.patch(args.announcementId, {
-      reactions: filteredReactions,
-      updatedAt: now,
-    });
+    await ctx.db.patch(args.announcementId, { updatedAt: now });
 
     return args.announcementId;
   },
@@ -641,10 +638,7 @@ export const removeReaction = mutation({
       { reactions: filteredReactions },
       now,
     );
-    await ctx.db.patch(args.announcementId, {
-      reactions: filteredReactions,
-      updatedAt: now,
-    });
+    await ctx.db.patch(args.announcementId, { updatedAt: now });
 
     return args.announcementId;
   },

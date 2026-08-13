@@ -338,7 +338,6 @@ async function tryCreateOrgInvitationSoft(
     email,
     role,
     invitedBy: userRecord._id,
-    token,
     tokenHash,
     status: "pending",
     expiresAt,
@@ -511,17 +510,7 @@ async function findInvitationByRawToken(
   }
   if (hashedMatches[0]) return hashedMatches[0];
 
-  const legacyMatches = await ctx.db
-    .query("invitations")
-    .withIndex("by_token", (q) => q.eq("token", token))
-    .take(2);
-  const eligibleLegacyMatches = legacyMatches.filter(
-    (invitation) => invitation.tokenHash === undefined,
-  );
-  if (eligibleLegacyMatches.length > 1) {
-    throw new Error("Invalid invitation token");
-  }
-  return eligibleLegacyMatches[0] ?? null;
+  return null;
 }
 
 function redactInvitationToken(
@@ -592,7 +581,7 @@ export const resendInvitation = mutation({
     const token = createInvitationToken();
     const now = Date.now();
     await ctx.db.patch(invitation._id, {
-      token,
+      token: undefined,
       tokenHash: hashInvitationToken(token),
       expiresAt: now + 7 * 24 * 60 * 60 * 1000,
     });
@@ -1100,7 +1089,6 @@ export const createUserForEmployee = mutation({
       email: employee.personalInfo.email,
       role: args.role,
       invitedBy: userRecord._id,
-      token,
       tokenHash,
       status: "pending",
       expiresAt,

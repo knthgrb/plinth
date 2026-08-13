@@ -5,7 +5,7 @@ import { getEffectiveOrganizationLeaveSettings } from "./leaveEmployeeCompatibil
 import { getEffectiveOrganizationUiSettings } from "./workflowCompatibility";
 
 type ReadContext = Pick<QueryCtx, "db">;
-type ConfigurationSource = "normalized" | "legacy" | "default";
+type ConfigurationSource = "normalized" | "default";
 const RELEASE_2_MIGRATION_VERSION = 2;
 
 type LegacyDepartment =
@@ -148,9 +148,8 @@ export async function getEffectiveRequirementDefinitions(
   ctx: ReadContext,
   organizationId: Id<"organizations">,
 ) {
-  const [organization, payroll, normalizedRows] = await Promise.all([
+  const [organization, normalizedRows] = await Promise.all([
     ctx.db.get(organizationId),
-    getPayrollRow(ctx, organizationId),
     ctx.db
       .query("organizationRequirementDefinitions")
       .withIndex("by_organization", (query) =>
@@ -165,14 +164,6 @@ export async function getEffectiveRequirementDefinitions(
       throw new Error("Duplicate normalized requirement rows");
     }
     normalizedTypes.add(requirement.normalizedType);
-  }
-  if (normalizedRows.length === 0 && !payroll) {
-    return {
-      requirements: organization.defaultRequirements ?? [],
-      source: (organization.defaultRequirements ? "legacy" : "default") as
-        | "legacy"
-        | "default",
-    };
   }
   return {
     requirements: normalizedRows
@@ -211,22 +202,16 @@ export async function getEffectivePayrollSettings(
   ctx: ReadContext,
   organizationId: Id<"organizations">,
 ) {
-  const [payroll, legacySettings] = await Promise.all([
-    getPayrollRow(ctx, organizationId),
-    getLegacySettings(ctx, organizationId),
-  ]);
+  const payroll = await getPayrollRow(ctx, organizationId);
   if (payroll) {
     return {
       payrollSettings: payroll.payrollSettings,
       source: "normalized" as const,
     };
   }
-  const payrollSettings = sanitizeLegacyPayrollSettings(
-    legacySettings?.payrollSettings,
-  );
   return {
-    payrollSettings,
-    source: (payrollSettings ? "legacy" : "default") as "legacy" | "default",
+    payrollSettings: undefined,
+    source: "default" as const,
   };
 }
 
@@ -234,10 +219,7 @@ export async function getEffectiveAttendanceSettings(
   ctx: ReadContext,
   organizationId: Id<"organizations">,
 ) {
-  const [attendance, legacySettings] = await Promise.all([
-    getAttendanceRow(ctx, organizationId),
-    getLegacySettings(ctx, organizationId),
-  ]);
+  const attendance = await getAttendanceRow(ctx, organizationId);
   if (attendance) {
     return {
       attendanceSettings: attendance.attendanceSettings,
@@ -245,10 +227,8 @@ export async function getEffectiveAttendanceSettings(
     };
   }
   return {
-    attendanceSettings: legacySettings?.attendanceSettings,
-    source: (legacySettings?.attendanceSettings ? "legacy" : "default") as
-      | "legacy"
-      | "default",
+    attendanceSettings: undefined,
+    source: "default" as const,
   };
 }
 
@@ -262,8 +242,19 @@ export async function getEffectiveOrganization(
     getEffectiveRequirementDefinitions(ctx, organizationId),
   ]);
   if (!organization) return null;
+  const {
+    salaryPaymentFrequency: ignoredPaymentFrequency,
+    firstPayDate: ignoredFirstPayDate,
+    secondPayDate: ignoredSecondPayDate,
+    defaultRequirements: ignoredRequirements,
+    ...organizationProjection
+  } = organization;
+  void ignoredPaymentFrequency;
+  void ignoredFirstPayDate;
+  void ignoredSecondPayDate;
+  void ignoredRequirements;
   return {
-    ...organization,
+    ...organizationProjection,
     ...(payroll
       ? {
           salaryPaymentFrequency: payroll.salaryPaymentFrequency,
@@ -273,7 +264,7 @@ export async function getEffectiveOrganization(
       : {}),
     defaultRequirements: requirements.requirements,
     _normalizationSources: {
-      payroll: (payroll ? "normalized" : "legacy") as ConfigurationSource,
+      payroll: (payroll ? "normalized" : "default") as ConfigurationSource,
       requirements: requirements.source as ConfigurationSource,
     },
   };
@@ -292,74 +283,82 @@ export async function getEffectiveSettings(
       getEffectiveOrganizationUiSettings(ctx, organizationId),
       getCanonicalDepartments(ctx, organizationId),
     ]);
-  const legacyPayrollSettings = sanitizeLegacyPayrollSettings(
-    legacySettings?.payrollSettings,
-  );
-  const legacyDepartments = projectLegacyDepartments(
-    legacySettings?.departments as LegacyDepartment[] | undefined,
-  );
-  const useNormalizedDepartments =
-    normalizedDepartments.length > 0 || payroll !== null;
+  const {
+    cutoffDates: ignoredCutoffDates,
+    payrollSettings: ignoredPayrollSettings,
+    attendanceSettings: ignoredAttendanceSettings,
+    departments: ignoredDepartments,
+    proratedLeave: ignoredProratedLeave,
+    leaveAccrualFrequency: ignoredLeaveAccrualFrequency,
+    leaveTrackerMode: ignoredLeaveTrackerMode,
+    enableAnniversaryLeave: ignoredEnableAnniversaryLeave,
+    anniversaryLeaveMaxDays: ignoredAnniversaryLeaveMaxDays,
+    maxConvertibleLeaveDays: ignoredMaxConvertibleLeaveDays,
+    annualSil: ignoredAnnualSil,
+    grantLeaveUponRegularization: ignoredGrantLeaveUponRegularization,
+    paidLeaveRequiresRegularization: ignoredPaidLeaveRequiresRegularization,
+    leaveGuidelines: ignoredLeaveGuidelines,
+    leaveRequestFormTemplate: ignoredLeaveRequestFormTemplate,
+    leaveRequestPdfLayout: ignoredLeaveRequestPdfLayout,
+    evaluationColumns: ignoredEvaluationColumns,
+    recruitmentTableColumns: ignoredRecruitmentTableColumns,
+    requirementsTableColumns: ignoredRequirementsTableColumns,
+    leaveTableColumns: ignoredLeaveTableColumns,
+    ...settingsProjection
+  } = legacySettings ?? { organizationId };
+  void ignoredCutoffDates;
+  void ignoredPayrollSettings;
+  void ignoredAttendanceSettings;
+  void ignoredDepartments;
+  void ignoredProratedLeave;
+  void ignoredLeaveAccrualFrequency;
+  void ignoredLeaveTrackerMode;
+  void ignoredEnableAnniversaryLeave;
+  void ignoredAnniversaryLeaveMaxDays;
+  void ignoredMaxConvertibleLeaveDays;
+  void ignoredAnnualSil;
+  void ignoredGrantLeaveUponRegularization;
+  void ignoredPaidLeaveRequiresRegularization;
+  void ignoredLeaveGuidelines;
+  void ignoredLeaveRequestFormTemplate;
+  void ignoredLeaveRequestPdfLayout;
+  void ignoredEvaluationColumns;
+  void ignoredRecruitmentTableColumns;
+  void ignoredRequirementsTableColumns;
+  void ignoredLeaveTableColumns;
   return {
-    ...(legacySettings ?? { _id: null, organizationId }),
-    ...(leave
-      ? {
-          proratedLeave: leave.proratedLeave,
-          leaveAccrualFrequency: leave.leaveAccrualFrequency,
-          leaveTrackerMode: leave.leaveTrackerMode,
-          enableAnniversaryLeave: leave.enableAnniversaryLeave,
-          anniversaryLeaveMaxDays: leave.anniversaryLeaveMaxDays,
-          maxConvertibleLeaveDays: leave.maxConvertibleLeaveDays,
-          annualSil: leave.annualSil,
-          grantLeaveUponRegularization: leave.grantLeaveUponRegularization,
-          paidLeaveRequiresRegularization:
-            leave.paidLeaveRequiresRegularization,
-          leaveGuidelines: leave.leaveGuidelines,
-          leaveRequestFormTemplate: leave.leaveRequestFormTemplate,
-          leaveRequestPdfLayout: leave.leaveRequestPdfLayout,
-        }
-      : {}),
-    ...(ui
-      ? {
-          evaluationColumns: ui.evaluationColumns,
-          recruitmentTableColumns: ui.recruitmentTableColumns,
-          requirementsTableColumns: ui.requirementsTableColumns,
-          leaveTableColumns: ui.leaveTableColumns,
-        }
-      : {}),
-    cutoffDates: payroll ? payroll.cutoffDates : legacySettings?.cutoffDates,
-    payrollSettings: payroll ? payroll.payrollSettings : legacyPayrollSettings,
-    attendanceSettings:
-      attendance?.attendanceSettings ?? legacySettings?.attendanceSettings,
-    departments: useNormalizedDepartments
-      ? normalizedDepartments
-      : legacyDepartments,
+    ...settingsProjection,
+    organizationId,
+    cutoffDates: payroll?.cutoffDates,
+    payrollSettings: payroll?.payrollSettings,
+    attendanceSettings: attendance?.attendanceSettings,
+    departments: normalizedDepartments,
+    proratedLeave: leave?.proratedLeave,
+    leaveAccrualFrequency: leave?.leaveAccrualFrequency,
+    leaveTrackerMode: leave?.leaveTrackerMode,
+    enableAnniversaryLeave: leave?.enableAnniversaryLeave,
+    anniversaryLeaveMaxDays: leave?.anniversaryLeaveMaxDays,
+    maxConvertibleLeaveDays: leave?.maxConvertibleLeaveDays,
+    annualSil: leave?.annualSil,
+    grantLeaveUponRegularization: leave?.grantLeaveUponRegularization,
+    paidLeaveRequiresRegularization: leave?.paidLeaveRequiresRegularization,
+    leaveGuidelines: leave?.leaveGuidelines,
+    leaveRequestFormTemplate: leave?.leaveRequestFormTemplate,
+    leaveRequestPdfLayout: leave?.leaveRequestPdfLayout,
+    evaluationColumns: ui?.evaluationColumns,
+    recruitmentTableColumns: ui?.recruitmentTableColumns,
+    requirementsTableColumns: ui?.requirementsTableColumns,
+    leaveTableColumns: ui?.leaveTableColumns,
     _normalizationSources: {
       payroll: (payroll
         ? "normalized"
-        : legacyPayrollSettings
-          ? "legacy"
-          : "default") as ConfigurationSource,
+        : "default") as ConfigurationSource,
       attendance: (attendance
         ? "normalized"
-        : legacySettings?.attendanceSettings
-          ? "legacy"
-          : "default") as ConfigurationSource,
-      departments: (useNormalizedDepartments
-        ? "normalized"
-        : legacySettings?.departments
-          ? "legacy"
-          : "default") as ConfigurationSource,
-      leave: (leave
-        ? "normalized"
-        : legacySettings
-          ? "legacy"
-          : "default") as ConfigurationSource,
-      ui: (ui
-        ? "normalized"
-        : legacySettings
-          ? "legacy"
-          : "default") as ConfigurationSource,
+        : "default") as ConfigurationSource,
+      departments: "normalized" as ConfigurationSource,
+      leave: (leave ? "normalized" : "default") as ConfigurationSource,
+      ui: (ui ? "normalized" : "default") as ConfigurationSource,
     },
   };
 }
@@ -381,9 +380,7 @@ export async function upsertPayrollConfiguration(
   ]);
   if (!organization) throw new Error("Organization not found");
   const now = Date.now();
-  const currentPayrollSettings =
-    existing?.payrollSettings ??
-    sanitizeLegacyPayrollSettings(legacySettings?.payrollSettings);
+  const currentPayrollSettings = existing?.payrollSettings;
   const payrollSettings = patch.payrollSettings
     ? {
         ...(currentPayrollSettings ?? {}),
@@ -395,23 +392,18 @@ export async function upsertPayrollConfiguration(
     salaryPaymentFrequency:
       patch.salaryPaymentFrequency ??
       existing?.salaryPaymentFrequency ??
-      organization.salaryPaymentFrequency ??
       "bimonthly",
     firstPayDate:
       patch.firstPayDate ??
       existing?.firstPayDate ??
-      organization.firstPayDate ??
       15,
     secondPayDate:
       patch.secondPayDate ??
       existing?.secondPayDate ??
-      organization.secondPayDate ??
       30,
     ...(existing?.cutoffDates
       ? { cutoffDates: existing.cutoffDates }
-      : legacySettings?.cutoffDates
-        ? { cutoffDates: legacySettings.cutoffDates }
-        : {}),
+      : {}),
     ...(payrollSettings ? { payrollSettings } : {}),
     ...(legacySettings?._id
       ? { sourceSettingsId: legacySettings._id }
@@ -442,9 +434,7 @@ export async function upsertAttendanceConfiguration(
   ]);
   const now = Date.now();
   const attendanceSettings = {
-    ...(existing?.attendanceSettings ??
-      legacySettings?.attendanceSettings ??
-      {}),
+    ...(existing?.attendanceSettings ?? {}),
     ...attendancePatch,
   };
   const value = {

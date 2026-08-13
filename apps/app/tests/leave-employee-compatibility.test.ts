@@ -120,7 +120,7 @@ describe("leave and employee child compatibility", () => {
     ]);
   });
 
-  it("dual-writes a new deduction to the employee and normalized table", async () => {
+  it("writes a new deduction only to the normalized table", async () => {
     const { t, actor, employeeId } = await setup();
 
     await actor.mutation(api.employees.addDeduction, {
@@ -145,9 +145,9 @@ describe("leave and employee child compatibility", () => {
         )
         .collect(),
     }));
-    expect(state.employee?.deductions).toContainEqual(
-      expect.objectContaining({ id: "new-deduction" }),
-    );
+    expect(state.employee?.deductions).toEqual([
+      expect.objectContaining({ id: "legacy" }),
+    ]);
     expect(state.deductions).toHaveLength(1);
     expect(state.deductions[0]).toMatchObject({
       sourceId: "new-deduction",
@@ -201,8 +201,7 @@ describe("leave and employee child compatibility", () => {
         .collect(),
     }));
     expect(state.employee?.requirements?.map((row) => row.type)).toEqual([
-      "Government ID",
-      "Normalized custom",
+      "Legacy custom",
     ]);
     expect(state.requirements.map((row) => row.type)).toEqual([
       "Government ID",

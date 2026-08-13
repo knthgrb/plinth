@@ -248,8 +248,9 @@ export const updatePayrollSettings = mutation({
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
 
-    let settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
+    let settings = await ctx.db
+      .query("settings")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .first();
@@ -260,7 +261,6 @@ export const updatePayrollSettings = mutation({
       // Create settings if they don't exist
       await ctx.db.insert("settings", {
         organizationId: args.organizationId,
-        payrollSettings: args.payrollSettings,
         ...buildSettingsAuditPatch(settings, "payroll", userRecord, now),
         createdAt: now,
         updatedAt: now,
@@ -268,10 +268,6 @@ export const updatePayrollSettings = mutation({
     } else {
       // Update existing settings
       await ctx.db.patch(settings._id, {
-        payrollSettings: {
-          ...(settings.payrollSettings || {}),
-          ...args.payrollSettings,
-        },
         ...buildSettingsAuditPatch(settings, "payroll", userRecord, now),
         updatedAt: now,
       });
@@ -337,8 +333,9 @@ export const updateAttendanceSettings = mutation({
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
 
-    let settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
+    let settings = await ctx.db
+      .query("settings")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .first();
@@ -348,7 +345,6 @@ export const updateAttendanceSettings = mutation({
     if (!settings) {
       const settingsId = await ctx.db.insert("settings", {
         organizationId: args.organizationId,
-        attendanceSettings: args.attendanceSettings,
         ...buildSettingsAuditPatch(settings, "attendance", userRecord, now),
         createdAt: now,
         updatedAt: now,
@@ -356,10 +352,6 @@ export const updateAttendanceSettings = mutation({
       settings = await ctx.db.get(settingsId);
     } else {
       await ctx.db.patch(settings._id, {
-        attendanceSettings: {
-          ...(settings.attendanceSettings || {}),
-          ...args.attendanceSettings,
-        },
         ...buildSettingsAuditPatch(settings, "attendance", userRecord, now),
         updatedAt: now,
       });
@@ -457,8 +449,9 @@ export const updateLeaveTypes = mutation({
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
 
-    let settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
+    let settings = await ctx.db
+      .query("settings")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .first();
@@ -656,24 +649,12 @@ export const updateDepartments = mutation({
     if (!settings) {
       await ctx.db.insert("settings", {
         organizationId: args.organizationId,
-        departments: args.departments,
         ...buildSettingsAuditPatch(settings, "organization", userRecord, now),
         createdAt: now,
         updatedAt: now,
       });
     } else {
-      // Also migrate old format if it exists (shouldn't happen, but just in case)
-      let departmentsToSave = args.departments;
-      if (settings.departments && settings.departments.length > 0) {
-        const firstDept = settings.departments[0];
-        if (typeof firstDept === "string") {
-          // Old format still exists - use the new format from args
-          departmentsToSave = args.departments;
-        }
-      }
-
       await ctx.db.patch(settings._id, {
-        departments: departmentsToSave,
         ...buildSettingsAuditPatch(settings, "organization", userRecord, now),
         updatedAt: now,
       });

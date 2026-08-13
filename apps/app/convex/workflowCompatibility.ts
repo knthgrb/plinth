@@ -86,7 +86,6 @@ export async function loadEffectiveSettingsEvents(
     )
     .filter((q) => q.eq(q.field("sourceSettingsId"), settings._id))
     .collect();
-  if (rows.length === 0) return settings;
   const settingsChangeLog = rows
     .slice()
     .sort((left, right) => left.sourceIndex - right.sourceIndex)
@@ -168,9 +167,8 @@ export async function loadEffectiveEvaluation(
     });
   return {
     ...evaluation,
-    assignedReviewerIds:
-      reviewerRows.length > 0 ? reviewers : evaluation.assignedReviewerIds,
-    history: eventRows.length > 0 ? history : evaluation.history,
+    assignedReviewerIds: reviewers,
+    history,
   };
 }
 
@@ -258,12 +256,12 @@ export async function loadEffectiveApplicant(
   );
   return {
     ...applicant,
-    pipelineStageHistory: stages.length > 0 ? ordered(stages).map(({ from, to, changedAt, changedBy }) => ({ from, to, changedAt, changedBy })) : applicant.pipelineStageHistory,
-    notes: notes.length > 0 ? ordered(notes).map(({ date, author, content }) => ({ date, author, content })) : applicant.notes,
-    interviewSchedules: interviews.length > 0 ? ordered(interviews).map(({ date, type, interviewer, interviewers, remarks }) => ({ date, type, interviewer, interviewers, remarks })) : applicant.interviewSchedules,
-    scorecards: scorecards.length > 0 ? ordered(scorecards).map(({ reviewer, criteria, overallScore, recommendation, submittedAt }) => ({ reviewer, criteria, overallScore, recommendation, submittedAt })) : applicant.scorecards,
-    offerApproval: offers[0] ? { status: offers[0].status, requestedBy: offers[0].requestedBy, requestedAt: offers[0].requestedAt, approvedBy: offers[0].approvedBy, approvedAt: offers[0].approvedAt, notes: offers[0].notes } : applicant.offerApproval,
-    customFields: customValues.length > 0 ? customFields : applicant.customFields,
+    pipelineStageHistory: ordered(stages).map(({ from, to, changedAt, changedBy }) => ({ from, to, changedAt, changedBy })),
+    notes: ordered(notes).map(({ date, author, content }) => ({ date, author, content })),
+    interviewSchedules: ordered(interviews).map(({ date, type, interviewer, interviewers, remarks }) => ({ date, type, interviewer, interviewers, remarks })),
+    scorecards: ordered(scorecards).map(({ reviewer, criteria, overallScore, recommendation, submittedAt }) => ({ reviewer, criteria, overallScore, recommendation, submittedAt })),
+    offerApproval: offers[0] ? { status: offers[0].status, requestedBy: offers[0].requestedBy, requestedAt: offers[0].requestedAt, approvedBy: offers[0].approvedBy, approvedAt: offers[0].approvedAt, notes: offers[0].notes } : undefined,
+    customFields: customValues.length > 0 ? customFields : undefined,
   };
 }
 

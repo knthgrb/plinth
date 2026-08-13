@@ -1028,9 +1028,10 @@ async function auditInvitations(
   const now = Date.now();
 
   for (const invitation of page.page) {
+    const legacyToken = invitation.token ?? "";
     destination.totalRows += 1;
     const initialPlan = planInvitationTokenHash({
-      token: invitation.token,
+      token: legacyToken,
       tokenHash: invitation.tokenHash,
       hashedTokenMatchCount: 0,
     });
@@ -1049,7 +1050,7 @@ async function auditInvitations(
         : [],
       ctx.db
         .query("invitations")
-        .withIndex("by_token", (query) => query.eq("token", invitation.token))
+        .withIndex("by_token", (query) => query.eq("token", legacyToken))
         .take(2),
     ]);
     const claimants = new Set(hashRows.map((row) => row._id));
@@ -1057,12 +1058,12 @@ async function auditInvitations(
       if (row._id !== invitation._id) claimants.add(row._id);
     }
     const plan = planInvitationTokenHash({
-      token: invitation.token,
+      token: legacyToken,
       tokenHash: invitation.tokenHash,
       hashedTokenMatchCount: claimants.size,
     });
 
-    if (!invitation.token.trim()) {
+    if (!legacyToken.trim()) {
       if (invitation.tokenHash) destination.unexpected += 1;
     } else {
       destination.expected += 1;

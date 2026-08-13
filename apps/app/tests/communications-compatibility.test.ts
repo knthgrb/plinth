@@ -83,7 +83,7 @@ describe("communications compatibility", () => {
     ]);
   });
 
-  it("dual-writes announcement reactions", async () => {
+  it("writes announcement reactions only to normalized rows", async () => {
     const { t, actor, organizationId, userId, memoId } = await setup();
     await actor.mutation(api.announcements.addReaction, {
       announcementId: memoId,
@@ -98,7 +98,7 @@ describe("communications compatibility", () => {
         .collect(),
     }));
     expect(state.memo?.reactions).toEqual([
-      expect.objectContaining({ userId, emoji: "🎉" }),
+      expect.objectContaining({ userId, emoji: "legacy" }),
     ]);
     expect(state.reactions.map((row) => row.emoji)).toEqual(["🎉"]);
   });

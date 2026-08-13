@@ -133,7 +133,7 @@ describe("Release 2 organization configuration", () => {
     ]);
   });
 
-  it("falls back to legacy configuration when normalized rows are absent", async () => {
+  it("does not read legacy configuration when normalized rows are absent", async () => {
     const t = convexTest(schema, modules);
     const result = await t.run(async (ctx) => {
       const organizationId = await ctx.db.insert("organizations", {
@@ -160,22 +160,22 @@ describe("Release 2 organization configuration", () => {
     });
 
     expect(result.organization).toMatchObject({
-      salaryPaymentFrequency: "monthly",
-      firstPayDate: 8,
-      secondPayDate: 24,
-      defaultRequirements: [{ type: "Legacy requirement" }],
-      _normalizationSources: { payroll: "legacy", requirements: "legacy" },
+      defaultRequirements: [],
+      _normalizationSources: { payroll: "default", requirements: "normalized" },
     });
+    expect(result.organization?.salaryPaymentFrequency).toBeUndefined();
+    expect(result.organization?.firstPayDate).toBeUndefined();
+    expect(result.organization?.secondPayDate).toBeUndefined();
     expect(result.settings).toMatchObject({
-      payrollSettings: { regularHolidayRate: 2.5 },
-      attendanceSettings: { graceMinutes: 7 },
-      departments: [{ name: "Legacy team", color: "#abcdef" }],
+      departments: [],
       _normalizationSources: {
-        payroll: "legacy",
-        attendance: "legacy",
-        departments: "legacy",
+        payroll: "default",
+        attendance: "default",
+        departments: "normalized",
       },
     });
+    expect(result.settings.payrollSettings).toBeUndefined();
+    expect(result.settings.attendanceSettings).toBeUndefined();
   });
 
   it("keeps canonical child collections empty after an organization is normalized", async () => {
@@ -466,9 +466,19 @@ describe("Release 2 organization configuration", () => {
           },
         },
       });
-    const employee = await t.run((ctx) => ctx.db.get(employeeId));
+    const state = await t.run(async (ctx) => ({
+      employee: await ctx.db.get(employeeId),
+      requirements: await ctx.db
+        .query("employeeRequirements")
+        .withIndex("by_organization", (query) =>
+          query.eq("organizationId", organizationId),
+        )
+        .filter((query) => query.eq(query.field("employeeId"), employeeId))
+        .collect(),
+    }));
 
-    expect(employee?.requirements).toEqual([
+    expect(state.employee?.requirements).toBeUndefined();
+    expect(state.requirements).toEqual([
       expect.objectContaining({
         type: "Canonical requirement",
         isDefault: true,
@@ -535,7 +545,7 @@ describe("Release 2 organization configuration", () => {
     });
   });
 
-  it("dual-writes payroll and attendance changes", async () => {
+  it("writes payroll and attendance changes only to normalized rows", async () => {
     const t = convexTest(schema, modules);
     const email = "configuration-owner@example.com";
     const organizationId = await t.run(async (ctx) => {
@@ -630,9 +640,9 @@ describe("Release 2 organization configuration", () => {
         .unique(),
     }));
     expect(result.organization).toMatchObject({
-      salaryPaymentFrequency: "monthly",
-      firstPayDate: 28,
-      secondPayDate: 28,
+      salaryPaymentFrequency: "bimonthly",
+      firstPayDate: 15,
+      secondPayDate: 30,
     });
     expect(result.payroll).toMatchObject({
       salaryPaymentFrequency: "monthly",
@@ -644,16 +654,12 @@ describe("Release 2 organization configuration", () => {
       },
       migrationVersion: 2,
     });
-    expect(result.settings?.payrollSettings).toEqual(
-      result.payroll?.payrollSettings,
-    );
+    expect(result.settings?.payrollSettings).toEqual({ nightDiffPercent: 1.1 });
     expect(result.attendance).toMatchObject({
       attendanceSettings: { graceMinutes: 9, roundingRule: "nearest_5" },
       migrationVersion: 2,
     });
-    expect(result.settings?.attendanceSettings).toEqual(
-      result.attendance?.attendanceSettings,
-    );
+    expect(result.settings?.attendanceSettings).toEqual({ graceMinutes: 5 });
   });
 
   it("reconciles department and requirement rows while preserving stable IDs", async () => {
@@ -748,8 +754,7 @@ describe("Release 2 organization configuration", () => {
         .collect(),
     }));
     expect(result.settings?.departments).toEqual([
-      { name: "Operations", color: "#222222" },
-      { name: "Finance", color: "#333333" },
+      { name: "Operations", color: "#111111" },
     ]);
     expect(result.departments).toEqual(
       expect.arrayContaining([
@@ -766,8 +771,7 @@ describe("Release 2 organization configuration", () => {
       ]),
     );
     expect(result.organization?.defaultRequirements).toEqual([
-      { type: "NBI Clearance", isRequired: false },
-      { type: "Medical Certificate", isRequired: true },
+      { type: "NBI Clearance", isRequired: true },
     ]);
     expect(result.requirements).toEqual(
       expect.arrayContaining([

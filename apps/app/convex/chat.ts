@@ -1193,7 +1193,6 @@ export const togglePinConversation = mutation({
       ctx,
       args.organizationId,
       userRecord._id,
-      preferences?.pinnedConversations || [],
     );
 
     if (pinned.includes(args.conversationId)) {
@@ -1331,7 +1330,6 @@ export const getPinnedConversations = query({
       ctx,
       args.organizationId,
       userRecord._id,
-      preferences?.pinnedConversations || [],
     );
   },
 });

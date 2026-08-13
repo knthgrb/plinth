@@ -168,7 +168,18 @@ describe("payslip PIN access", () => {
     ).resolves.toEqual({ credential: "normalized-hash", locked: false });
   });
 
-  it("dual-writes new and upgraded credentials", async () => {
+  it("does not read a legacy credential when the normalized row is absent", async () => {
+    const { t, email, employeeId } = await createFixture();
+    await t.run((ctx) =>
+      ctx.db.patch(employeeId, { payslipPinHash: "legacy-hash" }),
+    );
+
+    await expect(
+      t.withIdentity({ email }).mutation(beginVerification, { employeeId }),
+    ).resolves.toEqual({ credential: null, locked: false });
+  });
+
+  it("writes new and upgraded credentials only to the normalized row", async () => {
     const { t, email, employeeId } = await createFixture();
     const actor = t.withIdentity({ email });
     await actor.mutation(storeCredential, {
@@ -187,7 +198,7 @@ describe("payslip PIN access", () => {
         .withIndex("by_employee", (q) => q.eq("employeeId", employeeId))
         .collect(),
     }));
-    expect(state.employee?.payslipPinHash).toBe("scrypt$v1$upgraded");
+    expect(state.employee?.payslipPinHash).toBeUndefined();
     expect(state.credentials).toHaveLength(1);
     expect(state.credentials[0]?.credentialHash).toBe("scrypt$v1$upgraded");
   });
@@ -239,7 +250,7 @@ describe("payslip PIN access", () => {
     ).rejects.toThrow("Reset link is invalid or has expired");
 
     const employee = await t.run((ctx) => ctx.db.get(employeeId));
-    expect(employee?.payslipPinHash).toBe("scrypt$v1$new-credential");
+    expect(employee?.payslipPinHash).toBeUndefined();
     const credentials = await t.run((ctx) =>
       ctx.db
         .query("payslipCredentials")
@@ -254,9 +265,19 @@ describe("payslip PIN access", () => {
 
   it("allows an alumni employee to verify their historical-payslip PIN", async () => {
     const { t, email, employeeId } = await createFixture("alumni");
-    await t.run((ctx) =>
-      ctx.db.patch(employeeId, { payslipPinHash: "scrypt$v1$credential" }),
-    );
+    await t.run(async (ctx) => {
+      const employee = await ctx.db.get(employeeId);
+      if (!employee) throw new Error("Employee fixture was not found");
+      await ctx.db.insert("payslipCredentials", {
+        organizationId: employee.organizationId,
+        employeeId,
+        credentialHash: "scrypt$v1$credential",
+        credentialVersion: 1,
+        migrationVersion: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
 
     await expect(
       t.withIdentity({ email }).mutation(beginVerification, { employeeId }),

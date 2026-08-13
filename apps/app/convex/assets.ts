@@ -217,7 +217,7 @@ export const updateAsset = mutation({
 
     const now = Date.now();
     const effectiveAsset = await loadEffectiveAsset(ctx, asset);
-    const updates: Partial<Doc<"assets">> = {
+    const parentUpdates: Partial<Doc<"assets">> = {
       ...(args.name !== undefined && { name: args.name }),
       ...(args.description !== undefined && { description: args.description }),
       ...(args.category !== undefined && { category: args.category }),
@@ -232,19 +232,7 @@ export const updateAsset = mutation({
         serialNumber: args.serialNumber,
       }),
       ...(args.location !== undefined && { location: args.location }),
-      ...(args.custodyAcknowledgedAt !== undefined && {
-        custodyAcknowledgedAt: args.custodyAcknowledgedAt ?? undefined,
-      }),
-      ...(args.returnDueDate !== undefined && {
-        returnDueDate: args.returnDueDate ?? undefined,
-      }),
-      ...(args.returnedAt !== undefined && {
-        returnedAt: args.returnedAt ?? undefined,
-      }),
       ...(args.condition !== undefined && { condition: args.condition }),
-      ...(args.maintenanceHistory !== undefined && {
-        maintenanceHistory: args.maintenanceHistory,
-      }),
       ...(args.status !== undefined && { status: args.status }),
       ...(args.notes !== undefined && { notes: args.notes }),
       updatedAt: now,
@@ -252,17 +240,32 @@ export const updateAsset = mutation({
 
     if (args.assignedEmployeeId !== undefined) {
       const assignedEmployeeId = args.assignedEmployeeId ?? undefined;
-      updates.assignedEmployeeId = assignedEmployeeId;
-      updates.assignedAt = assignedEmployeeId ? now : undefined;
-      updates.assignedBy = assignedEmployeeId ? userRecord._id : undefined;
-      if (!assignedEmployeeId && args.custodyAcknowledgedAt === undefined) {
-        updates.custodyAcknowledgedAt = undefined;
-      }
     }
 
-    const projectedAsset = { ...effectiveAsset, ...updates };
+    const projectedAsset = {
+      ...effectiveAsset,
+      ...(args.assignedEmployeeId !== undefined
+        ? {
+            assignedEmployeeId: args.assignedEmployeeId ?? undefined,
+            assignedAt: args.assignedEmployeeId ? now : undefined,
+            assignedBy: args.assignedEmployeeId ? userRecord._id : undefined,
+          }
+        : {}),
+      ...(args.custodyAcknowledgedAt !== undefined
+        ? { custodyAcknowledgedAt: args.custodyAcknowledgedAt ?? undefined }
+        : {}),
+      ...(args.returnDueDate !== undefined
+        ? { returnDueDate: args.returnDueDate ?? undefined }
+        : {}),
+      ...(args.returnedAt !== undefined
+        ? { returnedAt: args.returnedAt ?? undefined }
+        : {}),
+      ...(args.maintenanceHistory !== undefined
+        ? { maintenanceHistory: args.maintenanceHistory }
+        : {}),
+    };
     await replaceAssetProjection(ctx, asset, projectedAsset, now);
-    await ctx.db.patch(args.assetId, updates);
+    await ctx.db.patch(args.assetId, parentUpdates);
 
     return { success: true };
   },

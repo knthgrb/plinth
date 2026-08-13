@@ -320,11 +320,7 @@ export const assignEvaluationReviewers = mutation({
       history,
       now,
     );
-    await ctx.db.patch(args.evaluationId, {
-      assignedReviewerIds: args.reviewerIds,
-      updatedAt: now,
-      history,
-    });
+    await ctx.db.patch(args.evaluationId, { updatedAt: now });
 
     return { success: true };
   },

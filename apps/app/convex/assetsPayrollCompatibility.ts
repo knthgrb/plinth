@@ -36,18 +36,13 @@ export async function loadEffectiveAsset(
   const returned = custody.find((row) => row.eventType === "returned");
   return {
     ...asset,
-    maintenanceHistory:
-      maintenance.length > 0 ? maintenanceHistory : asset.maintenanceHistory,
-    ...(custody.length > 0
-      ? {
-          assignedEmployeeId: assigned?.employeeId,
-          assignedAt: assigned?.occurredAt,
-          assignedBy: assigned?.actorUserId,
-          returnDueDate: assigned?.returnDueDate,
-          custodyAcknowledgedAt: acknowledged?.occurredAt,
-          returnedAt: returned?.occurredAt,
-        }
-      : {}),
+    maintenanceHistory,
+    assignedEmployeeId: assigned?.employeeId,
+    assignedAt: assigned?.occurredAt,
+    assignedBy: assigned?.actorUserId,
+    returnDueDate: assigned?.returnDueDate,
+    custodyAcknowledgedAt: acknowledged?.occurredAt,
+    returnedAt: returned?.occurredAt,
   };
 }
 
@@ -117,7 +112,6 @@ export async function loadEffectivePayrollRunNotes(
     .query("payrollRunNotes")
     .withIndex("by_payroll_run", (q) => q.eq("payrollRunId", payrollRun._id))
     .collect();
-  if (rows.length === 0) return payrollRun.notes ?? [];
   return rows
     .sort((a, b) => a.sourceIndex - b.sourceIndex)
     .map((row) => {
@@ -152,7 +146,6 @@ export async function loadEffectiveAccountingReceipts(
   item: Doc<"accountingCostItems">,
 ): Promise<Id<"_storage">[]> {
   const rows = await ctx.db.query("storageObjectLinks").withIndex("by_parent", (q) => q.eq("parentType", "accounting_cost_item").eq("parentId", item._id)).collect();
-  if (rows.length === 0) return item.receipts ?? [];
   return rows.sort((a, b) => a.sourceIndex - b.sourceIndex).map((row) => {
     if (row.organizationId !== item.organizationId || row.purpose !== "accounting_receipt") throw new Error("Accounting receipt tenant mismatch");
     return row.storageId;

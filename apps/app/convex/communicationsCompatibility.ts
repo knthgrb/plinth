@@ -62,19 +62,14 @@ export async function loadEffectiveMemo(
   const orderedLinks = links.slice().sort((a, b) => a.sourceIndex - b.sourceIndex);
   return {
     ...memo,
-    reactions: reactions.length > 0 ? orderedReactions : memo.reactions,
-    acknowledgedBy:
-      acknowledgements.length > 0
-        ? orderedAcknowledgements
-        : memo.acknowledgedBy,
-    specificEmployees: employees.length > 0 ? employees : memo.specificEmployees,
-    departments: departments.length > 0 ? departments : memo.departments,
-    attachments:
-      links.length > 0 ? orderedLinks.map((row) => row.storageId) : memo.attachments,
-    attachmentContentTypes:
-      links.length > 0
-        ? orderedLinks.map((row) => row.contentType ?? "application/octet-stream")
-        : memo.attachmentContentTypes,
+    reactions: orderedReactions,
+    acknowledgedBy: orderedAcknowledgements,
+    specificEmployees: employees,
+    departments,
+    attachments: orderedLinks.map((row) => row.storageId),
+    attachmentContentTypes: orderedLinks.map(
+      (row) => row.contentType ?? "application/octet-stream",
+    ),
   };
 }
 
@@ -172,10 +167,10 @@ export async function loadEffectiveDocument(
   const visibleDepartments = grants.filter((row) => row.grantType === "department" && row.department).sort((a, b) => a.sourceIndex - b.sourceIndex).map((row) => row.department as string);
   return {
     ...document,
-    sharedWith: sharedWith.length > 0 ? sharedWith : document.sharedWith,
-    visibleEmployeeIds: visibleEmployeeIds.length > 0 ? visibleEmployeeIds : document.visibleEmployeeIds,
-    visibleDepartments: visibleDepartments.length > 0 ? visibleDepartments : document.visibleDepartments,
-    attachments: links.length > 0 ? links.sort((a, b) => a.sourceIndex - b.sourceIndex).map((row) => row.storageId) : document.attachments,
+    sharedWith,
+    visibleEmployeeIds,
+    visibleDepartments,
+    attachments: links.sort((a, b) => a.sourceIndex - b.sourceIndex).map((row) => row.storageId),
   };
 }
 
@@ -204,7 +199,6 @@ export async function loadEffectiveConversation(
   conversation: Doc<"conversations">,
 ): Promise<Doc<"conversations">> {
   const rows = await ctx.db.query("conversationMembers").withIndex("by_conversation", (q) => q.eq("conversationId", conversation._id)).collect();
-  if (rows.length === 0) return conversation;
   const participants = rows.sort((a, b) => a.sourceIndex - b.sourceIndex).map((row) => {
     if (row.organizationId !== conversation.organizationId) throw new Error("Conversation member tenant mismatch");
     return row.userId;
@@ -234,7 +228,6 @@ export async function loadEffectiveMessageReadBy(
   message: Doc<"messages">,
 ): Promise<Id<"users">[]> {
   const rows = await ctx.db.query("messageReceipts").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect();
-  if (rows.length === 0) return message.readBy ?? [];
   return rows.sort((a, b) => a.sourceIndex - b.sourceIndex).map((row) => {
     if (row.organizationId !== conversation.organizationId || row.conversationId !== conversation._id) throw new Error("Message receipt tenant mismatch");
     return row.userId;
@@ -262,10 +255,9 @@ export async function loadEffectivePinnedConversations(
   ctx: DatabaseContext,
   organizationId: Id<"organizations">,
   userId: Id<"users">,
-  legacy: Id<"conversations">[],
 ): Promise<Id<"conversations">[]> {
   const rows = await ctx.db.query("userPinnedConversations").withIndex("by_user_organization", (q) => q.eq("userId", userId).eq("organizationId", organizationId)).collect();
-  return rows.length > 0 ? rows.sort((a, b) => a.position - b.position).map((row) => row.conversationId) : legacy;
+  return rows.sort((a, b) => a.position - b.position).map((row) => row.conversationId);
 }
 
 export async function replacePinnedConversations(

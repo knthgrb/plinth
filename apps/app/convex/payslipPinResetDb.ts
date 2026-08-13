@@ -70,7 +70,7 @@ export async function loadPayslipCredentialHash(
     }
     return credential.credentialHash;
   }
-  return employee.payslipPinHash ?? null;
+  return null;
 }
 
 async function writePayslipCredential(
@@ -102,10 +102,6 @@ async function writePayslipCredential(
       updatedAt: now,
     });
   }
-  await ctx.db.patch(employeeId, {
-    payslipPinHash: credentialHash,
-    updatedAt: now,
-  });
 }
 
 export const storePayslipPinCredential = internalMutation({

@@ -44,8 +44,6 @@ export async function loadEffectiveEmployeeDeductions(
     )
     .filter((q) => q.eq(q.field("employeeId"), employee._id))
     .collect();
-  if (rows.length === 0) return employee.deductions ?? [];
-
   const sourceIds = new Set<string>();
   return rows
     .sort((left, right) => left.createdAt - right.createdAt)
@@ -79,8 +77,6 @@ export async function loadEffectiveEmployeeIncentives(
     )
     .filter((q) => q.eq(q.field("employeeId"), employee._id))
     .collect();
-  if (rows.length === 0) return employee.incentives ?? [];
-
   const sourceIds = new Set<string>();
   return rows
     .sort((left, right) => left.createdAt - right.createdAt)
@@ -111,8 +107,6 @@ export async function loadEffectiveEmployeeRequirements(
     )
     .filter((q) => q.eq(q.field("employeeId"), employee._id))
     .collect();
-  if (rows.length === 0) return employee.requirements ?? [];
-
   const sourceKeys = new Set<string>();
   return rows
     .sort((left, right) => left.createdAt - right.createdAt)
@@ -158,8 +152,6 @@ export async function loadEffectiveEmployeeScheduleOverrides(
     )
     .filter((q) => q.eq(q.field("employeeId"), employee._id))
     .collect();
-  if (rows.length === 0) return employee.schedule.scheduleOverrides ?? [];
-
   const dates = new Set<number>();
   return rows
     .sort((left, right) => left.date - right.date)
@@ -182,14 +174,12 @@ export async function loadEmployeeScheduleOverridesById(
   ctx: DatabaseContext,
   organizationId: Id<"organizations">,
   employeeId: Id<"employees">,
-  legacy: EmployeeScheduleOverride[],
 ): Promise<EmployeeScheduleOverride[]> {
   const rows = await ctx.db
     .query("employeeScheduleOverrides")
     .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
     .filter((q) => q.eq(q.field("employeeId"), employeeId))
     .collect();
-  if (rows.length === 0) return legacy;
   return rows.sort((a, b) => a.date - b.date).map((row) => ({
     date: row.date,
     in: row.in,
@@ -210,7 +200,7 @@ export async function loadEffectiveEmployeePaymentAccount(
     throw new Error("Employee payment account is not unique");
   }
   const row = rows[0];
-  if (!row) return employee.compensation.bankDetails;
+  if (!row) return undefined;
   assertEmployeeChild(employee, row, "Employee payment account");
   return {
     bankName: row.bankName,
@@ -238,7 +228,7 @@ export async function loadEffectiveEmployeeLeaveCredits(
     .filter((q) => q.eq(q.field("employeeId"), employee._id))
     .collect();
   const employeeRows = rows.filter((row) => row.source === "employee_credits");
-  if (employeeRows.length === 0) return employee.leaveCredits;
+  if (employeeRows.length === 0) return undefined;
   const byKey = new Map<string, (typeof employeeRows)[number]>();
   for (const row of employeeRows) {
     assertEmployeeChild(employee, row, "Employee leave balance");
@@ -281,11 +271,7 @@ export async function loadEffectiveEmployeeCustomFields(
     .withIndex("by_organization", (q) => q.eq("organizationId", employee.organizationId))
     .filter((q) => q.eq(q.field("employeeId"), employee._id))
     .collect();
-  if (rows.length === 0) {
-    return employee.customFields && typeof employee.customFields === "object"
-      ? (employee.customFields as CustomFields)
-      : undefined;
-  }
+  if (rows.length === 0) return undefined;
   const fields: CustomFields = {};
   for (const row of rows) {
     assertEmployeeChild(employee, row, "Employee custom field");

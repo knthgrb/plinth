@@ -499,19 +499,12 @@ export const updateOrganization = mutation({
       throw new Error("Only active organizations can be updated");
     }
 
-    const updates: any = { updatedAt: Date.now() };
+    const updates: Partial<Doc<"organizations">> = { updatedAt: Date.now() };
     if (args.name !== undefined) updates.name = args.name;
     if (args.address !== undefined) updates.address = args.address;
     if (args.phone !== undefined) updates.phone = args.phone;
     if (args.email !== undefined) updates.email = args.email;
     if (args.taxId !== undefined) updates.taxId = args.taxId;
-    if (args.firstPayDate !== undefined)
-      updates.firstPayDate = args.firstPayDate;
-    if (args.secondPayDate !== undefined)
-      updates.secondPayDate = args.secondPayDate;
-    if (args.salaryPaymentFrequency !== undefined)
-      updates.salaryPaymentFrequency = args.salaryPaymentFrequency;
-
     await ctx.db.patch(args.organizationId, updates);
     if (
       args.salaryPaymentFrequency !== undefined ||
@@ -896,10 +889,6 @@ export const updateDefaultRequirements = mutation({
 
     const now = Date.now();
 
-    await ctx.db.patch(args.organizationId, {
-      defaultRequirements: args.requirements,
-      updatedAt: now,
-    });
     await replaceRequirementConfiguration(
       ctx,
       args.organizationId,
@@ -963,10 +952,6 @@ export const updateDefaultRequirements = mutation({
         updatedRequirements,
         now,
       );
-      await ctx.db.patch(employee._id, {
-        requirements: updatedRequirements,
-        updatedAt: now,
-      });
     }
 
     return { success: true };

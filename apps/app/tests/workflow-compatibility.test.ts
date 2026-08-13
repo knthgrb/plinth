@@ -122,11 +122,11 @@ describe("workflow compatibility", () => {
     ]);
   });
 
-  it("dual-writes reviewer assignments", async () => {
-    const { t, actor, evaluationId, legacyReviewerId } = await setup();
+  it("writes reviewer assignments only to normalized rows", async () => {
+    const { t, actor, actorId, evaluationId, legacyReviewerId } = await setup();
     await actor.mutation(api.evaluations.assignEvaluationReviewers, {
       evaluationId,
-      reviewerIds: [legacyReviewerId],
+      reviewerIds: [actorId],
     });
     const state = await t.run(async (ctx) => ({
       evaluation: await ctx.db.get(evaluationId),
@@ -138,9 +138,7 @@ describe("workflow compatibility", () => {
         .collect(),
     }));
     expect(state.evaluation?.assignedReviewerIds).toEqual([legacyReviewerId]);
-    expect(state.reviewers.map((row) => row.reviewerId)).toEqual([
-      legacyReviewerId,
-    ]);
+    expect(state.reviewers.map((row) => row.reviewerId)).toEqual([actorId]);
   });
 
   it("appends to normalized evaluation history and removes child rows on delete", async () => {

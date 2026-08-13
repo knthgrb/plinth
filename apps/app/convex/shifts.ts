@@ -170,7 +170,6 @@ export async function getScheduleWithLunch(
         ctx,
         organizationId,
         employee._id,
-        effectiveSchedule.scheduleOverrides ?? [],
       );
       effectiveSchedule = { ...effectiveSchedule, scheduleOverrides };
     }

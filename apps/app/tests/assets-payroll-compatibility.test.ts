@@ -74,7 +74,7 @@ describe("assets and payroll compatibility", () => {
     ]);
   });
 
-  it("dual-writes maintenance history", async () => {
+  it("writes maintenance history only to normalized rows", async () => {
     const { t, actor, assetId } = await setup();
     await actor.mutation(api.assets.updateAsset, {
       assetId,
@@ -87,7 +87,7 @@ describe("assets and payroll compatibility", () => {
         .withIndex("by_asset_source", (q) => q.eq("assetId", assetId))
         .collect(),
     }));
-    expect(state.asset?.maintenanceHistory?.[0]?.date).toBe(3);
+    expect(state.asset?.maintenanceHistory?.[0]?.date).toBe(1);
     expect(state.events).toHaveLength(1);
     expect(state.events[0]).toMatchObject({
       serviceDate: 3,

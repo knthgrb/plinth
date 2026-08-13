@@ -674,16 +674,21 @@ export const createEmployee = mutation({
       (requirement) => buildRequirementFromDefault(requirement, now),
     );
 
+    const {
+      bankDetails: ignoredBankDetails,
+      ...canonicalCompensation
+    } = args.compensation;
+    const { scheduleOverrides: ignoredOverrides, ...canonicalSchedule } =
+      args.schedule;
+    void ignoredBankDetails;
+    void ignoredOverrides;
     const insertedId = await ctx.db.insert("employees", {
       organizationId: args.organizationId,
       personalInfo: args.personalInfo,
       employment: args.employment,
-      compensation: encryptCompensationForDb(args.compensation) as any,
-      schedule: args.schedule,
+      compensation: encryptCompensationForDb(canonicalCompensation) as Doc<"employees">["compensation"],
+      schedule: canonicalSchedule,
       shiftId: args.shiftId ?? null,
-      requirements: defaultRequirements,
-      deductions: [],
-      incentives: [],
       createdAt: now,
       updatedAt: now,
     });
@@ -701,7 +706,7 @@ export const createEmployee = mutation({
       organizationId: args.organizationId,
       employeeId: insertedId,
       effectiveFrom: toManilaDayStartUtcMs(args.employment.hireDate),
-      schedule: args.schedule,
+      schedule: canonicalSchedule,
       shiftId: args.shiftId ?? null,
       createdAt: now,
       updatedAt: now,
@@ -948,9 +953,23 @@ export const updateEmployee = mutation({
         ...args.compensation,
       };
       nextBankDetails = nextCompensation.bankDetails;
-      updates.compensation = encryptCompensationForDb(nextCompensation) as any;
+      const {
+        bankDetails: ignoredBankDetails,
+        paymentFrequency: ignoredPaymentFrequency,
+        ...canonicalCompensation
+      } = nextCompensation;
+      void ignoredBankDetails;
+      void ignoredPaymentFrequency;
+      updates.compensation = encryptCompensationForDb(
+        canonicalCompensation,
+      ) as Doc<"employees">["compensation"];
     }
-    if (args.schedule) updates.schedule = args.schedule;
+    if (args.schedule) {
+      const { scheduleOverrides: ignoredOverrides, ...canonicalSchedule } =
+        args.schedule;
+      void ignoredOverrides;
+      updates.schedule = canonicalSchedule;
+    }
     if (args.shiftId !== undefined) updates.shiftId = args.shiftId;
     let nextCustomFields: Record<string, unknown> | undefined;
     if (args.customFields !== undefined) {
@@ -963,7 +982,6 @@ export const updateEmployee = mutation({
         ...(existingCustomFields || {}),
         ...args.customFields,
       };
-      updates.customFields = nextCustomFields;
     }
 
     await ctx.db.patch(args.employeeId, updates);
@@ -1149,10 +1167,7 @@ export const updateLeaveCredits = mutation({
 
     await replaceEmployeeLeaveCredits(ctx, employee, args.leaveCredits, now);
 
-    await ctx.db.patch(args.employeeId, {
-      leaveCredits: args.leaveCredits,
-      updatedAt: now,
-    });
+    await ctx.db.patch(args.employeeId, { updatedAt: now });
 
     return { success: true };
   },
@@ -1194,10 +1209,7 @@ export const addRequirement = mutation({
 
     const now = Date.now();
     await replaceEmployeeRequirements(ctx, employee, requirements, now);
-    await ctx.db.patch(args.employeeId, {
-      requirements,
-      updatedAt: now,
-    });
+    await ctx.db.patch(args.employeeId, { updatedAt: now });
 
     return { success: true };
   },
@@ -1222,10 +1234,7 @@ export const removeRequirement = mutation({
       requirements.splice(args.requirementIndex, 1);
       const now = Date.now();
       await replaceEmployeeRequirements(ctx, employee, requirements, now);
-      await ctx.db.patch(args.employeeId, {
-        requirements,
-        updatedAt: now,
-      });
+      await ctx.db.patch(args.employeeId, { updatedAt: now });
       return { success: true };
     } else {
       throw new Error(
@@ -1281,10 +1290,7 @@ export const updateRequirementStatus = mutation({
     }
 
     await replaceEmployeeRequirements(ctx, employee, requirements, now);
-    await ctx.db.patch(args.employeeId, {
-      requirements,
-      updatedAt: now,
-    });
+    await ctx.db.patch(args.employeeId, { updatedAt: now });
 
     return { success: true };
   },
@@ -1319,10 +1325,7 @@ export const setEmployeeRequirementsComplete = mutation({
     }));
 
     await replaceEmployeeRequirements(ctx, employee, updated, now);
-    await ctx.db.patch(args.employeeId, {
-      requirements: updated,
-      updatedAt: now,
-    });
+    await ctx.db.patch(args.employeeId, { updatedAt: now });
 
     return { success: true };
   },
@@ -1369,10 +1372,7 @@ export const updateRequirementFile = mutation({
 
     const now = Date.now();
     await replaceEmployeeRequirements(ctx, employee, requirements, now);
-    await ctx.db.patch(args.employeeId, {
-      requirements,
-      updatedAt: now,
-    });
+    await ctx.db.patch(args.employeeId, { updatedAt: now });
 
     return { success: true };
   },
@@ -1401,17 +1401,10 @@ export const addDeduction = mutation({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
+    await checkAuth(ctx, employee.organizationId, "hr");
 
-    const deductions = await loadEffectiveEmployeeDeductions(ctx, employee);
-    deductions.push(args.deduction);
     const now = Date.now();
     await upsertEmployeeDeduction(ctx, employee, args.deduction, now);
-
-    await ctx.db.patch(args.employeeId, {
-      deductions,
-      updatedAt: now,
-    });
 
     return { success: true };
   },
@@ -1439,15 +1432,8 @@ export const addIncentive = mutation({
 
     await checkAuth(ctx, employee.organizationId, "hr");
 
-    const incentives = await loadEffectiveEmployeeIncentives(ctx, employee);
-    incentives.push(args.incentive);
     const now = Date.now();
     await upsertEmployeeIncentive(ctx, employee, args.incentive, now);
-
-    await ctx.db.patch(args.employeeId, {
-      incentives,
-      updatedAt: now,
-    });
 
     return { success: true };
   },

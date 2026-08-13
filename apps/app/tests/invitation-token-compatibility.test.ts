@@ -102,9 +102,8 @@ describe("invitation token compatibility writes", () => {
     const invitation = await t.run((ctx) =>
       ctx.db.get(created.invitationId as Id<"invitations">),
     );
-    expect(created.token).toBe(invitation?.token);
-    expect(invitation?.tokenHash).toBe(hashInvitationToken(invitation!.token));
-    expect(invitation?.tokenHash).not.toBe(invitation?.token);
+    expect(invitation?.token).toBeUndefined();
+    expect(invitation?.tokenHash).toBe(hashInvitationToken(created.token));
   });
 
   it("uses token hashes first and never falls back for a hashed row", async () => {
@@ -140,7 +139,7 @@ describe("invitation token compatibility writes", () => {
     ).resolves.toMatchObject({ email: "hash-first@example.com" });
   });
 
-  it("keeps plaintext lookup only for rows that have no token hash", async () => {
+  it("does not use plaintext lookup for rows that have no token hash", async () => {
     const { t, organizationId } = await setupActor("active");
     const token = "legacy-only-token";
     await t.run(async (ctx) => {
@@ -160,7 +159,7 @@ describe("invitation token compatibility writes", () => {
 
     await expect(
       t.query(api.invitations.getInvitationByToken, { token }),
-    ).resolves.toMatchObject({ email: "legacy-only@example.com" });
+    ).resolves.toBeNull();
   });
 
   it("redacts stored bearer tokens and rotates them for resend", async () => {
@@ -200,8 +199,8 @@ describe("invitation token compatibility writes", () => {
     const invitation = await t.run((ctx) =>
       ctx.db.get(result.invitationId as Id<"invitations">),
     );
-    expect(invitation?.tokenHash).toBe(hashInvitationToken(invitation!.token));
-    expect(invitation?.tokenHash).not.toBe(invitation?.token);
+    expect(invitation?.token).toBeUndefined();
+    expect(invitation?.tokenHash).toBe(hashInvitationToken(result.token));
   });
 
   it("blocks inactive organization members from both invitation paths", async () => {
