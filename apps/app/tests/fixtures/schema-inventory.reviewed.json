@@ -1,5 +1,5 @@
 {
-  "tableCount": 45,
+  "tableCount": 54,
   "tables": [
     {
       "name": "accountingCostItems",
@@ -72,6 +72,48 @@
       "indexesSha256": "b094b9565fc358e354e1ff7a71c7922131eebc5a7f5db8d3855ccb0ba1375595"
     },
     {
+      "name": "employeeCustomFieldValues",
+      "fieldCount": 9,
+      "fieldsSha256": "2e8564bb49d75c9446856e3176b8bd4a76c118cb9fe212e41fad014f6b50cc80",
+      "indexCount": 3,
+      "indexesSha256": "a876a504ff787748a36b5975c93f00afcb0dc529cd5083086987b29b6e5747e0"
+    },
+    {
+      "name": "employeeDeductions",
+      "fieldCount": 13,
+      "fieldsSha256": "2e460cca4aefa970d20242c0b104cf968fba47e1270c9a1e65459a2f19cd19e4",
+      "indexCount": 2,
+      "indexesSha256": "e98b28d0dc9057d2d2bb7a85c28b251416410fd0c7255d6cab6c910d92eecbd5"
+    },
+    {
+      "name": "employeeIncentives",
+      "fieldCount": 10,
+      "fieldsSha256": "14b215cc189ce541477c579c70d240198fee7f131481749b5d6e6eae8d1c6d19",
+      "indexCount": 2,
+      "indexesSha256": "e98b28d0dc9057d2d2bb7a85c28b251416410fd0c7255d6cab6c910d92eecbd5"
+    },
+    {
+      "name": "employeeLeaveBalances",
+      "fieldCount": 16,
+      "fieldsSha256": "690908c81403b21dd0a74bf9d765cae37e90f0ff0270db3993a0d95a29b8bd0b",
+      "indexCount": 2,
+      "indexesSha256": "e72554642d1a3ba77916f169585ac450a973462c2dcb8e19e44175cb3d8c2a83"
+    },
+    {
+      "name": "employeePaymentAccounts",
+      "fieldCount": 8,
+      "fieldsSha256": "770c3084fab7fee05b11d8d4cf6fbef94a93bdc77024af2ed48fd21d97c84b4a",
+      "indexCount": 2,
+      "indexesSha256": "db8b6c9f85a3a577e91fab98f3c43a9212989281de1060e869a0f6a6f952e859"
+    },
+    {
+      "name": "employeeRequirements",
+      "fieldCount": 26,
+      "fieldsSha256": "8966cd67bfa1351bceda9d724b9864cdc34367f3ee8ac0883740c629e094c28a",
+      "indexCount": 3,
+      "indexesSha256": "a876a504ff787748a36b5975c93f00afcb0dc529cd5083086987b29b6e5747e0"
+    },
+    {
       "name": "employees",
       "fieldCount": 119,
       "fieldsSha256": "c1c76560eb6c3d85ed4026fbfa1434676cc12da4b011f3b38ebd1737411d1af5",
@@ -84,6 +126,13 @@
       "fieldsSha256": "aa10324ea887b2ce3205bbd8a348b04503dc20d415c8780d03948dc8886835e2",
       "indexCount": 3,
       "indexesSha256": "58e9986a9e22ede5ebaddaf1f319960c2cef9d59b8beefb9254e5ec02f2c6704"
+    },
+    {
+      "name": "employeeScheduleOverrides",
+      "fieldCount": 9,
+      "fieldsSha256": "eb75dc9e2758145d18849c59e415b0fb3762667f344ac15ede19a5a926b42ab1",
+      "indexCount": 2,
+      "indexesSha256": "35ebf38ced5920a0d10caae2ff9718a551446b23499b6d739214f7f5aca1aaa8"
     },
     {
       "name": "evaluations",
@@ -136,10 +185,10 @@
     },
     {
       "name": "leaveTypes",
-      "fieldCount": 8,
-      "fieldsSha256": "482b26da6cf90f3b45e26ebdae3f04373be4cf05b76e0e058ff467a17f1ea03f",
-      "indexCount": 1,
-      "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
+      "fieldCount": 15,
+      "fieldsSha256": "ac2fce697b876c41a34f415b59bb7a8ae4a0dbe549b78d988cc4fb1f1eeafe19",
+      "indexCount": 2,
+      "indexesSha256": "dde6def1f567182041b6202d40db73bef279b255604b5c2f2013df0b81e7fd77"
     },
     {
       "name": "memos",
@@ -164,8 +213,8 @@
     },
     {
       "name": "migrationAudits",
-      "fieldCount": 20,
-      "fieldsSha256": "4ac0275abc2280da2f2e364a91d7630dac5db91a315accfe16c8258ca352252c",
+      "fieldCount": 21,
+      "fieldsSha256": "465b0d0bb2b712815c0a32ea1283e2541e4e2257c5aac25cf07ec79d6f86c05c",
       "indexCount": 2,
       "indexesSha256": "09bf93f928ec3a85fc7785763ee247c22be279480fb2d69322beaae4675a6d9f"
     },
@@ -198,11 +247,25 @@
       "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
     },
     {
+      "name": "organizationCustomFieldDefinitions",
+      "fieldCount": 9,
+      "fieldsSha256": "6259fbaabd0b67a1fe775cde2b1ae3ab39fc016fdb3a71f2f8ceb662f40a603a",
+      "indexCount": 2,
+      "indexesSha256": "bfb782c5fd2b049cbedb633ea6baf69b345fa95eb4b69ed53bfb890ec9104d4c"
+    },
+    {
       "name": "organizationDepartments",
       "fieldCount": 12,
       "fieldsSha256": "83f1a732c500ba2c18cf666ef1e51cf5afd813d3083571bd49cfe588810640d0",
       "indexCount": 2,
       "indexesSha256": "517148b4bcc53b6861b7a35b1e4be7f9fc694dbe935316e9bcac8cc9a5a248b8"
+    },
+    {
+      "name": "organizationLeaveSettings",
+      "fieldCount": 26,
+      "fieldsSha256": "2ad3ffc3a95d0b9465dd224687a35ae8061a853bb5a0d3732757e1295422edbd",
+      "indexCount": 1,
+      "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
     },
     {
       "name": "organizationPayrollSettings",

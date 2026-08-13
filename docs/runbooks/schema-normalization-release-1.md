@@ -179,3 +179,9 @@ equality.
 The returned field manifest covers Release 1 fields and preserved payroll
 snapshots. Later normalization tranches extend it before their own contract
 releases; it is not yet a classification of every field in the full schema.
+
+The expanded cleanup waves now have separate operator runbooks. After the
+identity/credentials release, use
+[`leave-employee-children-release-1c.md`](./leave-employee-children-release-1c.md)
+for the additive leave and employee-child migration. Do not reuse the Release 1
+organization-configuration run IDs for a later domain.

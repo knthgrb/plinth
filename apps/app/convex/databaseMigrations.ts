@@ -49,6 +49,7 @@ type FullSchemaCleanupReadinessMode =
   | "not_started"
   | "organization_configuration"
   | "identity_credentials"
+  | "leave_employee_children"
   | "unsupported";
 
 function addCounters(
@@ -1086,7 +1087,8 @@ function hasCleanCompletedSchemaCleanupAudit(
     audit.destination.duplicate === 0 &&
     audit.destination.mismatched === 0 &&
     audit.destination.unexpected === 0 &&
-    audit.destination.matching === audit.destination.expected
+    audit.destination.matching === audit.destination.expected &&
+    audit.destination.totalRows === audit.destination.expected
   );
 }
 
@@ -1106,7 +1108,8 @@ function hasCleanCompletedDomainAudit(
     audit.destination.duplicate === 0 &&
     audit.destination.mismatched === 0 &&
     audit.destination.unexpected === 0 &&
-    audit.destination.matching === audit.destination.expected
+    audit.destination.matching === audit.destination.expected &&
+    audit.destination.totalRows === audit.destination.expected
   );
 }
 
@@ -1138,7 +1141,8 @@ function auditBlockers(audit: Doc<"migrationAudits">) {
     audit.destination.duplicate > 0 ||
     audit.destination.mismatched > 0 ||
     audit.destination.unexpected > 0 ||
-    audit.destination.matching !== audit.destination.expected
+    audit.destination.matching !== audit.destination.expected ||
+    audit.destination.totalRows !== audit.destination.expected
   ) {
     blockers.push("AUDIT_DESTINATION_DISCREPANCIES");
   }
@@ -1149,10 +1153,7 @@ async function getOrganizationConfigurationReadiness(
   ctx: Pick<QueryCtx, "db">,
   registration: FullSchemaCleanupReadinessRegistration,
 ): Promise<FullSchemaDomainReadiness> {
-  const runLookup = await getLatestWriteAttempt(
-    ctx,
-    registration.migrationKey,
-  );
+  const runLookup = await getLatestWriteAttempt(ctx, registration.migrationKey);
   if (runLookup.status === "truncated") {
     return {
       domain: registration.domain,
@@ -1287,6 +1288,14 @@ export function resolveFullSchemaCleanupReadinessMode(
   ) {
     return "identity_credentials";
   }
+  if (
+    registration.implementation === "migration" &&
+    registration.domain === "leave_employee_children" &&
+    registration.migrationKey === "full-schema-leave-employee-children" &&
+    registration.migrationVersion === 1
+  ) {
+    return "leave_employee_children";
+  }
   return "unsupported";
 }
 
@@ -1306,6 +1315,8 @@ async function getFullSchemaDomainReadiness(
     case "organization_configuration":
       return getOrganizationConfigurationReadiness(ctx, registration);
     case "identity_credentials":
+      return getOrganizationConfigurationReadiness(ctx, registration);
+    case "leave_employee_children":
       return getOrganizationConfigurationReadiness(ctx, registration);
     case "unsupported":
       return {

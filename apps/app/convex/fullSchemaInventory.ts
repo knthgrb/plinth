@@ -6,6 +6,7 @@ export type FullSchemaCleanupDomain =
   | "storage"
   | "notifications"
   | "employee_core_credentials"
+  | "employee_children"
   | "time_holidays"
   | "payroll_offboarding"
   | "performance"
@@ -72,6 +73,15 @@ export const CURRENT_SCHEMA_TABLES = [
   "storageObjects",
   "notifications",
   "employees",
+  "organizationLeaveSettings",
+  "employeeLeaveBalances",
+  "employeeRequirements",
+  "employeeDeductions",
+  "employeeIncentives",
+  "employeeScheduleOverrides",
+  "employeePaymentAccounts",
+  "organizationCustomFieldDefinitions",
+  "employeeCustomFieldValues",
   "payslipCredentials",
   "payslipPinResets",
   "payslipPinAttempts",
@@ -177,6 +187,47 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "employee_core_credentials",
     "normalize_children",
     "canonical_embedded",
+  ),
+  organizationLeaveSettings: tablePolicy(
+    "leave",
+    "retain",
+    "normalized_target",
+  ),
+  employeeLeaveBalances: tablePolicy("leave", "retain", "normalized_target"),
+  employeeRequirements: tablePolicy(
+    "employee_children",
+    "retain",
+    "normalized_target",
+  ),
+  employeeDeductions: tablePolicy(
+    "employee_children",
+    "retain",
+    "normalized_target",
+  ),
+  employeeIncentives: tablePolicy(
+    "employee_children",
+    "retain",
+    "normalized_target",
+  ),
+  employeeScheduleOverrides: tablePolicy(
+    "employee_children",
+    "retain",
+    "normalized_target",
+  ),
+  employeePaymentAccounts: tablePolicy(
+    "employee_children",
+    "retain",
+    "normalized_target",
+  ),
+  organizationCustomFieldDefinitions: tablePolicy(
+    "employee_children",
+    "retain",
+    "normalized_target",
+  ),
+  employeeCustomFieldValues: tablePolicy(
+    "employee_children",
+    "retain",
+    "normalized_target",
   ),
   payslipCredentials: tablePolicy(
     "employee_core_credentials",

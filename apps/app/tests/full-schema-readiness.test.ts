@@ -140,9 +140,9 @@ describe("full schema cleanup readiness", () => {
     expect(inventory).toMatchObject({
       programKey: FULL_SCHEMA_CLEANUP_PROGRAM_KEY,
       programVersion: FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
-      currentTableCount: 45,
+      currentTableCount: 54,
     });
-    expect(inventory.tables).toHaveLength(45);
+    expect(inventory.tables).toHaveLength(54);
     expect(inventory.tables).toContainEqual(
       expect.objectContaining({
         table: "organizations",
@@ -233,6 +233,83 @@ describe("full schema cleanup readiness", () => {
         blockers: [],
         auditId,
         auditedAt: 2,
+      }),
+    );
+  });
+
+  it("marks leave employee children ready from its newest clean write audit", async () => {
+    const t = convexTest(schema, modules);
+    const auditId = await t.run(async (ctx) => {
+      const runId = await ctx.db.insert("migrationRuns", {
+        key: "full-schema-leave-employee-children",
+        version: 1,
+        dryRun: false,
+        status: "completed",
+        phase: "leave_balances",
+        batchSize: 20,
+        counters: {
+          scanned: 4,
+          changed: 12,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 1,
+        updatedAt: 1,
+        completedAt: 1,
+      });
+      return ctx.db.insert("migrationAudits", {
+        migrationRunId: runId,
+        status: "completed",
+        phase: "leave_balances",
+        batchSize: 5,
+        organizations: 1,
+        destination: {
+          expected: 12,
+          matching: 12,
+          missing: 0,
+          duplicate: 0,
+          mismatched: 0,
+          unexpected: 0,
+          totalRows: 12,
+        },
+        duplicateLegacySettings: 0,
+        sourceConflicts: 0,
+        auditTruncated: false,
+        startedAt: 2,
+        updatedAt: 2,
+        completedAt: 2,
+      });
+    });
+
+    const readiness = await t.query(getFullSchemaCleanupReadiness, {});
+    expect(readiness.domains).toContainEqual(
+      expect.objectContaining({
+        domain: "leave_employee_children",
+        status: "ready",
+        blockers: [],
+        auditId,
+        auditedAt: 2,
+      }),
+    );
+
+    await t.run(async (ctx) => {
+      const audit = await ctx.db.get(auditId);
+      if (!audit) throw new Error("Audit fixture was not found");
+      await ctx.db.patch(auditId, {
+        destination: { ...audit.destination, totalRows: 11 },
+      });
+    });
+    const incompleteTargetScan = await t.query(
+      getFullSchemaCleanupReadiness,
+      {},
+    );
+    expect(incompleteTargetScan.domains).toContainEqual(
+      expect.objectContaining({
+        domain: "leave_employee_children",
+        status: "blocked",
+        blockers: expect.arrayContaining(["AUDIT_DESTINATION_DISCREPANCIES"]),
       }),
     );
   });
@@ -412,7 +489,13 @@ describe("full schema cleanup readiness", () => {
     },
   ])(
     "does not search past a newer $name",
-    async ({ writeStatus, errors, conflicts, expectedStatus, expectedBlocker }) => {
+    async ({
+      writeStatus,
+      errors,
+      conflicts,
+      expectedStatus,
+      expectedBlocker,
+    }) => {
       const t = convexTest(schema, modules);
       await t.run(async (ctx) => {
         const cleanRunId = await ctx.db.insert("migrationRuns", {
@@ -810,7 +893,10 @@ describe("full schema cleanup readiness", () => {
           auditTruncated: audit.auditTruncated ?? false,
           startedAt: 2,
           updatedAt: 2,
-          completedAt: audit.status === "queued" || audit.status === "running" ? undefined : 2,
+          completedAt:
+            audit.status === "queued" || audit.status === "running"
+              ? undefined
+              : 2,
         });
       }
     });

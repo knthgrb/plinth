@@ -37,8 +37,8 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     domain: "leave_employee_children",
     migrationKey: "full-schema-leave-employee-children",
     migrationVersion: 1,
-    implementation: "not_started",
-    policyDomains: ["leave", "time_holidays"],
+    implementation: "migration",
+    policyDomains: ["leave", "time_holidays", "employee_children"],
   },
   {
     domain: "workflow_events",
