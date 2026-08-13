@@ -54,7 +54,6 @@ import {
   isEmployeeRestDay,
 } from "@/lib/payroll-calculations";
 import {
-  attendanceDayKey,
   normalizeAttendanceDateMs,
   parseYmdToAttendanceDateMs,
 } from "@/lib/manila-date";
@@ -63,10 +62,19 @@ import {
   validateAttendanceImportFile,
 } from "@/lib/attendance-import/client";
 import {
-  buildAttendanceImportPreview,
+  applyAttendanceImportConflicts,
+  buildAttendanceImportPreviewWhenReady,
   type AttendanceImportPreviewRow,
 } from "@/lib/attendance-import/preview";
 import type { AttendanceImportStatus } from "@/lib/attendance-import/types";
+import type { NormalizedAttendanceCandidate } from "@/lib/attendance-import/types";
+import {
+  areAttendanceImportLookupsReady,
+  AttendanceImportRequestCoordinator,
+  handleAttendanceDialogOpenChange,
+  isAttendanceConflictCheckPending,
+  runLatestAttendanceImportRequest,
+} from "@/lib/attendance-import/lifecycle";
 import { AttendanceImportFileControls } from "./attendance-import-file-controls";
 
 function formatHHmmTo12h(hhmm: string | undefined): string {
@@ -158,12 +166,50 @@ export function BulkAddAttendanceDialog({
   const [csvPreviewRows, setCsvPreviewRows] = useState<
     AttendanceImportPreviewRow[]
   >([]);
+  const [importCandidates, setImportCandidates] = useState<
+    NormalizedAttendanceCandidate[] | null
+  >(null);
   const [bulkConflictResolutions, setBulkConflictResolutions] = useState<
     Record<number, "overwrite" | "exclude">
   >({});
   const [csvParseError, setCsvParseError] = useState<string | null>(null);
   const [isTransformingImport, setIsTransformingImport] = useState(false);
   const [isImportingCsv, setIsImportingCsv] = useState(false);
+  const importRequestCoordinatorRef = useRef(
+    new AttendanceImportRequestCoordinator(),
+  );
+  const importLookupsReady = areAttendanceImportLookupsReady(
+    employees,
+    holidays,
+  );
+
+  const invalidateImportRequest = useCallback(() => {
+    importRequestCoordinatorRef.current.invalidate();
+    setIsTransformingImport(false);
+  }, []);
+
+  const resetImportPreview = useCallback(() => {
+    setImportCandidates(null);
+    setCsvPreviewRows([]);
+    setCsvParseError(null);
+  }, []);
+
+  const invalidateAndResetImport = useCallback(() => {
+    invalidateImportRequest();
+    resetImportPreview();
+  }, [invalidateImportRequest, resetImportPreview]);
+
+  useEffect(() => {
+    invalidateAndResetImport();
+  }, [currentOrganizationId, invalidateAndResetImport]);
+
+  useEffect(
+    () => () => {
+      importRequestCoordinatorRef.current.invalidate();
+    },
+    [],
+  );
+
   const canUseNoWorkForDate = (
     dateTs: number,
     employee: Doc<"employees">,
@@ -268,33 +314,26 @@ export function BulkAddAttendanceDialog({
       : "skip",
   );
 
-  const existingAttendanceIdByCsvKey = useMemo(() => {
-    const map = new Map<string, Id<"attendance">>();
-    if (!orgAttendanceForCsv) return map;
-    for (const record of orgAttendanceForCsv) {
-      const key = attendanceDayKey(record.employeeId, record.date);
-      if (!map.has(key)) {
-        map.set(key, record._id);
-      }
-    }
-    return map;
-  }, [orgAttendanceForCsv]);
-
   useEffect(() => {
-    if (existingAttendanceIdByCsvKey.size === 0) return;
-    setCsvPreviewRows((prev) =>
-      prev.map((row) => {
-        if (!row.employeeId || row.dateTs <= 0) {
-          return { ...row, existingAttendanceId: null };
-        }
-        const key = attendanceDayKey(row.employeeId, row.dateTs);
-        return {
-          ...row,
-          existingAttendanceId: existingAttendanceIdByCsvKey.get(key) ?? null,
-        };
-      }),
+    if (importCandidates === null) {
+      return;
+    }
+
+    const preview = buildAttendanceImportPreviewWhenReady(
+      importCandidates,
+      employees,
+      holidays,
     );
-  }, [existingAttendanceIdByCsvKey]);
+
+    if (preview === undefined) {
+      setCsvPreviewRows([]);
+      return;
+    }
+
+    setCsvPreviewRows(
+      applyAttendanceImportConflicts(preview, orgAttendanceForCsv),
+    );
+  }, [employees, holidays, importCandidates, orgAttendanceForCsv]);
 
   useEffect(() => {
     setBulkConflictResolutions({});
@@ -346,36 +385,74 @@ export function BulkAddAttendanceDialog({
     ).length;
   }, [csvPreviewRows]);
 
+  const csvImportableRowCount = useMemo(
+    () =>
+      csvPreviewRows.filter(
+        (row) =>
+          row.employeeId &&
+          !row.error &&
+          row.dateTs > 0 &&
+          row.includeInImport,
+      ).length,
+    [csvPreviewRows],
+  );
+  const isCheckingImportConflicts = isAttendanceConflictCheckPending(
+    csvImportableRowCount > 0,
+    orgAttendanceForCsv,
+  );
+
   const handleCSVFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    setCsvParseError(null);
-    setCsvPreviewRows([]);
-    if (!file || !currentOrganizationId) return;
+    invalidateAndResetImport();
+    if (!file || !currentOrganizationId || !importLookupsReady) return;
 
     try {
       validateAttendanceImportFile(file);
-      setIsTransformingImport(true);
-      const candidates = await transformAttendanceImport(
-        file,
-        currentOrganizationId,
-      );
-      setCsvPreviewRows(
-        buildAttendanceImportPreview(candidates, employees ?? [], holidays ?? []),
-      );
     } catch (error: unknown) {
       setCsvParseError(
         error instanceof Error
           ? error.message
           : "The attendance file could not be transformed.",
       );
-    } finally {
-      setIsTransformingImport(false);
+      return;
     }
+
+    await runLatestAttendanceImportRequest(
+      importRequestCoordinatorRef.current,
+      (signal) =>
+        transformAttendanceImport(
+          file,
+          currentOrganizationId,
+          fetch,
+          signal,
+        ),
+      {
+        onStart: () => setIsTransformingImport(true),
+        onSuccess: setImportCandidates,
+        onError: (error) =>
+          setCsvParseError(
+            error instanceof Error
+              ? error.message
+              : "The attendance file could not be transformed.",
+          ),
+        onFinish: () => setIsTransformingImport(false),
+      },
+    );
   };
 
   const handleCSVImport = async () => {
     if (!currentOrganizationId) return;
+    if (isCheckingImportConflicts) {
+      toast({
+        title: "Checking existing attendance",
+        description:
+          "Wait for the attendance conflict check to finish before importing.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (csvUnresolvedConflictCount > 0) {
       toast({
         title: "Resolve conflicts first",
@@ -415,8 +492,7 @@ export function BulkAddAttendanceDialog({
       await bulkCreateMutation({ entries });
       setIsBulkDialogOpen(false);
       setBulkMode("manual");
-      setCsvPreviewRows([]);
-      setCsvParseError(null);
+      invalidateAndResetImport();
       toast({
         title: "Import complete",
         description: `Imported ${entries.length} attendance record(s).`,
@@ -436,6 +512,16 @@ export function BulkAddAttendanceDialog({
       setIsImportingCsv(false);
     }
   };
+
+  const handleBulkDialogOpenChange = useCallback(
+    (open: boolean) =>
+      handleAttendanceDialogOpenChange(
+        open,
+        invalidateAndResetImport,
+        setIsBulkDialogOpen,
+      ),
+    [invalidateAndResetImport],
+  );
 
   const downloadCSVTemplate = () => {
     const blob = new Blob([CSV_TEMPLATE], { type: "text/csv;charset=utf-8;" });
@@ -790,7 +876,7 @@ export function BulkAddAttendanceDialog({
   };
 
   return (
-    <Dialog open={isBulkDialogOpen} onOpenChange={setIsBulkDialogOpen}>
+    <Dialog open={isBulkDialogOpen} onOpenChange={handleBulkDialogOpenChange}>
       <DialogTrigger asChild>
         <Button variant="outline">
           <Upload className="mr-2 h-4 w-4" />
@@ -813,7 +899,10 @@ export function BulkAddAttendanceDialog({
             <div className="flex rounded-lg border border-gray-200 bg-gray-50/50 p-0.5 shrink-0">
               <button
                 type="button"
-                onClick={() => setBulkMode("manual")}
+                onClick={() => {
+                  invalidateAndResetImport();
+                  setBulkMode("manual");
+                }}
                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                   bulkMode === "manual"
                     ? "bg-white text-gray-900 shadow-sm border border-gray-200"
@@ -825,9 +914,8 @@ export function BulkAddAttendanceDialog({
               <button
                 type="button"
                 onClick={() => {
+                  invalidateAndResetImport();
                   setBulkMode("file");
-                  setCsvParseError(null);
-                  setCsvPreviewRows([]);
                 }}
                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                   bulkMode === "file"
@@ -845,6 +933,8 @@ export function BulkAddAttendanceDialog({
             <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-4">
               <AttendanceImportFileControls
                 isTransforming={isTransformingImport}
+                isCheckingConflicts={isCheckingImportConflicts}
+                lookupsReady={importLookupsReady}
                 onFileChange={handleCSVFileSelect}
                 onDownloadTemplate={downloadCSVTemplate}
               />
@@ -1015,8 +1105,8 @@ export function BulkAddAttendanceDialog({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setIsBulkDialogOpen(false)}
-                disabled={isTransformingImport || isImportingCsv}
+                onClick={() => handleBulkDialogOpenChange(false)}
+                disabled={isImportingCsv}
               >
                 Cancel
               </Button>
@@ -1026,10 +1116,9 @@ export function BulkAddAttendanceDialog({
                 disabled={
                   isTransformingImport ||
                   isImportingCsv ||
+                  isCheckingImportConflicts ||
                   csvUnresolvedConflictCount > 0 ||
-                  csvPreviewRows.filter(
-                    (r) => r.employeeId && !r.error && r.dateTs > 0 && r.includeInImport
-                  ).length === 0
+                  csvImportableRowCount === 0
                 }
               >
                 {isImportingCsv ? (

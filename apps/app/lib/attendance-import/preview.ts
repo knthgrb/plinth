@@ -1,5 +1,6 @@
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import {
+  attendanceDayKey,
   formatManilaShortDate,
   parseYmdToAttendanceDateMs,
 } from "@/lib/manila-date";
@@ -39,6 +40,11 @@ export interface AttendanceImportPreviewRow {
   isRestDay: boolean;
 }
 
+export type AttendanceImportConflictRecord = Pick<
+  Doc<"attendance">,
+  "_id" | "employeeId" | "date"
+>;
+
 const DEFAULT_SCHEDULE_IN = "09:00";
 const DEFAULT_SCHEDULE_OUT = "18:00";
 
@@ -53,6 +59,50 @@ export function buildAttendanceImportPreview(
   holidays: readonly AttendanceImportHoliday[],
 ): AttendanceImportPreviewRow[] {
   return candidates.map((candidate) => buildPreviewRow(candidate, employees, holidays));
+}
+
+export function buildAttendanceImportPreviewWhenReady(
+  candidates: readonly NormalizedAttendanceCandidate[],
+  employees: readonly AttendanceImportEmployee[] | undefined,
+  holidays: readonly AttendanceImportHoliday[] | undefined,
+): AttendanceImportPreviewRow[] | undefined {
+  if (employees === undefined || holidays === undefined) {
+    return undefined;
+  }
+
+  return buildAttendanceImportPreview(candidates, employees, holidays);
+}
+
+export function applyAttendanceImportConflicts(
+  rows: readonly AttendanceImportPreviewRow[],
+  records: readonly AttendanceImportConflictRecord[] | undefined,
+): AttendanceImportPreviewRow[] {
+  if (records === undefined) {
+    return [...rows];
+  }
+
+  const existingAttendanceByKey = new Map<string, Id<"attendance">>();
+
+  for (const record of records) {
+    const key = attendanceDayKey(record.employeeId, record.date);
+
+    if (!existingAttendanceByKey.has(key)) {
+      existingAttendanceByKey.set(key, record._id);
+    }
+  }
+
+  return rows.map((row) => {
+    if (!row.employeeId || row.dateTs <= 0) {
+      return { ...row, existingAttendanceId: null };
+    }
+
+    const key = attendanceDayKey(row.employeeId, row.dateTs);
+
+    return {
+      ...row,
+      existingAttendanceId: existingAttendanceByKey.get(key) ?? null,
+    };
+  });
 }
 
 export function findAttendanceEmployee(

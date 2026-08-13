@@ -128,6 +128,7 @@ export async function transformAttendanceImport(
   file: File,
   organizationId: string,
   fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<NormalizedAttendanceCandidate[]> {
   validateAttendanceImportFile(file);
 
@@ -140,6 +141,7 @@ export async function transformAttendanceImport(
       method: "POST",
       headers: { "x-organization-id": organizationId },
       body: formData,
+      signal,
     });
     const responseBody: unknown = await response.json();
     const parsed = attendanceImportTransformResponseSchema.safeParse(responseBody);

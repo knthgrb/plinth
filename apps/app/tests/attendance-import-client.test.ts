@@ -7,6 +7,13 @@ import {
   transformAttendanceImport,
   validateAttendanceImportFile,
 } from "@/lib/attendance-import/client";
+import {
+  areAttendanceImportLookupsReady,
+  AttendanceImportRequestCoordinator,
+  handleAttendanceDialogOpenChange,
+  isAttendanceConflictCheckPending,
+  runLatestAttendanceImportRequest,
+} from "@/lib/attendance-import/lifecycle";
 import type { NormalizedAttendanceCandidate } from "@/lib/attendance-import/types";
 
 const organizationId = "k57c6m9n2p4q7r8s3t5v6w9x2y4z7a8b";
@@ -45,6 +52,8 @@ describe("attendance import client", () => {
     const markup = renderToStaticMarkup(
       createElement(AttendanceImportFileControls, {
         isTransforming: true,
+        isCheckingConflicts: false,
+        lookupsReady: true,
         onFileChange: () => undefined,
         onDownloadTemplate: () => undefined,
       }),
@@ -59,6 +68,137 @@ describe("attendance import client", () => {
       "This file will be processed by Google Gemini.",
     );
     expect(markup).toContain("Processing with Gemini…");
+  });
+
+  it("disables upload while employee and holiday lookups are loading", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AttendanceImportFileControls, {
+        isTransforming: false,
+        isCheckingConflicts: false,
+        lookupsReady: false,
+        onFileChange: () => undefined,
+        onDownloadTemplate: () => undefined,
+      }),
+    );
+
+    expect(markup).toContain('type="file"');
+    expect(markup).toContain("disabled");
+    expect(markup).toContain("Preparing employee and holiday data…");
+  });
+
+  it("renders the conflict-checking state before final import is allowed", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AttendanceImportFileControls, {
+        isTransforming: false,
+        isCheckingConflicts: true,
+        lookupsReady: true,
+        onFileChange: () => undefined,
+        onDownloadTemplate: () => undefined,
+      }),
+    );
+
+    expect(markup).toContain("Checking existing attendance…");
+  });
+
+  it("treats empty lookup and conflict results as loaded", () => {
+    expect(areAttendanceImportLookupsReady(undefined, [])).toBe(false);
+    expect(areAttendanceImportLookupsReady([], undefined)).toBe(false);
+    expect(areAttendanceImportLookupsReady([], [])).toBe(true);
+    expect(isAttendanceConflictCheckPending(true, undefined)).toBe(true);
+    expect(isAttendanceConflictCheckPending(true, [])).toBe(false);
+    expect(isAttendanceConflictCheckPending(false, undefined)).toBe(false);
+  });
+
+  it("lets only the latest request update rows, errors, and loading", async () => {
+    const coordinator = new AttendanceImportRequestCoordinator();
+    const first = deferred<string>();
+    const second = deferred<string>();
+    const rows: string[] = [];
+    const errors: string[] = [];
+    const signals: AbortSignal[] = [];
+    let loading = false;
+
+    const run = (request: Promise<string>) =>
+      runLatestAttendanceImportRequest(
+        coordinator,
+        (signal) => {
+          signals.push(signal);
+          return request;
+        },
+        {
+          onStart: () => {
+            loading = true;
+          },
+          onSuccess: (value) => rows.push(value),
+          onError: (error) =>
+            errors.push(error instanceof Error ? error.message : "unknown"),
+          onFinish: () => {
+            loading = false;
+          },
+        },
+      );
+
+    const firstRun = run(first.promise);
+    const secondRun = run(second.promise);
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
+    first.reject(new Error("stale failure"));
+    await firstRun;
+
+    expect(rows).toEqual([]);
+    expect(errors).toEqual([]);
+    expect(loading).toBe(true);
+
+    second.resolve("current rows");
+    await secondRun;
+
+    expect(rows).toEqual(["current rows"]);
+    expect(errors).toEqual([]);
+    expect(loading).toBe(false);
+  });
+
+  it("invalidates and aborts an active request when the dialog closes", async () => {
+    const coordinator = new AttendanceImportRequestCoordinator();
+    const request = deferred<string>();
+    const rows: string[] = [];
+    let loading = false;
+    let dialogOpen = true;
+    let activeSignal: AbortSignal | undefined;
+    const running = runLatestAttendanceImportRequest(
+      coordinator,
+      (signal) => {
+        activeSignal = signal;
+        return request.promise;
+      },
+      {
+        onStart: () => {
+          loading = true;
+        },
+        onSuccess: (value) => rows.push(value),
+        onError: () => rows.push("error"),
+        onFinish: () => {
+          loading = false;
+        },
+      },
+    );
+
+    handleAttendanceDialogOpenChange(
+      false,
+      () => {
+        coordinator.invalidate();
+        loading = false;
+      },
+      (open) => {
+        dialogOpen = open;
+      },
+    );
+    request.resolve("late rows");
+    await running;
+
+    expect(dialogOpen).toBe(false);
+    expect(activeSignal?.aborted).toBe(true);
+    expect(rows).toEqual([]);
+    expect(loading).toBe(false);
   });
 
   it("rejects unsupported, uppercase-extension, and oversized files before upload", () => {
@@ -85,10 +225,12 @@ describe("attendance import client", () => {
       Response.json({ ok: true, candidates }),
     );
 
+    const controller = new AbortController();
     const result = await transformAttendanceImport(
       validCsvFile,
       organizationId,
       fetchImpl,
+      controller.signal,
     );
 
     expect(result).toEqual(candidates);
@@ -100,6 +242,7 @@ describe("attendance import client", () => {
       organizationId,
     );
     expect(new Headers(init?.headers).has("content-type")).toBe(false);
+    expect(init?.signal).toBe(controller.signal);
     const body = init?.body;
     expect(body).toBeInstanceOf(FormData);
     expect((body as FormData).get("organizationId")).toBe(organizationId);
@@ -191,3 +334,24 @@ describe("attendance import client", () => {
     ).rejects.toThrow("The attendance file could not be transformed.");
   });
 });
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolvePromise: ((value: T) => void) | undefined;
+  let rejectPromise: ((error: unknown) => void) | undefined;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+
+  return {
+    promise,
+    resolve: (value) => resolvePromise?.(value),
+    reject: (error) => rejectPromise?.(error),
+  };
+}

@@ -7,7 +7,9 @@ import type {
 } from "@/lib/attendance-import/preview";
 import {
   attendanceTimeToHHmm,
+  applyAttendanceImportConflicts,
   buildAttendanceImportPreview,
+  buildAttendanceImportPreviewWhenReady,
   findAttendanceEmployee,
 } from "@/lib/attendance-import/preview";
 import type { NormalizedAttendanceCandidate } from "@/lib/attendance-import/types";
@@ -124,6 +126,53 @@ const validCandidate: NormalizedAttendanceCandidate = {
 };
 
 describe("attendance import preview mapping", () => {
+  it("waits for both lookup datasets before mapping retained candidates", () => {
+    expect(
+      buildAttendanceImportPreviewWhenReady(
+        [validCandidate],
+        undefined,
+        [],
+      ),
+    ).toBeUndefined();
+    expect(
+      buildAttendanceImportPreviewWhenReady(
+        [validCandidate],
+        [employeeFixture],
+        undefined,
+      ),
+    ).toBeUndefined();
+
+    const rows = buildAttendanceImportPreviewWhenReady(
+      [validCandidate],
+      [employeeFixture],
+      [],
+    );
+
+    expect(rows?.[0]).toMatchObject({
+      employeeId: employeeFixture._id,
+      error: null,
+      includeInImport: true,
+    });
+  });
+
+  it("clears stale conflict IDs when a loaded conflict query is empty", () => {
+    const [row] = buildAttendanceImportPreview(
+      [validCandidate],
+      [employeeFixture],
+      [],
+    );
+    const staleConflictRow = {
+      ...row,
+      existingAttendanceId: "attendance-stale" as Id<"attendance">,
+    };
+
+    expect(
+      applyAttendanceImportConflicts([staleConflictRow], undefined),
+    ).toEqual([staleConflictRow]);
+    expect(applyAttendanceImportConflicts([staleConflictRow], [])[0])
+      .toMatchObject({ existingAttendanceId: null });
+  });
+
   it("keeps valid rows importable while flagging invalid rows", () => {
     const rows = buildAttendanceImportPreview(
       [validCandidate, { ...validCandidate, employeeKey: "Unknown" }],
