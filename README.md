@@ -115,11 +115,19 @@ pnpm install
    NEXT_PUBLIC_CONVEX_URL=your_convex_url
    SITE_URL=http://localhost:3001
    AUTH_EMAIL_WEBHOOK_SECRET=replace_with_a_random_32_byte_secret
+   GEMINI_API_KEY=your_google_ai_studio_api_key
+   GEMINI_MODEL=gemini-3.5-flash-lite
    ```
 
    Set the same `AUTH_EMAIL_WEBHOOK_SECRET` in both the app runtime and the
    Convex deployment. Convex uses it to authenticate password-reset email
    requests sent to the app API.
+
+   `GEMINI_API_KEY` and `GEMINI_MODEL` are server-only variables and must not
+   use the `NEXT_PUBLIC_` prefix. `GEMINI_MODEL` is optional and defaults to
+   `gemini-3.5-flash-lite`. Free-tier input may be used by Google for product
+   improvement. Production HR data should use a paid Gemini tier under the
+   organization's privacy and security review.
 
    - **Marketing** (optional, for “Log in” / “Get Started” links to the app):
 
