@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   extractAttendanceWithGemini,
+  geminiAttendanceResponseSchema,
   GeminiAttendanceError,
 } from "@/lib/attendance-import/gemini";
 import type { WorkbookData } from "@/lib/attendance-import/workbook";
@@ -73,6 +74,11 @@ function jsonResponse(body: unknown, status = 200, headers?: HeadersInit): Respo
 function successfulResponse(candidates: unknown[]): Response {
   return jsonResponse(completedInteraction(JSON.stringify({ candidates })));
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 describe("Gemini attendance extraction", () => {
   it("sends every sheet as untrusted data and requests strict JSON", async () => {
@@ -162,6 +168,91 @@ describe("Gemini attendance extraction", () => {
       "missing_employee",
       "extraction_issue",
     ]);
+  });
+
+  it.each([
+    ["source sheet", { sourceSheet: `M${" ".repeat(200)}` }],
+    ["employee key", { employeeKey: `E${" ".repeat(300)}` }],
+    ["date", { date: `D${" ".repeat(40)}` }],
+    ["explicit time in", { explicitTimeIn: `T${" ".repeat(40)}` }],
+    ["explicit time out", { explicitTimeOut: `T${" ".repeat(40)}` }],
+    ["punch", { punches: [`P${" ".repeat(40)}`] }],
+    ["status", { status: `S${" ".repeat(50)}` }],
+    ["notes", { notes: `N${" ".repeat(2_000)}` }],
+    [
+      "extraction issue",
+      { extractionIssues: [`I${" ".repeat(300)}`] },
+    ],
+  ])("rejects an oversized raw whitespace-padded %s", (_label, override) => {
+    expect(
+      geminiAttendanceResponseSchema.safeParse({
+        candidates: [{ ...validCandidate, ...override }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("validates required strings after trimming", () => {
+    expect(
+      geminiAttendanceResponseSchema.safeParse({
+        candidates: [
+          {
+            ...validCandidate,
+            sourceSheet: "   ",
+            extractionIssues: ["   "],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts documented transport annotations and provider metadata", async () => {
+    const fetchImpl = vi.fn(async (): Promise<Response> =>
+      jsonResponse({
+        created: "2026-08-13T00:00:00Z",
+        id: "interaction-annotated",
+        model: "gemini-3.5-flash-lite",
+        object: "interaction",
+        service_tier: "standard",
+        status: "completed",
+        steps: [
+          {
+            type: "user_input",
+            content: [{ type: "text", text: "redacted workbook input" }],
+          },
+          {
+            type: "model_output",
+            id: "output-step-1",
+            status: "done",
+            provider_metadata: { trace_id: "provider-trace-1" },
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ candidates: [validCandidate] }),
+                annotations: [
+                  {
+                    type: "url_citation",
+                    start_index: 0,
+                    end_index: 10,
+                    title: "Provider documentation",
+                    url: "https://ai.google.dev/",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        updated: "2026-08-13T00:00:01Z",
+        usage: { total_input_tokens: 10, total_output_tokens: 20 },
+      }),
+    );
+
+    const result = await extractAttendanceWithGemini(twoSheetWorkbook, {
+      apiKey: "test-key",
+      fetchImpl,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ employeeKey: "EMP-001" });
   });
 
   it("rejects unknown candidate properties", async () => {
@@ -258,6 +349,35 @@ describe("Gemini attendance extraction", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it.each(["0x1", "+1", "1e0"])(
+    "does not retry a non-decimal Retry-After value %s",
+    async (retryAfter) => {
+      vi.useFakeTimers();
+      const fetchImpl = vi
+        .fn<() => Promise<Response>>()
+        .mockResolvedValueOnce(
+          jsonResponse(
+            { error: { code: "rate_limit_exceeded", message: "busy" } },
+            429,
+            { "retry-after": retryAfter },
+          ),
+        )
+        .mockResolvedValueOnce(successfulResponse([validCandidate]));
+
+      const promise = extractAttendanceWithGemini(twoSheetWorkbook, {
+        apiKey: "test-key",
+        fetchImpl,
+      });
+      const rateLimitExpectation = expect(promise).rejects.toMatchObject({
+        code: "rate_limited",
+      });
+
+      await vi.runAllTimersAsync();
+      await rateLimitExpectation;
+      expect(fetchImpl).toHaveBeenCalledOnce();
+    },
+  );
+
   it("retries a transient 5xx response once", async () => {
     const fetchImpl = vi
       .fn<() => Promise<Response>>()
@@ -290,19 +410,39 @@ describe("Gemini attendance extraction", () => {
     await expect(promise).rejects.not.toThrow(/SUPER_SECRET_CELL/);
   });
 
-  it("maps abort failures to timeout", async () => {
-    const fetchImpl = vi.fn(async (): Promise<Response> => {
-      throw new DOMException("test-key SUPER_SECRET_CELL", "AbortError");
+  it("uses one 30-second signal across fetch and retry delay", async () => {
+    vi.useFakeTimers();
+    const timeoutController = new AbortController();
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockReturnValue(timeoutController.signal);
+    const receivedSignals: AbortSignal[] = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if (init?.signal instanceof AbortSignal) {
+        receivedSignals.push(init.signal);
+      }
+
+      return jsonResponse(
+        { error: { code: "service_unavailable", message: "temporary" } },
+        503,
+      );
     });
+    setTimeout(() => timeoutController.abort(), 50);
 
     const promise = extractAttendanceWithGemini(twoSheetWorkbook, {
       apiKey: "test-key",
       fetchImpl,
-      signal: AbortSignal.abort(),
+    });
+    const timeoutExpectation = expect(promise).rejects.toMatchObject({
+      code: "timeout",
     });
 
-    await expect(promise).rejects.toMatchObject({ code: "timeout" });
-    await expect(promise).rejects.not.toThrow(/test-key|SUPER_SECRET_CELL/);
+    await vi.advanceTimersByTimeAsync(50);
+    await timeoutExpectation;
+    expect(timeoutSpy).toHaveBeenCalledOnce();
+    expect(timeoutSpy).toHaveBeenCalledWith(30_000);
+    expect(receivedSignals).toEqual([timeoutController.signal]);
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
   it("maps provider safety refusals without exposing the provider body", async () => {
