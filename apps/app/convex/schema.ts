@@ -201,6 +201,9 @@ export default defineSchema({
       v.literal("communications_preferences"),
       v.literal("communications_documents"),
       v.literal("communications_leave_attachments"),
+      v.literal("assets_payroll_runs"),
+      v.literal("assets_accounting_items"),
+      v.literal("assets_assets"),
     ),
     cursor: v.optional(v.string()),
     batchSize: v.number(),
@@ -292,6 +295,14 @@ export default defineSchema({
       v.literal("communications_target_pins"),
       v.literal("communications_target_document_grants"),
       v.literal("communications_target_storage_links"),
+      v.literal("assets_payroll_runs"),
+      v.literal("assets_accounting_items"),
+      v.literal("assets_assets"),
+      v.literal("assets_source_verification"),
+      v.literal("assets_target_payroll_notes"),
+      v.literal("assets_target_accounting_receipts"),
+      v.literal("assets_target_custody_events"),
+      v.literal("assets_target_maintenance_events"),
     ),
     cursor: v.optional(v.string()),
     verificationRunId: v.optional(v.id("migrationRuns")),
@@ -444,12 +455,14 @@ export default defineSchema({
       v.literal("message"),
       v.literal("document"),
       v.literal("leave_request"),
+      v.literal("accounting_cost_item"),
     ),
     parentId: v.union(
       v.id("memos"),
       v.id("messages"),
       v.id("documents"),
       v.id("leaveRequests"),
+      v.id("accountingCostItems"),
     ),
     purpose: v.union(
       v.literal("announcement_attachment"),
@@ -457,6 +470,7 @@ export default defineSchema({
       v.literal("chat_attachment"),
       v.literal("document_attachment"),
       v.literal("leave_attachment"),
+      v.literal("accounting_receipt"),
     ),
     sourceIndex: v.number(),
     contentType: v.optional(v.string()),
@@ -1611,6 +1625,23 @@ export default defineSchema({
       "runType",
       "year",
     ]),
+
+  payrollRunNotes: defineTable({
+    organizationId: v.id("organizations"),
+    payrollRunId: v.id("payrollRuns"),
+    employeeId: v.id("employees"),
+    noteDate: v.number(),
+    note: v.string(),
+    addedBy: v.id("users"),
+    addedAt: v.number(),
+    sourceIndex: v.number(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_payroll_run", ["payrollRunId"])
+    .index("by_payroll_run_source", ["payrollRunId", "sourceIndex"])
+    .index("by_organization", ["organizationId"]),
 
   finalSettlements: defineTable({
     organizationId: v.id("organizations"),
@@ -3000,4 +3031,42 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),
+
+  assetCustodyEvents: defineTable({
+    organizationId: v.id("organizations"),
+    assetId: v.id("assets"),
+    eventType: v.union(
+      v.literal("assigned"),
+      v.literal("acknowledged"),
+      v.literal("returned"),
+    ),
+    employeeId: v.optional(v.id("employees")),
+    actorUserId: v.optional(v.id("users")),
+    occurredAt: v.number(),
+    returnDueDate: v.optional(v.number()),
+    sourceIndex: v.number(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_asset", ["assetId", "occurredAt"])
+    .index("by_asset_source", ["assetId", "sourceIndex"])
+    .index("by_organization", ["organizationId"]),
+
+  assetMaintenanceEvents: defineTable({
+    organizationId: v.id("organizations"),
+    assetId: v.id("assets"),
+    serviceDate: v.number(),
+    description: v.string(),
+    cost: v.optional(v.number()),
+    performedBy: v.optional(v.string()),
+    nextServiceDate: v.optional(v.number()),
+    sourceIndex: v.number(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_asset", ["assetId", "serviceDate"])
+    .index("by_asset_source", ["assetId", "sourceIndex"])
+    .index("by_organization", ["organizationId"]),
 });

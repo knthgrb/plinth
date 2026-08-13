@@ -52,6 +52,7 @@ type FullSchemaCleanupReadinessMode =
   | "leave_employee_children"
   | "workflow_events"
   | "communications_documents"
+  | "assets_payroll_compatibility"
   | "unsupported";
 
 function addCounters(
@@ -1314,6 +1315,14 @@ export function resolveFullSchemaCleanupReadinessMode(
   ) {
     return "communications_documents";
   }
+  if (
+    registration.implementation === "migration" &&
+    registration.domain === "assets_payroll_compatibility" &&
+    registration.migrationKey === "full-schema-assets-payroll" &&
+    registration.migrationVersion === 1
+  ) {
+    return "assets_payroll_compatibility";
+  }
   return "unsupported";
 }
 
@@ -1339,6 +1348,8 @@ async function getFullSchemaDomainReadiness(
     case "workflow_events":
       return getOrganizationConfigurationReadiness(ctx, registration);
     case "communications_documents":
+      return getOrganizationConfigurationReadiness(ctx, registration);
+    case "assets_payroll_compatibility":
       return getOrganizationConfigurationReadiness(ctx, registration);
     case "unsupported":
       return {

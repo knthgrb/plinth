@@ -631,7 +631,7 @@ describe("communications migration", () => {
   it("persists a clean audit over every communications target table", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
-    await t.run(insertSources);
+    const sources = await t.run(insertSources);
     const dryRun = await t.mutation(startMigration, { dryRun: true });
     await t.finishAllScheduledFunctions(() => vi.runAllTimers());
     const write = await t.mutation(startMigration, {
@@ -639,6 +639,30 @@ describe("communications migration", () => {
       dryRunId: dryRun.runId,
     });
     await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    await t.run(async (ctx) => {
+      const itemId = await ctx.db.insert("accountingCostItems", {
+        organizationId: sources.organizationId,
+        name: "Receipt owner",
+        amount: 1,
+        amountPaid: 1,
+        frequency: "one-time",
+        status: "paid",
+        receipts: [sources.memoStorageId],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("storageObjectLinks", {
+        organizationId: sources.organizationId,
+        storageId: sources.memoStorageId,
+        parentType: "accounting_cost_item",
+        parentId: itemId,
+        purpose: "accounting_receipt",
+        sourceIndex: 0,
+        migrationVersion: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
 
     await t.mutation(startAudit, { runId: write.runId, batchSize: 1 });
     await t.finishAllScheduledFunctions(() => vi.runAllTimers());

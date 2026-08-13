@@ -24,9 +24,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 6796,
+      "totalMatches": 6881,
       "fileCount": 227,
-      "fingerprint": "78aa75d2af26d2679424a265d9a14620c9664f69b63088bbfab53fa69051102a",
+      "fingerprint": "ed2391dd5385dce3677a4de467913d357ba6ffa18b6924398f7524baeb137678",
       "symbols": [
         {
           "symbol": "acknowledgedBy",
@@ -42,6 +42,21 @@
           "symbol": "annualSil",
           "matches": 46,
           "files": 11
+        },
+        {
+          "symbol": "assignedAt",
+          "matches": 2,
+          "files": 1
+        },
+        {
+          "symbol": "assignedBy",
+          "matches": 2,
+          "files": 1
+        },
+        {
+          "symbol": "assignedEmployeeId",
+          "matches": 34,
+          "files": 4
         },
         {
           "symbol": "assignedReviewerIds",
@@ -62,6 +77,11 @@
           "symbol": "attendanceSettings",
           "matches": 27,
           "files": 5
+        },
+        {
+          "symbol": "custodyAcknowledgedAt",
+          "matches": 17,
+          "files": 4
         },
         {
           "symbol": "customFields",
@@ -287,6 +307,16 @@
           "symbol": "requirementsTableColumns",
           "matches": 5,
           "files": 2
+        },
+        {
+          "symbol": "returnDueDate",
+          "matches": 21,
+          "files": 4
+        },
+        {
+          "symbol": "returnedAt",
+          "matches": 9,
+          "files": 3
         },
         {
           "symbol": "role",

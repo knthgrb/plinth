@@ -91,6 +91,7 @@ export const CURRENT_SCHEMA_TABLES = [
   "shifts",
   "holidays",
   "payrollRuns",
+  "payrollRunNotes",
   "finalSettlements",
   "payslips",
   "payslipCorrections",
@@ -130,6 +131,8 @@ export const CURRENT_SCHEMA_TABLES = [
   "documentVersions",
   "accountingCostItems",
   "assets",
+  "assetCustodyEvents",
+  "assetMaintenanceEvents",
 ] as const;
 
 export type CurrentSchemaTable = (typeof CURRENT_SCHEMA_TABLES)[number];
@@ -275,6 +278,11 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "payroll_offboarding",
     "normalize_children",
     "canonical_embedded",
+  ),
+  payrollRunNotes: tablePolicy(
+    "payroll_offboarding",
+    "retain",
+    "normalized_target",
   ),
   finalSettlements: tablePolicy(
     "payroll_offboarding",
@@ -431,6 +439,12 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "canonical_embedded",
   ),
   assets: tablePolicy("assets", "normalize_children", "canonical_embedded"),
+  assetCustodyEvents: tablePolicy("assets", "retain", "normalized_target"),
+  assetMaintenanceEvents: tablePolicy(
+    "assets",
+    "retain",
+    "normalized_target",
+  ),
 } as const satisfies Record<CurrentSchemaTable, SchemaTablePolicy>;
 
 const override = (
@@ -594,6 +608,48 @@ export const FULL_SCHEMA_FIELD_OVERRIDES = [
     "compatibility_write",
     "payrollRunNotes",
     "release_3b_payroll_contract",
+  ),
+  override(
+    "assets",
+    "assignedEmployeeId",
+    "compatibility_write",
+    "assetCustodyEvents.employeeId",
+    "release_3b_assets_contract",
+  ),
+  override(
+    "assets",
+    "assignedAt",
+    "compatibility_write",
+    "assetCustodyEvents.occurredAt",
+    "release_3b_assets_contract",
+  ),
+  override(
+    "assets",
+    "assignedBy",
+    "compatibility_write",
+    "assetCustodyEvents.actorUserId",
+    "release_3b_assets_contract",
+  ),
+  override(
+    "assets",
+    "custodyAcknowledgedAt",
+    "compatibility_write",
+    "assetCustodyEvents.occurredAt",
+    "release_3b_assets_contract",
+  ),
+  override(
+    "assets",
+    "returnDueDate",
+    "compatibility_write",
+    "assetCustodyEvents.returnDueDate",
+    "release_3b_assets_contract",
+  ),
+  override(
+    "assets",
+    "returnedAt",
+    "compatibility_write",
+    "assetCustodyEvents.occurredAt",
+    "release_3b_assets_contract",
   ),
   override(
     "payrollRuns",

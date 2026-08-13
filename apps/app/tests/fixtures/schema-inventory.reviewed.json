@@ -1,5 +1,5 @@
 {
-  "tableCount": 72,
+  "tableCount": 75,
   "tables": [
     {
       "name": "accountingCostItems",
@@ -70,6 +70,20 @@
       "fieldsSha256": "ccb76b4f2f07bb65945e15a1ea1b6335b71011f031fe28aff94996444c79b5ad",
       "indexCount": 2,
       "indexesSha256": "fa93e537c57fdb3dd2a88148a2f7a4a3dfcc6d8f05569b9373cae8ca37e7d022"
+    },
+    {
+      "name": "assetCustodyEvents",
+      "fieldCount": 11,
+      "fieldsSha256": "dd03892675144d9ea9d203732eef7053c2d1ea6d626fab2358a060bf86ff2603",
+      "indexCount": 3,
+      "indexesSha256": "c9498fee96404ace424bf9aa2fed0acf3220a67939cb7c85587670c5e4f4d6a9"
+    },
+    {
+      "name": "assetMaintenanceEvents",
+      "fieldCount": 11,
+      "fieldsSha256": "9b603a22c2b27e609d96c0d624b2899e3be876158b6c133e616e815929033e3c",
+      "indexCount": 3,
+      "indexesSha256": "c9498fee96404ace424bf9aa2fed0acf3220a67939cb7c85587670c5e4f4d6a9"
     },
     {
       "name": "assets",
@@ -399,6 +413,13 @@
       "fieldsSha256": "57484f1ad51f1c8c3bc0dd696344ce2602b5089221efd4f3a5f5ba268313fc6d",
       "indexCount": 1,
       "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
+    },
+    {
+      "name": "payrollRunNotes",
+      "fieldCount": 11,
+      "fieldsSha256": "b259182f7b4877f1803c7f1d82a14546125f9e087a576b93325954d9b0c7eac3",
+      "indexCount": 3,
+      "indexesSha256": "d0e4baa52f380ce885a01145b8250b30f8eed0024817b4a20678462e096921a3"
     },
     {
       "name": "payrollRuns",

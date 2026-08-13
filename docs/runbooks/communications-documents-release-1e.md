@@ -137,7 +137,8 @@ pnpm --filter app exec convex run --prod \
 ```
 
 The first five domains must report `status: ready` with no blockers.
-`assets_payroll_compatibility` remains `not_started`, so
+Until Release 1F is deployed, `assets_payroll_compatibility` remains
+`not_started`, so
 `readyForRelease3` must remain `false`.
 
 ## Interruption and rollback

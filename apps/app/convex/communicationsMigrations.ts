@@ -1876,6 +1876,8 @@ async function storageLinkHasSource(
         request.supportingDocuments?.[row.sourceIndex] === row.storageId
       );
     }
+    case "accounting_cost_item":
+      return false;
   }
 }
 
@@ -2053,10 +2055,16 @@ async function auditTarget(
       );
     }
     case "communications_target_storage_links": {
-      const page = await ctx.db.query("storageObjectLinks").paginate({
+      const rawPage = await ctx.db.query("storageObjectLinks").paginate({
         cursor: audit.cursor ?? null,
         numItems: audit.batchSize,
       });
+      const page = {
+        ...rawPage,
+        page: rawPage.page.filter(
+          (row) => row.parentType !== "accounting_cost_item",
+        ),
+      };
       return acceptRows(
         page,
         "storageObjectLink",

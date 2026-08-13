@@ -131,6 +131,13 @@ describe("full schema cleanup readiness", () => {
     expect(
       resolveFullSchemaCleanupReadinessMode(organizationConfiguration),
     ).toBe("organization_configuration");
+    const assetsPayroll = FULL_SCHEMA_CLEANUP_DOMAINS.find(
+      ({ domain }) => domain === "assets_payroll_compatibility",
+    );
+    if (!assetsPayroll) throw new Error("Assets payroll registration was not found");
+    expect(resolveFullSchemaCleanupReadinessMode(assetsPayroll)).toBe(
+      "assets_payroll_compatibility",
+    );
   });
 
   it("reports every table and waits for the identity migration", async () => {
@@ -140,9 +147,9 @@ describe("full schema cleanup readiness", () => {
     expect(inventory).toMatchObject({
       programKey: FULL_SCHEMA_CLEANUP_PROGRAM_KEY,
       programVersion: FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
-      currentTableCount: 72,
+      currentTableCount: 75,
     });
-    expect(inventory.tables).toHaveLength(72);
+    expect(inventory.tables).toHaveLength(75);
     expect(inventory.tables).toContainEqual(
       expect.objectContaining({
         table: "organizations",
@@ -287,6 +294,65 @@ describe("full schema cleanup readiness", () => {
     expect(readiness.domains).toContainEqual(
       expect.objectContaining({
         domain: "communications_documents",
+        status: "ready",
+        blockers: [],
+        auditId,
+        auditedAt: 2,
+      }),
+    );
+    expect(readiness.readyForRelease3).toBe(false);
+  });
+
+  it("marks assets and payroll compatibility ready from its clean audit", async () => {
+    const t = convexTest(schema, modules);
+    const auditId = await t.run(async (ctx) => {
+      const runId = await ctx.db.insert("migrationRuns", {
+        key: "full-schema-assets-payroll",
+        version: 1,
+        dryRun: false,
+        status: "completed",
+        phase: "assets_assets",
+        batchSize: 20,
+        counters: {
+          scanned: 3,
+          changed: 6,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 1,
+        updatedAt: 1,
+        completedAt: 1,
+      });
+      return ctx.db.insert("migrationAudits", {
+        migrationRunId: runId,
+        status: "completed",
+        phase: "assets_target_maintenance_events",
+        batchSize: 5,
+        organizations: 0,
+        destination: {
+          expected: 6,
+          matching: 6,
+          missing: 0,
+          duplicate: 0,
+          mismatched: 0,
+          unexpected: 0,
+          totalRows: 6,
+        },
+        duplicateLegacySettings: 0,
+        sourceConflicts: 0,
+        auditTruncated: false,
+        startedAt: 2,
+        updatedAt: 2,
+        completedAt: 2,
+      });
+    });
+
+    const readiness = await t.query(getFullSchemaCleanupReadiness, {});
+    expect(readiness.domains).toContainEqual(
+      expect.objectContaining({
+        domain: "assets_payroll_compatibility",
         status: "ready",
         blockers: [],
         auditId,

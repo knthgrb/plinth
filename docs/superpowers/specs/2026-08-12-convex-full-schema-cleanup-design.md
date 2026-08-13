@@ -206,7 +206,15 @@ Release 2 compatibility mode while the remaining domains advance.
 - Keep accounting receipt links and asset-event targets in the final
   payroll/assets wave.
 
-### Release 1F: Global expansion audit
+### Release 1F: Payroll, accounting, and asset expansion
+
+- Add payroll-run note, accounting receipt-link, asset custody-event, and
+  asset maintenance-event targets.
+- Backfill in bounded pages and validate tenant, parent, employee, user, and
+  storage metadata integrity.
+- Preserve payroll snapshots, accounting breakdowns, and current asset state.
+
+### Release 1G: Global expansion audit
 
 - Audit all legacy sources against every normalized destination.
 - Verify source/destination and parent/tenant row counts.
