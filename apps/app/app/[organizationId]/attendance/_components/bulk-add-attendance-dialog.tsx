@@ -64,10 +64,15 @@ import {
 import {
   applyAttendanceImportConflicts,
   buildAttendanceImportPreviewWhenReady,
+  getAttendanceImportRowIdentities,
+  reconcileAttendanceImportPreviewRows,
   type AttendanceImportPreviewRow,
+  type AttendanceImportRowDecisions,
 } from "@/lib/attendance-import/preview";
-import type { AttendanceImportStatus } from "@/lib/attendance-import/types";
-import type { NormalizedAttendanceCandidate } from "@/lib/attendance-import/types";
+import type {
+  AttendanceImportStatus,
+  NormalizedAttendanceCandidate,
+} from "@/lib/attendance-import/types";
 import {
   areAttendanceImportLookupsReady,
   AttendanceImportRequestCoordinator,
@@ -169,6 +174,8 @@ export function BulkAddAttendanceDialog({
   const [importCandidates, setImportCandidates] = useState<
     NormalizedAttendanceCandidate[] | null
   >(null);
+  const [importRowDecisions, setImportRowDecisions] =
+    useState<AttendanceImportRowDecisions>({});
   const [bulkConflictResolutions, setBulkConflictResolutions] = useState<
     Record<number, "overwrite" | "exclude">
   >({});
@@ -190,6 +197,7 @@ export function BulkAddAttendanceDialog({
 
   const resetImportPreview = useCallback(() => {
     setImportCandidates(null);
+    setImportRowDecisions({});
     setCsvPreviewRows([]);
     setCsvParseError(null);
   }, []);
@@ -331,9 +339,18 @@ export function BulkAddAttendanceDialog({
     }
 
     setCsvPreviewRows(
-      applyAttendanceImportConflicts(preview, orgAttendanceForCsv),
+      reconcileAttendanceImportPreviewRows(
+        applyAttendanceImportConflicts(preview, orgAttendanceForCsv),
+        importRowDecisions,
+      ),
     );
-  }, [employees, holidays, importCandidates, orgAttendanceForCsv]);
+  }, [
+    employees,
+    holidays,
+    importCandidates,
+    importRowDecisions,
+    orgAttendanceForCsv,
+  ]);
 
   useEffect(() => {
     setBulkConflictResolutions({});
@@ -384,6 +401,10 @@ export function BulkAddAttendanceDialog({
         !r.overwriteExisting,
     ).length;
   }, [csvPreviewRows]);
+  const csvRowIdentities = useMemo(
+    () => getAttendanceImportRowIdentities(csvPreviewRows),
+    [csvPreviewRows],
+  );
 
   const csvImportableRowCount = useMemo(
     () =>
@@ -1016,7 +1037,16 @@ export function BulkAddAttendanceDialog({
                                     <input
                                       type="checkbox"
                                       checked={r.includeInImport}
+                                      disabled={isCheckingImportConflicts}
                                       onChange={() => {
+                                        const identity = csvRowIdentities[i];
+                                        setImportRowDecisions((previous) => ({
+                                          ...previous,
+                                          [identity]: {
+                                            ...previous[identity],
+                                            includeInImport: !r.includeInImport,
+                                          },
+                                        }));
                                         setCsvPreviewRows((prev) =>
                                           prev.map((row, idx) =>
                                             idx === i
@@ -1067,15 +1097,24 @@ export function BulkAddAttendanceDialog({
                                     variant="outline"
                                     size="sm"
                                     className="h-7 text-xs"
-                                    onClick={() =>
+                                    disabled={isCheckingImportConflicts}
+                                    onClick={() => {
+                                      const identity = csvRowIdentities[i];
+                                      setImportRowDecisions((previous) => ({
+                                        ...previous,
+                                        [identity]: {
+                                          ...previous[identity],
+                                          overwriteExisting: true,
+                                        },
+                                      }));
                                       setCsvPreviewRows((prev) =>
                                         prev.map((row, idx) =>
                                           idx === i
                                             ? { ...row, overwriteExisting: true }
                                             : row,
                                         ),
-                                      )
-                                    }
+                                      );
+                                    }}
                                   >
                                     Overwrite
                                   </Button>

@@ -11,6 +11,8 @@ import {
   buildAttendanceImportPreview,
   buildAttendanceImportPreviewWhenReady,
   findAttendanceEmployee,
+  getAttendanceImportRowIdentities,
+  reconcileAttendanceImportPreviewRows,
 } from "@/lib/attendance-import/preview";
 import type { NormalizedAttendanceCandidate } from "@/lib/attendance-import/types";
 
@@ -171,6 +173,111 @@ describe("attendance import preview mapping", () => {
     ).toEqual([staleConflictRow]);
     expect(applyAttendanceImportConflicts([staleConflictRow], [])[0])
       .toMatchObject({ existingAttendanceId: null });
+  });
+
+  it("preserves explicit exclude, rest-day include, and overwrite decisions across rebuilds", () => {
+    const candidates = [
+      validCandidate,
+      {
+        ...validCandidate,
+        sourceRow: 9,
+        date: "2026-08-15",
+      },
+      {
+        ...validCandidate,
+        sourceRow: 10,
+        date: "2026-08-18",
+      },
+    ];
+    const updatedEmployee = {
+      ...employeeFixture,
+      schedule: {
+        defaultSchedule: {
+          ...employeeFixture.schedule.defaultSchedule,
+          monday: { in: "07:00", out: "16:00", isWorkday: true },
+        },
+      },
+    } satisfies AttendanceImportEmployee;
+    const rebuilt = applyAttendanceImportConflicts(
+      buildAttendanceImportPreview(candidates, [updatedEmployee], []),
+      [
+        {
+          _id: "attendance-overwrite" as Id<"attendance">,
+          employeeId: employeeFixture._id,
+          date: Date.UTC(2026, 7, 18),
+        },
+      ],
+    );
+    const identities = getAttendanceImportRowIdentities(rebuilt);
+
+    const reconciled = reconcileAttendanceImportPreviewRows(rebuilt, {
+      [identities[0]]: { includeInImport: false },
+      [identities[1]]: { includeInImport: true },
+      [identities[2]]: { overwriteExisting: true },
+    });
+
+    expect(reconciled[0].includeInImport).toBe(false);
+    expect(reconciled[0].scheduleIn).toBe("07:00");
+    expect(reconciled[1]).toMatchObject({
+      isRestDay: true,
+      includeInImport: true,
+    });
+    expect(reconciled[2]).toMatchObject({
+      existingAttendanceId: "attendance-overwrite",
+      includeInImport: true,
+      overwriteExisting: true,
+    });
+
+    const afterConflictRemoval = reconcileAttendanceImportPreviewRows(
+      applyAttendanceImportConflicts(rebuilt, []),
+      {
+        [identities[2]]: { overwriteExisting: true },
+      },
+    );
+    expect(afterConflictRemoval[2]).toMatchObject({
+      existingAttendanceId: null,
+      overwriteExisting: false,
+    });
+  });
+
+  it("never preserves include or overwrite decisions for a rebuilt invalid row", () => {
+    const [invalidRow] = applyAttendanceImportConflicts(
+      buildAttendanceImportPreview(
+        [{ ...validCandidate, employeeKey: "Unknown" }],
+        [employeeFixture],
+        [],
+      ),
+      [],
+    );
+    const [identity] = getAttendanceImportRowIdentities([invalidRow]);
+
+    const [reconciled] = reconcileAttendanceImportPreviewRows([invalidRow], {
+      [identity]: { includeInImport: true, overwriteExisting: true },
+    });
+
+    expect(reconciled).toMatchObject({
+      employeeId: null,
+      includeInImport: false,
+      existingAttendanceId: null,
+      overwriteExisting: false,
+    });
+  });
+
+  it("keeps duplicate source coordinates as distinct decision identities", () => {
+    const rows = buildAttendanceImportPreview(
+      [validCandidate, { ...validCandidate, employeeKey: "Unknown" }],
+      [employeeFixture],
+      [],
+    );
+    const identities = getAttendanceImportRowIdentities(rows);
+
+    expect(identities[0]).not.toBe(identities[1]);
+    const reconciled = reconcileAttendanceImportPreviewRows(rows, {
+      [identities[0]]: { includeInImport: false },
+      [identities[1]]: { includeInImport: true },
+    });
+    expect(reconciled[0].includeInImport).toBe(false);
+    expect(reconciled[1].includeInImport).toBe(false);
   });
 
   it("keeps valid rows importable while flagging invalid rows", () => {

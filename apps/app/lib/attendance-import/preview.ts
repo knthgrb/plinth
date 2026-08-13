@@ -45,6 +45,15 @@ export type AttendanceImportConflictRecord = Pick<
   "_id" | "employeeId" | "date"
 >;
 
+export interface AttendanceImportRowDecision {
+  includeInImport?: boolean;
+  overwriteExisting?: boolean;
+}
+
+export type AttendanceImportRowDecisions = Readonly<
+  Record<string, AttendanceImportRowDecision>
+>;
+
 const DEFAULT_SCHEDULE_IN = "09:00";
 const DEFAULT_SCHEDULE_OUT = "18:00";
 
@@ -101,6 +110,49 @@ export function applyAttendanceImportConflicts(
     return {
       ...row,
       existingAttendanceId: existingAttendanceByKey.get(key) ?? null,
+    };
+  });
+}
+
+export function getAttendanceImportRowIdentities(
+  rows: readonly Pick<
+    AttendanceImportPreviewRow,
+    "sourceSheet" | "sourceRow"
+  >[],
+): string[] {
+  const occurrenceByCoordinate = new Map<string, number>();
+
+  return rows.map((row) => {
+    const coordinate = JSON.stringify([row.sourceSheet, row.sourceRow]);
+    const occurrence = occurrenceByCoordinate.get(coordinate) ?? 0;
+    occurrenceByCoordinate.set(coordinate, occurrence + 1);
+    return JSON.stringify([row.sourceSheet, row.sourceRow, occurrence]);
+  });
+}
+
+export function reconcileAttendanceImportPreviewRows(
+  rebuiltRows: readonly AttendanceImportPreviewRow[],
+  decisions: AttendanceImportRowDecisions,
+): AttendanceImportPreviewRow[] {
+  const identities = getAttendanceImportRowIdentities(rebuiltRows);
+
+  return rebuiltRows.map((row, index) => {
+    const decision = decisions[identities[index]];
+    const isValid = row.employeeId !== null && row.dateTs > 0 && row.error === null;
+    const includeInImport = isValid
+      ? decision?.includeInImport ?? row.includeInImport
+      : false;
+    const overwriteExisting = Boolean(
+      isValid &&
+        includeInImport &&
+        row.existingAttendanceId &&
+        decision?.overwriteExisting,
+    );
+
+    return {
+      ...row,
+      includeInImport,
+      overwriteExisting,
     };
   });
 }
