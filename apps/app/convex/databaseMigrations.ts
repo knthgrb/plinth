@@ -1403,6 +1403,44 @@ export function resolveFullSchemaProgramReadiness(
   };
 }
 
+async function getRelease3ContractAuditReadiness(
+  ctx: QueryCtx,
+): Promise<boolean> {
+  const runs = await ctx.db
+    .query("migrationRuns")
+    .withIndex("by_key_started", (q) =>
+      q.eq("key", "full-schema-release-3-contract"),
+    )
+    .order("desc")
+    .take(20);
+  const writeRun = runs.find((run) => !run.dryRun);
+  if (
+    !writeRun ||
+    writeRun.version !== 1 ||
+    writeRun.status !== "completed" ||
+    writeRun.counters.conflicts > 0 ||
+    writeRun.counters.errors > 0
+  ) {
+    return false;
+  }
+  const audit = await ctx.db
+    .query("migrationAudits")
+    .withIndex("by_run", (q) => q.eq("migrationRunId", writeRun._id))
+    .order("desc")
+    .first();
+  return Boolean(
+    audit &&
+      audit.phase === "release3_contract" &&
+      audit.status === "completed" &&
+      !audit.auditTruncated &&
+      audit.sourceConflicts === 0 &&
+      audit.destination.missing === 0 &&
+      audit.destination.duplicate === 0 &&
+      audit.destination.mismatched === 0 &&
+      audit.destination.unexpected === 0,
+  );
+}
+
 export const getFullSchemaCleanupReadiness = internalQuery({
   args: {},
   handler: async (ctx) => {
@@ -1411,7 +1449,11 @@ export const getFullSchemaCleanupReadiness = internalQuery({
         getFullSchemaDomainReadiness(ctx, registration),
       ),
     );
-    const programReadiness = resolveFullSchemaProgramReadiness(domains);
+    const cleanupAuditReady = await getRelease3ContractAuditReadiness(ctx);
+    const programReadiness = resolveFullSchemaProgramReadiness(
+      domains,
+      cleanupAuditReady,
+    );
     return {
       programKey: FULL_SCHEMA_CLEANUP_PROGRAM_KEY,
       programVersion: FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,

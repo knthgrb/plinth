@@ -134,7 +134,7 @@ describe("tenant-owned storage", () => {
     ).rejects.toThrow("Not authorized");
   });
 
-  it("allows a legacy file only when an organization record references it", async () => {
+  it("allows a file only when a normalized storage link references it", async () => {
     const { t, email, organizationId } = await createMembershipFixture();
     const storageId = await t.run(async (ctx) => {
       const user = await ctx.db
@@ -143,13 +143,23 @@ describe("tenant-owned storage", () => {
         .unique();
       if (!user) throw new Error("Fixture user missing");
       const storageId = await ctx.storage.store(new Blob(["legacy document"]));
-      await ctx.db.insert("documents", {
+      const documentId = await ctx.db.insert("documents", {
         organizationId,
         createdBy: user._id,
-        title: "Legacy document",
+        title: "Normalized document",
         content: "{}",
         type: "other",
-        attachments: [storageId],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("storageObjectLinks", {
+        organizationId,
+        storageId,
+        parentType: "document",
+        parentId: documentId,
+        purpose: "document_attachment",
+        sourceIndex: 0,
+        migrationVersion: 1,
         createdAt: 1,
         updatedAt: 1,
       });

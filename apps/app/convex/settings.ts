@@ -11,35 +11,29 @@ import {
 import { requireActiveMembership } from "./access";
 import { upsertOrganizationLeaveSettings } from "./leaveEmployeeCompatibility";
 import {
-  loadEffectiveSettingsEvents,
-  replaceOrganizationSettingsEvents,
+  appendOrganizationSettingsEvent,
   upsertOrganizationUiSettings,
 } from "./workflowCompatibility";
 
-async function synchronizeUiSettings(
+async function getOrCreateSettingsAnchor(
   ctx: MutationCtx,
   organizationId: Id<"organizations">,
   now: number,
-): Promise<void> {
+): Promise<Doc<"settings">> {
   const rows = await ctx.db
     .query("settings")
     .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
     .take(2);
-  if (rows.length !== 1) throw new Error("Organization settings are not unique");
-  await upsertOrganizationUiSettings(ctx, rows[0], now);
-}
-
-async function synchronizeSettingsEventsForOrganization(
-  ctx: MutationCtx,
-  organizationId: Id<"organizations">,
-  now: number,
-): Promise<void> {
-  const rows = await ctx.db
-    .query("settings")
-    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-    .take(2);
-  if (rows.length !== 1) throw new Error("Organization settings are not unique");
-  await replaceOrganizationSettingsEvents(ctx, rows[0], now);
+  if (rows.length > 1) throw new Error("Organization settings are not unique");
+  if (rows[0]) return rows[0];
+  const settingsId = await ctx.db.insert("settings", {
+    organizationId,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const settings = await ctx.db.get(settingsId);
+  if (!settings) throw new Error("Organization settings anchor was not created");
+  return settings;
 }
 
 // Helper to check authorization with organization context
@@ -74,30 +68,49 @@ async function checkAuth(
 
 type SettingsChangeArea = "payroll" | "leave" | "attendance" | "organization";
 
-function buildSettingsAuditPatch(
-  settings: Doc<"settings"> | null,
+async function recordSettingsChange(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
   area: SettingsChangeArea,
-  userRecord: Doc<"users">,
+  userId: Id<"users">,
   now: number,
   reason?: string,
-) {
-  const nextSettingsVersion = (settings?.settingsVersion ?? 0) + 1;
-  const existingLog = Array.isArray(settings?.settingsChangeLog)
-    ? settings.settingsChangeLog
-    : [];
-  return {
-    settingsVersion: nextSettingsVersion,
-    settingsChangeLog: [
-      ...existingLog.slice(-49),
-      {
-        area,
-        version: nextSettingsVersion,
-        changedBy: userRecord._id,
-        changedAt: now,
-        ...(reason ? { reason } : {}),
-      },
-    ],
-  };
+): Promise<Doc<"settings">> {
+  const settings = await getOrCreateSettingsAnchor(ctx, organizationId, now);
+  await appendOrganizationSettingsEvent(
+    ctx,
+    settings._id,
+    organizationId,
+    area,
+    userId,
+    now,
+    reason,
+  );
+  return settings;
+}
+
+async function updateNormalizedUiSettings(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  patch: Partial<
+    Pick<
+      Doc<"organizationUiSettings">,
+      | "evaluationColumns"
+      | "recruitmentTableColumns"
+      | "requirementsTableColumns"
+      | "leaveTableColumns"
+    >
+  >,
+  now: number,
+): Promise<void> {
+  const settings = await getOrCreateSettingsAnchor(ctx, organizationId, now);
+  await upsertOrganizationUiSettings(
+    ctx,
+    organizationId,
+    settings._id,
+    patch,
+    now,
+  );
 }
 
 // Get organization settings
@@ -108,10 +121,11 @@ export const getSettings = query({
   handler: async (ctx, args) => {
     try {
       await checkAuth(ctx, args.organizationId);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "";
       if (
-        error?.message?.includes("Not authenticated") ||
-        error?.message?.includes("Unauthenticated")
+        message.includes("Not authenticated") ||
+        message.includes("Unauthenticated")
       ) {
         return null;
       }
@@ -247,36 +261,17 @@ export const updatePayrollSettings = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
-
-    let settings = await ctx.db
-      .query("settings")
-      .withIndex("by_organization", (q) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .first();
-    if (settings) settings = await loadEffectiveSettingsEvents(ctx, settings);
-
     const now = Date.now();
-    if (!settings) {
-      // Create settings if they don't exist
-      await ctx.db.insert("settings", {
-        organizationId: args.organizationId,
-        ...buildSettingsAuditPatch(settings, "payroll", userRecord, now),
-        createdAt: now,
-        updatedAt: now,
-      });
-    } else {
-      // Update existing settings
-      await ctx.db.patch(settings._id, {
-        ...buildSettingsAuditPatch(settings, "payroll", userRecord, now),
-        updatedAt: now,
-      });
-    }
-
     await upsertPayrollConfiguration(ctx, args.organizationId, {
       payrollSettings: args.payrollSettings,
     });
-    await synchronizeSettingsEventsForOrganization(ctx, args.organizationId, now);
+    await recordSettingsChange(
+      ctx,
+      args.organizationId,
+      "payroll",
+      userRecord._id,
+      now,
+    );
 
     return { success: true };
   },
@@ -332,36 +327,19 @@ export const updateAttendanceSettings = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
-
-    let settings = await ctx.db
-      .query("settings")
-      .withIndex("by_organization", (q) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .first();
-    if (settings) settings = await loadEffectiveSettingsEvents(ctx, settings);
-
     const now = Date.now();
-    if (!settings) {
-      const settingsId = await ctx.db.insert("settings", {
-        organizationId: args.organizationId,
-        ...buildSettingsAuditPatch(settings, "attendance", userRecord, now),
-        createdAt: now,
-        updatedAt: now,
-      });
-      settings = await ctx.db.get(settingsId);
-    } else {
-      await ctx.db.patch(settings._id, {
-        ...buildSettingsAuditPatch(settings, "attendance", userRecord, now),
-        updatedAt: now,
-      });
-    }
     await upsertAttendanceConfiguration(
       ctx,
       args.organizationId,
       args.attendanceSettings,
     );
-    await synchronizeSettingsEventsForOrganization(ctx, args.organizationId, now);
+    await recordSettingsChange(
+      ctx,
+      args.organizationId,
+      "attendance",
+      userRecord._id,
+      now,
+    );
     return { success: true };
   },
 });
@@ -448,99 +426,89 @@ export const updateLeaveTypes = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
-
-    let settings = await ctx.db
-      .query("settings")
-      .withIndex("by_organization", (q) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .first();
-    if (settings) settings = await loadEffectiveSettingsEvents(ctx, settings);
-
     const now = Date.now();
-    const patch: any = { updatedAt: now };
-    if (args.proratedLeave !== undefined) {
-      patch.proratedLeave = args.proratedLeave;
-    }
-    if (args.leaveAccrualFrequency !== undefined) {
-      patch.leaveAccrualFrequency = args.leaveAccrualFrequency;
-    }
-    if (args.leaveTrackerMode !== undefined) {
-      patch.leaveTrackerMode = args.leaveTrackerMode;
-    }
-    if (args.enableAnniversaryLeave !== undefined) {
-      patch.enableAnniversaryLeave = args.enableAnniversaryLeave;
-    }
-    if (args.anniversaryLeaveMaxDays !== undefined) {
-      patch.anniversaryLeaveMaxDays = args.anniversaryLeaveMaxDays;
-    }
-    if (args.annualSil !== undefined) {
-      patch.annualSil = args.annualSil;
-    }
-    if (args.grantLeaveUponRegularization !== undefined) {
-      patch.grantLeaveUponRegularization = args.grantLeaveUponRegularization;
-    }
-    if (args.paidLeaveRequiresRegularization !== undefined) {
-      patch.paidLeaveRequiresRegularization =
-        args.paidLeaveRequiresRegularization;
-    }
-    if (args.leaveGuidelines !== undefined) {
-      patch.leaveGuidelines = args.leaveGuidelines;
-    }
-    if (args.leaveRequestFormTemplate !== undefined) {
-      patch.leaveRequestFormTemplate = args.leaveRequestFormTemplate;
-    }
-    if (args.leaveRequestPdfLayout !== undefined) {
-      patch.leaveRequestPdfLayout = args.leaveRequestPdfLayout;
-    }
-    if (args.maxConvertibleLeaveDays !== undefined) {
-      patch.maxConvertibleLeaveDays = args.maxConvertibleLeaveDays;
-    }
-    if (args.leaveTypes !== undefined) {
-      patch.leaveTypes = args.leaveTypes;
-    }
-
-    let settingsId: Id<"settings">;
-    if (!settings) {
-      settingsId = await ctx.db.insert("settings", {
-        organizationId: args.organizationId,
-        proratedLeave: args.proratedLeave ?? true,
-        leaveAccrualFrequency: args.leaveAccrualFrequency ?? "monthly",
-        leaveTrackerMode: args.leaveTrackerMode ?? "general",
-        enableAnniversaryLeave: args.enableAnniversaryLeave ?? true,
-        anniversaryLeaveMaxDays: args.anniversaryLeaveMaxDays ?? 15,
-        annualSil: args.annualSil ?? 8,
-        grantLeaveUponRegularization: args.grantLeaveUponRegularization ?? true,
-        paidLeaveRequiresRegularization:
-          args.paidLeaveRequiresRegularization ?? true,
-        leaveGuidelines: args.leaveGuidelines,
-        leaveRequestFormTemplate: args.leaveRequestFormTemplate,
-        leaveRequestPdfLayout: args.leaveRequestPdfLayout,
-        maxConvertibleLeaveDays: args.maxConvertibleLeaveDays ?? 5,
-        ...(args.leaveTypes !== undefined
-          ? { leaveTypes: args.leaveTypes }
-          : {}),
-        ...buildSettingsAuditPatch(settings, "leave", userRecord, now),
-        createdAt: now,
-        updatedAt: now,
-      });
-    } else {
-      settingsId = settings._id;
-      await ctx.db.patch(settings._id, {
-        ...patch,
-        ...buildSettingsAuditPatch(settings, "leave", userRecord, now),
-      });
-    }
-
-    const effectiveSettings = await ctx.db.get(settingsId);
-    if (!effectiveSettings) throw new Error("Leave settings did not persist");
+    const settings = await recordSettingsChange(
+      ctx,
+      args.organizationId,
+      "leave",
+      userRecord._id,
+      now,
+    );
+    const leaveSettingsPatch = {
+      ...(args.proratedLeave !== undefined ? { proratedLeave: args.proratedLeave } : {}),
+      ...(args.leaveAccrualFrequency !== undefined
+        ? { leaveAccrualFrequency: args.leaveAccrualFrequency }
+        : {}),
+      ...(args.leaveTrackerMode !== undefined
+        ? { leaveTrackerMode: args.leaveTrackerMode }
+        : {}),
+      ...(args.enableAnniversaryLeave !== undefined
+        ? { enableAnniversaryLeave: args.enableAnniversaryLeave }
+        : {}),
+      ...(args.anniversaryLeaveMaxDays !== undefined
+        ? { anniversaryLeaveMaxDays: args.anniversaryLeaveMaxDays }
+        : {}),
+      ...(args.annualSil !== undefined ? { annualSil: args.annualSil } : {}),
+      ...(args.grantLeaveUponRegularization !== undefined
+        ? { grantLeaveUponRegularization: args.grantLeaveUponRegularization }
+        : {}),
+      ...(args.paidLeaveRequiresRegularization !== undefined
+        ? { paidLeaveRequiresRegularization: args.paidLeaveRequiresRegularization }
+        : {}),
+      ...(args.leaveGuidelines !== undefined
+        ? { leaveGuidelines: args.leaveGuidelines }
+        : {}),
+      ...(args.leaveRequestFormTemplate !== undefined
+        ? { leaveRequestFormTemplate: args.leaveRequestFormTemplate }
+        : {}),
+      ...(args.leaveRequestPdfLayout !== undefined
+        ? { leaveRequestPdfLayout: args.leaveRequestPdfLayout }
+        : {}),
+      ...(args.maxConvertibleLeaveDays !== undefined
+        ? { maxConvertibleLeaveDays: args.maxConvertibleLeaveDays }
+        : {}),
+    };
     await upsertOrganizationLeaveSettings(
       ctx,
       args.organizationId,
-      effectiveSettings,
+      settings._id,
+      leaveSettingsPatch,
       now,
     );
-    await synchronizeSettingsEventsForOrganization(ctx, args.organizationId, now);
+    if (args.leaveTypes !== undefined) {
+      const existing = await ctx.db
+        .query("leaveTypes")
+        .withIndex("by_organization", (q) =>
+          q.eq("organizationId", args.organizationId),
+        )
+        .collect();
+      for (const row of existing) await ctx.db.delete(row._id);
+      for (const leaveType of args.leaveTypes) {
+        await ctx.db.insert("leaveTypes", {
+          organizationId: args.organizationId,
+          sourceKey: leaveType.type,
+          name: leaveType.name,
+          defaultCredits: leaveType.defaultCredits,
+          isPaid: leaveType.isPaid,
+          requiresApproval: leaveType.requiresApproval,
+          ...(leaveType.maxConsecutiveDays !== undefined
+            ? { maxConsecutiveDays: leaveType.maxConsecutiveDays }
+            : {}),
+          ...(leaveType.carryOver !== undefined
+            ? { carryOver: leaveType.carryOver }
+            : {}),
+          ...(leaveType.maxCarryOver !== undefined
+            ? { maxCarryOver: leaveType.maxCarryOver }
+            : {}),
+          ...(leaveType.isAnniversary !== undefined
+            ? { isAnniversary: leaveType.isAnniversary }
+            : {}),
+          migrationVersion: 1,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
     return { success: true };
   },
 });
@@ -565,57 +533,56 @@ export const updateLeaveTracker = mutation({
       throw new Error("Reason for manual leave tracker override is required.");
     }
 
-    let settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
+    const now = Date.now();
+    const leaveSettings = await ctx.db
+      .query("organizationLeaveSettings")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
-      .first();
-    if (settings) settings = await loadEffectiveSettingsEvents(ctx, settings);
-
-    const now = Date.now();
-    const byYear = settings?.leaveTrackerByYear ?? [];
-    const otherYears = byYear.filter((e: any) => e.year !== args.year);
-    const newByYear = [
-      ...otherYears,
-      {
+      .unique();
+    for (const row of args.rows) {
+      const employee = await ctx.db.get(row.employeeId);
+      if (!employee || employee.organizationId !== args.organizationId) {
+        throw new Error("Leave tracker employee does not belong to organization");
+      }
+      const existing = await ctx.db
+        .query("employeeLeaveBalances")
+        .withIndex("by_employee_year_type", (q) =>
+          q.eq("employeeId", row.employeeId).eq("year", args.year).eq("leaveTypeKey", "general"),
+        )
+        .unique();
+      const total = row.annualSilOverride ?? leaveSettings?.annualSil ?? 0;
+      const used = row.availed ?? 0;
+      const value = {
+        organizationId: args.organizationId,
+        employeeId: row.employeeId,
         year: args.year,
-        rows: args.rows,
+        leaveTypeKey: "general",
+        total,
+        used,
+        balance: total - used,
+        source: "yearly_tracker" as const,
+        ...(row.annualSilOverride !== undefined
+          ? { annualSilOverride: row.annualSilOverride }
+          : {}),
         overrideReason,
         updatedBy: userRecord._id,
+        approvedDays: 0,
+        reconciliationStatus: "not_applicable" as const,
+        migrationVersion: 1,
         updatedAt: now,
-      },
-    ].sort((a: any, b: any) => a.year - b.year);
-
-    if (!settings) {
-      await ctx.db.insert("settings", {
-        organizationId: args.organizationId,
-        annualSil: 8,
-        leaveTrackerByYear: newByYear,
-        ...buildSettingsAuditPatch(
-          settings,
-          "leave",
-          userRecord,
-          now,
-          overrideReason,
-        ),
-        createdAt: now,
-        updatedAt: now,
-      });
-    } else {
-      await ctx.db.patch(settings._id, {
-        leaveTrackerByYear: newByYear,
-        ...buildSettingsAuditPatch(
-          settings,
-          "leave",
-          userRecord,
-          now,
-          overrideReason,
-        ),
-        updatedAt: now,
-      });
+      };
+      if (existing) await ctx.db.patch(existing._id, value);
+      else await ctx.db.insert("employeeLeaveBalances", { ...value, createdAt: now });
     }
-
-    await synchronizeSettingsEventsForOrganization(ctx, args.organizationId, now);
+    await recordSettingsChange(
+      ctx,
+      args.organizationId,
+      "leave",
+      userRecord._id,
+      now,
+      overrideReason,
+    );
     return { success: true };
   },
 });
@@ -637,35 +604,19 @@ export const updateDepartments = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
-
-    let settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .first();
-    if (settings) settings = await loadEffectiveSettingsEvents(ctx, settings);
-
     const now = Date.now();
-    if (!settings) {
-      await ctx.db.insert("settings", {
-        organizationId: args.organizationId,
-        ...buildSettingsAuditPatch(settings, "organization", userRecord, now),
-        createdAt: now,
-        updatedAt: now,
-      });
-    } else {
-      await ctx.db.patch(settings._id, {
-        ...buildSettingsAuditPatch(settings, "organization", userRecord, now),
-        updatedAt: now,
-      });
-    }
-
     await replaceDepartmentConfiguration(
       ctx,
       args.organizationId,
       args.departments,
     );
-    await synchronizeSettingsEventsForOrganization(ctx, args.organizationId, now);
+    await recordSettingsChange(
+      ctx,
+      args.organizationId,
+      "organization",
+      userRecord._id,
+      now,
+    );
 
     return { success: true };
   },
@@ -694,30 +645,14 @@ export const updateRecruitmentTableColumns = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
-
-    const settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .first();
-
+    await checkAuth(ctx, args.organizationId, "hr");
     const now = Date.now();
-    if (!settings) {
-      await ctx.db.insert("settings", {
-        organizationId: args.organizationId,
-        recruitmentTableColumns: args.columns,
-        createdAt: now,
-        updatedAt: now,
-      });
-    } else {
-      await ctx.db.patch(settings._id, {
-        recruitmentTableColumns: args.columns,
-        updatedAt: now,
-      });
-    }
-
-    await synchronizeUiSettings(ctx, args.organizationId, now);
+    await updateNormalizedUiSettings(
+      ctx,
+      args.organizationId,
+      { recruitmentTableColumns: args.columns },
+      now,
+    );
 
     return { success: true };
   },
@@ -746,30 +681,14 @@ export const updateRequirementsTableColumns = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
-
-    const settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .first();
-
+    await checkAuth(ctx, args.organizationId, "hr");
     const now = Date.now();
-    if (!settings) {
-      await ctx.db.insert("settings", {
-        organizationId: args.organizationId,
-        requirementsTableColumns: args.columns,
-        createdAt: now,
-        updatedAt: now,
-      });
-    } else {
-      await ctx.db.patch(settings._id, {
-        requirementsTableColumns: args.columns,
-        updatedAt: now,
-      });
-    }
-
-    await synchronizeUiSettings(ctx, args.organizationId, now);
+    await updateNormalizedUiSettings(
+      ctx,
+      args.organizationId,
+      { requirementsTableColumns: args.columns },
+      now,
+    );
 
     return { success: true };
   },
@@ -796,30 +715,14 @@ export const updateEvaluationColumns = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
-
-    const settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .first();
-
+    await checkAuth(ctx, args.organizationId, "hr");
     const now = Date.now();
-    if (!settings) {
-      await ctx.db.insert("settings", {
-        organizationId: args.organizationId,
-        evaluationColumns: args.columns,
-        createdAt: now,
-        updatedAt: now,
-      });
-    } else {
-      await ctx.db.patch(settings._id, {
-        evaluationColumns: args.columns,
-        updatedAt: now,
-      });
-    }
-
-    await synchronizeUiSettings(ctx, args.organizationId, now);
+    await updateNormalizedUiSettings(
+      ctx,
+      args.organizationId,
+      { evaluationColumns: args.columns },
+      now,
+    );
 
     return { success: true };
   },
@@ -850,30 +753,14 @@ export const updateLeaveTableColumns = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
-
-    const settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .first();
-
+    await checkAuth(ctx, args.organizationId, "hr");
     const now = Date.now();
-    if (!settings) {
-      await ctx.db.insert("settings", {
-        organizationId: args.organizationId,
-        leaveTableColumns: args.columns,
-        createdAt: now,
-        updatedAt: now,
-      });
-    } else {
-      await ctx.db.patch(settings._id, {
-        leaveTableColumns: args.columns,
-        updatedAt: now,
-      });
-    }
-
-    await synchronizeUiSettings(ctx, args.organizationId, now);
+    await updateNormalizedUiSettings(
+      ctx,
+      args.organizationId,
+      { leaveTableColumns: args.columns },
+      now,
+    );
 
     return { success: true };
   },

@@ -834,7 +834,6 @@ export const createCostItem = mutation({
       status,
       dueDate: args.dueDate,
       notes: args.notes,
-      receipts: args.receipts,
       createdAt: now,
       updatedAt: now,
     });
@@ -904,7 +903,6 @@ export const updateCostItem = mutation({
     if (args.frequency !== undefined) updates.frequency = args.frequency;
     if (args.dueDate !== undefined) updates.dueDate = args.dueDate;
     if (args.notes !== undefined) updates.notes = args.notes;
-    if (args.receipts !== undefined) updates.receipts = args.receipts;
     if (args.categoryName !== undefined) updates.categoryName = args.categoryName;
 
     // Auto-update status based on amountPaid if status not explicitly set

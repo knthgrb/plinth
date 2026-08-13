@@ -167,11 +167,8 @@ export const createMemo = mutation({
       priority: args.priority,
       author: userRecord._id,
       targetAudience: args.targetAudience,
-      departments: args.departments,
-      specificEmployees: args.specificEmployees,
       publishedDate: args.isPublished ? now : 0,
       expiryDate: args.expiryDate,
-      attachments: args.attachments,
       isPublished: args.isPublished,
       acknowledgementRequired: args.acknowledgementRequired,
       createdAt: now,
@@ -239,7 +236,7 @@ export const updateMemo = mutation({
 
     const userRecord = await checkAuth(ctx, memo.organizationId, "hr");
 
-    const updates: any = { updatedAt: Date.now() };
+    const updates: Partial<Doc<"memos">> = { updatedAt: Date.now() };
     if (args.title !== undefined) updates.title = args.title;
     if (args.content !== undefined) updates.content = args.content;
     if (args.category !== undefined) updates.category = args.category;
@@ -247,11 +244,7 @@ export const updateMemo = mutation({
     if (args.priority !== undefined) updates.priority = args.priority;
     if (args.targetAudience !== undefined)
       updates.targetAudience = args.targetAudience;
-    if (args.departments !== undefined) updates.departments = args.departments;
-    if (args.specificEmployees !== undefined)
-      updates.specificEmployees = args.specificEmployees;
     if (args.expiryDate !== undefined) updates.expiryDate = args.expiryDate;
-    if (args.attachments !== undefined) updates.attachments = args.attachments;
     if (args.acknowledgementRequired !== undefined)
       updates.acknowledgementRequired = args.acknowledgementRequired;
     if (args.isPublished !== undefined) {
@@ -261,7 +254,16 @@ export const updateMemo = mutation({
       }
     }
 
-    await synchronizeEffectiveMemo(ctx, memo, updates, Date.now());
+    await synchronizeEffectiveMemo(
+      ctx,
+      memo,
+      {
+        departments: args.departments,
+        specificEmployees: args.specificEmployees,
+        attachments: args.attachments,
+      },
+      Date.now(),
+    );
     await ctx.db.patch(args.memoId, updates);
     return { success: true };
   },
@@ -323,10 +325,7 @@ export const acknowledgeMemo = mutation({
     });
 
     await synchronizeEffectiveMemo(ctx, memo, { acknowledgedBy }, now);
-    await ctx.db.patch(args.memoId, {
-      acknowledgedBy,
-      updatedAt: now,
-    });
+    await ctx.db.patch(args.memoId, { updatedAt: now });
 
     return { success: true };
   },

@@ -9,6 +9,11 @@ import {
   synchronizeEffectiveApplicant,
 } from "./workflowCompatibility";
 import { runOrgQuery } from "./queryAuthGrace";
+import {
+  replaceEmployeeDeductions,
+  replaceEmployeeIncentives,
+  replaceEmployeeRequirements,
+} from "./leaveEmployeeCompatibility";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -311,6 +316,7 @@ export const createApplicant = mutation({
     }
 
     const now = Date.now();
+    const pipelineStageHistory = [{ to: "new", changedAt: now }];
     const applicantId = await ctx.db.insert("applicants", {
       organizationId: args.organizationId,
       jobId: args.jobId,
@@ -323,7 +329,6 @@ export const createApplicant = mutation({
       source: args.source,
       sourceDetails: args.sourceDetails,
       status: "new",
-      pipelineStageHistory: [{ to: "new", changedAt: now }],
       appliedDate: now,
       createdAt: now,
       updatedAt: now,
@@ -333,7 +338,7 @@ export const createApplicant = mutation({
     await synchronizeEffectiveApplicant(
       ctx,
       applicant,
-      { pipelineStageHistory: applicant.pipelineStageHistory },
+      { pipelineStageHistory },
       now,
     );
 
@@ -370,6 +375,9 @@ export const createApplicantByHR = mutation({
 
     // HR/Admin can add applicants to any job status
     const now = Date.now();
+    const pipelineStageHistory = [
+      { to: "new", changedAt: now, changedBy: userRecord._id },
+    ];
     const applicantId = await ctx.db.insert("applicants", {
       organizationId: args.organizationId,
       jobId: args.jobId,
@@ -385,9 +393,6 @@ export const createApplicantByHR = mutation({
       interviewVideoLink: args.interviewVideoLink,
       portfolioLink: args.portfolioLink,
       status: "new",
-      pipelineStageHistory: [
-        { to: "new", changedAt: now, changedBy: userRecord._id },
-      ],
       appliedDate: now,
       createdAt: now,
       updatedAt: now,
@@ -397,7 +402,7 @@ export const createApplicantByHR = mutation({
     await synchronizeEffectiveApplicant(
       ctx,
       applicant,
-      { pipelineStageHistory: applicant.pipelineStageHistory },
+      { pipelineStageHistory },
       now,
     );
 
@@ -429,7 +434,7 @@ export const updateApplicant = mutation({
     const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
     const effectiveApplicant = await loadEffectiveApplicant(ctx, applicant);
 
-    const updates: any = { updatedAt: Date.now() };
+    const updates: Partial<Doc<"applicants">> = { updatedAt: Date.now() };
     if (args.firstName !== undefined) updates.firstName = args.firstName;
     if (args.lastName !== undefined) updates.lastName = args.lastName;
     if (args.email !== undefined) updates.email = args.email;
@@ -447,18 +452,15 @@ export const updateApplicant = mutation({
       updates.portfolioLink = args.portfolioLink;
     if (args.customFields !== undefined) {
       // Merge with existing customFields
-      updates.customFields = {
+      const customFields = {
         ...(effectiveApplicant.customFields || {}),
         ...args.customFields,
       };
-    }
-
-    if (updates.customFields !== undefined) {
       await synchronizeEffectiveApplicant(
         ctx,
         applicant,
-        { customFields: updates.customFields },
-        updates.updatedAt,
+        { customFields },
+        updates.updatedAt ?? Date.now(),
       );
     }
     await ctx.db.patch(args.applicantId, updates);
@@ -505,7 +507,6 @@ export const updateApplicantStatus = mutation({
     );
     await ctx.db.patch(args.applicantId, {
       status: args.status,
-      pipelineStageHistory,
       updatedAt: now,
     });
 
@@ -535,10 +536,7 @@ export const addApplicantNote = mutation({
     });
 
     await synchronizeEffectiveApplicant(ctx, applicant, { notes }, now);
-    await ctx.db.patch(args.applicantId, {
-      notes,
-      updatedAt: now,
-    });
+    await ctx.db.patch(args.applicantId, { updatedAt: now });
 
     return { success: true };
   },
@@ -587,9 +585,7 @@ export const scheduleInterview = mutation({
       now,
     );
     await ctx.db.patch(args.applicantId, {
-      interviewSchedules: interviews,
       status: "interview",
-      pipelineStageHistory,
       updatedAt: now,
     });
 
@@ -628,7 +624,6 @@ export const addApplicantScorecard = mutation({
 
     await synchronizeEffectiveApplicant(ctx, applicant, { scorecards }, now);
     await ctx.db.patch(args.applicantId, {
-      scorecards,
       rating: args.overallScore,
       updatedAt: now,
     });
@@ -672,8 +667,6 @@ export const requestOfferApproval = mutation({
     );
     await ctx.db.patch(args.applicantId, {
       status: "offer",
-      offerApproval,
-      pipelineStageHistory,
       updatedAt: now,
     });
 
@@ -707,10 +700,7 @@ export const approveOffer = mutation({
       { offerApproval },
       now,
     );
-    await ctx.db.patch(args.applicantId, {
-      offerApproval,
-      updatedAt: now,
-    });
+    await ctx.db.patch(args.applicantId, { updatedAt: now });
 
     return { success: true };
   },
@@ -807,7 +797,7 @@ export const convertApplicantToEmployee = mutation({
       compensation: encryptCompensationForDb({
         basicSalary: args.employeeData.basicSalary,
         salaryType: args.employeeData.salaryType,
-      }) as any,
+      }) as Doc<"employees">["compensation"],
       schedule: {
         defaultSchedule: {
           monday: { in: "09:00", out: "18:00", isWorkday: true },
@@ -819,12 +809,16 @@ export const convertApplicantToEmployee = mutation({
           sunday: { in: "09:00", out: "18:00", isWorkday: false },
         },
       },
-      requirements: defaultRequirements,
-      deductions: [],
-      incentives: [],
       createdAt: now,
       updatedAt: now,
     });
+    const employee = await ctx.db.get(employeeId);
+    if (!employee) throw new Error("Employee conversion did not persist");
+    await Promise.all([
+      replaceEmployeeRequirements(ctx, employee, defaultRequirements, now),
+      replaceEmployeeDeductions(ctx, employee, [], now),
+      replaceEmployeeIncentives(ctx, employee, [], now),
+    ]);
 
     // Update applicant status
     await ctx.db.patch(args.applicantId, {

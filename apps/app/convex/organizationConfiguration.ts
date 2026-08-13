@@ -274,7 +274,7 @@ export async function getEffectiveSettings(
   ctx: ReadContext,
   organizationId: Id<"organizations">,
 ) {
-  const [legacySettings, payroll, attendance, leave, ui, normalizedDepartments] =
+  const [legacySettings, payroll, attendance, leave, ui, normalizedDepartments, leaveTypes] =
     await Promise.all([
       getLegacySettings(ctx, organizationId),
       getPayrollRow(ctx, organizationId),
@@ -282,6 +282,10 @@ export async function getEffectiveSettings(
       getEffectiveOrganizationLeaveSettings(ctx, organizationId),
       getEffectiveOrganizationUiSettings(ctx, organizationId),
       getCanonicalDepartments(ctx, organizationId),
+      ctx.db
+        .query("leaveTypes")
+        .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+        .collect(),
     ]);
   const {
     cutoffDates: ignoredCutoffDates,
@@ -304,6 +308,7 @@ export async function getEffectiveSettings(
     recruitmentTableColumns: ignoredRecruitmentTableColumns,
     requirementsTableColumns: ignoredRequirementsTableColumns,
     leaveTableColumns: ignoredLeaveTableColumns,
+    leaveTypes: ignoredLeaveTypes,
     ...settingsProjection
   } = legacySettings ?? { organizationId };
   void ignoredCutoffDates;
@@ -326,6 +331,7 @@ export async function getEffectiveSettings(
   void ignoredRecruitmentTableColumns;
   void ignoredRequirementsTableColumns;
   void ignoredLeaveTableColumns;
+  void ignoredLeaveTypes;
   return {
     ...settingsProjection,
     organizationId,
@@ -349,6 +355,25 @@ export async function getEffectiveSettings(
     recruitmentTableColumns: ui?.recruitmentTableColumns,
     requirementsTableColumns: ui?.requirementsTableColumns,
     leaveTableColumns: ui?.leaveTableColumns,
+    leaveTypes: leaveTypes.map((leaveType) => ({
+      type: leaveType.sourceKey ?? leaveType.name,
+      name: leaveType.name,
+      defaultCredits: leaveType.defaultCredits ?? leaveType.maxDays ?? 0,
+      isPaid: leaveType.isPaid,
+      requiresApproval: leaveType.requiresApproval,
+      ...(leaveType.maxConsecutiveDays !== undefined
+        ? { maxConsecutiveDays: leaveType.maxConsecutiveDays }
+        : {}),
+      ...(leaveType.carryOver !== undefined
+        ? { carryOver: leaveType.carryOver }
+        : {}),
+      ...(leaveType.maxCarryOver !== undefined
+        ? { maxCarryOver: leaveType.maxCarryOver }
+        : {}),
+      ...(leaveType.isAnniversary !== undefined
+        ? { isAnniversary: leaveType.isAnniversary }
+        : {}),
+    })),
     _normalizationSources: {
       payroll: (payroll
         ? "normalized"

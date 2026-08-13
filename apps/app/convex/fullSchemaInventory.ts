@@ -1186,6 +1186,13 @@ export const FULL_SCHEMA_FIELD_OVERRIDES = [
   ),
   override(
     "memos",
+    "departments",
+    "compatibility_write",
+    "memoAudienceMembers",
+    "release_3b_communications_contract",
+  ),
+  override(
+    "memos",
     "attachments",
     "compatibility_write",
     "storageObjectLinks",

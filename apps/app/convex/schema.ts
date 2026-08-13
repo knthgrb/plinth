@@ -204,6 +204,23 @@ export default defineSchema({
       v.literal("assets_payroll_runs"),
       v.literal("assets_accounting_items"),
       v.literal("assets_assets"),
+      v.literal("release3_organizations"),
+      v.literal("release3_users"),
+      v.literal("release3_invitations"),
+      v.literal("release3_employees"),
+      v.literal("release3_payroll_runs"),
+      v.literal("release3_assets"),
+      v.literal("release3_payslips"),
+      v.literal("release3_evaluations"),
+      v.literal("release3_settings"),
+      v.literal("release3_applicants"),
+      v.literal("release3_memos"),
+      v.literal("release3_conversations"),
+      v.literal("release3_messages"),
+      v.literal("release3_chat_preferences"),
+      v.literal("release3_leave_requests"),
+      v.literal("release3_documents"),
+      v.literal("release3_accounting_items"),
     ),
     cursor: v.optional(v.string()),
     batchSize: v.number(),
@@ -216,6 +233,8 @@ export default defineSchema({
       errors: v.number(),
     }),
     requiredDryRunId: v.optional(v.id("migrationRuns")),
+    exportReference: v.optional(v.string()),
+    exportAcknowledgedAt: v.optional(v.number()),
     startedAt: v.number(),
     updatedAt: v.number(),
     completedAt: v.optional(v.number()),
@@ -303,6 +322,7 @@ export default defineSchema({
       v.literal("assets_target_accounting_receipts"),
       v.literal("assets_target_custody_events"),
       v.literal("assets_target_maintenance_events"),
+      v.literal("release3_contract"),
     ),
     cursor: v.optional(v.string()),
     verificationRunId: v.optional(v.id("migrationRuns")),
@@ -2694,7 +2714,7 @@ export default defineSchema({
   // Chat conversations
   conversations: defineTable({
     organizationId: v.id("organizations"),
-    participants: v.array(v.id("users")), // Users in the conversation (for channel = members who joined)
+    participants: v.optional(v.array(v.id("users"))),
     type: v.union(
       v.literal("direct"),
       v.literal("group"),
@@ -2745,7 +2765,7 @@ export default defineSchema({
   userChatPreferences: defineTable({
     userId: v.id("users"),
     organizationId: v.id("organizations"),
-    pinnedConversations: v.array(v.id("conversations")), // Pinned conversation IDs
+    pinnedConversations: v.optional(v.array(v.id("conversations"))),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_user_organization", ["userId", "organizationId"]),

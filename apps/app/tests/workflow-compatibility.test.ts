@@ -164,11 +164,23 @@ describe("workflow compatibility", () => {
       evaluationId,
       label: "Updated",
     });
-    const updated = await t.run(async (ctx) => ctx.db.get(evaluationId));
-    expect(updated?.history?.map((event) => event.action)).toEqual([
+    const state = await t.run(async (ctx) => ({
+      evaluation: await ctx.db.get(evaluationId),
+      events: await ctx.db
+        .query("evaluationEvents")
+        .withIndex("by_evaluation_source_index", (q) =>
+          q.eq("evaluationId", evaluationId),
+        )
+        .collect(),
+    }));
+    expect(state.evaluation?.history?.map((event) => event.action)).toEqual([
+      "legacy",
+    ]);
+    expect(state.events.map((event) => event.action)).toEqual([
       "normalized",
       "updated",
     ]);
+    const updated = state.evaluation;
 
     await actor.mutation(api.evaluations.deleteEvaluation, { evaluationId });
     const children = await t.run(async (ctx) => ({
@@ -235,8 +247,7 @@ describe("workflow compatibility", () => {
         .collect(),
     }));
     expect(state.settings?.settingsChangeLog?.map((event) => event.area)).toEqual([
-      "payroll",
-      "organization",
+      "leave",
     ]);
     expect(
       state.events

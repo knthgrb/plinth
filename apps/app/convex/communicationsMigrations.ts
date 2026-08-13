@@ -767,7 +767,9 @@ async function processConversations(ctx: MutationCtx, run: MigrationRun) {
       continue;
     }
     const participantKeys = new Set<string>();
-    for (const [sourceIndex, userId] of conversation.participants.entries()) {
+    for (const [sourceIndex, userId] of (
+      conversation.participants ?? []
+    ).entries()) {
       if (
         participantKeys.has(userId) ||
         !(await userBelongsToOrganization(
@@ -1986,7 +1988,7 @@ async function auditTarget(
           const conversation = await ctx.db.get(row.conversationId);
           return (
             conversation?.organizationId === row.organizationId &&
-            conversation.participants[row.sourceIndex] === row.userId
+            conversation.participants?.[row.sourceIndex] === row.userId
           );
         },
       );
@@ -2022,7 +2024,8 @@ async function auditTarget(
           return (
             preferences?.organizationId === row.organizationId &&
             preferences.userId === row.userId &&
-            preferences.pinnedConversations[row.position] === row.conversationId
+            preferences.pinnedConversations?.[row.position] ===
+              row.conversationId
           );
         },
       );

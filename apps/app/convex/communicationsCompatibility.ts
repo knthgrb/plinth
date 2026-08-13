@@ -3,6 +3,9 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 
 const MIGRATION_VERSION = 1;
 type DatabaseContext = Pick<QueryCtx | MutationCtx, "db">;
+type EffectiveConversation = Omit<Doc<"conversations">, "participants"> & {
+  participants: Id<"users">[];
+};
 export type MemoReaction = {
   userId: Id<"users">;
   emoji: string;
@@ -197,7 +200,7 @@ export async function replaceDocumentProjection(
 export async function loadEffectiveConversation(
   ctx: DatabaseContext,
   conversation: Doc<"conversations">,
-): Promise<Doc<"conversations">> {
+): Promise<EffectiveConversation> {
   const rows = await ctx.db.query("conversationMembers").withIndex("by_conversation", (q) => q.eq("conversationId", conversation._id)).collect();
   const participants = rows.sort((a, b) => a.sourceIndex - b.sourceIndex).map((row) => {
     if (row.organizationId !== conversation.organizationId) throw new Error("Conversation member tenant mismatch");
@@ -251,6 +254,120 @@ export async function replaceMessageReceipts(
   }
 }
 
+export async function loadEffectiveMessageAttachments(
+  ctx: DatabaseContext,
+  conversation: Doc<"conversations">,
+  message: Doc<"messages">,
+): Promise<Id<"_storage">[]> {
+  const rows = await ctx.db
+    .query("storageObjectLinks")
+    .withIndex("by_parent", (q) =>
+      q.eq("parentType", "message").eq("parentId", message._id),
+    )
+    .collect();
+  return rows
+    .sort((left, right) => left.sourceIndex - right.sourceIndex)
+    .map((row) => {
+      if (
+        row.organizationId !== conversation.organizationId ||
+        row.purpose !== "chat_attachment"
+      ) {
+        throw new Error("Message attachment tenant mismatch");
+      }
+      return row.storageId;
+    });
+}
+
+export async function replaceMessageAttachments(
+  ctx: MutationCtx,
+  conversation: Doc<"conversations">,
+  message: Doc<"messages">,
+  attachments: Id<"_storage">[],
+  now: number,
+): Promise<void> {
+  const existing = await ctx.db
+    .query("storageObjectLinks")
+    .withIndex("by_parent", (q) =>
+      q.eq("parentType", "message").eq("parentId", message._id),
+    )
+    .collect();
+  for (const row of existing) await ctx.db.delete(row._id);
+  const storageIds = new Set<Id<"_storage">>();
+  for (const [sourceIndex, storageId] of attachments.entries()) {
+    if (storageIds.has(storageId)) {
+      throw new Error("Message attachment is not unique");
+    }
+    storageIds.add(storageId);
+    await ctx.db.insert("storageObjectLinks", {
+      organizationId: conversation.organizationId,
+      storageId,
+      parentType: "message",
+      parentId: message._id,
+      purpose: "chat_attachment",
+      sourceIndex,
+      migrationVersion: MIGRATION_VERSION,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+}
+
+export async function loadEffectiveLeaveAttachments(
+  ctx: DatabaseContext,
+  request: Doc<"leaveRequests">,
+): Promise<Id<"_storage">[]> {
+  const rows = await ctx.db
+    .query("storageObjectLinks")
+    .withIndex("by_parent", (q) =>
+      q.eq("parentType", "leave_request").eq("parentId", request._id),
+    )
+    .collect();
+  return rows
+    .sort((left, right) => left.sourceIndex - right.sourceIndex)
+    .map((row) => {
+      if (
+        row.organizationId !== request.organizationId ||
+        row.purpose !== "leave_attachment"
+      ) {
+        throw new Error("Leave attachment tenant mismatch");
+      }
+      return row.storageId;
+    });
+}
+
+export async function replaceLeaveAttachments(
+  ctx: MutationCtx,
+  request: Doc<"leaveRequests">,
+  attachments: Id<"_storage">[],
+  now: number,
+): Promise<void> {
+  const existing = await ctx.db
+    .query("storageObjectLinks")
+    .withIndex("by_parent", (q) =>
+      q.eq("parentType", "leave_request").eq("parentId", request._id),
+    )
+    .collect();
+  for (const row of existing) await ctx.db.delete(row._id);
+  const storageIds = new Set<Id<"_storage">>();
+  for (const [sourceIndex, storageId] of attachments.entries()) {
+    if (storageIds.has(storageId)) {
+      throw new Error("Leave attachment is not unique");
+    }
+    storageIds.add(storageId);
+    await ctx.db.insert("storageObjectLinks", {
+      organizationId: request.organizationId,
+      storageId,
+      parentType: "leave_request",
+      parentId: request._id,
+      purpose: "leave_attachment",
+      sourceIndex,
+      migrationVersion: MIGRATION_VERSION,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+}
+
 export async function loadEffectivePinnedConversations(
   ctx: DatabaseContext,
   organizationId: Id<"organizations">,
@@ -262,7 +379,10 @@ export async function loadEffectivePinnedConversations(
 
 export async function replacePinnedConversations(
   ctx: MutationCtx,
-  preferences: Doc<"userChatPreferences">,
+  preferences: Pick<
+    Doc<"userChatPreferences">,
+    "_id" | "userId" | "organizationId"
+  >,
   conversations: Id<"conversations">[],
   now: number,
 ): Promise<void> {

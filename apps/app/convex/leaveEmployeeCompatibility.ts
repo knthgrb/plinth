@@ -545,7 +545,24 @@ export async function getEffectiveOrganizationLeaveSettings(
 export async function upsertOrganizationLeaveSettings(
   ctx: MutationCtx,
   organizationId: Id<"organizations">,
-  settings: Doc<"settings">,
+  sourceSettingsId: Id<"settings">,
+  patch: Partial<
+    Pick<
+      Doc<"organizationLeaveSettings">,
+      | "proratedLeave"
+      | "leaveAccrualFrequency"
+      | "leaveTrackerMode"
+      | "enableAnniversaryLeave"
+      | "anniversaryLeaveMaxDays"
+      | "maxConvertibleLeaveDays"
+      | "annualSil"
+      | "grantLeaveUponRegularization"
+      | "paidLeaveRequiresRegularization"
+      | "leaveGuidelines"
+      | "leaveRequestFormTemplate"
+      | "leaveRequestPdfLayout"
+    >
+  >,
   now: number,
 ): Promise<void> {
   const existing = await getEffectiveOrganizationLeaveSettings(
@@ -554,41 +571,8 @@ export async function upsertOrganizationLeaveSettings(
   );
   const value = {
     organizationId,
-    ...(settings.proratedLeave !== undefined
-      ? { proratedLeave: settings.proratedLeave }
-      : {}),
-    ...(settings.leaveAccrualFrequency !== undefined
-      ? { leaveAccrualFrequency: settings.leaveAccrualFrequency }
-      : {}),
-    ...(settings.leaveTrackerMode !== undefined
-      ? { leaveTrackerMode: settings.leaveTrackerMode }
-      : {}),
-    ...(settings.enableAnniversaryLeave !== undefined
-      ? { enableAnniversaryLeave: settings.enableAnniversaryLeave }
-      : {}),
-    ...(settings.anniversaryLeaveMaxDays !== undefined
-      ? { anniversaryLeaveMaxDays: settings.anniversaryLeaveMaxDays }
-      : {}),
-    ...(settings.maxConvertibleLeaveDays !== undefined
-      ? { maxConvertibleLeaveDays: settings.maxConvertibleLeaveDays }
-      : {}),
-    ...(settings.annualSil !== undefined ? { annualSil: settings.annualSil } : {}),
-    ...(settings.grantLeaveUponRegularization !== undefined
-      ? { grantLeaveUponRegularization: settings.grantLeaveUponRegularization }
-      : {}),
-    ...(settings.paidLeaveRequiresRegularization !== undefined
-      ? { paidLeaveRequiresRegularization: settings.paidLeaveRequiresRegularization }
-      : {}),
-    ...(settings.leaveGuidelines !== undefined
-      ? { leaveGuidelines: settings.leaveGuidelines }
-      : {}),
-    ...(settings.leaveRequestFormTemplate !== undefined
-      ? { leaveRequestFormTemplate: settings.leaveRequestFormTemplate }
-      : {}),
-    ...(settings.leaveRequestPdfLayout !== undefined
-      ? { leaveRequestPdfLayout: settings.leaveRequestPdfLayout }
-      : {}),
-    sourceSettingsId: settings._id,
+    ...patch,
+    sourceSettingsId,
     migrationVersion: MIGRATION_VERSION,
     updatedAt: now,
   };

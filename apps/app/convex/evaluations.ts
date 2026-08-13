@@ -179,6 +179,14 @@ export const createEvaluation = mutation({
       args.organizationId,
     );
     const now = Date.now();
+    const history = [
+      {
+        action: "created",
+        at: now,
+        by: userRecord._id,
+        summary: args.label,
+      },
+    ];
 
     const id = await ctx.db.insert("evaluations", {
       organizationId: args.organizationId,
@@ -188,20 +196,10 @@ export const createEvaluation = mutation({
       label: args.label,
       reviewCycle: args.reviewCycle,
       rating: args.rating,
-      frequencyMonths: args.frequencyMonths,
       attachmentUrl: args.attachmentUrl,
       notes: args.notes,
       selfReview: args.selfReview,
       managerReview: args.managerReview,
-      assignedReviewerIds: args.assignedReviewerIds,
-      history: [
-        {
-          action: "created",
-          at: now,
-          by: userRecord._id,
-          summary: args.label,
-        },
-      ],
       createdBy: userRecord._id,
       createdAt: now,
       updatedAt: now,
@@ -213,7 +211,7 @@ export const createEvaluation = mutation({
       ctx,
       evaluation,
       args.assignedReviewerIds ?? [],
-      evaluation.history ?? [],
+      history,
       now,
     );
 
@@ -259,7 +257,6 @@ export const updateEvaluation = mutation({
     );
     const updates: Partial<Doc<"evaluations">> = {
       updatedAt: now,
-      history,
     };
     if (args.templateId !== undefined) updates.templateId = args.templateId;
     if (args.label !== undefined) updates.label = args.label;
@@ -267,16 +264,12 @@ export const updateEvaluation = mutation({
       updates.evaluationDate = args.evaluationDate;
     if (args.reviewCycle !== undefined) updates.reviewCycle = args.reviewCycle;
     if (args.rating !== undefined) updates.rating = args.rating;
-    if (args.frequencyMonths !== undefined)
-      updates.frequencyMonths = args.frequencyMonths;
     if (args.attachmentUrl !== undefined)
       updates.attachmentUrl = args.attachmentUrl;
     if (args.notes !== undefined) updates.notes = args.notes;
     if (args.selfReview !== undefined) updates.selfReview = args.selfReview;
     if (args.managerReview !== undefined)
       updates.managerReview = args.managerReview;
-    if (args.assignedReviewerIds !== undefined)
-      updates.assignedReviewerIds = args.assignedReviewerIds;
 
     await ctx.db.patch(args.evaluationId, updates);
     await replaceEvaluationProjection(
@@ -354,7 +347,6 @@ export const lockEvaluation = mutation({
       lockedAt: now,
       lockedBy: userRecord._id,
       updatedAt: now,
-      history,
     });
 
     return { success: true };

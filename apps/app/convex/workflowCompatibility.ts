@@ -20,33 +20,60 @@ export async function getEffectiveOrganizationUiSettings(
 
 export async function upsertOrganizationUiSettings(
   ctx: MutationCtx,
-  settings: Doc<"settings">,
+  organizationId: Id<"organizations">,
+  sourceSettingsId: Id<"settings">,
+  patch: Partial<
+    Pick<
+      Doc<"organizationUiSettings">,
+      | "evaluationColumns"
+      | "recruitmentTableColumns"
+      | "requirementsTableColumns"
+      | "leaveTableColumns"
+    >
+  >,
   now: number,
 ): Promise<void> {
-  const existing = await getEffectiveOrganizationUiSettings(
-    ctx,
-    settings.organizationId,
-  );
+  const existing = await getEffectiveOrganizationUiSettings(ctx, organizationId);
   const value = {
-    organizationId: settings.organizationId,
-    ...(settings.evaluationColumns !== undefined
-      ? { evaluationColumns: settings.evaluationColumns }
-      : {}),
-    ...(settings.recruitmentTableColumns !== undefined
-      ? { recruitmentTableColumns: settings.recruitmentTableColumns }
-      : {}),
-    ...(settings.requirementsTableColumns !== undefined
-      ? { requirementsTableColumns: settings.requirementsTableColumns }
-      : {}),
-    ...(settings.leaveTableColumns !== undefined
-      ? { leaveTableColumns: settings.leaveTableColumns }
-      : {}),
-    sourceSettingsId: settings._id,
+    organizationId,
+    ...patch,
+    sourceSettingsId,
     migrationVersion: MIGRATION_VERSION,
     updatedAt: now,
   };
   if (existing) await ctx.db.patch(existing._id, value);
   else await ctx.db.insert("organizationUiSettings", { ...value, createdAt: now });
+}
+
+export async function appendOrganizationSettingsEvent(
+  ctx: MutationCtx,
+  settingsId: Id<"settings">,
+  organizationId: Id<"organizations">,
+  area: string,
+  userId: Id<"users">,
+  now: number,
+  reason?: string,
+): Promise<void> {
+  const rows = await ctx.db
+    .query("organizationSettingsEvents")
+    .withIndex("by_settings_source_index", (q) =>
+      q.eq("sourceSettingsId", settingsId),
+    )
+    .collect();
+  const last = rows.sort((left, right) => left.sourceIndex - right.sourceIndex).at(-1);
+  await ctx.db.insert("organizationSettingsEvents", {
+    organizationId,
+    sourceSettingsId: settingsId,
+    sourceIndex: (last?.sourceIndex ?? -1) + 1,
+    area,
+    version: (last?.version ?? 0) + 1,
+    changedBy: userId,
+    changedAt: now,
+    ...(reason ? { reason } : {}),
+    migrationVersion: MIGRATION_VERSION,
+    createdAt: now,
+    updatedAt: now,
+  });
 }
 
 export async function replaceOrganizationSettingsEvents(

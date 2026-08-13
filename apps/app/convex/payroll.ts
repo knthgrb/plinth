@@ -21,6 +21,7 @@ import {
   getEffectiveAttendanceSettings,
   getEffectiveOrganization,
   getEffectivePayrollSettings,
+  getEffectiveSettings,
 } from "./organizationConfiguration";
 import {
   getSSSContribution,
@@ -2622,11 +2623,7 @@ async function buildFinalPayAutomaticIncentives(
     ),
   );
 
-  const settings = await (ctx.db.query("settings") as any)
-    .withIndex("by_organization", (q: any) =>
-      q.eq("organizationId", args.organizationId),
-    )
-    .first();
+  const settings = await getEffectiveSettings(ctx, args.organizationId);
   const maxConvertibleLeaveDays = settings?.maxConvertibleLeaveDays ?? 5;
   const vacationBalance =
     Number(args.employee?.leaveCredits?.vacation?.balance) || 0;
@@ -5765,11 +5762,7 @@ async function computeLeaveConversionAmountsInternal(
     employeeIds: any[];
   },
 ) {
-  const settings = await (ctx.db.query("settings") as any)
-    .withIndex("by_organization", (q: any) =>
-      q.eq("organizationId", args.organizationId),
-    )
-    .first();
+  const settings = await getEffectiveSettings(ctx, args.organizationId);
   const { payrollSettings } = await getEffectivePayrollSettings(
     ctx,
     args.organizationId,
@@ -5789,14 +5782,21 @@ async function computeLeaveConversionAmountsInternal(
     activeEmployeeIds.has(employeeId),
   );
 
-  const byYear = settings?.leaveTrackerByYear ?? [];
-  const yearData = byYear.find((e: any) => e.year === args.year);
-  const legacyRows = settings?.leaveTrackerRows ?? [];
+  const balanceRows = await ctx.db
+    .query("employeeLeaveBalances")
+    .withIndex("by_organization_year", (q: any) =>
+      q.eq("organizationId", args.organizationId).eq("year", args.year),
+    )
+    .collect();
   const currentYear = new Date().getFullYear();
-  const rowsForYear =
-    yearData?.rows ?? (args.year === currentYear ? legacyRows : []);
-
-  const rowsMap = new Map(rowsForYear.map((r: any) => [r.employeeId, r]));
+  const rowsMap = new Map(
+    balanceRows
+      .filter((row: Doc<"employeeLeaveBalances">) => row.leaveTypeKey === "general")
+      .map((row: Doc<"employeeLeaveBalances">) => [
+        row.employeeId,
+        { annualSilOverride: row.annualSilOverride, availed: row.used },
+      ]),
+  );
 
   const annualSil = settings?.annualSil ?? 8;
   const proratedLeave = settings?.proratedLeave !== false;
@@ -5828,8 +5828,9 @@ async function computeLeaveConversionAmountsInternal(
   }> = [];
 
   for (const empId of scopedEmployeeIds) {
-    const employee = employees.find((e: any) => e._id === empId);
-    if (!employee) continue;
+    const employeeRow = employees.find((e: any) => e._id === empId);
+    if (!employeeRow) continue;
+    const employee = await loadEffectiveEmployee(ctx, employeeRow);
 
     const amt13 = amounts.find((a: any) => a.employeeId === empId);
     const totalBasicPay = amt13?.totalBasicPay ?? 0;
@@ -6476,10 +6477,7 @@ export const addPayrollRunNote = mutation({
     });
 
     await replacePayrollRunNotes(ctx, payrollRun, notes, now);
-    await ctx.db.patch(args.payrollRunId, {
-      notes,
-      updatedAt: now,
-    });
+    await ctx.db.patch(args.payrollRunId, { updatedAt: now });
 
     return { success: true };
   },

@@ -9,14 +9,14 @@ describe("configurable settings hardening", () => {
   it("versions settings changes with an audit log", () => {
     const settingsSource = readSource("../convex/settings.ts");
     const schemaSource = readSource("../convex/schema.ts");
+    const compatibilitySource = readSource("../convex/workflowCompatibility.ts");
 
     expect(schemaSource).toContain("settingsVersion: v.optional(v.number())");
     expect(schemaSource).toContain("settingsChangeLog: v.optional(");
-    expect(settingsSource).toContain("buildSettingsAuditPatch");
-    expect(settingsSource).toContain("settingsVersion: nextSettingsVersion");
-    expect(settingsSource).toContain("changedBy: userRecord._id");
-    expect(settingsSource).toContain("...buildSettingsAuditPatch(settings, \"payroll\", userRecord, now)");
-    expect(settingsSource).toContain("...buildSettingsAuditPatch(settings, \"leave\", userRecord, now)");
+    expect(settingsSource).toContain("appendOrganizationSettingsEvent");
+    expect(compatibilitySource).toContain("changedBy: userId");
+    expect(settingsSource).not.toContain("buildSettingsAuditPatch");
+    expect(settingsSource).not.toContain("settingsChangeLog:");
   });
 
   it("prevents single holiday create and update duplicates", () => {

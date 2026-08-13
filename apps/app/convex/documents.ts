@@ -303,19 +303,25 @@ export const createDocument = mutation({
       content: args.content,
       type: args.type,
       category: args.category,
-      attachments: args.attachments,
       isShared: args.isShared || false,
-      sharedWith: args.sharedWith || [],
       visibilityScope: args.visibilityScope,
-      visibleDepartments: args.visibleDepartments,
-      visibleEmployeeIds: args.visibleEmployeeIds,
       contentVersion: 1,
       createdAt: now,
       updatedAt: now,
     });
     const document = await ctx.db.get(documentId);
     if (!document) throw new Error("Document creation did not persist");
-    await replaceDocumentProjection(ctx, document, document, now);
+    await replaceDocumentProjection(
+      ctx,
+      document,
+      {
+        attachments: args.attachments,
+        sharedWith: args.sharedWith ?? [],
+        visibleDepartments: args.visibleDepartments,
+        visibleEmployeeIds: args.visibleEmployeeIds,
+      },
+      now,
+    );
 
     return documentId;
   },
@@ -367,21 +373,13 @@ export const updateDocument = mutation({
 
     const effectiveDocument = await loadEffectiveDocument(ctx, document);
     const now = Date.now();
-    const updates: any = { updatedAt: now };
+    const updates: Partial<Doc<"documents">> = { updatedAt: now };
     if (args.title !== undefined) updates.title = args.title;
     if (args.type !== undefined) updates.type = args.type;
     if (args.category !== undefined) updates.category = args.category;
-    if (args.attachments !== undefined) updates.attachments = args.attachments;
     if (args.isShared !== undefined) updates.isShared = args.isShared;
-    if (args.sharedWith !== undefined) updates.sharedWith = args.sharedWith;
     if (args.visibilityScope !== undefined) {
       updates.visibilityScope = args.visibilityScope;
-    }
-    if (args.visibleDepartments !== undefined) {
-      updates.visibleDepartments = args.visibleDepartments;
-    }
-    if (args.visibleEmployeeIds !== undefined) {
-      updates.visibleEmployeeIds = args.visibleEmployeeIds;
     }
 
     if (args.content !== undefined && args.content !== document.content) {
@@ -402,7 +400,14 @@ export const updateDocument = mutation({
     await replaceDocumentProjection(
       ctx,
       document,
-      { ...effectiveDocument, ...updates },
+      {
+        attachments: args.attachments ?? effectiveDocument.attachments,
+        sharedWith: args.sharedWith ?? effectiveDocument.sharedWith,
+        visibleDepartments:
+          args.visibleDepartments ?? effectiveDocument.visibleDepartments,
+        visibleEmployeeIds:
+          args.visibleEmployeeIds ?? effectiveDocument.visibleEmployeeIds,
+      },
       now,
     );
     await ctx.db.patch(args.documentId, updates);

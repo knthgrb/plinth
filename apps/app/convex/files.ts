@@ -38,42 +38,23 @@ const restrictedUploadRoles: Partial<
   payslip_pdf: new Set(["owner", "admin", "hr", "accounting"]),
 };
 
-function containsStorageId(
-  storageIds: Id<"_storage">[] | undefined,
-  storageId: Id<"_storage">,
-) {
-  return storageIds?.some((id) => id === storageId) ?? false;
-}
-
-async function hasLegacyStorageReference(
+async function hasStorageReference(
   ctx: Parameters<typeof requireActiveMembership>[0],
   organizationId: Id<"organizations">,
   storageId: Id<"_storage">,
 ) {
-  const [documents, memos, employees, leaveRequests, applicants, costItems, payslips] =
+  const [links, requirements, applicants, payslips] =
     await Promise.all([
       ctx.db
-        .query("documents")
+        .query("storageObjectLinks")
         .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
         .collect(),
       ctx.db
-        .query("memos")
-        .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-        .collect(),
-      ctx.db
-        .query("employees")
-        .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-        .collect(),
-      ctx.db
-        .query("leaveRequests")
+        .query("employeeRequirements")
         .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
         .collect(),
       ctx.db
         .query("applicants")
-        .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-        .collect(),
-      ctx.db
-        .query("accountingCostItems")
         .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
         .collect(),
       ctx.db
@@ -83,41 +64,12 @@ async function hasLegacyStorageReference(
     ]);
 
   if (
-    documents.some((document) =>
-      containsStorageId(document.attachments, storageId),
-    ) ||
-    memos.some((memo) => containsStorageId(memo.attachments, storageId)) ||
-    employees.some((employee) =>
-      employee.requirements?.some((requirement) => requirement.file === storageId),
-    ) ||
-    leaveRequests.some((request) =>
-      containsStorageId(request.supportingDocuments, storageId),
-    ) ||
+    links.some((link) => link.storageId === storageId) ||
+    requirements.some((requirement) => requirement.file === storageId) ||
     applicants.some((applicant) => applicant.resume === storageId) ||
-    costItems.some((item) => containsStorageId(item.receipts, storageId)) ||
     payslips.some((payslip) => payslip.pdfFile === storageId)
   ) {
     return true;
-  }
-
-  const conversations = await ctx.db
-    .query("conversations")
-    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-    .collect();
-  for (const conversation of conversations) {
-    const messages = await ctx.db
-      .query("messages")
-      .withIndex("by_conversation", (q) =>
-        q.eq("conversationId", conversation._id),
-      )
-      .collect();
-    if (
-      messages.some((message) =>
-        containsStorageId(message.attachments, storageId),
-      )
-    ) {
-      return true;
-    }
   }
 
   return false;
@@ -216,7 +168,7 @@ async function requireStorageObject(
     .withIndex("by_storage", (q) => q.eq("storageId", storageId))
     .unique();
   if (!storageObject) {
-    if (await hasLegacyStorageReference(ctx, organizationId, storageId)) {
+    if (await hasStorageReference(ctx, organizationId, storageId)) {
       return null;
     }
     throw new Error("Not authorized");

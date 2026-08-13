@@ -18,9 +18,11 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { canUseFullOrganizationAccess } from "@/utils/org-membership-lifecycle";
 import {
   loadEffectiveConversation,
+  loadEffectiveMessageAttachments,
   loadEffectiveMessageReadBy,
   loadEffectivePinnedConversations,
   replaceConversationMembers,
+  replaceMessageAttachments,
   replaceMessageReceipts,
   replacePinnedConversations,
 } from "./communicationsCompatibility";
@@ -280,7 +282,6 @@ export const getOrCreateConversation = mutation({
     const now = Date.now();
     const conversationId = await ctx.db.insert("conversations", {
       organizationId: args.organizationId,
-      participants: [userRecord._id, args.participantId],
       type: "direct",
       ...(requestedKind === "staff_as_admin"
         ? {
@@ -293,7 +294,12 @@ export const getOrCreateConversation = mutation({
     });
     const conversation = await ctx.db.get(conversationId);
     if (!conversation) throw new Error("Conversation creation did not persist");
-    await replaceConversationMembers(ctx, conversation, conversation.participants, now);
+    await replaceConversationMembers(
+      ctx,
+      conversation,
+      [userRecord._id, args.participantId],
+      now,
+    );
 
     return conversationId;
   },
@@ -441,7 +447,10 @@ export const getMessages = query({
       const enriched = await Promise.all(
         messages.map(async (msg) => {
           const sender = await ctx.db.get(msg.senderId);
-          const readBy = await loadEffectiveMessageReadBy(ctx, conversation, msg);
+          const [readBy, attachments] = await Promise.all([
+            loadEffectiveMessageReadBy(ctx, conversation, msg),
+            loadEffectiveMessageAttachments(ctx, conversation, msg),
+          ]);
           let replyTo = null;
           if (msg.replyToMessageId) {
             const replyMsg = await ctx.db.get(msg.replyToMessageId);
@@ -454,6 +463,7 @@ export const getMessages = query({
             return {
               ...msg,
               readBy,
+              attachments,
               sender: {
                 _id: sender._id,
                 name: sender.name || sender.email,
@@ -465,6 +475,7 @@ export const getMessages = query({
           return {
             ...msg,
             readBy,
+            attachments,
             sender: null,
             replyTo,
           };
@@ -486,7 +497,10 @@ export const getMessages = query({
       const enriched = await Promise.all(
         messages.map(async (msg) => {
           const sender = await ctx.db.get(msg.senderId);
-          const readBy = await loadEffectiveMessageReadBy(ctx, conversation, msg);
+          const [readBy, attachments] = await Promise.all([
+            loadEffectiveMessageReadBy(ctx, conversation, msg),
+            loadEffectiveMessageAttachments(ctx, conversation, msg),
+          ]);
           let replyTo = null;
           if (msg.replyToMessageId) {
             const replyMsg = await ctx.db.get(msg.replyToMessageId);
@@ -499,6 +513,7 @@ export const getMessages = query({
             return {
               ...msg,
               readBy,
+              attachments,
               sender: {
                 _id: sender._id,
                 name: sender.name || sender.email,
@@ -510,6 +525,7 @@ export const getMessages = query({
           return {
             ...msg,
             readBy,
+            attachments,
             sender: null,
             replyTo,
           };
@@ -601,10 +617,8 @@ export const sendMessage = mutation({
       senderId: userRecord._id,
       content: contentToStore,
       messageType,
-      attachments: args.attachments,
       payslipId: args.payslipId,
       replyToMessageId: args.replyToMessageId,
-      readBy: [userRecord._id], // Sender has read their own message
       createdAt: now,
     });
     const message = await ctx.db.get(messageId);
@@ -614,6 +628,13 @@ export const sendMessage = mutation({
       conversation,
       message,
       [userRecord._id],
+      now,
+    );
+    await replaceMessageAttachments(
+      ctx,
+      conversation,
+      message,
+      args.attachments ?? [],
       now,
     );
 
@@ -721,13 +742,18 @@ export const forwardMessage = mutation({
       senderId: userRecord._id,
       content: forwardBody,
       messageType,
-      attachments: args.attachments,
-      readBy: [userRecord._id],
       createdAt: now,
     });
     const message = await ctx.db.get(messageId);
     if (!message) throw new Error("Message creation did not persist");
     await replaceMessageReceipts(ctx, target, message, [userRecord._id], now);
+    await replaceMessageAttachments(
+      ctx,
+      target,
+      message,
+      args.attachments ?? [],
+      now,
+    );
 
     await ctx.db.patch(args.targetConversationId, {
       lastMessageAt: now,
@@ -770,9 +796,6 @@ export const markMessagesAsRead = mutation({
             nextReadBy,
             Date.now(),
           );
-          await ctx.db.patch(messageId, {
-            readBy: nextReadBy,
-          });
         }
       }
     }
@@ -927,7 +950,6 @@ export const createGroupChat = mutation({
     const now = Date.now();
     const conversationId = await ctx.db.insert("conversations", {
       organizationId: args.organizationId,
-      participants: allParticipants,
       type: "group",
       name: args.name,
       createdBy: userRecord._id,
@@ -961,7 +983,6 @@ export const createChannel = mutation({
     const now = Date.now();
     const conversationId = await ctx.db.insert("conversations", {
       organizationId: args.organizationId,
-      participants: [userRecord._id],
       type: "channel",
       name: trimmedName,
       createdBy: userRecord._id,
@@ -1009,10 +1030,7 @@ export const joinChannel = mutation({
     const now = Date.now();
     const participants = [...conversation.participants, userRecord._id];
     await replaceConversationMembers(ctx, conversationRow, participants, now);
-    await ctx.db.patch(args.conversationId, {
-      participants,
-      updatedAt: now,
-    });
+    await ctx.db.patch(args.conversationId, { updatedAt: now });
 
     return { success: true, alreadyMember: false };
   },
@@ -1098,10 +1116,7 @@ export const addMembersToGroup = mutation({
     const now = Date.now();
     const participants = [...conversation.participants, ...newParticipants];
     await replaceConversationMembers(ctx, conversationRow, participants, now);
-    await ctx.db.patch(args.conversationId, {
-      participants,
-      updatedAt: now,
-    });
+    await ctx.db.patch(args.conversationId, { updatedAt: now });
 
     return { success: true, added: newParticipants.length };
   },
@@ -1151,10 +1166,7 @@ export const removeMemberFromGroup = mutation({
       (id) => id !== args.participantId,
     );
     await replaceConversationMembers(ctx, conversationRow, participants, now);
-    await ctx.db.patch(args.conversationId, {
-      participants,
-      updatedAt: now,
-    });
+    await ctx.db.patch(args.conversationId, { updatedAt: now });
 
     return { success: true };
   },
@@ -1202,10 +1214,7 @@ export const togglePinConversation = mutation({
       );
       if (preferences) {
         await replacePinnedConversations(ctx, preferences, updatedPinned, now);
-        await ctx.db.patch(preferences._id, {
-          pinnedConversations: updatedPinned,
-          updatedAt: now,
-        });
+        await ctx.db.patch(preferences._id, { updatedAt: now });
       }
       return { pinned: false };
     } else {
@@ -1213,15 +1222,11 @@ export const togglePinConversation = mutation({
       const updatedPinned = [...pinned, args.conversationId];
       if (preferences) {
         await replacePinnedConversations(ctx, preferences, updatedPinned, now);
-        await ctx.db.patch(preferences._id, {
-          pinnedConversations: updatedPinned,
-          updatedAt: now,
-        });
+        await ctx.db.patch(preferences._id, { updatedAt: now });
       } else {
         const preferencesId = await ctx.db.insert("userChatPreferences", {
           userId: userRecord._id,
           organizationId: args.organizationId,
-          pinnedConversations: updatedPinned,
           createdAt: now,
           updatedAt: now,
         });
@@ -1287,23 +1292,6 @@ export const deleteConversation = mutation({
         .collect()
     ).filter((pin) => pin.conversationId === args.conversationId);
     for (const pin of pins) await ctx.db.delete(pin._id);
-
-    // Remove from any user's pinned list
-    const allPrefs = await ctx.db.query("userChatPreferences").collect();
-    for (const prefs of allPrefs) {
-      if (
-        prefs.organizationId === conversation.organizationId &&
-        (prefs.pinnedConversations || []).includes(args.conversationId)
-      ) {
-        const updated = (prefs.pinnedConversations || []).filter(
-          (id) => id !== args.conversationId,
-        );
-        await ctx.db.patch(prefs._id, {
-          pinnedConversations: updated,
-          updatedAt: Date.now(),
-        });
-      }
-    }
 
     await ctx.db.delete(args.conversationId);
     return { success: true };
@@ -1430,9 +1418,6 @@ export const markAllConversationsAsRead = mutation({
             nextReadBy,
             Date.now(),
           );
-          await ctx.db.patch(msg._id, {
-            readBy: nextReadBy,
-          });
         }
       }
     }

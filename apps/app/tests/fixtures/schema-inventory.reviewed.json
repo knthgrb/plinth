@@ -339,8 +339,8 @@
     },
     {
       "name": "migrationRuns",
-      "fieldCount": 18,
-      "fieldsSha256": "747b33ca961485872e528dce0f945a5917901d1e0f1ed2852c1838bfce4cf1f4",
+      "fieldCount": 20,
+      "fieldsSha256": "ac699500982fa209ebbe164ef8efb8629821cd7c40c3ad3dc9c2349f9c2b8898",
       "indexCount": 2,
       "indexesSha256": "7cb193f1956b7733f33f2de7ff49424424d16529407c8131d54a1d48bcc5e94b"
     },

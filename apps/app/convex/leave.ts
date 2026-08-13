@@ -27,6 +27,11 @@ import {
   loadEffectiveEmployee,
   replaceEmployeeLeaveCredits,
 } from "./leaveEmployeeCompatibility";
+import { getEffectiveSettings } from "./organizationConfiguration";
+import {
+  loadEffectiveLeaveAttachments,
+  replaceLeaveAttachments,
+} from "./communicationsCompatibility";
 
 async function persistLeaveCredits(
   ctx: MutationCtx,
@@ -35,7 +40,6 @@ async function persistLeaveCredits(
 ): Promise<void> {
   const now = Date.now();
   await replaceEmployeeLeaveCredits(ctx, employee, leaveCredits, now);
-  await ctx.db.patch(employee._id, { leaveCredits, updatedAt: now });
 }
 
 // Helper to check authorization with organization context
@@ -401,7 +405,12 @@ export const getLeaveRequests = query({
     }
 
     requests.sort((a: any, b: any) => b.filedDate - a.filedDate);
-    return requests;
+    return await Promise.all(
+      requests.map(async (request: Doc<"leaveRequests">) => ({
+        ...request,
+        supportingDocuments: await loadEffectiveLeaveAttachments(ctx, request),
+      })),
+    );
   },
 });
 
@@ -429,7 +438,10 @@ export const getLeaveRequest = query({
       throw new Error("Not authorized");
     }
 
-    return request;
+    return {
+      ...request,
+      supportingDocuments: await loadEffectiveLeaveAttachments(ctx, request),
+    };
   },
 });
 
@@ -479,11 +491,7 @@ export const getLeaveRequestApprovalInfo = query({
       };
     }
 
-    const settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", request.organizationId),
-      )
-      .first();
+    const settings = await getEffectiveSettings(ctx, request.organizationId);
     const leaveTrackerMode = settings?.leaveTrackerMode ?? "general";
     const now = Date.now();
     const requestIsPaid = resolveLeaveRequestIsPaid(request, settings);
@@ -597,11 +605,7 @@ export const createLeaveRequest = mutation({
       throw new Error(formatLeaveConflictMessage(overlappingRequest));
     }
 
-    const settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .first();
+    const settings = await getEffectiveSettings(ctx, args.organizationId);
     const leaveTrackerMode = settings?.leaveTrackerMode ?? "general";
     const usesGeneralPool =
       args.leaveType === "custom" &&
@@ -664,11 +668,18 @@ export const createLeaveRequest = mutation({
       filledFormContent: args.filledFormContent,
       signatureDataUrl: args.signatureDataUrl,
       status: "pending",
-      supportingDocuments: args.supportingDocuments,
       filedDate: now,
       createdAt: now,
       updatedAt: now,
     });
+    const leaveRequest = await ctx.db.get(leaveRequestId);
+    if (!leaveRequest) throw new Error("Leave request was not created");
+    await replaceLeaveAttachments(
+      ctx,
+      leaveRequest,
+      args.supportingDocuments ?? [],
+      now,
+    );
 
     const typeLabel =
       args.leaveType === "custom" &&
@@ -752,11 +763,7 @@ export const createManualLeaveRequest = mutation({
       throw new Error(formatLeaveConflictMessage(overlappingRequest));
     }
 
-    const settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .first();
+    const settings = await getEffectiveSettings(ctx, args.organizationId);
     const leaveTrackerMode = settings?.leaveTrackerMode ?? "general";
     const usesGeneralPool =
       args.leaveType === "custom" &&
@@ -873,11 +880,7 @@ export const approveLeaveRequest = mutation({
       throw new Error(formatLeaveConflictMessage(overlappingApprovedRequest));
     }
 
-    const settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", request.organizationId),
-      )
-      .first();
+    const settings = await getEffectiveSettings(ctx, request.organizationId);
     const leaveTrackerMode = settings?.leaveTrackerMode ?? "general";
     const nowApprove = Date.now();
     const requestIsPaid = resolveLeaveRequestIsPaid(request, settings);
@@ -1116,11 +1119,7 @@ export const getEmployeeLeaveCredits = query({
     if (!employeeRow) throw new Error("Employee not found");
     const employee = await loadEffectiveEmployee(ctx, employeeRow);
 
-    const settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .first();
+    const settings = await getEffectiveSettings(ctx, args.organizationId);
 
     const now = Date.now();
     const leaveTrackerMode = settings?.leaveTrackerMode ?? "general";
@@ -1417,11 +1416,7 @@ export const convertLeaveToCash = mutation({
       );
     }
 
-    const settings = await (ctx.db.query("settings") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .first();
+    const settings = await getEffectiveSettings(ctx, args.organizationId);
     const maxConvertible = settings?.maxConvertibleLeaveDays ?? 5;
     const convertibleDays = getConvertibleLeaveDays(
       targetLeave.balance,

@@ -158,14 +158,7 @@ export const createAsset = mutation({
       supplier: args.supplier,
       serialNumber: args.serialNumber,
       location: args.location,
-      assignedEmployeeId,
-      assignedAt: assignedEmployeeId ? now : undefined,
-      assignedBy: assignedEmployeeId ? userRecord._id : undefined,
-      custodyAcknowledgedAt: args.custodyAcknowledgedAt ?? undefined,
-      returnDueDate: args.returnDueDate ?? undefined,
-      returnedAt: args.returnedAt ?? undefined,
       condition: args.condition,
-      maintenanceHistory: args.maintenanceHistory,
       status: args.status || "active",
       notes: args.notes,
       createdAt: now,
@@ -173,7 +166,20 @@ export const createAsset = mutation({
     });
     const asset = await ctx.db.get(assetId);
     if (!asset) throw new Error("Asset creation did not persist");
-    await replaceAssetProjection(ctx, asset, asset, now);
+    await replaceAssetProjection(
+      ctx,
+      asset,
+      {
+        assignedEmployeeId,
+        assignedAt: assignedEmployeeId ? now : undefined,
+        assignedBy: assignedEmployeeId ? userRecord._id : undefined,
+        custodyAcknowledgedAt: args.custodyAcknowledgedAt ?? undefined,
+        returnDueDate: args.returnDueDate ?? undefined,
+        returnedAt: args.returnedAt ?? undefined,
+        maintenanceHistory: args.maintenanceHistory,
+      },
+      now,
+    );
 
     return assetId;
   },
@@ -237,10 +243,6 @@ export const updateAsset = mutation({
       ...(args.notes !== undefined && { notes: args.notes }),
       updatedAt: now,
     };
-
-    if (args.assignedEmployeeId !== undefined) {
-      const assignedEmployeeId = args.assignedEmployeeId ?? undefined;
-    }
 
     const projectedAsset = {
       ...effectiveAsset,

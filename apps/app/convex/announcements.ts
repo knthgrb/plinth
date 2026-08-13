@@ -317,8 +317,6 @@ export const createAnnouncement = mutation({
       author: userRecord._id,
       ...(authorDisplayName ? { authorDisplayName } : {}),
       targetAudience: args.targetAudience,
-      departments: args.departments,
-      specificEmployees: args.specificEmployees,
       publishedDate,
       scheduledPublishDate: args.scheduledPublishDate,
       expiryDate: args.expiryDate,
@@ -328,8 +326,6 @@ export const createAnnouncement = mutation({
         count: audienceEmployeeIds.length,
         generatedAt: now,
       },
-      attachments: args.attachments,
-      attachmentContentTypes: args.attachmentContentTypes,
       isPublished: true,
       acknowledgementRequired: args.acknowledgementRequired,
       createdAt: now,
@@ -411,10 +407,6 @@ export const updateAnnouncement = mutation({
     if (args.priority !== undefined) updateData.priority = args.priority;
     if (args.targetAudience !== undefined)
       updateData.targetAudience = args.targetAudience;
-    if (args.departments !== undefined)
-      updateData.departments = args.departments;
-    if (args.specificEmployees !== undefined)
-      updateData.specificEmployees = args.specificEmployees;
     if (args.scheduledPublishDate !== undefined) {
       updateData.scheduledPublishDate = args.scheduledPublishDate;
       updateData.publishedDate = args.scheduledPublishDate;
@@ -423,10 +415,6 @@ export const updateAnnouncement = mutation({
     if (args.isPinned !== undefined) updateData.isPinned = args.isPinned;
     if (args.reminderCadenceDays !== undefined)
       updateData.reminderCadenceDays = args.reminderCadenceDays;
-    if (args.attachments !== undefined)
-      updateData.attachments = args.attachments;
-    if (args.attachmentContentTypes !== undefined)
-      updateData.attachmentContentTypes = args.attachmentContentTypes;
     if (args.acknowledgementRequired !== undefined)
       updateData.acknowledgementRequired = args.acknowledgementRequired;
 
@@ -435,12 +423,13 @@ export const updateAnnouncement = mutation({
       args.departments !== undefined ||
       args.specificEmployees !== undefined
     ) {
+      const effectiveAnnouncement = await loadEffectiveMemo(ctx, announcement);
       const nextAnnouncement = {
-        ...announcement,
+        ...effectiveAnnouncement,
         targetAudience: args.targetAudience ?? announcement.targetAudience,
-        departments: args.departments ?? announcement.departments,
+        departments: args.departments ?? effectiveAnnouncement.departments,
         specificEmployees:
-          args.specificEmployees ?? announcement.specificEmployees,
+          args.specificEmployees ?? effectiveAnnouncement.specificEmployees,
       };
       const audienceEmployeeIds = await getAnnouncementAudienceEmployeeIds(
         ctx,
@@ -460,7 +449,17 @@ export const updateAnnouncement = mutation({
       }
     }
 
-    await synchronizeEffectiveMemo(ctx, announcement, updateData, Date.now());
+    await synchronizeEffectiveMemo(
+      ctx,
+      announcement,
+      {
+        departments: args.departments,
+        specificEmployees: args.specificEmployees,
+        attachments: args.attachments,
+        attachmentContentTypes: args.attachmentContentTypes,
+      },
+      Date.now(),
+    );
     await ctx.db.patch(args.announcementId, updateData);
     return args.announcementId;
   },
@@ -535,12 +534,13 @@ export const sendAnnouncementAcknowledgementReminders = mutation({
       throw new Error("This announcement does not require acknowledgement");
     }
 
+    const effectiveAnnouncement = await loadEffectiveMemo(ctx, announcement);
     const audienceEmployeeIds = await getAnnouncementAudienceEmployeeIds(
       ctx,
-      announcement,
+      effectiveAnnouncement,
     );
     const acknowledged = new Set(
-      (announcement.acknowledgedBy ?? []).map((entry) =>
+      (effectiveAnnouncement.acknowledgedBy ?? []).map((entry) =>
         String(entry.employeeId),
       ),
     );

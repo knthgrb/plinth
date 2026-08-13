@@ -432,8 +432,6 @@ export const createOrganization = mutation({
       email: args.email,
       taxId: args.taxId,
       status: "active",
-      firstPayDate: 15, // Default: 15th of the month
-      secondPayDate: 30, // Default: 30th of the month
       createdAt: now,
       updatedAt: now,
     });
@@ -455,15 +453,6 @@ export const createOrganization = mutation({
       joinedAt: now,
       updatedAt: now,
     });
-
-    // Also update legacy fields for backward compatibility
-    if (!userRecord.organizationId) {
-      await ctx.db.patch(userRecord._id, {
-        organizationId,
-        role: "owner",
-        updatedAt: now,
-      });
-    }
 
     return organizationId;
   },
