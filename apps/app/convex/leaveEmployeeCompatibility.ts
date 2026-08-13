@@ -349,6 +349,25 @@ export async function upsertEmployeeDeduction(
   });
 }
 
+export async function replaceEmployeeDeductions(
+  ctx: MutationCtx,
+  employee: Doc<"employees">,
+  deductions: EmployeeDeduction[],
+  now: number,
+): Promise<void> {
+  const existing = await ctx.db
+    .query("employeeDeductions")
+    .withIndex("by_organization", (q) =>
+      q.eq("organizationId", employee.organizationId),
+    )
+    .filter((q) => q.eq(q.field("employeeId"), employee._id))
+    .collect();
+  for (const row of existing) await ctx.db.delete(row._id);
+  for (const deduction of deductions) {
+    await upsertEmployeeDeduction(ctx, employee, deduction, now);
+  }
+}
+
 export async function upsertEmployeeIncentive(
   ctx: MutationCtx,
   employee: Doc<"employees">,
@@ -381,6 +400,25 @@ export async function upsertEmployeeIncentive(
     return rows[0]._id;
   }
   return ctx.db.insert("employeeIncentives", { ...value, createdAt: now });
+}
+
+export async function replaceEmployeeIncentives(
+  ctx: MutationCtx,
+  employee: Doc<"employees">,
+  incentives: EmployeeIncentive[],
+  now: number,
+): Promise<void> {
+  const existing = await ctx.db
+    .query("employeeIncentives")
+    .withIndex("by_organization", (q) =>
+      q.eq("organizationId", employee.organizationId),
+    )
+    .filter((q) => q.eq(q.field("employeeId"), employee._id))
+    .collect();
+  for (const row of existing) await ctx.db.delete(row._id);
+  for (const incentive of incentives) {
+    await upsertEmployeeIncentive(ctx, employee, incentive, now);
+  }
 }
 
 export async function replaceEmployeeRequirements(
