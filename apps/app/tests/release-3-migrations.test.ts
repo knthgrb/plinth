@@ -39,6 +39,21 @@ const getAudit = makeFunctionReference<
   { runId: Id<"migrationRuns"> },
   { ready: boolean; status: string; destination: { missing: number }; sourceConflicts: number }
 >("release3Migrations:getRelease3ContractAudit");
+const listAuditIssues = makeFunctionReference<
+  "query",
+  {
+    auditId: Id<"migrationAudits">;
+    paginationOpts: { numItems: number; cursor: string | null };
+  },
+  {
+    page: Array<{
+      entityType: string;
+      entityId?: string;
+      field: string;
+      code: string;
+    }>;
+  }
+>("release3Migrations:listRelease3ContractAuditIssues");
 
 afterEach(() => vi.useRealTimers());
 
@@ -135,6 +150,61 @@ describe("Release 3 contract cleanup", () => {
     await t.finishAllScheduledFunctions(() => vi.runAllTimers());
     await expect(t.query(getRun, { runId: finalDryRun.runId })).resolves.toMatchObject({
       run: { status: "completed", counters: { changed: 0, conflicts: 0, errors: 0 } },
+    });
+  });
+
+  it("reports every residual legacy field found by the audit", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const organizationId = await t.run((ctx) =>
+      ctx.db.insert("organizations", {
+        name: "Residual Legacy Org",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+
+    const dryRun = await t.mutation(startCleanup, {
+      dryRun: true,
+      batchSize: 10,
+    });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    await t.mutation(acknowledgeExport, {
+      dryRunId: dryRun.runId,
+      exportReference: "prod-backup-residual-test",
+    });
+    const writeRun = await t.mutation(startCleanup, {
+      dryRun: false,
+      dryRunId: dryRun.runId,
+      batchSize: 10,
+    });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+    await t.run((ctx) => ctx.db.patch(organizationId, { firstPayDate: 15 }));
+    const { auditId } = await t.mutation(startAudit, {
+      runId: writeRun.runId,
+      batchSize: 10,
+    });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+    await expect(t.query(getAudit, { runId: writeRun.runId })).resolves.toMatchObject({
+      ready: false,
+      destination: { missing: 1 },
+    });
+    await expect(
+      t.query(listAuditIssues, {
+        auditId,
+        paginationOpts: { numItems: 100, cursor: null },
+      }),
+    ).resolves.toMatchObject({
+      page: [
+        {
+          entityType: "organizations",
+          entityId: organizationId,
+          field: "firstPayDate",
+          code: "LEGACY_FIELD_REMAINS",
+        },
+      ],
     });
   });
 });

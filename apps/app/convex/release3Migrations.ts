@@ -150,6 +150,18 @@ async function processPage<T extends CleanupDocument>(
       }
       counters = addCounters(counters, { conflicts: plan.issues.length });
     } else if (plan.outcome === "change") {
+      if (run.dryRun && run.requiredDryRunId) {
+        for (const field of plan.changedFields) {
+          await recordIssue(
+            ctx,
+            run,
+            document,
+            table,
+            "LEGACY_FIELD_REMAINS",
+            field,
+          );
+        }
+      }
       if (!run.dryRun) await apply(document, plan.patch);
       counters = addCounters(counters, { changed: plan.changedFields.length });
     } else {
@@ -573,6 +585,7 @@ export const startRelease3ContractAudit = internalMutation({
       phase: PHASES[0],
       batchSize,
       counters: EMPTY_COUNTERS,
+      requiredDryRunId: run._id,
       startedAt: now,
       updatedAt: now,
     });
