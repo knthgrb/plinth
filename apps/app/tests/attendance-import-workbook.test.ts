@@ -30,7 +30,7 @@ describe("attendance workbook ingestion", () => {
 
     expect(workbook.sheets).toEqual([
       {
-        name: "attendance.csv",
+        name: "CSV",
         rows: [
           { rowNumber: 1, cells: ["Name", "Notes"] },
           { rowNumber: 2, cells: ["Ana", 'Said "hello"\nand left'] },

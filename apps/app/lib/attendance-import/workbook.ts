@@ -54,7 +54,7 @@ export async function readAttendanceWorkbook(
 
   if (extension === "csv") {
     const parsedCsv = parseCsv(bytes);
-    return convertSheets([{ sheet: file.name, ...parsedCsv }]);
+    return convertSheets([{ sheet: "CSV", ...parsedCsv }]);
   }
 
   if (extension === "xlsx") {

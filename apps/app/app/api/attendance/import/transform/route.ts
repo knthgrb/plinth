@@ -8,6 +8,8 @@ import {
 } from "@/lib/attendance-import/gemini";
 import {
   ATTENDANCE_IMPORT_LIMITS,
+  type AttendanceImportTransformErrorCode,
+  type AttendanceImportTransformResponse,
   type NormalizedAttendanceCandidate,
 } from "@/lib/attendance-import/types";
 import {
@@ -19,27 +21,6 @@ import { type NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-type AttendanceImportTransformErrorCode =
-  | "unauthenticated"
-  | "forbidden"
-  | "invalid_request"
-  | "unsupported_file"
-  | "unsafe_workbook"
-  | "no_attendance"
-  | "not_configured"
-  | "rate_limited"
-  | "timeout"
-  | "provider_unavailable"
-  | "invalid_provider_response";
-
-export type AttendanceImportTransformResponse =
-  | { ok: true; candidates: NormalizedAttendanceCandidate[] }
-  | {
-      ok: false;
-      code: AttendanceImportTransformErrorCode;
-      message: string;
-    };
-
 interface RouteMetrics {
   correlationId: string;
   startedAt: number;
@@ -48,6 +29,10 @@ interface RouteMetrics {
   rowCount: number;
   candidateCount: number;
 }
+
+type BoundedBodyResult =
+  | { ok: true; bytes: Uint8Array<ArrayBuffer> }
+  | { ok: false; byteCount: number; tooLarge: boolean };
 
 const ORGANIZATION_ID_PATTERN = /^[a-z0-9]{20,64}$/;
 const SUPPORTED_FILE_EXTENSION_PATTERN = /\.(csv|xlsx)$/i;
@@ -113,18 +98,10 @@ export async function POST(
     return errorResponse("invalid_request", 400, metrics);
   }
 
-  let formData: FormData;
-
-  try {
-    formData = await request.formData();
-  } catch {
-    return errorResponse("invalid_request", 400, metrics);
-  }
-
-  const organizationIdValue = formData.get("organizationId");
+  const organizationIdValue = request.headers.get("x-organization-id")?.trim();
 
   if (
-    typeof organizationIdValue !== "string" ||
+    organizationIdValue === undefined ||
     !ORGANIZATION_ID_PATTERN.test(organizationIdValue)
   ) {
     return errorResponse("invalid_request", 400, metrics);
@@ -159,7 +136,50 @@ export async function POST(
     return errorResponse("forbidden", 403, metrics);
   }
 
-  const fileValue = formData.get("file");
+  const boundedBody = await readBoundedBody(request);
+
+  if (!boundedBody.ok) {
+    metrics.byteCount = boundedBody.byteCount;
+    return errorResponse(
+      "invalid_request",
+      boundedBody.tooLarge ? 413 : 400,
+      metrics,
+    );
+  }
+
+  metrics.byteCount = boundedBody.bytes.byteLength;
+
+  let formData: FormData;
+
+  try {
+    const multipartRequest = new Request(request.url, {
+      method: "POST",
+      headers: { "content-type": request.headers.get("content-type") ?? "" },
+      body: boundedBody.bytes.buffer,
+    });
+    formData = await multipartRequest.formData();
+  } catch {
+    return errorResponse("invalid_request", 400, metrics);
+  }
+
+  const formEntries = Array.from(formData.entries());
+  const organizationValues = formData.getAll("organizationId");
+  const fileValues = formData.getAll("file");
+
+  if (
+    formEntries.length !== 2 ||
+    formEntries.some(
+      ([name]) => name !== "organizationId" && name !== "file",
+    ) ||
+    organizationValues.length !== 1 ||
+    typeof organizationValues[0] !== "string" ||
+    organizationValues[0] !== organizationIdValue ||
+    fileValues.length !== 1
+  ) {
+    return errorResponse("invalid_request", 400, metrics);
+  }
+
+  const fileValue = fileValues[0];
 
   if (!(fileValue instanceof File) || fileValue.size === 0) {
     return errorResponse("invalid_request", 400, metrics);
@@ -221,6 +241,52 @@ function errorResponse(
     { ok: false, code, message: ERROR_MESSAGES[code] },
     { status },
   );
+}
+
+async function readBoundedBody(request: NextRequest): Promise<BoundedBodyResult> {
+  const reader = request.body?.getReader();
+
+  if (!reader) {
+    return { ok: false, byteCount: 0, tooLarge: false };
+  }
+
+  const chunks: Uint8Array[] = [];
+  let byteCount = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      byteCount += value.byteLength;
+
+      if (byteCount > ATTENDANCE_IMPORT_LIMITS.maxMultipartBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          // The oversized request is rejected even if its source cannot cancel.
+        }
+        return { ok: false, byteCount, tooLarge: true };
+      }
+
+      chunks.push(value);
+    }
+  } catch {
+    return { ok: false, byteCount, tooLarge: false };
+  }
+
+  const bytes = new Uint8Array(byteCount);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return { ok: true, bytes };
 }
 
 function logResult(

@@ -65,3 +65,24 @@ export interface NormalizedAttendanceCandidate {
   notes: string;
   issues: AttendanceImportIssue[];
 }
+
+export type AttendanceImportTransformErrorCode =
+  | "unauthenticated"
+  | "forbidden"
+  | "invalid_request"
+  | "unsupported_file"
+  | "unsafe_workbook"
+  | "no_attendance"
+  | "not_configured"
+  | "rate_limited"
+  | "timeout"
+  | "provider_unavailable"
+  | "invalid_provider_response";
+
+export type AttendanceImportTransformResponse =
+  | { ok: true; candidates: NormalizedAttendanceCandidate[] }
+  | {
+      ok: false;
+      code: AttendanceImportTransformErrorCode;
+      message: string;
+    };
