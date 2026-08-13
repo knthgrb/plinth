@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,7 +36,6 @@ import {
   X,
   RotateCcw,
   Loader2,
-  FileSpreadsheet,
   AlertTriangle,
 } from "lucide-react";
 import { format } from "date-fns";
@@ -50,6 +50,7 @@ import {
 } from "@/utils/attendance-calculations";
 import {
   holidayAppliesToEmployee,
+  holidayMatchesDate,
   isEmployeeRestDay,
 } from "@/lib/payroll-calculations";
 import {
@@ -57,34 +58,17 @@ import {
   normalizeAttendanceDateMs,
   parseYmdToAttendanceDateMs,
 } from "@/lib/manila-date";
+import {
+  transformAttendanceImport,
+  validateAttendanceImportFile,
+} from "@/lib/attendance-import/client";
+import {
+  buildAttendanceImportPreview,
+  type AttendanceImportPreviewRow,
+} from "@/lib/attendance-import/preview";
+import type { AttendanceImportStatus } from "@/lib/attendance-import/types";
+import { AttendanceImportFileControls } from "./attendance-import-file-controls";
 
-// Parse time string to HH:mm (24h). Supports "9:00 AM", "17:00", "9:00", etc.
-function parseTimeToHHmm(input: string): string | null {
-  if (!input || typeof input !== "string") return null;
-  const s = input.trim();
-  if (!s) return null;
-  const amPm = /\s*(AM|PM|am|pm)\s*$/i.exec(s);
-  if (amPm) {
-    const rest = s.replace(/\s*(AM|PM|am|pm)\s*$/i, "").trim();
-    const parts = rest.split(/[:\s]+/);
-    let h = parseInt(parts[0], 10);
-    const m = parts[1] ? parseInt(parts[1], 10) : 0;
-    if (isNaN(h)) return null;
-    if (amPm[1].toUpperCase() === "PM" && h !== 12) h += 12;
-    if (amPm[1].toUpperCase() === "AM" && h === 12) h = 0;
-    return `${h.toString().padStart(2, "0")}:${(m || 0).toString().padStart(2, "0")}`;
-  }
-  const match = /^(\d{1,2}):?(\d{2})?$/.exec(s);
-  if (match) {
-    const h = parseInt(match[1], 10);
-    const m = match[2] ? parseInt(match[2], 10) : 0;
-    if (h >= 0 && h <= 23 && m >= 0 && m <= 59)
-      return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
-  }
-  return null;
-}
-
-// Format HH:mm (24h) for display as 12-hour (e.g. "08:58" -> "8:58 AM", "18:06" -> "6:06 PM")
 function formatHHmmTo12h(hhmm: string | undefined): string {
   if (!hhmm || !/^\d{1,2}:\d{2}$/.test(hhmm)) return hhmm ?? "—";
   const [hStr, mStr] = hhmm.split(":");
@@ -97,159 +81,41 @@ function formatHHmmTo12h(hhmm: string | undefined): string {
   return `${h}:${m.toString().padStart(2, "0")} ${period}`;
 }
 
-// Parse a single CSV line into cells (handles quoted fields)
-function parseCSVLine(line: string): string[] {
-  const out: string[] = [];
-  let i = 0;
-  while (i < line.length) {
-    if (line[i] === '"') {
-      i++;
-      let cell = "";
-      while (i < line.length && line[i] !== '"') {
-        cell += line[i];
-        i++;
-      }
-      if (line[i] === '"') i++;
-      out.push(cell.trim());
-      if (i < line.length && line[i] === ",") i++;
-    } else {
-      const comma = line.indexOf(",", i);
-      const end = comma === -1 ? line.length : comma;
-      out.push(line.slice(i, end).trim());
-      i = comma === -1 ? line.length : comma + 1;
-    }
-  }
-  return out;
+const CSV_TEMPLATE =
+  "Employee,Date,Time In,Time Out,Status,Notes\n\"Jane Doe\",2025-01-15,9:00 AM,5:00 PM,present,\n\"John Smith\",2025-01-15,8:30 AM,5:30 PM,present,Left early\n";
+
+type ManualAttendanceStatus = Exclude<AttendanceImportStatus, "half-day">;
+
+interface BulkDayTime {
+  timeIn: string;
+  timeOut: string;
+  status: ManualAttendanceStatus;
+  overtime: string;
+  late: string;
+  undertime: string;
+  notes: string;
+  useManualOvertime?: boolean;
+  useManualLate?: boolean;
+  useManualUndertime?: boolean;
 }
 
-// Simple CSV parse: split lines, then split by comma (handle quoted fields)
-function parseCSV(text: string): { headers: string[]; rows: Record<string, string>[] } {
-  const lines = text.split(/\r?\n/).filter((line) => line.trim());
-  if (lines.length === 0) return { headers: [], rows: [] };
-  const headers = parseCSVLine(lines[0]).map((h) => h.trim());
-  const rows: Record<string, string>[] = [];
-  for (let r = 1; r < lines.length; r++) {
-    const cells = parseCSVLine(lines[r]);
-    const row: Record<string, string> = {};
-    headers.forEach((h, i) => {
-      row[h] = cells[i] ?? "";
-    });
-    rows.push(row);
-  }
-  return { headers, rows };
-}
+const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+const DAY_NAMES = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+] as const;
 
-const CSV_TEMPLATE = "Employee,Date,Time In,Time Out,Status,Notes\n\"Jane Doe\",2025-01-15,09:00,17:00,present,\n\"John Smith\",2025-01-15,08:30,17:30,present,Left early\n";
-
-const DATE_ROW_REGEX = /^\d{1,2}\/\d{1,2}\/\d{4}$/;
-
-type BiometricCsvRow = {
-  employeeKey: string;
-  dateStr: string;
-  timeInStr: string;
-  timeOutStr: string;
-};
-
-function parseBiometricTimesheetCSV(text: string): BiometricCsvRow[] {
-  const lines = text.split(/\r?\n/).filter((line) => line.trim());
-  const result: BiometricCsvRow[] = [];
-  let currentEmployee = "";
-
-  for (let r = 0; r < lines.length; r++) {
-    const cells = parseCSVLine(lines[r]);
-    const col5 = (cells[5] ?? "").trim();
-    const col6 = (cells[6] ?? "").trim();
-    const col7 = (cells[7] ?? "").trim();
-
-    if (col5.startsWith("Employee:")) {
-      const namePart = col5
-        .replace(/^Employee:\s*/i, "")
-        .replace(/\s*\(\d+\)\s*$/, "")
-        .trim()
-        .replace(/\s+/g, " ");
-      currentEmployee = namePart;
-      for (let i = 6; i < cells.length - 1; i++) {
-        const cell = (cells[i] ?? "").trim();
-        if (DATE_ROW_REGEX.test(cell)) {
-          const timeInStr = (cells[i + 1] ?? "").trim();
-          const timeOutStr = (cells[i + 2] ?? "").trim();
-          result.push({
-            employeeKey: currentEmployee,
-            dateStr: cell,
-            timeInStr,
-            timeOutStr,
-          });
-          break;
-        }
-      }
-      continue;
-    }
-
-    if (col5 === "Total:") {
-      currentEmployee = "";
-      continue;
-    }
-
-    if (DATE_ROW_REGEX.test(col5) && currentEmployee) {
-      const col8 = (cells[8] ?? "").trim();
-      const col9 = (cells[9] ?? "").trim();
-      result.push({
-        employeeKey: currentEmployee,
-        dateStr: col5,
-        timeInStr: col6 || col8,
-        timeOutStr: col7 || col9,
-      });
-    }
-  }
-
-  return result;
-}
-
-function isBiometricTimesheetFormat(text: string): boolean {
-  const lines = text.split(/\r?\n/).filter((line) => line.trim());
-  for (let r = 0; r < Math.min(20, lines.length); r++) {
-    const cells = parseCSVLine(lines[r]);
-    const col3 = (cells[3] ?? "").trim();
-    const col5 = (cells[5] ?? "").trim();
-    const col7 = (cells[7] ?? "").trim();
-    const col8 = (cells[8] ?? "").trim();
-    if (col3 === "TIMESHEET REPORT") return true;
-    if (col5.startsWith("Employee:") && (col7 === "Date" || col8 === "In 1")) return true;
-    if (col7 === "Date" && col8 === "In 1") return true;
-  }
-  return false;
-}
-
-// Parse date as Manila calendar attendance day (canonical UTC midnight). Supports YYYY-MM-DD and MM/DD/YYYY.
-function parseDateToLocalTimestamp(dateStr: string): { ts: number; label: string } | { ts: 0; label: string } {
-  const s = (dateStr ?? "").trim();
-  if (!s) return { ts: 0, label: "—" };
-  const isoMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
-  if (isoMatch) {
-    try {
-      const ts = parseYmdToAttendanceDateMs(s);
-      return { ts, label: format(new Date(ts), "MMM dd, yyyy") };
-    } catch {
-      return { ts: 0, label: s };
-    }
-  }
-  const slashMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
-  if (slashMatch) {
-    const month = parseInt(slashMatch[1], 10);
-    const day = parseInt(slashMatch[2], 10);
-    const year = parseInt(slashMatch[3], 10);
-    if (month < 1 || month > 12 || day < 1 || day > 31) return { ts: 0, label: s };
-    const ts = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
-    return { ts, label: format(new Date(ts), "MMM dd, yyyy") };
-  }
-  const other = new Date(s);
-  if (isNaN(other.getTime())) return { ts: 0, label: s };
-  const ts = normalizeAttendanceDateMs(other.getTime());
-  return { ts, label: format(new Date(ts), "MMM dd, yyyy") };
+function getDayNameInManila(timestamp: number): (typeof DAY_NAMES)[number] {
+  return DAY_NAMES[new Date(timestamp + MANILA_OFFSET_MS).getUTCDay()];
 }
 
 interface BulkAddAttendanceDialogProps {
-  employees: any[] | undefined;
+  employees: Doc<"employees">[] | undefined;
   currentOrganizationId: string | null;
   onSuccess?: () => void;
 }
@@ -260,13 +126,13 @@ export function BulkAddAttendanceDialog({
   onSuccess,
 }: BulkAddAttendanceDialogProps) {
   const { toast } = useToast();
-  const bulkCreateMutation = useMutation(
-    (api as any).attendance.bulkCreateAttendance,
-  );
+  const bulkCreateMutation = useMutation(api.attendance.bulkCreateAttendance);
   const holidays = useQuery(
-    (api as any).holidays.getHolidays,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
-  );
+    api.holidays.getHolidays,
+    currentOrganizationId
+      ? { organizationId: currentOrganizationId as Id<"organizations"> }
+      : "skip",
+  ) as Doc<"holidays">[] | undefined;
 
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
   const [bulkStartDate, setBulkStartDate] = useState(
@@ -280,101 +146,41 @@ export function BulkAddAttendanceDialog({
   /** Rest days the user explicitly restored from excluded (manual bulk). */
   const manuallyIncludedRestDaysRef = useRef<Set<number>>(new Set());
   // Map of date timestamp to { timeIn, timeOut, status, overtime, late, undertime, notes, useManualOvertime, useManualLate, useManualUndertime }
-  const [bulkDayTimes, setBulkDayTimes] = useState<
-    Record<
-      number,
-      {
-        timeIn: string;
-        timeOut: string;
-        status: "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay" | "no_work";
-        overtime: string;
-        late: string;
-        undertime: string;
-        notes: string;
-        useManualOvertime?: boolean;
-        useManualLate?: boolean;
-        useManualUndertime?: boolean;
-      }
-    >
-  >({});
+  const [bulkDayTimes, setBulkDayTimes] = useState<Record<number, BulkDayTime>>(
+    {},
+  );
   // Set of excluded date timestamps
   const [excludedDates, setExcludedDates] = useState<Set<number>>(new Set());
 
   // CSV import
-  type BulkMode = "manual" | "csv";
+  type BulkMode = "manual" | "file";
   const [bulkMode, setBulkMode] = useState<BulkMode>("manual");
-  type CsvPreviewRow = {
-    employeeId: string | null;
-    employeeName: string;
-    dateTs: number;
-    dateLabel: string;
-    scheduleIn: string;
-    scheduleOut: string;
-    actualIn: string | undefined;
-    actualOut: string | undefined;
-    status: "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay" | "half-day" | "no_work";
-    notes: string;
-    error: string | null;
-    /** When true, row will be imported; when false, excluded. User can toggle per row. */
-    includeInImport: boolean;
-    /** Existing DB record on this Manila day (import conflict). */
-    existingAttendanceId: string | null;
-    /** User must choose overwrite to import when a record already exists. */
-    overwriteExisting: boolean;
-    /** Scheduled rest day for this employee (isWorkday: false). Excluded from import by default. */
-    isRestDay: boolean;
-  };
-  const [csvPreviewRows, setCsvPreviewRows] = useState<CsvPreviewRow[]>([]);
+  const [csvPreviewRows, setCsvPreviewRows] = useState<
+    AttendanceImportPreviewRow[]
+  >([]);
   const [bulkConflictResolutions, setBulkConflictResolutions] = useState<
     Record<number, "overwrite" | "exclude">
   >({});
   const [csvParseError, setCsvParseError] = useState<string | null>(null);
+  const [isTransformingImport, setIsTransformingImport] = useState(false);
   const [isImportingCsv, setIsImportingCsv] = useState(false);
-  const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
-  const dayNamesList = [
-    "sunday",
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
-  ];
-
-  /** Day name for a date in Manila timezone so schedule lookup matches backend. */
-  const getDayNameInManila = (timestamp: number): string =>
-    dayNamesList[new Date(timestamp + MANILA_OFFSET_MS).getUTCDay()];
-
-  const canUseNoWorkForDate = (dateTs: number, employee: any): boolean => {
-    if (!employee || !holidays) return false;
-    const target = new Date(dateTs);
-    const targetY = target.getFullYear();
-    const targetM = target.getMonth();
-    const targetD = target.getDate();
-    return holidays.some((h: any) => {
-      const holidayTs = h.offsetDate ?? h.date;
-      const hd = new Date(holidayTs);
-      const yearMatches = h.isRecurring ? true : (h.year == null || h.year === targetY);
-      if (!yearMatches) return false;
-      const dayMatches = h.isRecurring
-        ? hd.getMonth() === targetM && hd.getDate() === targetD
-        : hd.getFullYear() === targetY &&
-          hd.getMonth() === targetM &&
-          hd.getDate() === targetD;
-      if (!dayMatches) return false;
-      return (
-        (h.type === "regular" || h.type === "special") &&
-        holidayAppliesToEmployee(h, employee)
-      );
-    });
-  };
+  const canUseNoWorkForDate = (
+    dateTs: number,
+    employee: Doc<"employees">,
+  ): boolean =>
+    holidays?.some(
+      (holiday) =>
+        (holiday.type === "regular" || holiday.type === "special") &&
+        holidayMatchesDate(holiday, dateTs) &&
+        holidayAppliesToEmployee(holiday, employee),
+    ) ?? false;
 
   // Generate list of all dates that could be included (before filtering excluded ones)
-  const getAllBulkDates = () => {
+  const getAllBulkDates = useCallback(() => {
     if (!bulkSelectedEmployee || !bulkStartDate || !bulkEndDate) return [];
 
     const employee = employees?.find(
-      (e: any) => e._id === bulkSelectedEmployee,
+      (employee) => employee._id === bulkSelectedEmployee,
     );
     if (!employee) return [];
 
@@ -397,14 +203,14 @@ export function BulkAddAttendanceDialog({
     }
 
     return dates;
-  };
+  }, [bulkEndDate, bulkSelectedEmployee, bulkStartDate, employees]);
 
   // Get filtered dates (excluding removed ones)
-  const getBulkDates = () => {
+  const getBulkDates = useCallback(() => {
     return getAllBulkDates().filter(
       (dateInfo) => !excludedDates.has(dateInfo.timestamp),
     );
-  };
+  }, [excludedDates, getAllBulkDates]);
 
   const bulkRangeBounds = useMemo(() => {
     if (!bulkStartDate || !bulkEndDate) return null;
@@ -418,10 +224,10 @@ export function BulkAddAttendanceDialog({
   }, [bulkStartDate, bulkEndDate]);
 
   const employeeRangeAttendance = useQuery(
-    (api as any).attendance.getEmployeeAttendance,
+    api.attendance.getEmployeeAttendance,
     bulkSelectedEmployee && bulkRangeBounds
       ? {
-          employeeId: bulkSelectedEmployee,
+          employeeId: bulkSelectedEmployee as Id<"employees">,
           startDate: bulkRangeBounds.start - 86400000,
           endDate: bulkRangeBounds.end + 86400000 * 2,
         }
@@ -429,9 +235,9 @@ export function BulkAddAttendanceDialog({
   );
 
   const existingAttendanceByDay = useMemo(() => {
-    const map = new Map<number, string>();
+    const map = new Map<number, Id<"attendance">>();
     if (!employeeRangeAttendance) return map;
-    for (const record of employeeRangeAttendance as { _id: string; date: number }[]) {
+    for (const record of employeeRangeAttendance) {
       const dayKey = normalizeAttendanceDateMs(record.date);
       if (!map.has(dayKey)) {
         map.set(dayKey, record._id);
@@ -452,10 +258,10 @@ export function BulkAddAttendanceDialog({
   }, [csvPreviewRows]);
 
   const orgAttendanceForCsv = useQuery(
-    (api as any).attendance.getAttendance,
+    api.attendance.getAttendance,
     currentOrganizationId && csvDateRange
       ? {
-          organizationId: currentOrganizationId,
+          organizationId: currentOrganizationId as Id<"organizations">,
           startDate: csvDateRange.min - 86400000,
           endDate: csvDateRange.max + 86400000 * 2,
         }
@@ -463,13 +269,9 @@ export function BulkAddAttendanceDialog({
   );
 
   const existingAttendanceIdByCsvKey = useMemo(() => {
-    const map = new Map<string, string>();
+    const map = new Map<string, Id<"attendance">>();
     if (!orgAttendanceForCsv) return map;
-    for (const record of orgAttendanceForCsv as {
-      _id: string;
-      employeeId: string;
-      date: number;
-    }[]) {
+    for (const record of orgAttendanceForCsv) {
       const key = attendanceDayKey(record.employeeId, record.date);
       if (!map.has(key)) {
         map.set(key, record._id);
@@ -503,7 +305,7 @@ export function BulkAddAttendanceDialog({
   }, [bulkSelectedEmployee]);
 
   const getExistingIdForDay = useCallback(
-    (dateTs: number): string | null => {
+    (dateTs: number): Id<"attendance"> | null => {
       const dayKey = normalizeAttendanceDateMs(dateTs);
       return existingAttendanceByDay.get(dayKey) ?? null;
     },
@@ -527,11 +329,7 @@ export function BulkAddAttendanceDialog({
     ).length;
   }, [
     bulkSelectedEmployee,
-    bulkStartDate,
-    bulkEndDate,
-    excludedDates,
-    bulkConflictResolutions,
-    employeeRangeAttendance,
+    getBulkDates,
     getExistingIdForDay,
     isManualConflictResolved,
   ]);
@@ -548,208 +346,31 @@ export function BulkAddAttendanceDialog({
     ).length;
   }, [csvPreviewRows]);
 
-  const normalize = (s: string) =>
-    (s ?? "")
-      .trim()
-      .replace(/\s+/g, " ")
-      .toLowerCase();
-
-  const findEmployeeByKey = (employeeKey: string): any => {
-    const raw = (employeeKey ?? "").trim().replace(/\s+/g, " ");
-    const keyNorm = normalize(raw);
-    const swap = (name: string) => {
-      const parts = name.split(",").map((p) => p.trim().replace(/\s+/g, " ")).filter(Boolean);
-      if (parts.length >= 2) return `${parts[1]} ${parts[0]}`.trim();
-      return name.trim().replace(/\s+/g, " ");
-    };
-    const swappedNorm = normalize(swap(raw));
-    return employees?.find((e: any) => {
-      const first = (e.personalInfo?.firstName ?? "").trim().replace(/\s+/g, " ");
-      const last = (e.personalInfo?.lastName ?? "").trim().replace(/\s+/g, " ");
-      const fullName = `${first} ${last}`.trim();
-      const lastFirst = `${last}, ${first}`.trim();
-      const empId = (e.employment?.employeeId ?? "").trim();
-      const fullNorm = normalize(fullName);
-      const lastFirstDbNorm = normalize(lastFirst);
-      return (
-        fullNorm === keyNorm ||
-        lastFirstDbNorm === keyNorm ||
-        fullNorm === swappedNorm ||
-        lastFirstDbNorm === swappedNorm ||
-        (empId && normalize(empId) === keyNorm)
-      );
-    }) ?? null;
-  };
-
   const handleCSVFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     setCsvParseError(null);
     setCsvPreviewRows([]);
     if (!file || !currentOrganizationId) return;
+
     try {
-      const text = await file.text();
-
-      if (isBiometricTimesheetFormat(text)) {
-        const biometricRows = parseBiometricTimesheetCSV(text);
-        const preview: CsvPreviewRow[] = [];
-        const seen = new Map<string, number>();
-
-        for (let i = 0; i < biometricRows.length; i++) {
-          const { employeeKey, dateStr, timeInStr, timeOutStr } = biometricRows[i];
-          const emp = findEmployeeByKey(employeeKey);
-          const { ts: dateTs, label: dateLabel } = parseDateToLocalTimestamp(dateStr);
-          const actualIn = timeInStr ? parseTimeToHHmm(timeInStr) ?? undefined : undefined;
-          const actualOut = timeOutStr ? parseTimeToHHmm(timeOutStr) ?? undefined : undefined;
-          const status: "present" | "absent" | "leave" | "half-day" | "no_work" =
-            !actualIn && !actualOut ? "absent" : "present";
-
-          let scheduleIn = "09:00";
-          let scheduleOut = "18:00";
-          if (emp?.schedule?.defaultSchedule && dateTs > 0) {
-            const dayName = getDayNameInManila(dateTs);
-            const daySched = emp.schedule.defaultSchedule[dayName];
-            if (daySched?.isWorkday && daySched?.in && daySched?.out) {
-              scheduleIn = daySched.in;
-              scheduleOut = daySched.out;
-            }
-          }
-
-          let error: string | null = null;
-          if (!emp) error = "Employee not found";
-          else if (dateStr && dateTs === 0) error = "Invalid date";
-
-          const isRestDay =
-            !!emp && dateTs > 0 && isEmployeeRestDay(dateTs, emp.schedule);
-          const row: CsvPreviewRow = {
-            employeeId: emp?._id ?? null,
-            employeeName: employeeKey || "—",
-            dateTs,
-            dateLabel,
-            scheduleIn,
-            scheduleOut,
-            actualIn,
-            actualOut,
-            status,
-            notes: "",
-            error,
-            includeInImport: !isRestDay,
-            existingAttendanceId: null,
-            overwriteExisting: false,
-            isRestDay,
-          };
-          const dedupeKey = row.employeeId
-            ? `${row.employeeId}-${dateTs}`
-            : `name:${row.employeeName}-${dateTs}`;
-          const existingIndex = seen.get(dedupeKey);
-          if (existingIndex !== undefined) {
-            preview[existingIndex] = row;
-          } else {
-            seen.set(dedupeKey, preview.length);
-            preview.push(row);
-          }
-        }
-        setCsvPreviewRows(preview);
-        return;
-      }
-
-      const { headers, rows } = parseCSV(text);
-      const lowerHeaders = headers.map((h) => h.toLowerCase().trim());
-      const colAny = (...aliases: string[]): string | null => {
-        for (const alias of aliases) {
-          const idx = lowerHeaders.indexOf(alias.toLowerCase().trim());
-          if (idx !== -1) return headers[idx];
-        }
-        return null;
-      };
-      const employeeCol = colAny("employee", "employee name", "name", "employee id", "staff", "staff name", "full name", "worker", "emp name", "emp");
-      const dateCol = colAny("date", "work date", "attendance date", "day", "transaction date", "punch date", "dates", "workday");
-      const timeInCol = colAny("time in", "timein", "in", "clock in", "clockin", "check in", "checkin", "start time", "punch in", "time in (required)", "in time");
-      const timeOutCol = colAny("time out", "timeout", "out", "clock out", "clockout", "check out", "checkout", "end time", "punch out", "time out (required)", "out time");
-      const statusCol = colAny("status", "attendance status", "type");
-      const notesCol = colAny("notes", "remarks", "comment", "comments");
-
-      if (!employeeCol || !dateCol) {
-        setCsvParseError(
-          "CSV must include a name column (e.g. Employee, Name, Staff) and a date column (e.g. Date, Work Date, Day).",
-        );
-        return;
-      }
-
-      const preview: CsvPreviewRow[] = [];
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const employeeKey = (row[employeeCol] ?? "").trim();
-        const dateStr = (row[dateCol] ?? "").trim();
-        const timeInStr = (row[timeInCol ?? ""] ?? "").trim();
-        const timeOutStr = (row[timeOutCol ?? ""] ?? "").trim();
-        const statusStr = ((row[statusCol ?? ""] ?? "").trim() || "present").toLowerCase();
-        const notes = (row[notesCol ?? ""] ?? "").trim();
-
-        const statusMap: Record<
-          string,
-          "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay" | "half-day" | "no_work"
-        > = {
-          present: "present",
-          absent: "absent",
-          leave: "leave",
-          "leave with pay": "leave_with_pay",
-          "leave_with_pay": "leave_with_pay",
-          "leave without pay": "leave_without_pay",
-          "leave_without_pay": "leave_without_pay",
-          "half-day": "half-day",
-          halfday: "half-day",
-          "no_work": "no_work",
-          "no work": "no_work",
-        };
-        const status = statusMap[statusStr] ?? "present";
-
-        const emp = findEmployeeByKey(employeeKey);
-        const { ts: dateTs, label: dateLabel } = parseDateToLocalTimestamp(dateStr);
-        const actualIn = timeInStr ? parseTimeToHHmm(timeInStr) ?? undefined : undefined;
-        const actualOut = timeOutStr ? parseTimeToHHmm(timeOutStr) ?? undefined : undefined;
-
-        let scheduleIn = "09:00";
-        let scheduleOut = "18:00";
-        if (emp?.schedule?.defaultSchedule && dateTs > 0) {
-          const dayName = getDayNameInManila(dateTs);
-          const daySched = emp.schedule.defaultSchedule[dayName];
-          if (daySched?.isWorkday && daySched?.in && daySched?.out) {
-            scheduleIn = daySched.in;
-            scheduleOut = daySched.out;
-          }
-        }
-
-        let error: string | null = null;
-        if (!emp) error = "Employee not found";
-        else if (dateStr && dateTs === 0) error = "Invalid date";
-        else if (status === "present" && !actualIn && !actualOut) error = "Time In/Out required for present";
-        else if (status === "no_work" && dateTs > 0 && !canUseNoWorkForDate(dateTs, emp))
-          error = "No work is only allowed on holiday dates for this employee";
-
-        const isRestDay =
-          !!emp && dateTs > 0 && isEmployeeRestDay(dateTs, emp.schedule);
-        preview.push({
-          employeeId: emp?._id ?? null,
-          employeeName: employeeKey || "—",
-          dateTs,
-          dateLabel,
-          scheduleIn,
-          scheduleOut,
-          actualIn,
-          actualOut,
-          status,
-          notes,
-          error,
-          includeInImport: !isRestDay,
-          existingAttendanceId: null,
-          overwriteExisting: false,
-          isRestDay,
-        });
-      }
-      setCsvPreviewRows(preview);
-    } catch (err: unknown) {
-      setCsvParseError(err instanceof Error ? err.message : "Failed to parse CSV");
+      validateAttendanceImportFile(file);
+      setIsTransformingImport(true);
+      const candidates = await transformAttendanceImport(
+        file,
+        currentOrganizationId,
+      );
+      setCsvPreviewRows(
+        buildAttendanceImportPreview(candidates, employees ?? [], holidays ?? []),
+      );
+    } catch (error: unknown) {
+      setCsvParseError(
+        error instanceof Error
+          ? error.message
+          : "The attendance file could not be transformed.",
+      );
+    } finally {
+      setIsTransformingImport(false);
     }
   };
 
@@ -772,7 +393,7 @@ export function BulkAddAttendanceDialog({
     if (toImport.length === 0) {
       toast({
         title: "Nothing to import",
-        description: "Fix errors in the CSV, or check Include for rows you want to import.",
+        description: "Fix file errors, or check Include for rows you want to import.",
         variant: "destructive",
       });
       return;
@@ -780,8 +401,8 @@ export function BulkAddAttendanceDialog({
     setIsImportingCsv(true);
     try {
       const entries = toImport.map((r) => ({
-        organizationId: currentOrganizationId as string,
-        employeeId: r.employeeId as string,
+        organizationId: currentOrganizationId as Id<"organizations">,
+        employeeId: r.employeeId as Id<"employees">,
         date: r.dateTs,
         scheduleIn: r.scheduleIn,
         scheduleOut: r.scheduleOut,
@@ -802,10 +423,13 @@ export function BulkAddAttendanceDialog({
         variant: "default",
       });
       onSuccess?.();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Import failed",
-        description: error?.message ?? "Failed to create attendance records.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to create attendance records.",
         variant: "destructive",
       });
     } finally {
@@ -838,7 +462,7 @@ export function BulkAddAttendanceDialog({
     const dates = getAllBulkDates();
 
     const employee = employees?.find(
-      (e: any) => e._id === bulkSelectedEmployee,
+      (employee) => employee._id === bulkSelectedEmployee,
     );
 
     setExcludedDates((prev) => {
@@ -867,7 +491,7 @@ export function BulkAddAttendanceDialog({
       // Merge existing times with new ones, preserving user input
       const merged = { ...prev };
       const employee = employees?.find(
-        (e: any) => e._id === bulkSelectedEmployee,
+        (employee) => employee._id === bulkSelectedEmployee,
       );
 
       if (!employee) return merged;
@@ -917,7 +541,7 @@ export function BulkAddAttendanceDialog({
       });
       return merged;
     });
-  }, [bulkStartDate, bulkEndDate, bulkSelectedEmployee, employees]);
+  }, [bulkEndDate, bulkSelectedEmployee, bulkStartDate, employees, getAllBulkDates]);
 
   const handleBulkSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -926,7 +550,7 @@ export function BulkAddAttendanceDialog({
     setIsSubmittingBulk(true);
     try {
       const employee = employees?.find(
-        (e: any) => e._id === bulkSelectedEmployee,
+        (employee) => employee._id === bulkSelectedEmployee,
       );
       if (!employee) {
         toast({
@@ -1183,7 +807,7 @@ export function BulkAddAttendanceDialog({
               <DialogDescription className="text-sm text-gray-500 mt-1">
                 {bulkMode === "manual"
                   ? "Add attendance for an employee across a date range. Workdays are included by default; scheduled rest days are excluded until you restore them."
-                  : "Upload a CSV to import attendance. Rows on each employee's scheduled rest days are excluded by default—review and check Include to import them."}
+                  : "Upload an Excel or CSV file, then review valid and flagged attendance rows before importing."}
               </DialogDescription>
             </div>
             <div className="flex rounded-lg border border-gray-200 bg-gray-50/50 p-0.5 shrink-0">
@@ -1201,43 +825,29 @@ export function BulkAddAttendanceDialog({
               <button
                 type="button"
                 onClick={() => {
-                  setBulkMode("csv");
+                  setBulkMode("file");
                   setCsvParseError(null);
                   setCsvPreviewRows([]);
                 }}
                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  bulkMode === "csv"
+                  bulkMode === "file"
                     ? "bg-white text-gray-900 shadow-sm border border-gray-200"
                     : "text-gray-600 hover:text-gray-900"
                 }`}
               >
-                Import CSV
+                Import Excel / CSV
               </button>
             </div>
           </div>
         </DialogHeader>
-        {bulkMode === "csv" ? (
+        {bulkMode === "file" ? (
           <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <Label className="text-xs font-medium">CSV file</Label>
-                <Input
-                  type="file"
-                  accept=".csv"
-                  onChange={handleCSVFileSelect}
-                  className="max-w-xs text-xs"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={downloadCSVTemplate}
-                  className="text-xs"
-                >
-                  <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" />
-                  Download template
-                </Button>
-              </div>
+              <AttendanceImportFileControls
+                isTransforming={isTransformingImport}
+                onFileChange={handleCSVFileSelect}
+                onDownloadTemplate={downloadCSVTemplate}
+              />
               {csvParseError && (
                 <p className="text-sm text-red-600">{csvParseError}</p>
               )}
@@ -1271,6 +881,7 @@ export function BulkAddAttendanceDialog({
                       <TableHeader>
                         <TableRow>
                           <TableHead className="text-xs w-0 whitespace-nowrap">Include</TableHead>
+                          <TableHead className="text-xs">Source</TableHead>
                           <TableHead className="text-xs">Employee</TableHead>
                           <TableHead className="text-xs">Date</TableHead>
                           <TableHead className="text-xs">In</TableHead>
@@ -1289,7 +900,7 @@ export function BulkAddAttendanceDialog({
                               ? "Rest day (excluded)"
                               : "Excluded"
                             : r.status;
-                          const rowError = isExcluded ? null : r.error;
+                          const rowError = r.error;
                           const hasConflict =
                             r.includeInImport &&
                             !!r.existingAttendanceId &&
@@ -1332,10 +943,18 @@ export function BulkAddAttendanceDialog({
                                   "—"
                                 )}
                               </TableCell>
+                              <TableCell className="text-xs whitespace-nowrap">
+                                {r.sourceSheet} · Row {r.sourceRow}
+                              </TableCell>
                               <TableCell className="text-xs">{r.employeeName}</TableCell>
                               <TableCell className="text-xs">
                                 <div className="flex flex-col gap-0.5">
                                   <span>{r.dateLabel}</span>
+                                  {r.sourceDate && r.sourceDate !== r.dateLabel && (
+                                    <span className="text-[10px] text-gray-500">
+                                      Source: {r.sourceDate}
+                                    </span>
+                                  )}
                                   {r.isRestDay && (
                                     <span className="text-[10px] font-medium text-violet-700">
                                       Rest day
@@ -1397,7 +1016,7 @@ export function BulkAddAttendanceDialog({
                 type="button"
                 variant="outline"
                 onClick={() => setIsBulkDialogOpen(false)}
-                disabled={isImportingCsv}
+                disabled={isTransformingImport || isImportingCsv}
               >
                 Cancel
               </Button>
@@ -1405,6 +1024,7 @@ export function BulkAddAttendanceDialog({
                 type="button"
                 onClick={handleCSVImport}
                 disabled={
+                  isTransformingImport ||
                   isImportingCsv ||
                   csvUnresolvedConflictCount > 0 ||
                   csvPreviewRows.filter(
@@ -1531,7 +1151,7 @@ export function BulkAddAttendanceDialog({
                         <tbody>
                           {getBulkDates().map((dateInfo) => {
                             const employee = employees?.find(
-                              (e: any) => e._id === bulkSelectedEmployee,
+                              (employee) => employee._id === bulkSelectedEmployee,
                             );
                             const daySchedule =
                               employee?.schedule.defaultSchedule[
@@ -1777,7 +1397,7 @@ export function BulkAddAttendanceDialog({
                                 <TableCell className="px-3 py-2.5 align-middle w-[120px]">
                                   <Select
                                     value={dayTimes.status}
-                                    onValueChange={(value: any) => {
+                                    onValueChange={(value: ManualAttendanceStatus) => {
                                       setBulkDayTimes((prev) => {
                                         const currentTimes =
                                           prev[dateInfo.timestamp] || {};
@@ -1880,10 +1500,11 @@ export function BulkAddAttendanceDialog({
                                       <SelectItem value="leave_without_pay">
                                         Leave without pay
                                       </SelectItem>
-                                      {canUseNoWorkForDate(
-                                        dateInfo.timestamp,
-                                        employee,
-                                      ) && (
+                                      {employee &&
+                                        canUseNoWorkForDate(
+                                          dateInfo.timestamp,
+                                          employee,
+                                        ) && (
                                         <SelectItem value="no_work">
                                           No work
                                         </SelectItem>
@@ -2182,8 +1803,8 @@ export function BulkAddAttendanceDialog({
                                     size="sm"
                                     onClick={() => {
                                       const emp = employees?.find(
-                                        (e: any) =>
-                                          e._id === bulkSelectedEmployee,
+                                        (employee) =>
+                                          employee._id === bulkSelectedEmployee,
                                       );
                                       if (
                                         emp &&
@@ -2231,7 +1852,7 @@ export function BulkAddAttendanceDialog({
                       <div className="flex flex-wrap gap-1.5 sm:gap-2">
                         {getExcludedDates().map((dateInfo) => {
                           const emp = employees?.find(
-                            (e: any) => e._id === bulkSelectedEmployee,
+                            (employee) => employee._id === bulkSelectedEmployee,
                           );
                           const isRest =
                             !!emp &&

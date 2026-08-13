@@ -19,9 +19,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 7108,
-      "fileCount": 237,
-      "fingerprint": "e62031310e2c252d762cec9ec94f0c57dd9ed95a51391fde04a187ad17e66319",
+      "totalMatches": 7094,
+      "fileCount": 238,
+      "fingerprint": "1f071022647d5770994b206426965df38c3a4f0baba74e5186a9c0229f255481",
       "symbols": [
         {
           "symbol": "acknowledgedBy",
@@ -110,7 +110,7 @@
         },
         {
           "symbol": "employeeId",
-          "matches": 1247,
+          "matches": 1240,
           "files": 109
         },
         {
@@ -220,8 +220,8 @@
         },
         {
           "symbol": "notes",
-          "matches": 211,
-          "files": 33
+          "matches": 207,
+          "files": 34
         },
         {
           "symbol": "offerApproval",
@@ -230,8 +230,8 @@
         },
         {
           "symbol": "organizationId",
-          "matches": 1672,
-          "files": 156
+          "matches": 1675,
+          "files": 157
         },
         {
           "symbol": "paidLeaveRequiresRegularization",
@@ -340,8 +340,8 @@
         },
         {
           "symbol": "status",
-          "matches": 858,
-          "files": 91
+          "matches": 852,
+          "files": 92
         },
         {
           "symbol": "supportingDocuments",
