@@ -66,7 +66,11 @@ export function normalizeGeminiAttendanceCandidate(
     .sort((left, right) => left.minutes - right.minutes);
 
   const timeIn = explicitTimeIn?.formatted ?? (hasExplicitTimeIn ? undefined : punches[0]?.formatted);
-  const timeOut = explicitTimeOut?.formatted ?? (hasExplicitTimeOut ? undefined : punches.at(-1)?.formatted);
+  const timeOut =
+    explicitTimeOut?.formatted ??
+    (hasExplicitTimeOut || punches.length < 2
+      ? undefined
+      : punches.at(-1)?.formatted);
 
   if (!timeIn) {
     issues.push({ code: "missing_time_in", message: "Time in is required." });

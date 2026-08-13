@@ -44,6 +44,27 @@ describe("Gemini attendance normalization", () => {
     expect(result.status).toBe("present");
   });
 
+  it("derives only time in from a single punch", () => {
+    const result = normalizeGeminiAttendanceCandidate({
+      sourceSheet: "Punches",
+      sourceRow: 4,
+      employeeKey: "Jane Doe",
+      date: "2026-08-13",
+      explicitTimeIn: "",
+      explicitTimeOut: "",
+      punches: ["6:01 AM"],
+      status: "present",
+      notes: "",
+      extractionIssues: [],
+    });
+
+    expect(result.timeIn).toBe("6:01 AM");
+    expect(result.timeOut).toBeUndefined();
+    expect(result.issues.map((issue) => issue.code)).toContain(
+      "missing_time_out",
+    );
+  });
+
   it("flags an incomplete row without discarding its valid values", () => {
     const result = normalizeGeminiAttendanceCandidate({
       sourceSheet: "Sheet1",
