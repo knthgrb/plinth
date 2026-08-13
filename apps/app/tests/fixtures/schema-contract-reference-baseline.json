@@ -19,9 +19,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 7039,
-      "fileCount": 231,
-      "fingerprint": "4dd553638e25e70856fcdffa355df0439683e27e47e7313cc26ecf24064bb009",
+      "totalMatches": 7052,
+      "fileCount": 233,
+      "fingerprint": "cbf065cb7b34c12ad860061fc8131ffe1ce5364f76adcf37b172252151859f48",
       "symbols": [
         {
           "symbol": "acknowledgedBy",
@@ -220,8 +220,8 @@
         },
         {
           "symbol": "notes",
-          "matches": 202,
-          "files": 29
+          "matches": 205,
+          "files": 31
         },
         {
           "symbol": "offerApproval",
@@ -340,8 +340,8 @@
         },
         {
           "symbol": "status",
-          "matches": 813,
-          "files": 86
+          "matches": 823,
+          "files": 88
         },
         {
           "symbol": "supportingDocuments",
