@@ -81,6 +81,28 @@ describe("Gemini attendance normalization", () => {
     expect(parseAttendanceTime("8:60 AM")).toBeUndefined();
   });
 
+  it("does not replace an invalid explicit time with a punch", () => {
+    const result = normalizeGeminiAttendanceCandidate({
+      sourceSheet: "Sheet1",
+      sourceRow: 2,
+      employeeKey: "Jane Doe",
+      date: "2026-08-13",
+      explicitTimeIn: "8:60 AM",
+      explicitTimeOut: "",
+      punches: ["8:00 AM", "5:00 PM"],
+      status: "present",
+      notes: "",
+      extractionIssues: [],
+    });
+
+    expect(result.timeIn).toBeUndefined();
+    expect(result.timeOut).toBe("5:00 PM");
+    expect(result.issues.map((issue) => issue.code)).toEqual([
+      "invalid_time",
+      "missing_time_in",
+    ]);
+  });
+
   it("flags missing employee and date values", () => {
     const result = normalizeGeminiAttendanceCandidate({
       sourceSheet: "Sheet1",

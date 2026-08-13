@@ -56,6 +56,8 @@ export function normalizeGeminiAttendanceCandidate(
     issues.push({ code: "invalid_date", message: "Date must be a valid ISO date." });
   }
 
+  const hasExplicitTimeIn = Boolean(candidate.explicitTimeIn.trim());
+  const hasExplicitTimeOut = Boolean(candidate.explicitTimeOut.trim());
   const explicitTimeIn = parseCandidateTime(candidate.explicitTimeIn, "time in", issues);
   const explicitTimeOut = parseCandidateTime(candidate.explicitTimeOut, "time out", issues);
   const punches = candidate.punches
@@ -63,8 +65,8 @@ export function normalizeGeminiAttendanceCandidate(
     .filter((punch): punch is ParsedAttendanceTime => punch !== undefined)
     .sort((left, right) => left.minutes - right.minutes);
 
-  const timeIn = explicitTimeIn?.formatted ?? punches[0]?.formatted;
-  const timeOut = explicitTimeOut?.formatted ?? punches.at(-1)?.formatted;
+  const timeIn = explicitTimeIn?.formatted ?? (hasExplicitTimeIn ? undefined : punches[0]?.formatted);
+  const timeOut = explicitTimeOut?.formatted ?? (hasExplicitTimeOut ? undefined : punches.at(-1)?.formatted);
 
   if (!timeIn) {
     issues.push({ code: "missing_time_in", message: "Time in is required." });
