@@ -53,7 +53,9 @@ export function planRelease3ContractCleanup(
     changedFields.push(removal.field);
   }
 
-  for (const [parent, value] of nestedParents) patch[parent] = value;
+  for (const [parent, value] of nestedParents) {
+    if (!Object.hasOwn(patch, parent)) patch[parent] = value;
+  }
   if (issues.length > 0) {
     return { outcome: "conflict", patch: {}, changedFields: [], issues };
   }

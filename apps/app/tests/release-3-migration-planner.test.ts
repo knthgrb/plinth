@@ -37,6 +37,23 @@ describe("Release 3 contract cleanup planner", () => {
     expect(plan).toEqual({ outcome: "unchanged", patch: {}, changedFields: [], issues: [] });
   });
 
+  it("keeps a top-level removal authoritative over nested removals", () => {
+    const plan = planRelease3ContractCleanup("settings", {
+      payrollSettings: {
+        nightDiffPercent: 1.1,
+        payrollTabPassword: "legacy-secret",
+      },
+    });
+
+    expect(plan.outcome).toBe("change");
+    expect(plan.changedFields).toEqual([
+      "payrollSettings",
+      "payrollSettings.payrollTabPassword",
+    ]);
+    expect(plan.patch).toEqual({ payrollSettings: undefined });
+    expect(JSON.stringify(plan)).not.toContain("legacy-secret");
+  });
+
   it("reports malformed nested parents by field name only", () => {
     const plan = planRelease3ContractCleanup("employees", {
       compensation: "encrypted",
