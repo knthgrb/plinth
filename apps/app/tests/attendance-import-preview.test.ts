@@ -12,7 +12,7 @@ import {
   buildAttendanceImportPreviewWhenReady,
   findAttendanceEmployee,
   getAttendanceImportRowIdentities,
-  reconcileAttendanceImportPreviewRows,
+  reconcileAttendanceImportPreviewState,
 } from "@/lib/attendance-import/preview";
 import type { NormalizedAttendanceCandidate } from "@/lib/attendance-import/types";
 
@@ -210,11 +210,27 @@ describe("attendance import preview mapping", () => {
     );
     const identities = getAttendanceImportRowIdentities(rebuilt);
 
-    const reconciled = reconcileAttendanceImportPreviewRows(rebuilt, {
-      [identities[0]]: { includeInImport: false },
-      [identities[1]]: { includeInImport: true },
-      [identities[2]]: { overwriteExisting: true },
-    });
+    const { rows: reconciled } = reconcileAttendanceImportPreviewState(
+      rebuilt,
+      {
+        [identities[0]]: {
+          employeeId: employeeFixture._id,
+          dateTs: Date.UTC(2026, 7, 17),
+          includeInImport: false,
+        },
+        [identities[1]]: {
+          employeeId: employeeFixture._id,
+          dateTs: Date.UTC(2026, 7, 15),
+          includeInImport: true,
+        },
+        [identities[2]]: {
+          employeeId: employeeFixture._id,
+          dateTs: Date.UTC(2026, 7, 18),
+          approvedExistingAttendanceId:
+            "attendance-overwrite" as Id<"attendance">,
+        },
+      },
+    );
 
     expect(reconciled[0].includeInImport).toBe(false);
     expect(reconciled[0].scheduleIn).toBe("07:00");
@@ -228,16 +244,78 @@ describe("attendance import preview mapping", () => {
       overwriteExisting: true,
     });
 
-    const afterConflictRemoval = reconcileAttendanceImportPreviewRows(
+    const afterConflictRemoval = reconcileAttendanceImportPreviewState(
       applyAttendanceImportConflicts(rebuilt, []),
       {
-        [identities[2]]: { overwriteExisting: true },
+        [identities[2]]: {
+          employeeId: employeeFixture._id,
+          dateTs: Date.UTC(2026, 7, 18),
+          approvedExistingAttendanceId:
+            "attendance-overwrite" as Id<"attendance">,
+        },
       },
     );
-    expect(afterConflictRemoval[2]).toMatchObject({
+    expect(afterConflictRemoval.rows[2]).toMatchObject({
       existingAttendanceId: null,
       overwriteExisting: false,
     });
+    expect(
+      afterConflictRemoval.decisions[identities[2]]
+        ?.approvedExistingAttendanceId,
+    ).toBeUndefined();
+
+    for (const conflictId of ["attendance-new", "attendance-overwrite"]) {
+      const reappeared = reconcileAttendanceImportPreviewState(
+        applyAttendanceImportConflicts(rebuilt, [
+          {
+            _id: conflictId as Id<"attendance">,
+            employeeId: employeeFixture._id,
+            date: Date.UTC(2026, 7, 18),
+          },
+        ]),
+        afterConflictRemoval.decisions,
+      );
+      expect(reappeared.rows[2].overwriteExisting).toBe(false);
+    }
+  });
+
+  it("retains an exact overwrite approval while conflict lookup is pending", () => {
+    const [freshRow] = buildAttendanceImportPreview(
+      [validCandidate],
+      [employeeFixture],
+      [],
+    );
+    const [identity] = getAttendanceImportRowIdentities([freshRow]);
+    const existingAttendanceId = "attendance-pending" as Id<"attendance">;
+    const pending = reconcileAttendanceImportPreviewState(
+      [freshRow],
+      {
+        [identity]: {
+          employeeId: employeeFixture._id,
+          dateTs: freshRow.dateTs,
+          approvedExistingAttendanceId: existingAttendanceId,
+        },
+      },
+      false,
+    );
+
+    expect(pending.rows[0].overwriteExisting).toBe(false);
+    expect(
+      pending.decisions[identity]?.approvedExistingAttendanceId,
+    ).toBe(existingAttendanceId);
+
+    const loaded = reconcileAttendanceImportPreviewState(
+      applyAttendanceImportConflicts([freshRow], [
+        {
+          _id: existingAttendanceId,
+          employeeId: employeeFixture._id,
+          date: freshRow.dateTs,
+        },
+      ]),
+      pending.decisions,
+    );
+
+    expect(loaded.rows[0].overwriteExisting).toBe(true);
   });
 
   it("never preserves include or overwrite decisions for a rebuilt invalid row", () => {
@@ -251,9 +329,15 @@ describe("attendance import preview mapping", () => {
     );
     const [identity] = getAttendanceImportRowIdentities([invalidRow]);
 
-    const [reconciled] = reconcileAttendanceImportPreviewRows([invalidRow], {
-      [identity]: { includeInImport: true, overwriteExisting: true },
+    const invalidState = reconcileAttendanceImportPreviewState([invalidRow], {
+      [identity]: {
+        employeeId: employeeFixture._id,
+        dateTs: Date.UTC(2026, 7, 17),
+        includeInImport: true,
+        approvedExistingAttendanceId: "attendance-old" as Id<"attendance">,
+      },
     });
+    const [reconciled] = invalidState.rows;
 
     expect(reconciled).toMatchObject({
       employeeId: null,
@@ -261,23 +345,86 @@ describe("attendance import preview mapping", () => {
       existingAttendanceId: null,
       overwriteExisting: false,
     });
+    expect(invalidState.decisions[identity]).toBeUndefined();
+
+    const [resolvedAsDifferentEmployee] = buildAttendanceImportPreview(
+      [{ ...validCandidate, employeeKey: "EMP-002" }],
+      [employeeFixture, duplicateNameFixture],
+      [],
+    );
+    const resolvedState = reconcileAttendanceImportPreviewState(
+      [resolvedAsDifferentEmployee],
+      invalidState.decisions,
+    );
+
+    expect(resolvedState.rows[0].includeInImport).toBe(true);
+    expect(resolvedState.decisions[identity]).toBeUndefined();
   });
 
   it("keeps duplicate source coordinates as distinct decision identities", () => {
     const rows = buildAttendanceImportPreview(
-      [validCandidate, { ...validCandidate, employeeKey: "Unknown" }],
+      [validCandidate, { ...validCandidate, date: "2026-08-15" }],
       [employeeFixture],
       [],
     );
     const identities = getAttendanceImportRowIdentities(rows);
 
     expect(identities[0]).not.toBe(identities[1]);
-    const reconciled = reconcileAttendanceImportPreviewRows(rows, {
-      [identities[0]]: { includeInImport: false },
-      [identities[1]]: { includeInImport: true },
+    const { rows: reconciled } = reconcileAttendanceImportPreviewState(rows, {
+      [identities[0]]: {
+        employeeId: employeeFixture._id,
+        dateTs: Date.UTC(2026, 7, 17),
+        includeInImport: false,
+      },
+      [identities[1]]: {
+        employeeId: employeeFixture._id,
+        dateTs: Date.UTC(2026, 7, 15),
+        includeInImport: true,
+      },
     });
     expect(reconciled[0].includeInImport).toBe(false);
-    expect(reconciled[1].includeInImport).toBe(false);
+    expect(reconciled[1].includeInImport).toBe(true);
+  });
+
+  it("does not migrate an include decision when employee or date resolution changes", () => {
+    const [original] = buildAttendanceImportPreview(
+      [validCandidate],
+      [employeeFixture, duplicateNameFixture],
+      [],
+    );
+    const [identity] = getAttendanceImportRowIdentities([original]);
+    const decision = {
+      [identity]: {
+        employeeId: employeeFixture._id,
+        dateTs: original.dateTs,
+        includeInImport: false,
+      },
+    };
+    const [differentEmployee] = buildAttendanceImportPreview(
+      [{ ...validCandidate, employeeKey: "EMP-002" }],
+      [employeeFixture, duplicateNameFixture],
+      [],
+    );
+    const employeeChanged = reconcileAttendanceImportPreviewState(
+      [differentEmployee],
+      decision,
+    );
+
+    expect(employeeChanged.rows[0].includeInImport).toBe(true);
+    expect(employeeChanged.decisions[identity]).toBeUndefined();
+
+    const [differentDate] = buildAttendanceImportPreview(
+      [{ ...validCandidate, date: "2026-08-18" }],
+      [employeeFixture],
+      [],
+    );
+    const dateChanged = reconcileAttendanceImportPreviewState(
+      [differentDate],
+      decision,
+    );
+
+    expect(dateChanged.rows[0].includeInImport).toBe(true);
+    expect(dateChanged.decisions[identity]).toBeUndefined();
   });
 
   it("keeps valid rows importable while flagging invalid rows", () => {

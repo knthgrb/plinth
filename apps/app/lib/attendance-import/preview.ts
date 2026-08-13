@@ -46,8 +46,10 @@ export type AttendanceImportConflictRecord = Pick<
 >;
 
 export interface AttendanceImportRowDecision {
+  employeeId: Id<"employees">;
+  dateTs: number;
   includeInImport?: boolean;
-  overwriteExisting?: boolean;
+  approvedExistingAttendanceId?: Id<"attendance">;
 }
 
 export type AttendanceImportRowDecisions = Readonly<
@@ -130,24 +132,89 @@ export function getAttendanceImportRowIdentities(
   });
 }
 
-export function reconcileAttendanceImportPreviewRows(
+export interface AttendanceImportPreviewReconciliation {
+  rows: AttendanceImportPreviewRow[];
+  decisions: AttendanceImportRowDecisions;
+}
+
+export function reconcileAttendanceImportPreviewState(
   rebuiltRows: readonly AttendanceImportPreviewRow[],
   decisions: AttendanceImportRowDecisions,
-): AttendanceImportPreviewRow[] {
+  conflictsReady = true,
+): AttendanceImportPreviewReconciliation {
   const identities = getAttendanceImportRowIdentities(rebuiltRows);
+  const activeIdentities = new Set(identities);
+  let nextDecisions: Record<string, AttendanceImportRowDecision> | null = null;
 
-  return rebuiltRows.map((row, index) => {
-    const decision = decisions[identities[index]];
+  const removeDecision = (identity: string): void => {
+    if (nextDecisions === null) {
+      nextDecisions = { ...decisions };
+    }
+
+    delete nextDecisions[identity];
+  };
+
+  const replaceDecision = (
+    identity: string,
+    decision: AttendanceImportRowDecision,
+  ): void => {
+    if (nextDecisions === null) {
+      nextDecisions = { ...decisions };
+    }
+
+    nextDecisions[identity] = decision;
+  };
+
+  for (const identity of Object.keys(decisions)) {
+    if (!activeIdentities.has(identity)) {
+      removeDecision(identity);
+    }
+  }
+
+  const rows = rebuiltRows.map((row, index) => {
+    const identity = identities[index];
+    const decision = decisions[identity];
     const isValid = row.employeeId !== null && row.dateTs > 0 && row.error === null;
-    const includeInImport = isValid
-      ? decision?.includeInImport ?? row.includeInImport
-      : false;
-    const overwriteExisting = Boolean(
+    const resolvedIdentityMatches = Boolean(
       isValid &&
+        decision &&
+        decision.employeeId === row.employeeId &&
+        decision.dateTs === row.dateTs,
+    );
+
+    if (decision && !resolvedIdentityMatches) {
+      removeDecision(identity);
+    }
+
+    const includeInImport =
+      isValid && resolvedIdentityMatches
+        ? decision?.includeInImport ?? row.includeInImport
+        : isValid
+          ? row.includeInImport
+          : false;
+    const overwriteExisting = Boolean(
+      resolvedIdentityMatches &&
         includeInImport &&
         row.existingAttendanceId &&
-        decision?.overwriteExisting,
+        decision?.approvedExistingAttendanceId === row.existingAttendanceId,
     );
+
+    if (
+      conflictsReady &&
+      decision?.approvedExistingAttendanceId &&
+      resolvedIdentityMatches &&
+      decision.approvedExistingAttendanceId !== row.existingAttendanceId
+    ) {
+      if (decision.includeInImport === undefined) {
+        removeDecision(identity);
+      } else {
+        replaceDecision(identity, {
+          employeeId: decision.employeeId,
+          dateTs: decision.dateTs,
+          includeInImport: decision.includeInImport,
+        });
+      }
+    }
 
     return {
       ...row,
@@ -155,6 +222,11 @@ export function reconcileAttendanceImportPreviewRows(
       overwriteExisting,
     };
   });
+
+  return {
+    rows,
+    decisions: nextDecisions ?? decisions,
+  };
 }
 
 export function findAttendanceEmployee(

@@ -65,7 +65,7 @@ import {
   applyAttendanceImportConflicts,
   buildAttendanceImportPreviewWhenReady,
   getAttendanceImportRowIdentities,
-  reconcileAttendanceImportPreviewRows,
+  reconcileAttendanceImportPreviewState,
   type AttendanceImportPreviewRow,
   type AttendanceImportRowDecisions,
 } from "@/lib/attendance-import/preview";
@@ -338,12 +338,16 @@ export function BulkAddAttendanceDialog({
       return;
     }
 
-    setCsvPreviewRows(
-      reconcileAttendanceImportPreviewRows(
-        applyAttendanceImportConflicts(preview, orgAttendanceForCsv),
-        importRowDecisions,
-      ),
+    const reconciliation = reconcileAttendanceImportPreviewState(
+      applyAttendanceImportConflicts(preview, orgAttendanceForCsv),
+      importRowDecisions,
+      orgAttendanceForCsv !== undefined,
     );
+    setCsvPreviewRows(reconciliation.rows);
+
+    if (reconciliation.decisions !== importRowDecisions) {
+      setImportRowDecisions(reconciliation.decisions);
+    }
   }, [
     employees,
     holidays,
@@ -1040,11 +1044,28 @@ export function BulkAddAttendanceDialog({
                                       disabled={isCheckingImportConflicts}
                                       onChange={() => {
                                         const identity = csvRowIdentities[i];
+                                        if (!r.employeeId || r.dateTs <= 0) {
+                                          return;
+                                        }
+                                        const resolvedEmployeeId = r.employeeId;
+                                        const resolvedDateTs = r.dateTs;
                                         setImportRowDecisions((previous) => ({
                                           ...previous,
                                           [identity]: {
-                                            ...previous[identity],
+                                            employeeId: resolvedEmployeeId,
+                                            dateTs: resolvedDateTs,
                                             includeInImport: !r.includeInImport,
+                                            approvedExistingAttendanceId:
+                                              previous[identity]?.employeeId ===
+                                                resolvedEmployeeId &&
+                                              previous[identity]?.dateTs ===
+                                                resolvedDateTs &&
+                                              previous[identity]
+                                                ?.approvedExistingAttendanceId ===
+                                                r.existingAttendanceId
+                                                ? previous[identity]
+                                                    ?.approvedExistingAttendanceId
+                                                : undefined,
                                           },
                                         }));
                                         setCsvPreviewRows((prev) =>
@@ -1100,11 +1121,31 @@ export function BulkAddAttendanceDialog({
                                     disabled={isCheckingImportConflicts}
                                     onClick={() => {
                                       const identity = csvRowIdentities[i];
+                                      if (
+                                        !r.employeeId ||
+                                        r.dateTs <= 0 ||
+                                        !r.existingAttendanceId
+                                      ) {
+                                        return;
+                                      }
+                                      const resolvedEmployeeId = r.employeeId;
+                                      const resolvedDateTs = r.dateTs;
+                                      const approvedExistingAttendanceId =
+                                        r.existingAttendanceId;
                                       setImportRowDecisions((previous) => ({
                                         ...previous,
                                         [identity]: {
-                                          ...previous[identity],
-                                          overwriteExisting: true,
+                                          employeeId: resolvedEmployeeId,
+                                          dateTs: resolvedDateTs,
+                                          includeInImport:
+                                            previous[identity]?.employeeId ===
+                                              resolvedEmployeeId &&
+                                            previous[identity]?.dateTs ===
+                                              resolvedDateTs
+                                              ? previous[identity]?.includeInImport
+                                              : undefined,
+                                          approvedExistingAttendanceId:
+                                            approvedExistingAttendanceId,
                                         },
                                       }));
                                       setCsvPreviewRows((prev) =>
