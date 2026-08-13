@@ -19,9 +19,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 7092,
-      "fileCount": 236,
-      "fingerprint": "5efc9ed6d43b7d16bc5b979c83989b652f07ea8c7d5b5f7aec583ef11be1243e",
+      "totalMatches": 7107,
+      "fileCount": 237,
+      "fingerprint": "e9420767b6cfaa5a25457c01cc27ed6cafced82fd5caa800818c8de4ea8dfc3a",
       "symbols": [
         {
           "symbol": "acknowledgedBy",
@@ -110,8 +110,8 @@
         },
         {
           "symbol": "employeeId",
-          "matches": 1243,
-          "files": 108
+          "matches": 1246,
+          "files": 109
         },
         {
           "symbol": "enableAnniversaryLeave",
@@ -220,8 +220,8 @@
         },
         {
           "symbol": "notes",
-          "matches": 209,
-          "files": 32
+          "matches": 211,
+          "files": 33
         },
         {
           "symbol": "offerApproval",
@@ -340,8 +340,8 @@
         },
         {
           "symbol": "status",
-          "matches": 848,
-          "files": 90
+          "matches": 858,
+          "files": 91
         },
         {
           "symbol": "supportingDocuments",
