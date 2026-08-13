@@ -185,3 +185,7 @@ identity/credentials release, use
 [`leave-employee-children-release-1c.md`](./leave-employee-children-release-1c.md)
 for the additive leave and employee-child migration. Do not reuse the Release 1
 organization-configuration run IDs for a later domain.
+
+After Release 1C is clean, use
+[`workflow-events-release-1d.md`](./workflow-events-release-1d.md) for the
+additive organization UI, evaluation, and recruitment workflow migration.

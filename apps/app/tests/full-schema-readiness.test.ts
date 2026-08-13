@@ -140,9 +140,9 @@ describe("full schema cleanup readiness", () => {
     expect(inventory).toMatchObject({
       programKey: FULL_SCHEMA_CLEANUP_PROGRAM_KEY,
       programVersion: FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
-      currentTableCount: 54,
+      currentTableCount: 64,
     });
-    expect(inventory.tables).toHaveLength(54);
+    expect(inventory.tables).toHaveLength(64);
     expect(inventory.tables).toContainEqual(
       expect.objectContaining({
         table: "organizations",
@@ -312,6 +312,65 @@ describe("full schema cleanup readiness", () => {
         blockers: expect.arrayContaining(["AUDIT_DESTINATION_DISCREPANCIES"]),
       }),
     );
+  });
+
+  it("marks workflow events ready from its newest clean write audit", async () => {
+    const t = convexTest(schema, modules);
+    const auditId = await t.run(async (ctx) => {
+      const runId = await ctx.db.insert("migrationRuns", {
+        key: "full-schema-workflow-events",
+        version: 1,
+        dryRun: false,
+        status: "completed",
+        phase: "workflow_applicants",
+        batchSize: 20,
+        counters: {
+          scanned: 3,
+          changed: 11,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 1,
+        updatedAt: 1,
+        completedAt: 1,
+      });
+      return ctx.db.insert("migrationAudits", {
+        migrationRunId: runId,
+        status: "completed",
+        phase: "workflow_target_custom_values",
+        batchSize: 5,
+        organizations: 1,
+        destination: {
+          expected: 11,
+          matching: 11,
+          missing: 0,
+          duplicate: 0,
+          mismatched: 0,
+          unexpected: 0,
+          totalRows: 11,
+        },
+        duplicateLegacySettings: 0,
+        sourceConflicts: 0,
+        auditTruncated: false,
+        startedAt: 2,
+        updatedAt: 2,
+        completedAt: 2,
+      });
+    });
+
+    const readiness = await t.query(getFullSchemaCleanupReadiness, {});
+    expect(readiness.domains).toContainEqual(
+      expect.objectContaining({
+        domain: "workflow_events",
+        status: "ready",
+        blockers: [],
+        auditId,
+        auditedAt: 2,
+      }),
+    );
+    expect(readiness.readyForRelease3).toBe(false);
   });
 
   it("does not search past a newer unsafe identity write", async () => {

@@ -192,6 +192,9 @@ export default defineSchema({
       v.literal("leave_types"),
       v.literal("employee_children"),
       v.literal("leave_balances"),
+      v.literal("workflow_settings"),
+      v.literal("workflow_evaluations"),
+      v.literal("workflow_applicants"),
     ),
     cursor: v.optional(v.string()),
     batchSize: v.number(),
@@ -260,6 +263,19 @@ export default defineSchema({
       v.literal("leave_target_definitions"),
       v.literal("leave_target_values"),
       v.literal("leave_target_balances"),
+      v.literal("workflow_settings"),
+      v.literal("workflow_source_verification"),
+      v.literal("workflow_target_ui_settings"),
+      v.literal("workflow_target_settings_events"),
+      v.literal("workflow_target_reviewers"),
+      v.literal("workflow_target_evaluation_events"),
+      v.literal("workflow_target_stage_events"),
+      v.literal("workflow_target_notes"),
+      v.literal("workflow_target_interviews"),
+      v.literal("workflow_target_scorecards"),
+      v.literal("workflow_target_offer_events"),
+      v.literal("workflow_target_custom_definitions"),
+      v.literal("workflow_target_custom_values"),
     ),
     cursor: v.optional(v.string()),
     verificationRunId: v.optional(v.id("migrationRuns")),
@@ -884,7 +900,7 @@ export default defineSchema({
 
   organizationCustomFieldDefinitions: defineTable({
     organizationId: v.id("organizations"),
-    entityType: v.literal("employee"),
+    entityType: v.union(v.literal("employee"), v.literal("applicant")),
     sourceKey: v.string(),
     label: v.string(),
     valueType: v.union(
@@ -927,6 +943,243 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_employee_source_key", ["employeeId", "sourceKey"])
+    .index("by_definition", ["definitionId"])
+    .index("by_organization", ["organizationId"]),
+
+  organizationUiSettings: defineTable({
+    organizationId: v.id("organizations"),
+    evaluationColumns: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          label: v.string(),
+          type: v.union(
+            v.literal("date"),
+            v.literal("number"),
+            v.literal("text"),
+            v.literal("rating"),
+          ),
+          hidden: v.optional(v.boolean()),
+          hasRatingColumn: v.optional(v.boolean()),
+          hasNotesColumn: v.optional(v.boolean()),
+        }),
+      ),
+    ),
+    recruitmentTableColumns: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          label: v.string(),
+          field: v.string(),
+          type: v.union(
+            v.literal("text"),
+            v.literal("number"),
+            v.literal("date"),
+            v.literal("badge"),
+            v.literal("link"),
+          ),
+          sortable: v.optional(v.boolean()),
+          width: v.optional(v.string()),
+          customField: v.optional(v.boolean()),
+        }),
+      ),
+    ),
+    requirementsTableColumns: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          label: v.string(),
+          field: v.string(),
+          type: v.union(
+            v.literal("text"),
+            v.literal("number"),
+            v.literal("date"),
+            v.literal("badge"),
+            v.literal("link"),
+          ),
+          sortable: v.optional(v.boolean()),
+          width: v.optional(v.string()),
+          customField: v.optional(v.boolean()),
+        }),
+      ),
+    ),
+    leaveTableColumns: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          label: v.string(),
+          field: v.string(),
+          type: v.union(
+            v.literal("text"),
+            v.literal("number"),
+            v.literal("date"),
+            v.literal("badge"),
+            v.literal("link"),
+          ),
+          sortable: v.optional(v.boolean()),
+          width: v.optional(v.string()),
+          customField: v.optional(v.boolean()),
+          isDefault: v.optional(v.boolean()),
+          hidden: v.optional(v.boolean()),
+        }),
+      ),
+    ),
+    sourceSettingsId: v.id("settings"),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  organizationSettingsEvents: defineTable({
+    organizationId: v.id("organizations"),
+    sourceSettingsId: v.id("settings"),
+    sourceIndex: v.number(),
+    area: v.string(),
+    version: v.number(),
+    changedBy: v.id("users"),
+    changedAt: v.number(),
+    reason: v.optional(v.string()),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_settings_source_index", ["sourceSettingsId", "sourceIndex"])
+    .index("by_organization", ["organizationId"]),
+
+  evaluationReviewers: defineTable({
+    organizationId: v.id("organizations"),
+    evaluationId: v.id("evaluations"),
+    reviewerId: v.id("users"),
+    sourceIndex: v.number(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_evaluation_reviewer", ["evaluationId", "reviewerId"])
+    .index("by_organization", ["organizationId"]),
+
+  evaluationEvents: defineTable({
+    organizationId: v.id("organizations"),
+    evaluationId: v.id("evaluations"),
+    sourceIndex: v.number(),
+    action: v.string(),
+    at: v.number(),
+    by: v.id("users"),
+    summary: v.optional(v.string()),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_evaluation_source_index", ["evaluationId", "sourceIndex"])
+    .index("by_organization", ["organizationId"]),
+
+  applicantStageEvents: defineTable({
+    organizationId: v.id("organizations"),
+    applicantId: v.id("applicants"),
+    sourceIndex: v.number(),
+    from: v.optional(v.string()),
+    to: v.string(),
+    changedAt: v.number(),
+    changedBy: v.optional(v.id("users")),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_applicant_source_index", ["applicantId", "sourceIndex"])
+    .index("by_organization", ["organizationId"]),
+
+  applicantNotes: defineTable({
+    organizationId: v.id("organizations"),
+    applicantId: v.id("applicants"),
+    sourceIndex: v.number(),
+    date: v.number(),
+    author: v.id("users"),
+    content: v.string(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_applicant_source_index", ["applicantId", "sourceIndex"])
+    .index("by_organization", ["organizationId"]),
+
+  applicantInterviews: defineTable({
+    organizationId: v.id("organizations"),
+    applicantId: v.id("applicants"),
+    sourceIndex: v.number(),
+    date: v.number(),
+    type: v.string(),
+    interviewer: v.id("users"),
+    interviewers: v.optional(v.array(v.id("users"))),
+    remarks: v.optional(v.string()),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_applicant_source_index", ["applicantId", "sourceIndex"])
+    .index("by_organization", ["organizationId"]),
+
+  applicantScorecards: defineTable({
+    organizationId: v.id("organizations"),
+    applicantId: v.id("applicants"),
+    sourceIndex: v.number(),
+    reviewer: v.id("users"),
+    criteria: v.array(
+      v.object({
+        label: v.string(),
+        score: v.number(),
+        notes: v.optional(v.string()),
+      }),
+    ),
+    overallScore: v.number(),
+    recommendation: v.optional(v.string()),
+    submittedAt: v.number(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_applicant_source_index", ["applicantId", "sourceIndex"])
+    .index("by_organization", ["organizationId"]),
+
+  applicantOfferEvents: defineTable({
+    organizationId: v.id("organizations"),
+    applicantId: v.id("applicants"),
+    status: v.union(
+      v.literal("not_requested"),
+      v.literal("pending"),
+      v.literal("approved"),
+      v.literal("rejected"),
+    ),
+    requestedBy: v.optional(v.id("users")),
+    requestedAt: v.optional(v.number()),
+    approvedBy: v.optional(v.id("users")),
+    approvedAt: v.optional(v.number()),
+    notes: v.optional(v.string()),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_applicant", ["applicantId"])
+    .index("by_organization", ["organizationId"]),
+
+  applicantCustomFieldValues: defineTable({
+    organizationId: v.id("organizations"),
+    applicantId: v.id("applicants"),
+    definitionId: v.id("organizationCustomFieldDefinitions"),
+    sourceKey: v.string(),
+    valueType: v.union(
+      v.literal("string"),
+      v.literal("number"),
+      v.literal("boolean"),
+      v.literal("null"),
+      v.literal("array"),
+      v.literal("object"),
+    ),
+    valueJson: v.string(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_applicant_source_key", ["applicantId", "sourceKey"])
     .index("by_definition", ["definitionId"])
     .index("by_organization", ["organizationId"]),
 

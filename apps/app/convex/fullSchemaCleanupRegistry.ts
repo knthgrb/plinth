@@ -44,7 +44,7 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     domain: "workflow_events",
     migrationKey: "full-schema-workflow-events",
     migrationVersion: 1,
-    implementation: "not_started",
+    implementation: "migration",
     policyDomains: ["performance", "recruitment"],
   },
   {

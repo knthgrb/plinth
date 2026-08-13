@@ -66,6 +66,9 @@ import type * as settings from "../settings.js";
 import type * as shifts from "../shifts.js";
 import type * as sss from "../sss.js";
 import type * as storageMigrations from "../storageMigrations.js";
+import type * as workflowMigrationPlanner from "../workflowMigrationPlanner.js";
+import type * as workflowMigrationTypes from "../workflowMigrationTypes.js";
+import type * as workflowMigrations from "../workflowMigrations.js";
 
 import type {
   ApiFromModules,
@@ -132,6 +135,9 @@ declare const fullApi: ApiFromModules<{
   shifts: typeof shifts;
   sss: typeof sss;
   storageMigrations: typeof storageMigrations;
+  workflowMigrationPlanner: typeof workflowMigrationPlanner;
+  workflowMigrationTypes: typeof workflowMigrationTypes;
+  workflowMigrations: typeof workflowMigrations;
 }>;
 
 /**

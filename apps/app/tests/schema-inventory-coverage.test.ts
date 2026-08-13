@@ -53,7 +53,7 @@ describe("schema source inventory", () => {
 
   it("finds all current Convex tables", () => {
     const inventory = parseSchemaSourceInventory(schemaSource);
-    expect(inventory.tables).toHaveLength(54);
+    expect(inventory.tables).toHaveLength(64);
     expect(inventory.tables.map(({ name }) => name)).toContain("assets");
     expect(inventory.tables.map(({ name }) => name)).toContain(
       "payslipCredentials",

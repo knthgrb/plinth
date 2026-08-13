@@ -50,6 +50,7 @@ type FullSchemaCleanupReadinessMode =
   | "organization_configuration"
   | "identity_credentials"
   | "leave_employee_children"
+  | "workflow_events"
   | "unsupported";
 
 function addCounters(
@@ -1296,6 +1297,14 @@ export function resolveFullSchemaCleanupReadinessMode(
   ) {
     return "leave_employee_children";
   }
+  if (
+    registration.implementation === "migration" &&
+    registration.domain === "workflow_events" &&
+    registration.migrationKey === "full-schema-workflow-events" &&
+    registration.migrationVersion === 1
+  ) {
+    return "workflow_events";
+  }
   return "unsupported";
 }
 
@@ -1317,6 +1326,8 @@ async function getFullSchemaDomainReadiness(
     case "identity_credentials":
       return getOrganizationConfigurationReadiness(ctx, registration);
     case "leave_employee_children":
+      return getOrganizationConfigurationReadiness(ctx, registration);
+    case "workflow_events":
       return getOrganizationConfigurationReadiness(ctx, registration);
     case "unsupported":
       return {
