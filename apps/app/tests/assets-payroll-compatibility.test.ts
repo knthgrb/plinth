@@ -45,7 +45,6 @@ async function setup() {
       organizationId,
       name: "Laptop",
       quantity: 1,
-      maintenanceHistory: [{ date: 1, description: "Legacy service" }],
       status: "active",
       createdAt: 1,
       updatedAt: 1,
@@ -66,7 +65,7 @@ async function setup() {
 }
 
 describe("assets and payroll compatibility", () => {
-  it("uses normalized maintenance events before embedded history", async () => {
+  it("loads maintenance history from normalized events", async () => {
     const { actor, assetId } = await setup();
     const asset = await actor.query(api.assets.getAsset, { assetId });
     expect(asset?.maintenanceHistory).toEqual([
@@ -87,7 +86,7 @@ describe("assets and payroll compatibility", () => {
         .withIndex("by_asset_source", (q) => q.eq("assetId", assetId))
         .collect(),
     }));
-    expect(state.asset?.maintenanceHistory?.[0]?.date).toBe(1);
+    expect(state.asset).not.toHaveProperty("maintenanceHistory");
     expect(state.events).toHaveLength(1);
     expect(state.events[0]).toMatchObject({
       serviceDate: 3,

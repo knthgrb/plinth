@@ -1,12 +1,16 @@
 import type { Id } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { decryptEmployeeFromDb } from "./employeeCompensationCrypto";
 
+type DatabaseContext = Pick<QueryCtx | MutationCtx, "db">;
+
 export async function getUserIdsForLeaveApprovers(
-  ctx: { db: any },
+  ctx: DatabaseContext,
   organizationId: Id<"organizations">,
 ): Promise<Id<"users">[]> {
-  const rows = await (ctx.db.query("userOrganizations") as any)
-    .withIndex("by_organization", (q: any) =>
+  const rows = await ctx.db
+    .query("userOrganizations")
+    .withIndex("by_organization", (q) =>
       q.eq("organizationId", organizationId),
     )
     .collect();
@@ -14,11 +18,11 @@ export async function getUserIdsForLeaveApprovers(
   const seen = new Set<string>();
   const out: Id<"users">[] = [];
   for (const r of rows) {
-    if (!approverRoles.has((r as { role: string }).role)) continue;
-    const uid = String((r as { userId: Id<"users"> }).userId);
+    if (!approverRoles.has(r.role)) continue;
+    const uid = String(r.userId);
     if (seen.has(uid)) continue;
     seen.add(uid);
-    out.push((r as { userId: Id<"users"> }).userId);
+    out.push(r.userId);
   }
   return out;
 }
@@ -30,22 +34,23 @@ export async function getUserIdsForLeaveApprovers(
  * alone misses them; we fall back to work-email + org membership (same as payslip emails).
  */
 export async function getUserIdForEmployeeInOrg(
-  ctx: { db: any },
+  ctx: DatabaseContext,
   organizationId: Id<"organizations">,
   employeeId: Id<"employees">,
 ): Promise<Id<"users"> | null> {
-  const rows = await (ctx.db.query("userOrganizations") as any)
-    .withIndex("by_organization", (q: any) =>
+  const rows = await ctx.db
+    .query("userOrganizations")
+    .withIndex("by_organization", (q) =>
       q.eq("organizationId", organizationId),
     )
-    .filter((f: any) => f.eq(f.field("employeeId"), employeeId))
+    .filter((filter) => filter.eq(filter.field("employeeId"), employeeId))
     .collect();
-  const direct = (rows[0] as { userId?: Id<"users"> } | undefined)?.userId;
+  const direct = rows[0]?.userId;
   if (direct) return direct;
 
   const employeeRaw = await ctx.db.get(employeeId);
   if (!employeeRaw) return null;
-  const employee = decryptEmployeeFromDb(employeeRaw as any);
+  const employee = decryptEmployeeFromDb(employeeRaw);
   const workEmail = String(employee.personalInfo?.email || "").trim();
 
   const tryEmails = new Set<string>();
@@ -55,18 +60,20 @@ export async function getUserIdForEmployeeInOrg(
   }
   for (const em of tryEmails) {
     if (!em) continue;
-    const user = await (ctx.db.query("users") as any)
-      .withIndex("by_email", (q: any) => q.eq("email", em))
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", em))
       .first();
-    if (!user || (user as { isActive?: boolean }).isActive === false) continue;
-    const uo = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_user_organization", (q: any) =>
+    if (!user) continue;
+    const uo = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_user_organization", (q) =>
         q.eq("userId", user._id).eq("organizationId", organizationId),
       )
       .first();
     if (!uo) continue;
     if (uo.employeeId != null && uo.employeeId !== employeeId) continue;
-    return (user as { _id: Id<"users"> })._id;
+    return user._id;
   }
 
   return null;
@@ -85,7 +92,7 @@ export type InsertInAppNotificationArgs = {
 };
 
 export async function insertInAppNotification(
-  ctx: { db: any },
+  ctx: Pick<MutationCtx, "db">,
   args: InsertInAppNotificationArgs,
 ) {
   const now = Date.now();

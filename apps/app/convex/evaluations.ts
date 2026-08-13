@@ -6,6 +6,7 @@ import { runOrgQuery } from "./queryAuthGrace";
 import {
   loadEffectiveEvaluation,
   replaceEvaluationProjection,
+  type EffectiveEvaluation,
 } from "./workflowCompatibility";
 
 const templateSectionValidator = v.object({
@@ -50,7 +51,7 @@ async function checkOrgHrAdmin(
 }
 
 function appendEvaluationHistory(
-  evaluation: Doc<"evaluations">,
+  evaluation: EffectiveEvaluation,
   action: string,
   userId: Id<"users">,
   summary?: string,
@@ -86,15 +87,14 @@ export const getEvaluationTemplates = query({
     return runOrgQuery(async () => {
       await checkOrgHrAdmin(ctx, args.organizationId);
 
-      const templates = await (ctx.db.query("evaluationTemplates") as any)
-        .withIndex("by_organization", (q: any) =>
+      const templates = await ctx.db
+        .query("evaluationTemplates")
+        .withIndex("by_organization", (q) =>
           q.eq("organizationId", args.organizationId),
         )
         .collect();
 
-      return templates.sort((a: any, b: any) =>
-        a.name.localeCompare(b.name),
-      );
+      return templates.sort((a, b) => a.name.localeCompare(b.name));
     }, []);
   },
 });
@@ -133,19 +133,20 @@ export const getEvaluations = query({
     return runOrgQuery(async () => {
       await checkOrgHrAdmin(ctx, args.organizationId);
 
-      let evaluations = await (ctx.db.query("evaluations") as any)
-        .withIndex("by_organization", (q: any) =>
+      let evaluations = await ctx.db
+        .query("evaluations")
+        .withIndex("by_organization", (q) =>
           q.eq("organizationId", args.organizationId),
         )
         .collect();
 
       if (args.employeeId) {
         evaluations = evaluations.filter(
-          (e: any) => e.employeeId === args.employeeId,
+          (evaluation) => evaluation.employeeId === args.employeeId,
         );
       }
 
-      evaluations.sort((a: any, b: any) => b.evaluationDate - a.evaluationDate);
+      evaluations.sort((a, b) => b.evaluationDate - a.evaluationDate);
       return Promise.all(
         evaluations.map((evaluation: Doc<"evaluations">) =>
           loadEffectiveEvaluation(ctx, evaluation),

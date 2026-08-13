@@ -15,9 +15,9 @@ describe("evaluation workflow hardening", () => {
     expect(schemaSource).toContain("reviewCycle");
     expect(schemaSource).toContain("selfReview");
     expect(schemaSource).toContain("managerReview");
-    expect(schemaSource).toContain("assignedReviewerIds");
+    expect(schemaSource).toContain("evaluationReviewers");
     expect(schemaSource).toContain("lockedAt");
-    expect(schemaSource).toContain("history");
+    expect(schemaSource).toContain("evaluationEvents");
     expect(evaluationsSource).toContain("createEvaluationTemplate");
     expect(evaluationsSource).toContain("assignEvaluationReviewers");
     expect(evaluationsSource).toContain("lockEvaluation");

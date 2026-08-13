@@ -20,6 +20,9 @@ empty array. Retain the Release 3A backup/export reference for rollback.
 
 Deploy the Release 3B commit using the normal production pipeline. This commit
 contains the strict normalized schema and must not be deployed before the gate.
+The deployment intentionally retires the Release 1/1B–1F backfill functions and
+the Release 3A cleanup functions. Their `migrationRuns`, `migrationAudits`, and
+issue rows remain as operational history; do not delete those records.
 
 After deployment:
 

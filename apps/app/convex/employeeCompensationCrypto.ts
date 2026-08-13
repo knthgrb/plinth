@@ -4,20 +4,47 @@ import {
 } from "./fieldEncryption";
 import { isEncryptionEnabled } from "./appEncryption";
 
-export function encryptCompensationForDb(comp: Record<string, any>) {
-  if (!comp || !isEncryptionEnabled()) return comp;
+type StoredCompensation = Record<string, unknown> & {
+  basicSalary: number | string;
+  allowance?: number | string | null;
+};
+
+type EncryptedCompensation<T extends StoredCompensation> = Omit<
+  T,
+  "basicSalary" | "allowance"
+> & {
+  basicSalary: number | string;
+  allowance?: number | string | null;
+};
+
+type DecryptedCompensation<T extends StoredCompensation> = Omit<
+  T,
+  "basicSalary" | "allowance"
+> & {
+  basicSalary: number;
+  allowance?: number | null;
+};
+
+export function encryptCompensationForDb<T extends StoredCompensation>(
+  comp: T,
+): EncryptedCompensation<T> {
+  if (!isEncryptionEnabled()) return comp;
   return {
     ...comp,
-    basicSalary: maybeEncryptNumberForStorage(comp.basicSalary),
+    basicSalary:
+      typeof comp.basicSalary === "number"
+        ? maybeEncryptNumberForStorage(comp.basicSalary)
+        : comp.basicSalary,
     allowance:
-      comp.allowance !== undefined && comp.allowance !== null
+      typeof comp.allowance === "number"
         ? maybeEncryptNumberForStorage(comp.allowance)
         : comp.allowance,
   };
 }
 
-export function decryptCompensationFromDb(comp: Record<string, any>) {
-  if (!comp) return comp;
+export function decryptCompensationFromDb<T extends StoredCompensation>(
+  comp: T,
+): DecryptedCompensation<T> {
   return {
     ...comp,
     basicSalary: decryptNumberFromStorage(comp.basicSalary),
@@ -28,13 +55,13 @@ export function decryptCompensationFromDb(comp: Record<string, any>) {
   };
 }
 
-export function decryptEmployeeFromDb(emp: any): any {
-  if (!emp) return emp;
-  const safeEmployee = { ...emp };
-  delete safeEmployee.payslipPinHash;
-  delete safeEmployee.payslipPdfPassword;
+export function decryptEmployeeFromDb<
+  T extends { compensation: StoredCompensation },
+>(emp: T): Omit<T, "compensation"> & {
+  compensation: DecryptedCompensation<T["compensation"]>;
+} {
   return {
-    ...safeEmployee,
+    ...emp,
     compensation: decryptCompensationFromDb(emp.compensation),
   };
 }

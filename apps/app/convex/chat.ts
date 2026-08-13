@@ -131,15 +131,7 @@ export const getUserByEmployeeId = query({
       return await ctx.db.get(memberships[0].userId);
     }
 
-    const legacyUser = await ctx.db
-      .query("users")
-      .withIndex("by_employee", (q) => q.eq("employeeId", args.employeeId))
-      .unique();
-
-    return legacyUser?.organizationId === args.organizationId &&
-      legacyUser.isActive !== false
-      ? legacyUser
-      : null;
+    return null;
   },
 });
 
@@ -172,7 +164,7 @@ export const getPayrollAppealRecipient = query({
       );
       for (const candidate of candidates) {
         const user = await ctx.db.get(candidate.userId);
-        if (user && user.isActive !== false) {
+        if (user) {
           return { userId: candidate.userId, role: candidate.role as string };
         }
       }
@@ -208,7 +200,6 @@ async function assertActiveChatParticipants(
     ]);
     if (
       !user ||
-      user.isActive === false ||
       !membership ||
       !canUseFullOrganizationAccess(membership.accessStatus)
     ) {
@@ -905,7 +896,7 @@ export const getOrganizationUsers = query({
     const users = await Promise.all(
       userOrgs.map(async (userOrg) => {
         const user = await ctx.db.get(userOrg.userId);
-        if (!user || user.isActive === false) return null;
+        if (!user) return null;
         return {
           _id: user._id,
           name: user.name || user.email,
@@ -1306,13 +1297,6 @@ export const getPinnedConversations = query({
   handler: async (ctx, args) => {
     const userRecord = await checkAuthForQuery(ctx, args.organizationId);
     if (!userRecord) return [];
-
-    const preferences = await ctx.db
-      .query("userChatPreferences")
-      .withIndex("by_user_organization", (q) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
-      )
-      .first();
 
     return loadEffectivePinnedConversations(
       ctx,

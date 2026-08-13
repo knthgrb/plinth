@@ -33,7 +33,7 @@ export async function requireUserRecord(
     .query("users")
     .withIndex("by_email", (query) => query.eq("email", email))
     .unique();
-  if (!user || user.isActive === false) {
+  if (!user) {
     throw new Error("Not authorized");
   }
 

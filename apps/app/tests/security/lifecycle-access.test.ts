@@ -32,7 +32,7 @@ const defaultSchedule = {
 };
 
 describe("employee lifecycle access", () => {
-  it("does not authorize a user from legacy organization and role columns", async () => {
+  it("does not authorize a user without an organization membership", async () => {
     const t = convexTest(schema, modules);
     const email = "legacy-admin@example.com";
     const organizationId = await t.run(async (ctx) => {
@@ -43,8 +43,6 @@ describe("employee lifecycle access", () => {
       });
       await ctx.db.insert("users", {
         email,
-        organizationId,
-        role: "admin",
         createdAt: 1,
         updatedAt: 1,
       });
@@ -67,7 +65,7 @@ describe("employee lifecycle access", () => {
     ).rejects.toThrow("Not authorized");
   });
 
-  it("uses the membership role instead of a privileged legacy user role", async () => {
+  it("uses the organization membership role", async () => {
     const t = convexTest(schema, modules);
     const email = "membership-employee@example.com";
     const organizationId = await t.run(async (ctx) => {
@@ -78,8 +76,6 @@ describe("employee lifecycle access", () => {
       });
       const userId = await ctx.db.insert("users", {
         email,
-        organizationId,
-        role: "admin",
         createdAt: 1,
         updatedAt: 1,
       });
@@ -149,9 +145,15 @@ describe("employee lifecycle access", () => {
     const organizationId = await t.run(async (ctx) => {
       const organizationId = await ctx.db.insert("organizations", {
         name: "Protected organization",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("organizationPayrollSettings", {
+        organizationId,
         salaryPaymentFrequency: "bimonthly",
         firstPayDate: 15,
         secondPayDate: 30,
+        migrationVersion: 2,
         createdAt: 1,
         updatedAt: 1,
       });
@@ -183,7 +185,14 @@ describe("employee lifecycle access", () => {
     ).rejects.toThrow("Not authorized");
 
     await expect(
-      t.run((ctx) => ctx.db.get(organizationId)),
+      t.run((ctx) =>
+        ctx.db
+          .query("organizationPayrollSettings")
+          .withIndex("by_organization", (q) =>
+            q.eq("organizationId", organizationId),
+          )
+          .unique(),
+      ),
     ).resolves.toMatchObject({
       salaryPaymentFrequency: "bimonthly",
       firstPayDate: 15,
@@ -232,7 +241,6 @@ describe("employee lifecycle access", () => {
       });
       const employeeUserId = await ctx.db.insert("users", {
         email: employeeEmail,
-        employeeId,
         createdAt: 1,
         updatedAt: 1,
       });

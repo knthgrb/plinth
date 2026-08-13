@@ -4,7 +4,13 @@ import { normalizeMigrationSourceKey } from "./leaveEmployeeMigrationPlanner";
 
 const MIGRATION_VERSION = 1;
 type DatabaseContext = Pick<QueryCtx | MutationCtx, "db">;
-type EvaluationHistory = NonNullable<Doc<"evaluations">["history"]>;
+export type EvaluationHistory = Array<
+  Pick<Doc<"evaluationEvents">, "action" | "at" | "by" | "summary">
+>;
+export type EffectiveEvaluation = Doc<"evaluations"> & {
+  assignedReviewerIds: Id<"users">[];
+  history: EvaluationHistory;
+};
 
 export async function getEffectiveOrganizationUiSettings(
   ctx: DatabaseContext,
@@ -76,67 +82,6 @@ export async function appendOrganizationSettingsEvent(
   });
 }
 
-export async function replaceOrganizationSettingsEvents(
-  ctx: MutationCtx,
-  settings: Doc<"settings">,
-  now: number,
-): Promise<void> {
-  const existing = await ctx.db
-    .query("organizationSettingsEvents")
-    .withIndex("by_organization", (q) =>
-      q.eq("organizationId", settings.organizationId),
-    )
-    .filter((q) => q.eq(q.field("sourceSettingsId"), settings._id))
-    .collect();
-  for (const row of existing) await ctx.db.delete(row._id);
-  for (const [sourceIndex, event] of (settings.settingsChangeLog ?? []).entries()) {
-    await ctx.db.insert("organizationSettingsEvents", {
-      organizationId: settings.organizationId,
-      sourceSettingsId: settings._id,
-      sourceIndex,
-      ...event,
-      migrationVersion: MIGRATION_VERSION,
-      createdAt: now,
-      updatedAt: now,
-    });
-  }
-}
-
-export async function loadEffectiveSettingsEvents(
-  ctx: DatabaseContext,
-  settings: Doc<"settings">,
-): Promise<Doc<"settings">> {
-  const rows = await ctx.db
-    .query("organizationSettingsEvents")
-    .withIndex("by_organization", (q) =>
-      q.eq("organizationId", settings.organizationId),
-    )
-    .filter((q) => q.eq(q.field("sourceSettingsId"), settings._id))
-    .collect();
-  const settingsChangeLog = rows
-    .slice()
-    .sort((left, right) => left.sourceIndex - right.sourceIndex)
-    .map((row, index) => {
-      if (
-        row.organizationId !== settings.organizationId ||
-        row.sourceSettingsId !== settings._id
-      ) {
-        throw new Error("Organization settings event tenant mismatch");
-      }
-      if (row.sourceIndex !== index) {
-        throw new Error("Organization settings event indexes are not contiguous");
-      }
-      return {
-        area: row.area,
-        version: row.version,
-        changedBy: row.changedBy,
-        changedAt: row.changedAt,
-        ...(row.reason !== undefined ? { reason: row.reason } : {}),
-      };
-    });
-  return { ...settings, settingsChangeLog };
-}
-
 function assertEvaluationChild(
   evaluation: Doc<"evaluations">,
   child: { organizationId: Id<"organizations">; evaluationId: Id<"evaluations"> },
@@ -152,7 +97,7 @@ function assertEvaluationChild(
 export async function loadEffectiveEvaluation(
   ctx: DatabaseContext,
   evaluation: Doc<"evaluations">,
-): Promise<Doc<"evaluations">> {
+): Promise<EffectiveEvaluation> {
   const [reviewerRows, eventRows] = await Promise.all([
     ctx.db
       .query("evaluationReviewers")
@@ -253,15 +198,47 @@ export async function replaceEvaluationProjection(
   }
 }
 
-type ApplicantStage = NonNullable<Doc<"applicants">["pipelineStageHistory"]>;
-type ApplicantNotes = NonNullable<Doc<"applicants">["notes"]>;
-type ApplicantInterviews = NonNullable<Doc<"applicants">["interviewSchedules"]>;
-type ApplicantScorecards = NonNullable<Doc<"applicants">["scorecards"]>;
+type ApplicantStage = Array<
+  Pick<Doc<"applicantStageEvents">, "from" | "to" | "changedAt" | "changedBy">
+>;
+type ApplicantNotes = Array<
+  Pick<Doc<"applicantNotes">, "date" | "author" | "content">
+>;
+type ApplicantInterviews = Array<
+  Pick<
+    Doc<"applicantInterviews">,
+    "date" | "type" | "interviewer" | "interviewers" | "remarks"
+  >
+>;
+type ApplicantScorecards = Array<
+  Pick<
+    Doc<"applicantScorecards">,
+    "reviewer" | "criteria" | "overallScore" | "recommendation" | "submittedAt"
+  >
+>;
+type ApplicantOffer = Pick<
+  Doc<"applicantOfferEvents">,
+  | "status"
+  | "requestedBy"
+  | "requestedAt"
+  | "approvedBy"
+  | "approvedAt"
+  | "notes"
+>;
+type ApplicantCustomFields = Record<string, unknown>;
+export type EffectiveApplicant = Doc<"applicants"> & {
+  pipelineStageHistory: ApplicantStage;
+  notes: ApplicantNotes;
+  interviewSchedules: ApplicantInterviews;
+  scorecards: ApplicantScorecards;
+  offerApproval?: ApplicantOffer;
+  customFields?: ApplicantCustomFields;
+};
 
 export async function loadEffectiveApplicant(
   ctx: DatabaseContext,
   applicant: Doc<"applicants">,
-): Promise<Doc<"applicants">> {
+): Promise<EffectiveApplicant> {
   const [stages, notes, interviews, scorecards, offers, customValues] = await Promise.all([
     ctx.db.query("applicantStageEvents").withIndex("by_organization", (q) => q.eq("organizationId", applicant.organizationId)).filter((q) => q.eq(q.field("applicantId"), applicant._id)).collect(),
     ctx.db.query("applicantNotes").withIndex("by_organization", (q) => q.eq("organizationId", applicant.organizationId)).filter((q) => q.eq(q.field("applicantId"), applicant._id)).collect(),
@@ -300,7 +277,7 @@ export async function replaceApplicantProjection(
     notes: ApplicantNotes;
     interviews: ApplicantInterviews;
     scorecards: ApplicantScorecards;
-    offer?: NonNullable<Doc<"applicants">["offerApproval"]>;
+    offer?: ApplicantOffer;
   },
   now: number,
 ): Promise<void> {
@@ -322,7 +299,17 @@ export async function replaceApplicantProjection(
 export async function synchronizeEffectiveApplicant(
   ctx: MutationCtx,
   applicant: Doc<"applicants">,
-  patch: Partial<Pick<Doc<"applicants">, "pipelineStageHistory" | "notes" | "interviewSchedules" | "scorecards" | "offerApproval" | "customFields">>,
+  patch: Partial<
+    Pick<
+      EffectiveApplicant,
+      | "pipelineStageHistory"
+      | "notes"
+      | "interviewSchedules"
+      | "scorecards"
+      | "offerApproval"
+      | "customFields"
+    >
+  >,
   now: number,
 ): Promise<void> {
   const effective = await loadEffectiveApplicant(ctx, applicant);

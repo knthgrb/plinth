@@ -6,19 +6,68 @@ const MIGRATION_VERSION = 1;
 
 type DatabaseContext = Pick<QueryCtx | MutationCtx, "db">;
 
-type EmployeeDeduction = NonNullable<Doc<"employees">["deductions"]>[number];
-type EmployeeIncentive = NonNullable<Doc<"employees">["incentives"]>[number];
-type EmployeeRequirement = NonNullable<
-  Doc<"employees">["requirements"]
->[number];
-type EmployeeScheduleOverride = NonNullable<
-  Doc<"employees">["schedule"]["scheduleOverrides"]
->[number];
-type EmployeePaymentAccount = NonNullable<
-  Doc<"employees">["compensation"]["bankDetails"]
+export type EmployeeDeduction = {
+  id: string;
+  type: Doc<"employeeDeductions">["type"];
+  name: string;
+  amount: number;
+  frequency: Doc<"employeeDeductions">["frequency"];
+  startDate: number;
+  endDate?: number;
+  isActive: boolean;
+};
+export type EmployeeIncentive = {
+  id: string;
+  name: string;
+  amount: number;
+  frequency: Doc<"employeeIncentives">["frequency"];
+  isActive: boolean;
+};
+export type EmployeeRequirement = Omit<
+  Doc<"employeeRequirements">,
+  | "_id"
+  | "_creationTime"
+  | "organizationId"
+  | "employeeId"
+  | "requirementDefinitionId"
+  | "sourceKey"
+  | "migrationVersion"
+  | "createdAt"
+  | "updatedAt"
 >;
-type EmployeeLeaveCredits = NonNullable<Doc<"employees">["leaveCredits"]>;
+export type EmployeeScheduleOverride = Pick<
+  Doc<"employeeScheduleOverrides">,
+  "date" | "in" | "out" | "reason"
+>;
+export type EmployeePaymentAccount = Pick<
+  Doc<"employeePaymentAccounts">,
+  "bankName" | "accountNumber" | "accountName"
+>;
+export type EmployeeLeaveCredits = {
+  vacation: { total: number; used: number; balance: number };
+  sick: { total: number; used: number; balance: number };
+  custom?: Array<{
+    type: string;
+    total: number;
+    used: number;
+    balance: number;
+  }>;
+};
 type CustomFields = Record<string, unknown>;
+
+export type EffectiveEmployee = Doc<"employees"> & {
+  deductions: EmployeeDeduction[];
+  incentives: EmployeeIncentive[];
+  requirements: EmployeeRequirement[];
+  leaveCredits?: EmployeeLeaveCredits;
+  customFields?: CustomFields;
+  compensation: Doc<"employees">["compensation"] & {
+    bankDetails?: EmployeePaymentAccount;
+  };
+  schedule: Doc<"employees">["schedule"] & {
+    scheduleOverrides: EmployeeScheduleOverride[];
+  };
+};
 
 function assertEmployeeChild(
   employee: Doc<"employees">,
@@ -624,7 +673,7 @@ export async function upsertOrganizationLeaveSettings(
 export async function loadEffectiveEmployee(
   ctx: DatabaseContext,
   employee: Doc<"employees">,
-): Promise<Doc<"employees">> {
+): Promise<EffectiveEmployee> {
   const [deductions, incentives, requirements, scheduleOverrides, bankDetails, leaveCredits, customFields] =
     await Promise.all([
       loadEffectiveEmployeeDeductions(ctx, employee),

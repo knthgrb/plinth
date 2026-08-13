@@ -7,13 +7,16 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
   loadEffectiveMemo,
   synchronizeEffectiveMemo,
+  type EffectiveMemo,
   type MemoReaction,
 } from "./communicationsCompatibility";
 
-type AnnouncementAudience = Pick<
-  Doc<"memos">,
-  "organizationId" | "targetAudience" | "departments" | "specificEmployees"
->;
+type AnnouncementAudience = {
+  organizationId: Id<"organizations">;
+  targetAudience: Doc<"memos">["targetAudience"];
+  departments: string[];
+  specificEmployees: Id<"employees">[];
+};
 
 // Helper to check authorization - allows all authenticated users
 async function checkAuth(
@@ -67,7 +70,7 @@ async function getAnnouncementAudienceEmployeeIds(
   return [];
 }
 
-function sortAnnouncementsForDisplay(a: Doc<"memos">, b: Doc<"memos">) {
+function sortAnnouncementsForDisplay(a: EffectiveMemo, b: EffectiveMemo) {
   if (Boolean(a.isPinned) !== Boolean(b.isPinned)) {
     return a.isPinned ? -1 : 1;
   }
@@ -95,7 +98,8 @@ export const getAnnouncementAttachmentUrl = query({
         throw new Error("Announcement not found");
       }
 
-      const attachments = announcement.attachments || [];
+      const effectiveAnnouncement = await loadEffectiveMemo(ctx, announcement);
+      const attachments = effectiveAnnouncement.attachments;
       if (!attachments.includes(args.storageId)) {
         throw new Error("Attachment not found for this announcement");
       }
@@ -117,15 +121,15 @@ export const getAnnouncements = query({
     return runOrgQuery(async () => {
       const userRecord = await checkAuth(ctx, args.organizationId);
 
-      let announcements = await ctx.db
+      const rawAnnouncements = await ctx.db
         .query("memos")
         .withIndex("by_organization", (q) =>
           q.eq("organizationId", args.organizationId),
         )
         .collect();
 
-      announcements = await Promise.all(
-        announcements.map((memo) => loadEffectiveMemo(ctx, memo)),
+      let announcements = await Promise.all(
+        rawAnnouncements.map((memo) => loadEffectiveMemo(ctx, memo)),
       );
 
       const now = Date.now();
@@ -180,15 +184,15 @@ export const getUnreadAnnouncementsCount = query({
         )
         .first();
 
-      let announcements = await ctx.db
+      const rawAnnouncements = await ctx.db
         .query("memos")
         .withIndex("by_organization", (q) =>
           q.eq("organizationId", args.organizationId),
         )
         .collect();
 
-      announcements = await Promise.all(
-        announcements.map((memo) => loadEffectiveMemo(ctx, memo)),
+      let announcements = await Promise.all(
+        rawAnnouncements.map((memo) => loadEffectiveMemo(ctx, memo)),
       );
 
       const now = Date.now();
@@ -305,8 +309,8 @@ export const createAnnouncement = mutation({
     const audienceEmployeeIds = await getAnnouncementAudienceEmployeeIds(ctx, {
       organizationId: args.organizationId,
       targetAudience: args.targetAudience,
-      departments: args.departments,
-      specificEmployees: args.specificEmployees,
+      departments: args.departments ?? [],
+      specificEmployees: args.specificEmployees ?? [],
     });
     const announcementId = await ctx.db.insert("memos", {
       organizationId: args.organizationId,

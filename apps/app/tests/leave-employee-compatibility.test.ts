@@ -70,17 +70,6 @@ async function setup() {
           sunday: { ...workday, isWorkday: false },
         },
       },
-      deductions: [
-        {
-          id: "legacy",
-          type: "other",
-          name: "Legacy deduction",
-          amount: 100,
-          frequency: "monthly",
-          startDate: 1,
-          isActive: true,
-        },
-      ],
       createdAt: 1,
       updatedAt: 1,
     });
@@ -104,7 +93,7 @@ async function setup() {
 }
 
 describe("leave and employee child compatibility", () => {
-  it("uses normalized employee deductions before conflicting legacy data", async () => {
+  it("loads employee deductions from normalized rows", async () => {
     const { actor, employeeId } = await setup();
 
     const employee = await actor.query(api.employees.getEmployee, {
@@ -145,9 +134,7 @@ describe("leave and employee child compatibility", () => {
         )
         .collect(),
     }));
-    expect(state.employee?.deductions).toEqual([
-      expect.objectContaining({ id: "legacy" }),
-    ]);
+    expect(state.employee).not.toHaveProperty("deductions");
     expect(state.deductions).toHaveLength(1);
     expect(state.deductions[0]).toMatchObject({
       sourceId: "new-deduction",
@@ -159,18 +146,6 @@ describe("leave and employee child compatibility", () => {
   it("updates default requirements from the normalized employee projection", async () => {
     const { t, actor, organizationId, employeeId } = await setup();
     await t.run(async (ctx) => {
-      const employee = await ctx.db.get(employeeId);
-      if (!employee) throw new Error("Employee fixture missing");
-      await ctx.db.patch(employeeId, {
-        requirements: [
-          {
-            type: "Legacy custom",
-            isRequired: true,
-            status: "pending",
-            isCustom: true,
-          },
-        ],
-      });
       await ctx.db.insert("employeeRequirements", {
         organizationId,
         employeeId,
@@ -200,9 +175,7 @@ describe("leave and employee child compatibility", () => {
         .filter((q) => q.eq(q.field("employeeId"), employeeId))
         .collect(),
     }));
-    expect(state.employee?.requirements?.map((row) => row.type)).toEqual([
-      "Legacy custom",
-    ]);
+    expect(state.employee).not.toHaveProperty("requirements");
     expect(state.requirements.map((row) => row.type)).toEqual([
       "Government ID",
       "Normalized custom",

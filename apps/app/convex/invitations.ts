@@ -515,9 +515,8 @@ async function findInvitationByRawToken(
 
 function redactInvitationToken(
   invitation: Doc<"invitations">,
-): Omit<Doc<"invitations">, "token" | "tokenHash"> {
-  const { token: _token, tokenHash: _tokenHash, ...redacted } = invitation;
-  void _token;
+): Omit<Doc<"invitations">, "tokenHash"> {
+  const { tokenHash: _tokenHash, ...redacted } = invitation;
   void _tokenHash;
   return redacted;
 }
@@ -581,7 +580,6 @@ export const resendInvitation = mutation({
     const token = createInvitationToken();
     const now = Date.now();
     await ctx.db.patch(invitation._id, {
-      token: undefined,
       tokenHash: hashInvitationToken(token),
       expiresAt: now + 7 * 24 * 60 * 60 * 1000,
     });

@@ -3,13 +3,31 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 
 const MIGRATION_VERSION = 1;
 type DatabaseContext = Pick<QueryCtx | MutationCtx, "db">;
-type EffectiveConversation = Omit<Doc<"conversations">, "participants"> & {
+type EffectiveConversation = Doc<"conversations"> & {
   participants: Id<"users">[];
 };
 export type MemoReaction = {
   userId: Id<"users">;
   emoji: string;
   createdAt: number;
+};
+export type MemoAcknowledgement = {
+  employeeId: Id<"employees">;
+  date: number;
+};
+export type EffectiveMemo = Doc<"memos"> & {
+  reactions: MemoReaction[];
+  acknowledgedBy: MemoAcknowledgement[];
+  specificEmployees: Id<"employees">[];
+  departments: string[];
+  attachments: Id<"_storage">[];
+  attachmentContentTypes: string[];
+};
+export type EffectiveDocument = Doc<"documents"> & {
+  sharedWith: Id<"users">[];
+  visibleEmployeeIds: Id<"employees">[];
+  visibleDepartments: string[];
+  attachments: Id<"_storage">[];
 };
 
 function assertMemoChild(
@@ -27,7 +45,7 @@ function assertMemoChild(
 export async function loadEffectiveMemo(
   ctx: DatabaseContext,
   memo: Doc<"memos">,
-): Promise<Doc<"memos">> {
+): Promise<EffectiveMemo> {
   const [reactions, acknowledgements, audience, links] = await Promise.all([
     ctx.db.query("memoReactions").withIndex("by_memo", (q) => q.eq("memoId", memo._id)).collect(),
     ctx.db.query("memoAcknowledgements").withIndex("by_memo", (q) => q.eq("memoId", memo._id)).collect(),
@@ -81,7 +99,7 @@ export async function replaceMemoProjection(
   memo: Doc<"memos">,
   values: {
     reactions: MemoReaction[];
-    acknowledgements: NonNullable<Doc<"memos">["acknowledgedBy"]>;
+    acknowledgements: MemoAcknowledgement[];
     employees: Id<"employees">[];
     departments: string[];
     attachments: Id<"_storage">[];
@@ -139,7 +157,17 @@ export async function replaceMemoProjection(
 export async function synchronizeEffectiveMemo(
   ctx: MutationCtx,
   memo: Doc<"memos">,
-  patch: Partial<Pick<Doc<"memos">, "reactions" | "acknowledgedBy" | "specificEmployees" | "departments" | "attachments" | "attachmentContentTypes">>,
+  patch: Partial<
+    Pick<
+      EffectiveMemo,
+      | "reactions"
+      | "acknowledgedBy"
+      | "specificEmployees"
+      | "departments"
+      | "attachments"
+      | "attachmentContentTypes"
+    >
+  >,
   now: number,
 ): Promise<void> {
   const effective = await loadEffectiveMemo(ctx, memo);
@@ -157,7 +185,7 @@ export async function synchronizeEffectiveMemo(
 export async function loadEffectiveDocument(
   ctx: DatabaseContext,
   document: Doc<"documents">,
-): Promise<Doc<"documents">> {
+): Promise<EffectiveDocument> {
   const [grants, links] = await Promise.all([
     ctx.db.query("documentAccessGrants").withIndex("by_document", (q) => q.eq("documentId", document._id)).collect(),
     ctx.db.query("storageObjectLinks").withIndex("by_parent", (q) => q.eq("parentType", "document").eq("parentId", document._id)).collect(),
@@ -180,7 +208,10 @@ export async function loadEffectiveDocument(
 export async function replaceDocumentProjection(
   ctx: MutationCtx,
   document: Doc<"documents">,
-  values: Pick<Doc<"documents">, "sharedWith" | "visibleEmployeeIds" | "visibleDepartments" | "attachments">,
+  values: Pick<
+    EffectiveDocument,
+    "sharedWith" | "visibleEmployeeIds" | "visibleDepartments" | "attachments"
+  >,
   now: number,
 ): Promise<void> {
   const [grants, links] = await Promise.all([

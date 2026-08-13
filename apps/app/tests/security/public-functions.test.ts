@@ -165,7 +165,7 @@ describe("public Convex security boundaries", () => {
         email: "invitee@example.com",
         role: "employee",
         invitedBy: inviterId,
-        token: "private-token",
+        tokenHash: "private-token-hash",
         status: "pending",
         expiresAt: Date.now() + 60_000,
         createdAt: 1,

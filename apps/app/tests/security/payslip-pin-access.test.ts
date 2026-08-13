@@ -93,7 +93,6 @@ async function createFixture(accessStatus: "active" | "alumni" = "active") {
     });
     const userId = await ctx.db.insert("users", {
       email,
-      employeeId,
       createdAt: 1,
       updatedAt: 1,
     });
@@ -146,12 +145,11 @@ describe("payslip PIN access", () => {
     ).rejects.toThrow("Not authorized");
   });
 
-  it("prefers the normalized credential over a conflicting legacy hash", async () => {
+  it("reads the normalized credential", async () => {
     const { t, email, employeeId } = await createFixture();
     await t.run(async (ctx) => {
       const employee = await ctx.db.get(employeeId);
       if (!employee) throw new Error("Employee fixture was not found");
-      await ctx.db.patch(employeeId, { payslipPinHash: "legacy-hash" });
       await ctx.db.insert("payslipCredentials", {
         organizationId: employee.organizationId,
         employeeId,
@@ -166,17 +164,6 @@ describe("payslip PIN access", () => {
     await expect(
       t.withIdentity({ email }).mutation(beginVerification, { employeeId }),
     ).resolves.toEqual({ credential: "normalized-hash", locked: false });
-  });
-
-  it("does not read a legacy credential when the normalized row is absent", async () => {
-    const { t, email, employeeId } = await createFixture();
-    await t.run((ctx) =>
-      ctx.db.patch(employeeId, { payslipPinHash: "legacy-hash" }),
-    );
-
-    await expect(
-      t.withIdentity({ email }).mutation(beginVerification, { employeeId }),
-    ).resolves.toEqual({ credential: null, locked: false });
   });
 
   it("writes new and upgraded credentials only to the normalized row", async () => {
@@ -198,7 +185,7 @@ describe("payslip PIN access", () => {
         .withIndex("by_employee", (q) => q.eq("employeeId", employeeId))
         .collect(),
     }));
-    expect(state.employee?.payslipPinHash).toBeUndefined();
+    expect(state.employee).not.toHaveProperty("payslipPinHash");
     expect(state.credentials).toHaveLength(1);
     expect(state.credentials[0]?.credentialHash).toBe("scrypt$v1$upgraded");
   });
@@ -250,7 +237,7 @@ describe("payslip PIN access", () => {
     ).rejects.toThrow("Reset link is invalid or has expired");
 
     const employee = await t.run((ctx) => ctx.db.get(employeeId));
-    expect(employee?.payslipPinHash).toBeUndefined();
+    expect(employee).not.toHaveProperty("payslipPinHash");
     const credentials = await t.run((ctx) =>
       ctx.db
         .query("payslipCredentials")

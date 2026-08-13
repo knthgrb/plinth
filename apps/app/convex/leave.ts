@@ -26,6 +26,8 @@ import { canUseEmployeeSelfService } from "@/utils/employee-lifecycle";
 import {
   loadEffectiveEmployee,
   replaceEmployeeLeaveCredits,
+  type EffectiveEmployee,
+  type EmployeeLeaveCredits,
 } from "./leaveEmployeeCompatibility";
 import { getEffectiveSettings } from "./organizationConfiguration";
 import {
@@ -36,7 +38,7 @@ import {
 async function persistLeaveCredits(
   ctx: MutationCtx,
   employee: Doc<"employees">,
-  leaveCredits: NonNullable<Doc<"employees">["leaveCredits"]>,
+  leaveCredits: EmployeeLeaveCredits,
 ): Promise<void> {
   const now = Date.now();
   await replaceEmployeeLeaveCredits(ctx, employee, leaveCredits, now);
@@ -76,8 +78,8 @@ async function checkAuth(
 }
 
 async function checkAuthForQuery(
-  ctx: any,
-  organizationId: any,
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
   requiredRole?: "owner" | "admin" | "hr",
 ) {
   try {
@@ -106,7 +108,7 @@ function calculateWorkingDays(startDate: number, endDate: number): number {
 }
 
 async function findOverlappingLeaveRequest(
-  ctx: any,
+  ctx: QueryCtx | MutationCtx,
   {
     organizationId,
     employeeId,
@@ -115,24 +117,25 @@ async function findOverlappingLeaveRequest(
     statuses,
     excludeLeaveRequestId,
   }: {
-    organizationId: any;
-    employeeId: any;
+    organizationId: Id<"organizations">;
+    employeeId: Id<"employees">;
     startDate: number;
     endDate: number;
     statuses: readonly ActiveLeaveRequestStatus[];
-    excludeLeaveRequestId?: any;
+    excludeLeaveRequestId?: Id<"leaveRequests">;
   },
 ) {
   for (const status of statuses) {
-    const possibleConflicts = await (ctx.db.query("leaveRequests") as any)
-      .withIndex("by_employee_status_endDate", (q: any) =>
+    const possibleConflicts = await ctx.db
+      .query("leaveRequests")
+      .withIndex("by_employee_status_endDate", (q) =>
         q
           .eq("employeeId", employeeId)
           .eq("status", status)
           .gte("endDate", startDate),
       )
       .collect();
-    const conflict = possibleConflicts.find((request: any) => {
+    const conflict = possibleConflicts.find((request) => {
       if (request.organizationId !== organizationId) return false;
       if (excludeLeaveRequestId && request._id === excludeLeaveRequestId) {
         return false;
@@ -151,7 +154,7 @@ async function findOverlappingLeaveRequest(
   return null;
 }
 
-function formatLeaveConflictMessage(conflict: any) {
+function formatLeaveConflictMessage(conflict: Doc<"leaveRequests">) {
   const period = `${formatManilaNumericDate(conflict.startDate)} - ${formatManilaNumericDate(conflict.endDate)}`;
   return `This employee already has a ${conflict.status} leave request for ${period}.`;
 }
@@ -165,23 +168,41 @@ function getCreditType(
   return leaveType === "custom" ? customLeaveType || "" : leaveType;
 }
 
-function getBalanceForType(leaveCredits: any, creditType: string): number {
+function cloneLeaveCredits(
+  source: EmployeeLeaveCredits | undefined,
+): EmployeeLeaveCredits {
+  return {
+    vacation: { ...(source?.vacation ?? { total: 0, used: 0, balance: 0 }) },
+    sick: { ...(source?.sick ?? { total: 0, used: 0, balance: 0 }) },
+    custom: source?.custom?.map((credit) => ({ ...credit })) ?? [],
+  };
+}
+
+function getBalanceForType(
+  leaveCredits: EmployeeLeaveCredits | undefined,
+  creditType: string,
+): number {
   if (!leaveCredits) return 0;
   if (creditType === "vacation") return leaveCredits.vacation?.balance ?? 0;
   if (creditType === "sick") return leaveCredits.sick?.balance ?? 0;
-  const custom = leaveCredits.custom?.find((c: any) => c.type === creditType);
+  const custom = leaveCredits.custom?.find((credit) => credit.type === creditType);
   return custom?.balance ?? 0;
 }
 
-function hasTrackedCreditType(leaveCredits: any, creditType: string): boolean {
+function hasTrackedCreditType(
+  leaveCredits: EmployeeLeaveCredits | undefined,
+  creditType: string,
+): boolean {
   if (!leaveCredits) return false;
   if (creditType === "vacation") return !!leaveCredits.vacation;
   if (creditType === "sick") return !!leaveCredits.sick;
-  return Boolean(leaveCredits.custom?.some((c: any) => c.type === creditType));
+  return Boolean(
+    leaveCredits.custom?.some((credit) => credit.type === creditType),
+  );
 }
 
 function deductCreditsForType(
-  leaveCredits: any,
+  leaveCredits: EmployeeLeaveCredits,
   creditType: string,
   numberOfDays: number,
 ): void {
@@ -196,14 +217,16 @@ function deductCreditsForType(
     return;
   }
   if (!leaveCredits.custom) leaveCredits.custom = [];
-  const idx = leaveCredits.custom.findIndex((c: any) => c.type === creditType);
+  const idx = leaveCredits.custom.findIndex(
+    (credit) => credit.type === creditType,
+  );
   if (idx >= 0) {
     leaveCredits.custom[idx].used += numberOfDays;
     leaveCredits.custom[idx].balance -= numberOfDays;
   }
 }
 
-function ensureVacationSick(leaveCredits: any) {
+function ensureVacationSick(leaveCredits: EmployeeLeaveCredits) {
   if (!leaveCredits.vacation) {
     leaveCredits.vacation = { total: 0, used: 0, balance: 0 };
   }
@@ -213,7 +236,10 @@ function ensureVacationSick(leaveCredits: any) {
 }
 
 /** General SIL pool: take from vacation balance first, then sick. */
-function deductCreditsGeneralPool(leaveCredits: any, numberOfDays: number) {
+function deductCreditsGeneralPool(
+  leaveCredits: EmployeeLeaveCredits,
+  numberOfDays: number,
+) {
   ensureVacationSick(leaveCredits);
   let remaining = numberOfDays;
   const takeV = Math.min(
@@ -239,7 +265,10 @@ function deductCreditsGeneralPool(leaveCredits: any, numberOfDays: number) {
   }
 }
 
-function isGeneralPoolLeaveRequest(request: any, leaveTrackerMode: string) {
+function isGeneralPoolLeaveRequest(
+  request: Pick<Doc<"leaveRequests">, "leaveType" | "customLeaveType">,
+  leaveTrackerMode: string,
+) {
   return (
     leaveTrackerMode === "general" &&
     request.leaveType === "custom" &&
@@ -247,7 +276,15 @@ function isGeneralPoolLeaveRequest(request: any, leaveTrackerMode: string) {
   );
 }
 
-function getDefaultLeaveRequestIsPaid(request: any, settings: any) {
+type EffectiveSettings = Awaited<ReturnType<typeof getEffectiveSettings>>;
+
+function getDefaultLeaveRequestIsPaid(
+  request: Pick<
+    Doc<"leaveRequests">,
+    "leaveType" | "customLeaveType" | "isPaid"
+  >,
+  settings: EffectiveSettings,
+) {
   if (
     request.leaveType === "custom" &&
     request.customLeaveType === GENERAL_LEAVE_CREDIT_KEY
@@ -260,28 +297,37 @@ function getDefaultLeaveRequestIsPaid(request: any, settings: any) {
       ? request.customLeaveType
       : request.leaveType;
   const configured = (settings?.leaveTypes ?? []).find(
-    (type: any) => type.type === typeKey,
+    (type) => type.type === typeKey,
   );
 
   return configured?.isPaid !== false;
 }
 
-function resolveLeaveRequestIsPaid(request: any, settings: any) {
+function resolveLeaveRequestIsPaid(
+  request: Pick<
+    Doc<"leaveRequests">,
+    "leaveType" | "customLeaveType" | "isPaid"
+  >,
+  settings: EffectiveSettings,
+) {
   return typeof request.isPaid === "boolean"
     ? request.isPaid
     : getDefaultLeaveRequestIsPaid(request, settings);
 }
 
-function getUsedForConfiguredType(leaveCredits: any, typeKey: string): number {
+function getUsedForConfiguredType(
+  leaveCredits: EmployeeLeaveCredits,
+  typeKey: string,
+): number {
   if (typeKey === "vacation") return leaveCredits.vacation?.used ?? 0;
   if (typeKey === "sick") return leaveCredits.sick?.used ?? 0;
-  const c = leaveCredits.custom?.find((x: any) => x.type === typeKey);
+  const c = leaveCredits.custom?.find((credit) => credit.type === typeKey);
   return c?.used ?? 0;
 }
 
 function computeGeneralLeaveSummary(
-  employee: any,
-  settings: any,
+  employee: EffectiveEmployee,
+  settings: EffectiveSettings,
   referenceDate: number,
 ) {
   const hireDate = employee.employment?.hireDate;
@@ -295,14 +341,7 @@ function computeGeneralLeaveSummary(
   const paidLeaveRequiresRegularization =
     settings?.paidLeaveRequiresRegularization !== false;
 
-  const base = (employee.leaveCredits || {}) as any;
-  const leaveCredits = JSON.parse(
-    JSON.stringify({
-      vacation: base.vacation ?? { total: 0, used: 0, balance: 0 },
-      sick: base.sick ?? { total: 0, used: 0, balance: 0 },
-      custom: base.custom ?? [],
-    }),
-  );
+  const leaveCredits = cloneLeaveCredits(employee.leaveCredits);
 
   if (!hireDate) {
     return {
@@ -383,8 +422,9 @@ export const getLeaveRequests = query({
       throw new Error("Not authorized");
     }
 
-    let requests = await (ctx.db.query("leaveRequests") as any)
-      .withIndex("by_organization", (q: any) =>
+    let requests = await ctx.db
+      .query("leaveRequests")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
@@ -395,16 +435,18 @@ export const getLeaveRequests = query({
       if (!eid) {
         return [];
       }
-      requests = requests.filter((r: any) => r.employeeId === eid);
+      requests = requests.filter((request) => request.employeeId === eid);
     } else if (args.employeeId) {
-      requests = requests.filter((r: any) => r.employeeId === args.employeeId);
+      requests = requests.filter(
+        (request) => request.employeeId === args.employeeId,
+      );
     }
 
     if (args.status) {
-      requests = requests.filter((r: any) => r.status === args.status);
+      requests = requests.filter((request) => request.status === args.status);
     }
 
-    requests.sort((a: any, b: any) => b.filedDate - a.filedDate);
+    requests.sort((a, b) => b.filedDate - a.filedDate);
     return await Promise.all(
       requests.map(async (request: Doc<"leaveRequests">) => ({
         ...request,
@@ -578,7 +620,7 @@ export const createLeaveRequest = mutation({
     if (employee.organizationId !== args.organizationId) {
       throw new Error("Employee is not in this organization");
     }
-    if (!canUseEmployeeSelfService((employee as any).employment?.status)) {
+    if (!canUseEmployeeSelfService(employee.employment.status)) {
       throw new Error(
         "Separated or inactive employees cannot create new leave requests.",
       );
@@ -687,7 +729,7 @@ export const createLeaveRequest = mutation({
         ? "Annual leave"
         : args.customLeaveType || args.leaveType;
     const employeeName =
-      `${(employee as any).personalInfo?.firstName ?? ""} ${(employee as any).personalInfo?.lastName ?? ""}`.trim() ||
+      `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`.trim() ||
       "An employee";
     const periodStr = `${formatManilaNumericDate(args.startDate)} – ${formatManilaNumericDate(args.endDate)}`;
     const approverUserIds = await getUserIdsForLeaveApprovers(
@@ -702,7 +744,7 @@ export const createLeaveRequest = mutation({
         title: `New leave request: ${employeeName}`,
         body: `${typeLabel} · ${periodStr} · ${numberOfDays} day(s)`,
         pathAfterOrg: "leave?tab=requests",
-        leaveRequestId: leaveRequestId as any,
+        leaveRequestId,
       });
     }
 
@@ -1059,8 +1101,9 @@ export const getLeaveTypes = query({
     const userRecord = await checkAuthForQuery(ctx, args.organizationId);
     if (!userRecord) return [];
 
-    const leaveTypes = await (ctx.db.query("leaveTypes") as any)
-      .withIndex("by_organization", (q: any) =>
+    const leaveTypes = await ctx.db
+      .query("leaveTypes")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
@@ -1134,14 +1177,7 @@ export const getEmployeeLeaveCredits = query({
     const hireDate = employee.employment?.hireDate;
     const regularizationDate = employee.employment?.regularizationDate ?? undefined;
 
-    const base = (employee.leaveCredits || {}) as any;
-    const leaveCredits = JSON.parse(
-      JSON.stringify({
-        vacation: base.vacation ?? { total: 0, used: 0, balance: 0 },
-        sick: base.sick ?? { total: 0, used: 0, balance: 0 },
-        custom: base.custom ?? [],
-      }),
-    );
+    const leaveCredits = cloneLeaveCredits(employee.leaveCredits);
 
     const maxConvertible = settings?.maxConvertibleLeaveDays ?? 5;
     const vacationConvertible = getConvertibleLeaveDays(
@@ -1172,9 +1208,33 @@ export const getEmployeeLeaveCredits = query({
       paidLeaveRequiresRegularization,
     });
 
-    let generalLeave: any = undefined;
-    let byTypeLeaves: any[] | undefined = undefined;
-    let calculations: any;
+    type GeneralLeaveDetails = {
+      annualSilBase: number;
+      proratedSil: number;
+      anniversaryLeave: number;
+      entitlementTotal: number;
+      usedCombined: number;
+      available: number;
+    };
+    type ByTypeLeaveDetails = {
+      type: string;
+      name: string;
+      cap: number;
+      used: number;
+      balance: number;
+    };
+    type LeaveCalculations = {
+      vacationProrated: number;
+      sickProrated: number;
+      vacationMax: number;
+      sickMax: number;
+      proratedLeave: number;
+      anniversaryLeave: number;
+      totalEntitlement: number;
+    };
+    let generalLeave: GeneralLeaveDetails | undefined;
+    let byTypeLeaves: ByTypeLeaveDetails[] | undefined;
+    let calculations: LeaveCalculations;
 
     if (leaveTrackerMode === "general") {
       const g = computeGeneralLeaveSummary(employee, settings, now);
@@ -1197,7 +1257,7 @@ export const getEmployeeLeaveCredits = query({
       };
     } else {
       const configured = (settings?.leaveTypes ?? []).filter(
-        (t: any) => !t.isAnniversary,
+        (leaveType) => !leaveType.isAnniversary,
       );
       let sumCaps = 0;
       const enableAnniversaryLeave = settings?.enableAnniversaryLeave !== false;
@@ -1214,7 +1274,7 @@ export const getEmployeeLeaveCredits = query({
         referenceDate: now,
       });
 
-      byTypeLeaves = configured.map((cfg: any) => {
+      byTypeLeaves = configured.map((cfg) => {
         const cap = calculateAnnualLeaveBase({
           annualLeave: Number(cfg.defaultCredits || 0),
           hireDate,
@@ -1295,7 +1355,7 @@ export const updateEmployeeLeaveCredits = mutation({
     reason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
+    await checkAuth(ctx, args.organizationId, "hr");
 
     const employeeRow = await ctx.db.get(args.employeeId);
     if (!employeeRow) throw new Error("Employee not found");
@@ -1343,7 +1403,7 @@ export const updateEmployeeLeaveCredits = mutation({
         leaveCredits.custom = [];
       }
       const customIndex = leaveCredits.custom.findIndex(
-        (c: any) => c.type === args.customType,
+        (credit) => credit.type === args.customType,
       );
       if (customIndex >= 0) {
         const custom = { ...leaveCredits.custom[customIndex] };
@@ -1393,7 +1453,7 @@ export const convertLeaveToCash = mutation({
     reason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
+    await checkAuth(ctx, args.organizationId, "hr");
 
     const employeeRow = await ctx.db.get(args.employeeId);
     if (!employeeRow) throw new Error("Employee not found");

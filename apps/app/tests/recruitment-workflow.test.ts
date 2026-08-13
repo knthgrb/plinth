@@ -10,10 +10,10 @@ describe("recruitment workflow hardening", () => {
     const schemaSource = readSource("../convex/schema.ts");
     const recruitmentSource = readSource("../convex/recruitment.ts");
 
-    expect(schemaSource).toContain("pipelineStageHistory");
-    expect(schemaSource).toContain("scorecards");
+    expect(schemaSource).toContain("applicantStageEvents");
+    expect(schemaSource).toContain("applicantScorecards");
     expect(schemaSource).toContain("interviewers");
-    expect(schemaSource).toContain("offerApproval");
+    expect(schemaSource).toContain("applicantOfferEvents");
     expect(schemaSource).toContain("source");
     expect(schemaSource).toContain("convertedEmployeeId");
     expect(recruitmentSource).toContain("addApplicantScorecard");

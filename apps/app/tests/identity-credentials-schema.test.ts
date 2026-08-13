@@ -87,7 +87,6 @@ describe("identity credentials schema", () => {
         email: "invitee@example.com",
         role: "employee",
         invitedBy: userId,
-        token: "legacy-token",
         tokenHash: "redacted-invitation-token-hash",
         status: "pending",
         expiresAt: 2,

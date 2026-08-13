@@ -32,15 +32,12 @@ const defaultSchedule = {
 };
 
 describe("employee field projection", () => {
-  it("never projects payslip credentials from employee records", () => {
+  it("decrypts the employee compensation projection", () => {
     const projected = decryptEmployeeFromDb({
       compensation: { basicSalary: 30_000 },
-      payslipPinHash: "scrypt$v1$private",
-      payslipPdfPassword: "plaintext-private",
     });
 
-    expect(projected).not.toHaveProperty("payslipPinHash");
-    expect(projected).not.toHaveProperty("payslipPdfPassword");
+    expect(projected.compensation.basicSalary).toBe(30_000);
   });
 
   it("omits compensation, banking, and private contact fields for employee viewers", async () => {
@@ -91,11 +88,6 @@ describe("employee field projection", () => {
         compensation: {
           basicSalary: 100_000,
           salaryType: "monthly",
-          bankDetails: {
-            bankName: "Private Bank",
-            accountNumber: "1234567890",
-            accountName: "Private Employee",
-          },
         },
         schedule: { defaultSchedule },
         createdAt: 1,

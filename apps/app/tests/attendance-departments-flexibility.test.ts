@@ -43,16 +43,14 @@ describe("attendance and department flexibility settings", () => {
     );
     const settingsServiceSource = readSource("../services/settings-service.ts");
 
-    for (const field of [
-      "departmentHeadUserId",
-      "costCenter",
-      "location",
-      "parentDepartmentName",
-    ]) {
+    for (const field of ["departmentHeadUserId", "costCenter", "location"]) {
       expect(schemaSource).toContain(field);
       expect(settingsSource).toContain(field);
       expect(settingsServiceSource).toContain(field);
     }
+    expect(schemaSource).toContain("parentDepartmentNormalizedName");
+    expect(settingsSource).toContain("parentDepartmentName");
+    expect(settingsServiceSource).toContain("parentDepartmentName");
 
     expect(departmentsSettingsSource).toContain("Department head");
     expect(departmentsSettingsSource).toContain("Cost center");

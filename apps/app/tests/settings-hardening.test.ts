@@ -11,8 +11,9 @@ describe("configurable settings hardening", () => {
     const schemaSource = readSource("../convex/schema.ts");
     const compatibilitySource = readSource("../convex/workflowCompatibility.ts");
 
-    expect(schemaSource).toContain("settingsVersion: v.optional(v.number())");
-    expect(schemaSource).toContain("settingsChangeLog: v.optional(");
+    expect(schemaSource).toContain("organizationSettingsEvents");
+    expect(schemaSource).toContain("version: v.number()");
+    expect(schemaSource).toContain("changedBy: v.id(\"users\")");
     expect(settingsSource).toContain("appendOrganizationSettingsEvent");
     expect(compatibilitySource).toContain("changedBy: userId");
     expect(settingsSource).not.toContain("buildSettingsAuditPatch");

@@ -10,6 +10,7 @@ import {
 import {
   loadEffectiveDocument,
   replaceDocumentProjection,
+  type EffectiveDocument,
 } from "./communicationsCompatibility";
 
 const documentVisibilityScopeValidator = v.optional(
@@ -93,7 +94,9 @@ function canViewPayrollScopedDocuments(role: string | undefined) {
   );
 }
 
-function assertDocumentWriteAccess(userRecord: any) {
+type DocumentUserRecord = Awaited<ReturnType<typeof checkAuth>>;
+
+function assertDocumentWriteAccess(userRecord: DocumentUserRecord) {
   if (!canUseFullOrganizationAccess(userRecord.accessStatus)) {
     throw new Error("Document write access is not available for past organizations");
   }
@@ -103,7 +106,9 @@ function idsInclude(ids: unknown[] | undefined, id: unknown) {
   return Array.isArray(ids) && ids.some((item) => String(item) === String(id));
 }
 
-function resolveDocumentVisibilityScope(doc: any): DocumentVisibilityScope {
+function resolveDocumentVisibilityScope(
+  doc: EffectiveDocument,
+): DocumentVisibilityScope {
   const scope = doc.visibilityScope ?? undefined;
   if (scope) return scope;
   if (doc.isShared) return "all_employees";
@@ -113,12 +118,19 @@ function resolveDocumentVisibilityScope(doc: any): DocumentVisibilityScope {
   return "admins_only";
 }
 
-async function getUserEmployeeForDocumentAccess(ctx: any, userRecord: any) {
+async function getUserEmployeeForDocumentAccess(
+  ctx: QueryCtx,
+  userRecord: DocumentUserRecord,
+): Promise<Doc<"employees"> | null> {
   if (!userRecord.employeeId) return null;
   return await ctx.db.get(userRecord.employeeId);
 }
 
-function canViewDocument(doc: any, userRecord: any, userEmployee: any) {
+function canViewDocument(
+  doc: EffectiveDocument,
+  userRecord: DocumentUserRecord,
+  userEmployee: Doc<"employees"> | null,
+) {
   const scope = doc.visibilityScope ?? resolveDocumentVisibilityScope(doc);
 
   if (!canUseFullOrganizationAccess(userRecord.accessStatus)) {
@@ -211,13 +223,14 @@ export const getDocuments = query({
     return runOrgQuery(async () => {
       const userRecord = await checkAuth(ctx, args.organizationId);
 
-      let documents = await (ctx.db.query("documents") as any)
-        .withIndex("by_organization", (q: any) =>
+      const documentRows = await ctx.db
+        .query("documents")
+        .withIndex("by_organization", (q) =>
           q.eq("organizationId", args.organizationId),
         )
         .collect();
-      documents = await Promise.all(
-        documents.map((document: Doc<"documents">) =>
+      let documents = await Promise.all(
+        documentRows.map((document) =>
           loadEffectiveDocument(ctx, document),
         ),
       );
@@ -226,15 +239,15 @@ export const getDocuments = query({
         ctx,
         userRecord,
       );
-      documents = documents.filter((doc: any) =>
+      documents = documents.filter((doc) =>
         canViewDocument(doc, userRecord, userEmployee),
       );
 
       if (args.type) {
-        documents = documents.filter((doc: any) => doc.type === args.type);
+        documents = documents.filter((doc) => doc.type === args.type);
       }
 
-      documents.sort((a: any, b: any) => b.updatedAt - a.updatedAt);
+      documents.sort((a, b) => b.updatedAt - a.updatedAt);
 
       return documents;
     }, []);
@@ -315,10 +328,10 @@ export const createDocument = mutation({
       ctx,
       document,
       {
-        attachments: args.attachments,
+        attachments: args.attachments ?? [],
         sharedWith: args.sharedWith ?? [],
-        visibleDepartments: args.visibleDepartments,
-        visibleEmployeeIds: args.visibleEmployeeIds,
+        visibleDepartments: args.visibleDepartments ?? [],
+        visibleEmployeeIds: args.visibleEmployeeIds ?? [],
       },
       now,
     );
@@ -365,13 +378,13 @@ export const updateDocument = mutation({
       throw new Error("Not authorized to update this document");
     }
 
-    if (isUploadedFileOnlyRecord(document as any)) {
+    const effectiveDocument = await loadEffectiveDocument(ctx, document);
+    if (isUploadedFileOnlyRecord(effectiveDocument)) {
       throw new Error(
         "Uploaded files cannot be edited in the document editor. Re-upload the file to replace it, or create a new Plinth document for rich text.",
       );
     }
 
-    const effectiveDocument = await loadEffectiveDocument(ctx, document);
     const now = Date.now();
     const updates: Partial<Doc<"documents">> = { updatedAt: now };
     if (args.title !== undefined) updates.title = args.title;
@@ -434,8 +447,9 @@ export const deleteDocument = mutation({
       throw new Error("Not authorized to delete this document");
     }
 
-    const versionRows = await (ctx.db.query("documentVersions") as any)
-      .withIndex("by_document", (q: any) => q.eq("documentId", args.documentId))
+    const versionRows = await ctx.db
+      .query("documentVersions")
+      .withIndex("by_document", (q) => q.eq("documentId", args.documentId))
       .collect();
     for (const row of versionRows) {
       await ctx.db.delete(row._id);

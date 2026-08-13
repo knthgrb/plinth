@@ -102,11 +102,11 @@ describe("invitation token compatibility writes", () => {
     const invitation = await t.run((ctx) =>
       ctx.db.get(created.invitationId as Id<"invitations">),
     );
-    expect(invitation?.token).toBeUndefined();
+    expect(invitation).not.toHaveProperty("token");
     expect(invitation?.tokenHash).toBe(hashInvitationToken(created.token));
   });
 
-  it("uses token hashes first and never falls back for a hashed row", async () => {
+  it("accepts only the token matching the stored hash", async () => {
     const { t, organizationId } = await setupActor("active");
     const fixture = await t.run(async (ctx) => {
       const inviter = await ctx.db.query("users").first();
@@ -118,7 +118,6 @@ describe("invitation token compatibility writes", () => {
         email: "hash-first@example.com",
         role: "employee",
         invitedBy: inviter._id,
-        token: legacyToken,
         tokenHash: hashInvitationToken(currentToken),
         status: "pending",
         expiresAt: Date.now() + 60_000,
@@ -137,29 +136,6 @@ describe("invitation token compatibility writes", () => {
         token: fixture.currentToken,
       }),
     ).resolves.toMatchObject({ email: "hash-first@example.com" });
-  });
-
-  it("does not use plaintext lookup for rows that have no token hash", async () => {
-    const { t, organizationId } = await setupActor("active");
-    const token = "legacy-only-token";
-    await t.run(async (ctx) => {
-      const inviter = await ctx.db.query("users").first();
-      if (!inviter) throw new Error("Inviter fixture was not found");
-      await ctx.db.insert("invitations", {
-        organizationId,
-        email: "legacy-only@example.com",
-        role: "employee",
-        invitedBy: inviter._id,
-        token,
-        status: "pending",
-        expiresAt: Date.now() + 60_000,
-        createdAt: 1,
-      });
-    });
-
-    await expect(
-      t.query(api.invitations.getInvitationByToken, { token }),
-    ).resolves.toBeNull();
   });
 
   it("redacts stored bearer tokens and rotates them for resend", async () => {
@@ -199,7 +175,7 @@ describe("invitation token compatibility writes", () => {
     const invitation = await t.run((ctx) =>
       ctx.db.get(result.invitationId as Id<"invitations">),
     );
-    expect(invitation?.token).toBeUndefined();
+    expect(invitation).not.toHaveProperty("token");
     expect(invitation?.tokenHash).toBe(hashInvitationToken(result.token));
   });
 
@@ -239,7 +215,6 @@ describe("invitation token compatibility writes", () => {
         email: "protected-invite@example.com",
         role: "employee",
         invitedBy: inviter!._id,
-        token: "protected-token",
         tokenHash: hashInvitationToken("protected-token"),
         status: "pending",
         expiresAt: Date.now() + 60_000,
@@ -285,7 +260,6 @@ describe("invitation token compatibility writes", () => {
       });
       const userId = await ctx.db.insert("users", {
         email: "employee-invite@example.com",
-        employeeId,
         createdAt: 1,
         updatedAt: 1,
       });
@@ -310,7 +284,6 @@ describe("invitation token compatibility writes", () => {
         email: "employee-invite@example.com",
         role: "employee",
         invitedBy: inviterId,
-        token,
         tokenHash: hashInvitationToken(token),
         status: "pending",
         expiresAt: Date.now() + 60_000,

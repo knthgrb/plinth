@@ -10,10 +10,13 @@ describe("asset custody workflow", () => {
     const schemaSource = readSource("../convex/schema.ts");
     const assetsSource = readSource("../convex/assets.ts");
 
-    expect(schemaSource).toContain("assignedEmployeeId");
-    expect(schemaSource).toContain("custodyAcknowledgedAt");
+    expect(schemaSource).toContain("assetCustodyEvents");
+    expect(schemaSource).toContain('v.literal("assigned")');
+    expect(schemaSource).toContain('v.literal("acknowledged")');
+    expect(schemaSource).toContain('v.literal("returned")');
     expect(schemaSource).toContain("returnDueDate");
-    expect(schemaSource).toContain("maintenanceHistory");
+    expect(schemaSource).toContain("assetMaintenanceEvents");
+    expect(schemaSource).toContain("serviceDate");
     expect(schemaSource).toContain('v.literal("good")');
     expect(schemaSource).toContain('v.literal("needs_repair")');
     expect(assetsSource).toContain("assignedEmployeeId: v.optional(");

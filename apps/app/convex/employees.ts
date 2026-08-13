@@ -4,10 +4,9 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import {
   loadEffectiveEmployee,
-  loadEffectiveEmployeeDeductions,
   loadEffectiveEmployeeCustomFields,
-  loadEffectiveEmployeeIncentives,
   loadEffectiveEmployeeRequirements,
+  type EmployeePaymentAccount,
   replaceEmployeeLeaveCredits,
   replaceEmployeeCustomFields,
   replaceEmployeePaymentAccount,
@@ -21,7 +20,10 @@ import {
   decryptEmployeeFromDb,
 } from "./employeeCompensationCrypto";
 import { deriveAccessStatusForEmploymentStatus } from "@/utils/org-membership-lifecycle";
-import { getEffectiveRequirementDefinitions } from "./organizationConfiguration";
+import {
+  getEffectiveRequirementDefinitions,
+  type RequirementConfigurationInput,
+} from "./organizationConfiguration";
 
 function assertHireDateIsNotFuture(hireDate: number) {
   const today = new Date();
@@ -36,9 +38,7 @@ function assertHireDateIsNotFuture(hireDate: number) {
   }
 }
 
-type DefaultRequirement = NonNullable<
-  Doc<"organizations">["defaultRequirements"]
->[number];
+type DefaultRequirement = RequirementConfigurationInput;
 
 function buildRequirementFromDefault(req: DefaultRequirement, now = Date.now()) {
   return {
@@ -57,7 +57,7 @@ function buildRequirementFromDefault(req: DefaultRequirement, now = Date.now()) 
   };
 }
 
-function toEmployeeDirectoryEntry(employee: any) {
+function toEmployeeDirectoryEntry(employee: Doc<"employees">) {
   return {
     _id: employee._id,
     organizationId: employee.organizationId,
@@ -91,6 +91,10 @@ function toManilaDayStartUtcMs(ts: number): number {
     0,
     0,
   );
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 // Helper to check authorization with organization context
@@ -156,25 +160,27 @@ export const getEmployees = query({
     let userRecord;
     try {
       userRecord = await checkAuth(ctx, args.organizationId);
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Handle auth errors gracefully by returning empty array instead of throwing
       // This prevents errors during initial page load when there's a race condition:
       // - Next.js middleware checks cookies (server-side) → sees authenticated → allows access
       // - Convex queries use JWT tokens (client-side) → token might not be ready yet → throws "Not authenticated"
       // By returning empty array, the query succeeds and will retry once auth token is ready
+      const message = getErrorMessage(error);
       if (
-        error.message?.includes("Not authenticated") ||
-        error.message?.includes("Unauthenticated") ||
-        error.message?.includes("Not authorized") ||
-        error.message?.includes("User is not a member")
+        message.includes("Not authenticated") ||
+        message.includes("Unauthenticated") ||
+        message.includes("Not authorized") ||
+        message.includes("User is not a member")
       ) {
         return [];
       }
       throw error;
     }
 
-    let employees = await (ctx.db.query("employees") as any)
-      .withIndex("by_organization", (q: any) =>
+    let employees = await ctx.db
+      .query("employees")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
@@ -182,14 +188,14 @@ export const getEmployees = query({
     // Filter by status ("all" means no status filter).
     if (args.status && args.status !== "all") {
       employees = employees.filter(
-        (e: any) => e.employment.status === args.status,
+        (employee) => employee.employment.status === args.status,
       );
     }
 
     // Filter by department
     if (args.department) {
       employees = employees.filter(
-        (e: any) => e.employment.department === args.department,
+        (employee) => employee.employment.department === args.department,
       );
     }
 
@@ -197,11 +203,11 @@ export const getEmployees = query({
     if (args.search) {
       const searchLower = args.search.toLowerCase();
       employees = employees.filter(
-        (e: any) =>
-          e.personalInfo.firstName.toLowerCase().includes(searchLower) ||
-          e.personalInfo.lastName.toLowerCase().includes(searchLower) ||
-          e.personalInfo.email.toLowerCase().includes(searchLower) ||
-          e.employment.employeeId.toLowerCase().includes(searchLower),
+        (employee) =>
+          employee.personalInfo.firstName.toLowerCase().includes(searchLower) ||
+          employee.personalInfo.lastName.toLowerCase().includes(searchLower) ||
+          employee.personalInfo.email.toLowerCase().includes(searchLower) ||
+          employee.employment.employeeId.toLowerCase().includes(searchLower),
       );
     }
 
@@ -211,7 +217,7 @@ export const getEmployees = query({
       resigned: 2,
       terminated: 3,
     };
-    employees.sort((a: any, b: any) => {
+    employees.sort((a, b) => {
       const statusDiff =
         (statusRank[a?.employment?.status] ?? 99) -
         (statusRank[b?.employment?.status] ?? 99);
@@ -249,14 +255,15 @@ export const getEmployee = query({
     let userRecord;
     try {
       userRecord = await checkAuth(ctx, employee.organizationId);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
       if (
-        error.message?.includes("Not authenticated") ||
-        error.message?.includes("Unauthenticated") ||
-        error.message?.includes("Not authorized") ||
-        error.message?.includes("User is not a member") ||
-        error.message?.includes("User record not found") ||
-        error.message?.includes("Please complete your account setup")
+        message.includes("Not authenticated") ||
+        message.includes("Unauthenticated") ||
+        message.includes("Not authorized") ||
+        message.includes("User is not a member") ||
+        message.includes("User record not found") ||
+        message.includes("Please complete your account setup")
       ) {
         return null;
       }
@@ -285,11 +292,12 @@ export const employeeHasUserAccount = query({
     await checkAuth(ctx, args.organizationId);
 
     // Check if there's a user linked to this employee via userOrganizations
-    const userOrg = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const userOrg = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
-      .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
+      .filter((q) => q.eq(q.field("employeeId"), args.employeeId))
       .first();
 
     if (userOrg) {
@@ -299,8 +307,9 @@ export const employeeHasUserAccount = query({
     // Also check if there's a user with this employee's email (regardless of organization)
     const employee = await ctx.db.get(args.employeeId);
     if (employee) {
-      const user = await (ctx.db.query("users") as any)
-        .withIndex("by_email", (q: any) =>
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) =>
           q.eq("email", employee.personalInfo.email),
         )
         .first();
@@ -325,15 +334,16 @@ export const checkEmployeesUserAccounts = query({
     await checkAuth(ctx, args.organizationId);
 
     // Get all userOrganizations for these employees in this organization
-    const userOrgs = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const userOrgs = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
 
     // Filter to only those with matching employeeIds
     const employeeUserMap = new Map<string, string>();
-    userOrgs.forEach((userOrg: any) => {
+    userOrgs.forEach((userOrg) => {
       if (userOrg.employeeId && args.employeeIds.includes(userOrg.employeeId)) {
         employeeUserMap.set(userOrg.employeeId, userOrg.userId);
       }
@@ -349,7 +359,7 @@ export const checkEmployeesUserAccounts = query({
     );
 
     const emailToEmployeeMap = new Map<string, string>();
-    employees.forEach((emp: any) => {
+    employees.forEach((emp) => {
       if (emp) {
         emailToEmployeeMap.set(emp.personalInfo.email, emp._id);
       }
@@ -359,8 +369,9 @@ export const checkEmployeesUserAccounts = query({
     if (emailToEmployeeMap.size > 0) {
       const emails = Array.from(emailToEmployeeMap.keys());
       for (const email of emails) {
-        const user = await (ctx.db.query("users") as any)
-          .withIndex("by_email", (q: any) => q.eq("email", email))
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_email", (q) => q.eq("email", email))
           .first();
         if (user) {
           const employeeId = emailToEmployeeMap.get(email);
@@ -390,8 +401,9 @@ export const checkEmployeesInOrganization = query({
   handler: async (ctx, args) => {
     await checkAuth(ctx, args.organizationId);
 
-    const userOrgs = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const userOrgs = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
@@ -431,14 +443,16 @@ export const listEmployeesAvailableForOrgInvite = query({
         return [];
       }
 
-      const employees = await (ctx.db.query("employees") as any)
-        .withIndex("by_organization", (q: any) =>
+      const employees = await ctx.db
+        .query("employees")
+        .withIndex("by_organization", (q) =>
           q.eq("organizationId", args.organizationId),
         )
         .collect();
 
-      const userOrgs = await (ctx.db.query("userOrganizations") as any)
-        .withIndex("by_organization", (q: any) =>
+      const userOrgs = await ctx.db
+        .query("userOrganizations")
+        .withIndex("by_organization", (q) =>
           q.eq("organizationId", args.organizationId),
         )
         .collect();
@@ -459,8 +473,9 @@ export const listEmployeesAvailableForOrgInvite = query({
         }
       }
 
-      const invitations = await (ctx.db.query("invitations") as any)
-        .withIndex("by_organization", (q: any) =>
+      const invitations = await ctx.db
+        .query("invitations")
+        .withIndex("by_organization", (q) =>
           q.eq("organizationId", args.organizationId),
         )
         .collect();
@@ -483,8 +498,7 @@ export const listEmployeesAvailableForOrgInvite = query({
       for (const raw of employees) {
         const e = decryptEmployeeFromDb(raw);
         const em = String(
-          (e as { personalInfo?: { email?: string } }).personalInfo?.email ??
-            "",
+          e.personalInfo.email ?? "",
         ).trim();
         if (!em) continue;
         const emNorm = normalizeInviteListEmail(em);
@@ -493,12 +507,9 @@ export const listEmployeesAvailableForOrgInvite = query({
         if (pendingInviteEmails.has(emNorm)) continue;
         out.push({
           _id: e._id as string,
-          firstName: (e as { personalInfo: { firstName: string } }).personalInfo
-            .firstName,
-          lastName: (e as { personalInfo: { lastName: string } }).personalInfo
-            .lastName,
-          middleName: (e as { personalInfo: { middleName?: string } })
-            .personalInfo.middleName,
+          firstName: e.personalInfo.firstName,
+          lastName: e.personalInfo.lastName,
+          middleName: e.personalInfo.middleName,
           email: em,
         });
       }
@@ -660,7 +671,7 @@ export const createEmployee = mutation({
     shiftId: v.optional(v.union(v.id("shifts"), v.null())),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
+    await checkAuth(ctx, args.organizationId, "hr");
     assertHireDateIsNotFuture(args.employment.hireDate);
 
     const now = Date.now();
@@ -897,11 +908,11 @@ export const updateEmployee = mutation({
       assertHireDateIsNotFuture(args.employment.hireDate);
     }
 
-    const updates: any = { updatedAt: Date.now() };
-    let nextBankDetails: Doc<"employees">["compensation"]["bankDetails"];
+    const updates: Partial<Doc<"employees">> = { updatedAt: Date.now() };
+    let nextBankDetails: EmployeePaymentAccount | undefined;
     if (args.personalInfo) {
       // If employee has a linked user account, email cannot be changed (auth is tied to it)
-      const existingPersonal = (employee as any).personalInfo || {};
+      const existingPersonal = employee.personalInfo;
       const personalInfoUpdate = { ...existingPersonal, ...args.personalInfo };
       const canonicalMemberships = await ctx.db
         .query("userOrganizations")
@@ -913,20 +924,9 @@ export const updateEmployee = mutation({
       if (canonicalMemberships.length > 1) {
         throw new Error("Employee has multiple organization memberships");
       }
-      let linkedUser = canonicalMemberships[0]
+      const linkedUser = canonicalMemberships[0]
         ? await ctx.db.get(canonicalMemberships[0].userId)
         : null;
-      if (!linkedUser && canonicalMemberships.length === 0) {
-        const legacyUser = await ctx.db
-          .query("users")
-          .withIndex("by_employee", (q) =>
-            q.eq("employeeId", args.employeeId),
-          )
-          .unique();
-        if (legacyUser?.organizationId === employee.organizationId) {
-          linkedUser = legacyUser;
-        }
-      }
       if (linkedUser) {
         const exactMembership = await ctx.db
           .query("userOrganizations")
@@ -951,6 +951,9 @@ export const updateEmployee = mutation({
       const nextCompensation = {
         ...currentComp,
         ...args.compensation,
+      } as typeof currentComp & {
+        bankDetails?: EmployeePaymentAccount;
+        paymentFrequency?: string;
       };
       nextBankDetails = nextCompensation.bankDetails;
       const {
@@ -1011,16 +1014,16 @@ export const updateEmployee = mutation({
       );
     }
 
-    const normalizedCurrentShiftId = (employee as any).shiftId ?? null;
+    const normalizedCurrentShiftId = employee.shiftId ?? null;
     const normalizedNextShiftId =
       args.shiftId !== undefined
         ? (args.shiftId ?? null)
         : normalizedCurrentShiftId;
-    const nextSchedule = args.schedule ?? (employee as any).schedule;
+    const nextSchedule = args.schedule ?? employee.schedule;
     const scheduleChanged =
       args.schedule !== undefined &&
       JSON.stringify(args.schedule) !==
-        JSON.stringify((employee as any).schedule);
+        JSON.stringify(employee.schedule);
     const shiftChanged =
       args.shiftId !== undefined &&
       normalizedNextShiftId !== normalizedCurrentShiftId;
@@ -1028,10 +1031,9 @@ export const updateEmployee = mutation({
     if ((scheduleChanged || shiftChanged) && nextSchedule) {
       const now = Date.now();
       const effectiveFrom = toManilaDayStartUtcMs(now);
-      const existingTodayHistory = await (
-        ctx.db.query("employeeScheduleHistory") as any
-      )
-        .withIndex("by_employee_effective_from", (q: any) =>
+      const existingTodayHistory = await ctx.db
+        .query("employeeScheduleHistory")
+        .withIndex("by_employee_effective_from", (q) =>
           q
             .eq("employeeId", args.employeeId)
             .eq("effectiveFrom", effectiveFrom),
@@ -1070,22 +1072,12 @@ export const updateEmployee = mutation({
         .collect();
 
       if (linkedMemberships.length === 0) {
-        let linkedUser = await ctx.db
+        const linkedUser = await ctx.db
           .query("users")
-          .withIndex("by_employee", (query) =>
-            query.eq("employeeId", args.employeeId),
+          .withIndex("by_email", (query) =>
+            query.eq("email", employee.personalInfo.email),
           )
           .unique();
-
-        if (!linkedUser) {
-          linkedUser = await ctx.db
-            .query("users")
-            .withIndex("by_email", (query) =>
-              query.eq("email", employee.personalInfo.email),
-            )
-            .unique();
-        }
-
         if (linkedUser) {
           const membership = await ctx.db
             .query("userOrganizations")
@@ -1464,13 +1456,14 @@ export const deleteEmployee = mutation({
       archivedAt: now,
       archivedBy: userRecord._id,
       updatedAt: now,
-    } as any);
+    });
 
-    const linkedMemberships = await (ctx.db.query("userOrganizations") as any)
-      .withIndex("by_organization", (q: any) =>
+    const linkedMemberships = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", employee.organizationId),
       )
-      .filter((q: any) => q.eq(q.field("employeeId"), args.employeeId))
+      .filter((q) => q.eq(q.field("employeeId"), args.employeeId))
       .collect();
 
     for (const membership of linkedMemberships) {
@@ -1484,29 +1477,5 @@ export const deleteEmployee = mutation({
     }
 
     return { success: true };
-  },
-});
-
-// Migration: Remove paymentFrequency from all existing employee records
-export const migrateRemovePaymentFrequency = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const employees = await ctx.db.query("employees").collect();
-
-    for (const employee of employees) {
-      const dec = decryptEmployeeFromDb(employee);
-      if (dec.compensation?.paymentFrequency !== undefined) {
-        const { paymentFrequency, ...compensationWithoutPaymentFrequency } =
-          dec.compensation;
-        await ctx.db.patch(employee._id, {
-          compensation: encryptCompensationForDb(
-            compensationWithoutPaymentFrequency as any,
-          ) as any,
-          updatedAt: Date.now(),
-        });
-      }
-    }
-
-    return { migrated: employees.length };
   },
 });

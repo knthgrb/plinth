@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -76,9 +76,19 @@ describe("schema source inventory", () => {
   });
 
   it("matches the reviewed schema-item inventory exactly", () => {
-    expectReviewedInventory(
-      summarizeSchemaSourceInventory(parseSchemaSourceInventory(schemaSource)),
+    const review = summarizeSchemaSourceInventory(
+      parseSchemaSourceInventory(schemaSource),
     );
+    if (process.env.UPDATE_SCHEMA_INVENTORY_BASELINE === "1") {
+      writeFileSync(
+        fileURLToPath(
+          new URL("./fixtures/schema-inventory.reviewed.json", import.meta.url),
+        ),
+        `${JSON.stringify(review, null, 2)}\n`,
+      );
+      return;
+    }
+    expectReviewedInventory(review);
   });
 
   it("rejects an unreviewed field and index", () => {

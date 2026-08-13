@@ -33,11 +33,6 @@ async function setup() {
       createdAt: 1,
       updatedAt: 1,
     });
-    const legacyReviewerId = await ctx.db.insert("users", {
-      email: "legacy-reviewer@example.com",
-      createdAt: 1,
-      updatedAt: 1,
-    });
     const normalizedReviewerId = await ctx.db.insert("users", {
       email: "normalized-reviewer@example.com",
       createdAt: 1,
@@ -86,7 +81,6 @@ async function setup() {
       employeeId,
       evaluationDate: 1,
       label: "Annual",
-      assignedReviewerIds: [legacyReviewerId],
       createdBy: actorId,
       createdAt: 1,
       updatedAt: 1,
@@ -104,7 +98,6 @@ async function setup() {
       organizationId,
       actorId,
       evaluationId,
-      legacyReviewerId,
       normalizedReviewerId,
     };
   });
@@ -112,7 +105,7 @@ async function setup() {
 }
 
 describe("workflow compatibility", () => {
-  it("uses normalized reviewers before conflicting embedded reviewers", async () => {
+  it("loads reviewers from normalized rows", async () => {
     const { actor, organizationId, normalizedReviewerId } = await setup();
     const evaluations = await actor.query(api.evaluations.getEvaluations, {
       organizationId,
@@ -123,7 +116,7 @@ describe("workflow compatibility", () => {
   });
 
   it("writes reviewer assignments only to normalized rows", async () => {
-    const { t, actor, actorId, evaluationId, legacyReviewerId } = await setup();
+    const { t, actor, actorId, evaluationId } = await setup();
     await actor.mutation(api.evaluations.assignEvaluationReviewers, {
       evaluationId,
       reviewerIds: [actorId],
@@ -137,16 +130,13 @@ describe("workflow compatibility", () => {
         )
         .collect(),
     }));
-    expect(state.evaluation?.assignedReviewerIds).toEqual([legacyReviewerId]);
+    expect(state.evaluation).not.toHaveProperty("assignedReviewerIds");
     expect(state.reviewers.map((row) => row.reviewerId)).toEqual([actorId]);
   });
 
   it("appends to normalized evaluation history and removes child rows on delete", async () => {
     const { t, actor, actorId, evaluationId } = await setup();
     await t.run(async (ctx) => {
-      await ctx.db.patch(evaluationId, {
-        history: [{ action: "legacy", at: 1, by: actorId }],
-      });
       await ctx.db.insert("evaluationEvents", {
         organizationId: (await ctx.db.get(evaluationId))!.organizationId,
         evaluationId,
@@ -173,9 +163,7 @@ describe("workflow compatibility", () => {
         )
         .collect(),
     }));
-    expect(state.evaluation?.history?.map((event) => event.action)).toEqual([
-      "legacy",
-    ]);
+    expect(state.evaluation).not.toHaveProperty("history");
     expect(state.events.map((event) => event.action)).toEqual([
       "normalized",
       "updated",
@@ -207,15 +195,6 @@ describe("workflow compatibility", () => {
     const settingsId = await t.run(async (ctx) => {
       const settingsId = await ctx.db.insert("settings", {
         organizationId,
-        settingsVersion: 7,
-        settingsChangeLog: [
-          {
-            area: "leave",
-            version: 1,
-            changedBy: actorId,
-            changedAt: 1,
-          },
-        ],
         createdAt: 1,
         updatedAt: 1,
       });
@@ -246,9 +225,7 @@ describe("workflow compatibility", () => {
         .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
         .collect(),
     }));
-    expect(state.settings?.settingsChangeLog?.map((event) => event.area)).toEqual([
-      "leave",
-    ]);
+    expect(state.settings).not.toHaveProperty("settingsChangeLog");
     expect(
       state.events
         .sort((left, right) => left.sourceIndex - right.sourceIndex)

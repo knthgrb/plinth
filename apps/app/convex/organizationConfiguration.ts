@@ -1,12 +1,15 @@
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { normalizeDepartmentName } from "./databaseMigrationPlanner";
 import { getEffectiveOrganizationLeaveSettings } from "./leaveEmployeeCompatibility";
 import { getEffectiveOrganizationUiSettings } from "./workflowCompatibility";
 
 type ReadContext = Pick<QueryCtx, "db">;
 type ConfigurationSource = "normalized" | "default";
 const RELEASE_2_MIGRATION_VERSION = 2;
+
+function normalizeDepartmentName(name: string): string {
+  return name.trim().toLocaleLowerCase("en-US");
+}
 
 type LegacyDepartment =
   | string
@@ -20,20 +23,17 @@ type LegacyDepartment =
     };
 
 export type DepartmentConfigurationInput = Exclude<LegacyDepartment, string>;
-export type RequirementConfigurationInput = NonNullable<
-  Doc<"organizations">["defaultRequirements"]
->[number];
-
-const DEPARTMENT_COLORS = [
-  "#9CA3AF",
-  "#EF4444",
-  "#F97316",
-  "#EAB308",
-  "#22C55E",
-  "#3B82F6",
-  "#A855F7",
-  "#EC4899",
-] as const;
+export type RequirementConfigurationInput = Omit<
+  Doc<"organizationRequirementDefinitions">,
+  | "_id"
+  | "_creationTime"
+  | "organizationId"
+  | "normalizedType"
+  | "source"
+  | "migrationVersion"
+  | "createdAt"
+  | "updatedAt"
+>;
 
 async function getLegacySettings(
   ctx: ReadContext,
@@ -79,26 +79,6 @@ async function getAttendanceRow(
     throw new Error("Duplicate normalized attendance settings");
   }
   return rows[0] ?? null;
-}
-
-function sanitizeLegacyPayrollSettings(
-  settings: Doc<"settings">["payrollSettings"],
-) {
-  if (!settings) return undefined;
-  const { payrollTabPassword: removedPassword, ...safeSettings } = settings;
-  void removedPassword;
-  return safeSettings;
-}
-
-function projectLegacyDepartments(departments: LegacyDepartment[] | undefined) {
-  return (departments ?? []).map((department, index) =>
-    typeof department === "string"
-      ? {
-          name: department,
-          color: DEPARTMENT_COLORS[index % DEPARTMENT_COLORS.length],
-        }
-      : department,
-  );
 }
 
 async function getCanonicalDepartments(
@@ -242,19 +222,8 @@ export async function getEffectiveOrganization(
     getEffectiveRequirementDefinitions(ctx, organizationId),
   ]);
   if (!organization) return null;
-  const {
-    salaryPaymentFrequency: ignoredPaymentFrequency,
-    firstPayDate: ignoredFirstPayDate,
-    secondPayDate: ignoredSecondPayDate,
-    defaultRequirements: ignoredRequirements,
-    ...organizationProjection
-  } = organization;
-  void ignoredPaymentFrequency;
-  void ignoredFirstPayDate;
-  void ignoredSecondPayDate;
-  void ignoredRequirements;
   return {
-    ...organizationProjection,
+    ...organization,
     ...(payroll
       ? {
           salaryPaymentFrequency: payroll.salaryPaymentFrequency,
@@ -287,53 +256,8 @@ export async function getEffectiveSettings(
         .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
         .collect(),
     ]);
-  const {
-    cutoffDates: ignoredCutoffDates,
-    payrollSettings: ignoredPayrollSettings,
-    attendanceSettings: ignoredAttendanceSettings,
-    departments: ignoredDepartments,
-    proratedLeave: ignoredProratedLeave,
-    leaveAccrualFrequency: ignoredLeaveAccrualFrequency,
-    leaveTrackerMode: ignoredLeaveTrackerMode,
-    enableAnniversaryLeave: ignoredEnableAnniversaryLeave,
-    anniversaryLeaveMaxDays: ignoredAnniversaryLeaveMaxDays,
-    maxConvertibleLeaveDays: ignoredMaxConvertibleLeaveDays,
-    annualSil: ignoredAnnualSil,
-    grantLeaveUponRegularization: ignoredGrantLeaveUponRegularization,
-    paidLeaveRequiresRegularization: ignoredPaidLeaveRequiresRegularization,
-    leaveGuidelines: ignoredLeaveGuidelines,
-    leaveRequestFormTemplate: ignoredLeaveRequestFormTemplate,
-    leaveRequestPdfLayout: ignoredLeaveRequestPdfLayout,
-    evaluationColumns: ignoredEvaluationColumns,
-    recruitmentTableColumns: ignoredRecruitmentTableColumns,
-    requirementsTableColumns: ignoredRequirementsTableColumns,
-    leaveTableColumns: ignoredLeaveTableColumns,
-    leaveTypes: ignoredLeaveTypes,
-    ...settingsProjection
-  } = legacySettings ?? { organizationId };
-  void ignoredCutoffDates;
-  void ignoredPayrollSettings;
-  void ignoredAttendanceSettings;
-  void ignoredDepartments;
-  void ignoredProratedLeave;
-  void ignoredLeaveAccrualFrequency;
-  void ignoredLeaveTrackerMode;
-  void ignoredEnableAnniversaryLeave;
-  void ignoredAnniversaryLeaveMaxDays;
-  void ignoredMaxConvertibleLeaveDays;
-  void ignoredAnnualSil;
-  void ignoredGrantLeaveUponRegularization;
-  void ignoredPaidLeaveRequiresRegularization;
-  void ignoredLeaveGuidelines;
-  void ignoredLeaveRequestFormTemplate;
-  void ignoredLeaveRequestPdfLayout;
-  void ignoredEvaluationColumns;
-  void ignoredRecruitmentTableColumns;
-  void ignoredRequirementsTableColumns;
-  void ignoredLeaveTableColumns;
-  void ignoredLeaveTypes;
   return {
-    ...settingsProjection,
+    ...(legacySettings ?? {}),
     organizationId,
     cutoffDates: payroll?.cutoffDates,
     payrollSettings: payroll?.payrollSettings,
@@ -395,7 +319,9 @@ export async function upsertPayrollConfiguration(
     salaryPaymentFrequency?: "monthly" | "bimonthly";
     firstPayDate?: number;
     secondPayDate?: number;
-    payrollSettings?: NonNullable<Doc<"settings">["payrollSettings"]>;
+    payrollSettings?: NonNullable<
+      Doc<"organizationPayrollSettings">["payrollSettings"]
+    >;
   },
 ) {
   const [organization, existing, legacySettings] = await Promise.all([
@@ -409,7 +335,7 @@ export async function upsertPayrollConfiguration(
   const payrollSettings = patch.payrollSettings
     ? {
         ...(currentPayrollSettings ?? {}),
-        ...sanitizeLegacyPayrollSettings(patch.payrollSettings),
+        ...patch.payrollSettings,
       }
     : currentPayrollSettings;
   const value = {

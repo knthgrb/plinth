@@ -52,7 +52,6 @@ async function setup() {
       publishedDate: 1,
       isPublished: true,
       acknowledgementRequired: false,
-      reactions: [{ userId, emoji: "legacy", createdAt: 1 }],
       createdAt: 1,
       updatedAt: 1,
     });
@@ -73,7 +72,7 @@ async function setup() {
 }
 
 describe("communications compatibility", () => {
-  it("uses normalized reactions before conflicting embedded reactions", async () => {
+  it("loads reactions from normalized rows", async () => {
     const { actor, organizationId } = await setup();
     const announcements = await actor.query(api.announcements.getAnnouncements, {
       organizationId,
@@ -84,7 +83,7 @@ describe("communications compatibility", () => {
   });
 
   it("writes announcement reactions only to normalized rows", async () => {
-    const { t, actor, organizationId, userId, memoId } = await setup();
+    const { t, actor, organizationId, memoId } = await setup();
     await actor.mutation(api.announcements.addReaction, {
       announcementId: memoId,
       organizationId,
@@ -97,9 +96,7 @@ describe("communications compatibility", () => {
         .withIndex("by_memo", (q) => q.eq("memoId", memoId))
         .collect(),
     }));
-    expect(state.memo?.reactions).toEqual([
-      expect.objectContaining({ userId, emoji: "legacy" }),
-    ]);
+    expect(state.memo).not.toHaveProperty("reactions");
     expect(state.reactions.map((row) => row.emoji)).toEqual(["🎉"]);
   });
 
@@ -108,7 +105,6 @@ describe("communications compatibility", () => {
     const { conversationId } = await t.run(async (ctx) => {
       const conversationId = await ctx.db.insert("conversations", {
         organizationId,
-        participants: [],
         type: "channel",
         name: "Normalized channel",
         channelScope: "organization",
@@ -130,7 +126,6 @@ describe("communications compatibility", () => {
         senderId: userId,
         content: "normalized receipt",
         messageType: "text",
-        readBy: [],
         createdAt: 2,
       });
       await ctx.db.insert("messageReceipts", {
@@ -168,7 +163,6 @@ describe("communications compatibility", () => {
     const fixture = await t.run(async (ctx) => {
       const conversationId = await ctx.db.insert("conversations", {
         organizationId,
-        participants: [userId],
         type: "group",
         createdAt: 1,
         updatedAt: 1,
@@ -188,7 +182,6 @@ describe("communications compatibility", () => {
         senderId: userId,
         content: "delete me",
         messageType: "text",
-        readBy: [userId],
         createdAt: 2,
       });
       const receiptId = await ctx.db.insert("messageReceipts", {
@@ -205,7 +198,6 @@ describe("communications compatibility", () => {
       const preferencesId = await ctx.db.insert("userChatPreferences", {
         userId,
         organizationId,
-        pinnedConversations: [conversationId],
         createdAt: 1,
         updatedAt: 1,
       });
@@ -241,7 +233,7 @@ describe("communications compatibility", () => {
   });
 
   it("rejects pinning a conversation from another organization", async () => {
-    const { t, actor, organizationId, userId } = await setup();
+    const { t, actor, organizationId } = await setup();
     const otherConversationId = await t.run(async (ctx) => {
       const otherOrganizationId = await ctx.db.insert("organizations", {
         name: "Other Organization",
@@ -250,7 +242,6 @@ describe("communications compatibility", () => {
       });
       return ctx.db.insert("conversations", {
         organizationId: otherOrganizationId,
-        participants: [userId],
         type: "direct",
         createdAt: 1,
         updatedAt: 1,

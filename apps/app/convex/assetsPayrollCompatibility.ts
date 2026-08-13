@@ -4,12 +4,35 @@ import { buildAssetCustodyEvents } from "./assetsPayrollMigrationPlanner";
 
 const MIGRATION_VERSION = 1;
 type DatabaseContext = Pick<QueryCtx | MutationCtx, "db">;
-type PayrollNotes = NonNullable<Doc<"payrollRuns">["notes"]>;
+export type AssetMaintenanceEntry = {
+  date: number;
+  description: string;
+  cost?: number;
+  performedBy?: string;
+  nextServiceDate?: number;
+};
+export type AssetProjection = {
+  assignedEmployeeId?: Id<"employees">;
+  assignedAt?: number;
+  assignedBy?: Id<"users">;
+  custodyAcknowledgedAt?: number;
+  returnDueDate?: number;
+  returnedAt?: number;
+  maintenanceHistory: AssetMaintenanceEntry[];
+};
+export type EffectiveAsset = Doc<"assets"> & AssetProjection;
+export type PayrollNotes = Array<{
+  employeeId: Id<"employees">;
+  date: number;
+  note: string;
+  addedBy: Id<"users">;
+  addedAt: number;
+}>;
 
 export async function loadEffectiveAsset(
   ctx: DatabaseContext,
   asset: Doc<"assets">,
-): Promise<Doc<"assets">> {
+): Promise<EffectiveAsset> {
   const [maintenance, custody] = await Promise.all([
     ctx.db.query("assetMaintenanceEvents").withIndex("by_asset_source", (q) => q.eq("assetId", asset._id)).collect(),
     ctx.db.query("assetCustodyEvents").withIndex("by_asset_source", (q) => q.eq("assetId", asset._id)).collect(),
@@ -49,16 +72,7 @@ export async function loadEffectiveAsset(
 export async function replaceAssetProjection(
   ctx: MutationCtx,
   asset: Doc<"assets">,
-  effective: Pick<
-    Doc<"assets">,
-    | "assignedEmployeeId"
-    | "assignedAt"
-    | "assignedBy"
-    | "custodyAcknowledgedAt"
-    | "returnDueDate"
-    | "returnedAt"
-    | "maintenanceHistory"
-  >,
+  effective: AssetProjection,
   now: number,
 ): Promise<void> {
   const [maintenance, custody] = await Promise.all([

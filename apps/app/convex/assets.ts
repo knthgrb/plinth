@@ -176,7 +176,7 @@ export const createAsset = mutation({
         custodyAcknowledgedAt: args.custodyAcknowledgedAt ?? undefined,
         returnDueDate: args.returnDueDate ?? undefined,
         returnedAt: args.returnedAt ?? undefined,
-        maintenanceHistory: args.maintenanceHistory,
+        maintenanceHistory: args.maintenanceHistory ?? [],
       },
       now,
     );

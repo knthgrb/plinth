@@ -12,24 +12,6 @@ export default defineSchema({
     status: v.optional(v.union(v.literal("active"), v.literal("archived"))),
     archivedAt: v.optional(v.number()),
     archivedBy: v.optional(v.id("users")),
-    defaultRequirements: v.optional(
-      v.array(
-        v.object({
-          type: v.string(),
-          isRequired: v.optional(v.boolean()),
-          appliesToDepartments: v.optional(v.array(v.string())),
-          appliesToEmploymentTypes: v.optional(v.array(v.string())),
-          reminderDaysBeforeDue: v.optional(v.number()),
-          requiresVerification: v.optional(v.boolean()),
-          expiryDaysAfterSubmission: v.optional(v.number()),
-        }),
-      ),
-    ),
-    firstPayDate: v.optional(v.number()), // Day of month for first payroll (default: 15)
-    secondPayDate: v.optional(v.number()), // Day of month for second payroll (default: 30)
-    salaryPaymentFrequency: v.optional(
-      v.union(v.literal("monthly"), v.literal("bimonthly")),
-    ), // "monthly" = once per month, "bimonthly" = twice per month (e.g. 15th & 30th)
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_name", ["name"]),
@@ -362,26 +344,11 @@ export default defineSchema({
     email: v.string(),
     name: v.optional(v.string()),
     masterRole: v.optional(v.literal("super_admin")), // Master role: super_admin has access to /admin; null = regular user
-    organizationId: v.optional(v.id("organizations")), // Deprecated: kept for backward compatibility
-    role: v.optional(
-      v.union(
-        v.literal("admin"),
-        v.literal("owner"),
-        v.literal("hr"),
-        v.literal("manager"),
-        v.literal("employee"),
-        v.literal("accounting"),
-      ),
-    ), // Deprecated: kept for backward compatibility
-    employeeId: v.optional(v.id("employees")), // Link to employee record if applicable
-    isActive: v.optional(v.boolean()), // false when linked employee is archived; account cannot be used
     lastActiveOrganizationId: v.optional(v.id("organizations")), // Track user's last active organization
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_organization", ["organizationId"])
-    .index("by_email", ["email"])
-    .index("by_employee", ["employeeId"]),
+    .index("by_email", ["email"]),
 
   // User-Organization junction table (many-to-many relationship)
   userOrganizations: defineTable({
@@ -601,14 +568,6 @@ export default defineSchema({
         v.literal("daily"),
         v.literal("hourly"),
       ),
-      paymentFrequency: v.optional(v.string()), // Deprecated: kept for backward compatibility, will be removed
-      bankDetails: v.optional(
-        v.object({
-          bankName: v.string(),
-          accountNumber: v.string(),
-          accountName: v.string(),
-        }),
-      ),
       regularHolidayRate: v.optional(v.number()), // Actual rate for regular holidays (default 2.0 = 200% of daily)
       specialHolidayRate: v.optional(v.number()), // Actual rate for special holidays (default 1.3 = 130% of daily)
       nightDiffPercent: v.optional(v.number()), // Night differential override (default from settings)
@@ -660,110 +619,7 @@ export default defineSchema({
           isWorkday: v.boolean(),
         }),
       }),
-      scheduleOverrides: v.optional(
-        v.array(
-          v.object({
-            date: v.number(),
-            in: v.string(),
-            out: v.string(),
-            reason: v.string(),
-          }),
-        ),
-      ),
     }),
-    // Leave credits moved to leave tracker; optional for backward compatibility
-    leaveCredits: v.optional(
-      v.object({
-        vacation: v.object({
-          total: v.number(),
-          used: v.number(),
-          balance: v.number(),
-        }),
-        sick: v.object({
-          total: v.number(),
-          used: v.number(),
-          balance: v.number(),
-        }),
-        custom: v.optional(
-          v.array(
-            v.object({
-              type: v.string(),
-              total: v.number(),
-              used: v.number(),
-              balance: v.number(),
-            }),
-          ),
-        ),
-      }),
-    ),
-    requirements: v.optional(
-      v.array(
-        v.object({
-          type: v.string(),
-          status: v.union(
-            v.literal("pending"),
-            v.literal("submitted"),
-            v.literal("verified"),
-          ),
-          file: v.optional(v.id("_storage")),
-          submittedDate: v.optional(v.number()),
-          expiryDate: v.optional(v.number()),
-          isRequired: v.optional(v.boolean()),
-          appliesToDepartments: v.optional(v.array(v.string())),
-          appliesToEmploymentTypes: v.optional(v.array(v.string())),
-          reminderDaysBeforeDue: v.optional(v.number()),
-          requiresVerification: v.optional(v.boolean()),
-          verifiedAt: v.optional(v.number()),
-          verifiedBy: v.optional(v.id("users")),
-          verificationNotes: v.optional(v.string()),
-          rejectedAt: v.optional(v.number()),
-          rejectedBy: v.optional(v.id("users")),
-          rejectionReason: v.optional(v.string()),
-          reminderSentAt: v.optional(v.number()),
-          isDefault: v.optional(v.boolean()), // True if from organization defaults
-          isCustom: v.optional(v.boolean()), // True if custom requirement for this employee
-        }),
-      ),
-    ),
-    deductions: v.optional(
-      v.array(
-        v.object({
-          id: v.string(),
-          type: v.union(
-            v.literal("government"),
-            v.literal("loan"),
-            v.literal("other"),
-          ),
-          name: v.string(),
-          amount: v.number(),
-          frequency: v.union(v.literal("monthly"), v.literal("per-cutoff")),
-          startDate: v.number(),
-          endDate: v.optional(v.number()),
-          isActive: v.boolean(),
-        }),
-      ),
-    ),
-    incentives: v.optional(
-      v.array(
-        v.object({
-          id: v.string(),
-          name: v.string(),
-          amount: v.number(),
-          frequency: v.union(
-            v.literal("monthly"),
-            v.literal("quarterly"),
-            v.literal("one-time"),
-            v.literal("per-cutoff"),
-          ),
-          isActive: v.boolean(),
-        }),
-      ),
-    ),
-    customFields: v.optional(v.any()), // Flexible object for custom fields
-    /** Versioned payslip PIN credential. Legacy SHA-256 rows upgrade after successful verification. */
-    payslipPinHash: v.optional(v.string()),
-    /** Optional custom password for emailed payslip PDFs. When absent, employee ID is used. */
-    payslipPdfPassword: v.optional(v.string()),
     /** Optional shift (Morning, UK, Night). When set, schedule + lunch come from shift; null/absent = use defaultSchedule + org default lunch. */
     shiftId: v.optional(v.union(v.id("shifts"), v.null())),
     archivedAt: v.optional(v.number()),
@@ -1597,17 +1453,6 @@ export default defineSchema({
         }),
       ),
     ),
-    notes: v.optional(
-      v.array(
-        v.object({
-          employeeId: v.id("employees"),
-          date: v.number(),
-          note: v.string(),
-          addedBy: v.id("users"),
-          addedAt: v.number(),
-        }),
-      ),
-    ),
     /** Dependency snapshot captured when draft payslips were last regenerated. */
     draftDependencySnapshot: v.optional(
       v.object({
@@ -1898,23 +1743,6 @@ export default defineSchema({
       ),
     ),
     pdfFile: v.optional(v.id("_storage")),
-    editHistory: v.optional(
-      v.array(
-        v.object({
-          editedBy: v.id("users"),
-          editedByEmail: v.optional(v.string()),
-          editedAt: v.number(),
-          changes: v.array(
-            v.object({
-              field: v.string(),
-              oldValue: v.optional(v.any()),
-              newValue: v.optional(v.any()),
-              details: v.optional(v.array(v.string())),
-            }),
-          ),
-        }),
-      ),
-    ),
     concernSummary: v.optional(
       v.object({
         messageCount: v.number(),
@@ -1983,7 +1811,6 @@ export default defineSchema({
     label: v.string(), // e.g. "1st month", "6th month", "Annual"
     reviewCycle: v.optional(v.string()),
     rating: v.optional(v.number()), // 1-5 rating for this evaluation
-    frequencyMonths: v.optional(v.number()), // legacy/optional
     attachmentUrl: v.optional(v.string()), // link to external file (Drive, etc.)
     notes: v.optional(v.string()),
     selfReview: v.optional(
@@ -2001,19 +1828,8 @@ export default defineSchema({
         reviewerId: v.optional(v.id("users")),
       }),
     ),
-    assignedReviewerIds: v.optional(v.array(v.id("users"))),
     lockedAt: v.optional(v.number()),
     lockedBy: v.optional(v.id("users")),
-    history: v.optional(
-      v.array(
-        v.object({
-          action: v.string(),
-          at: v.number(),
-          by: v.id("users"),
-          summary: v.optional(v.string()),
-        }),
-      ),
-    ),
     createdBy: v.id("users"),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -2049,7 +1865,6 @@ export default defineSchema({
       v.literal("rejected"),
       v.literal("cancelled"),
     ),
-    supportingDocuments: v.optional(v.array(v.id("_storage"))),
     filedDate: v.number(),
     reviewedBy: v.optional(v.id("users")),
     reviewedDate: v.optional(v.number()),
@@ -2140,74 +1955,11 @@ export default defineSchema({
       v.literal("rejected"),
     ),
     appliedDate: v.number(),
-    pipelineStageHistory: v.optional(
-      v.array(
-        v.object({
-          from: v.optional(v.string()),
-          to: v.string(),
-          changedAt: v.number(),
-          changedBy: v.optional(v.id("users")),
-        }),
-      ),
-    ),
-    notes: v.optional(
-      v.array(
-        v.object({
-          date: v.number(),
-          author: v.id("users"),
-          content: v.string(),
-        }),
-      ),
-    ),
-    interviewSchedules: v.optional(
-      v.array(
-        v.object({
-          date: v.number(),
-          type: v.string(),
-          interviewer: v.id("users"),
-          interviewers: v.optional(v.array(v.id("users"))),
-          remarks: v.optional(v.string()),
-        }),
-      ),
-    ),
-    scorecards: v.optional(
-      v.array(
-        v.object({
-          reviewer: v.id("users"),
-          criteria: v.array(
-            v.object({
-              label: v.string(),
-              score: v.number(),
-              notes: v.optional(v.string()),
-            }),
-          ),
-          overallScore: v.number(),
-          recommendation: v.optional(v.string()),
-          submittedAt: v.number(),
-        }),
-      ),
-    ),
-    offerApproval: v.optional(
-      v.object({
-        status: v.union(
-          v.literal("not_requested"),
-          v.literal("pending"),
-          v.literal("approved"),
-          v.literal("rejected"),
-        ),
-        requestedBy: v.optional(v.id("users")),
-        requestedAt: v.optional(v.number()),
-        approvedBy: v.optional(v.id("users")),
-        approvedAt: v.optional(v.number()),
-        notes: v.optional(v.string()),
-      }),
-    ),
     convertedEmployeeId: v.optional(v.id("employees")),
     rating: v.optional(v.number()),
     googleMeetLink: v.optional(v.string()),
     interviewVideoLink: v.optional(v.string()),
     portfolioLink: v.optional(v.string()),
-    customFields: v.optional(v.any()), // Flexible object for custom fields
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -2277,8 +2029,6 @@ export default defineSchema({
       v.literal("department"),
       v.literal("specific-employees"),
     ),
-    departments: v.optional(v.array(v.string())),
-    specificEmployees: v.optional(v.array(v.id("employees"))),
     publishedDate: v.number(),
     scheduledPublishDate: v.optional(v.number()),
     expiryDate: v.optional(v.number()),
@@ -2292,19 +2042,8 @@ export default defineSchema({
         generatedAt: v.number(),
       }),
     ),
-    reactions: v.optional(v.array(v.any())),
-    attachments: v.optional(v.array(v.id("_storage"))),
-    attachmentContentTypes: v.optional(v.array(v.string())), // MIME types, same length as attachments (image/*, video/*)
     isPublished: v.boolean(),
     acknowledgementRequired: v.boolean(),
-    acknowledgedBy: v.optional(
-      v.array(
-        v.object({
-          employeeId: v.id("employees"),
-          date: v.number(),
-        }),
-      ),
-    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -2378,335 +2117,9 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_user_organization", ["userId", "organizationId"]),
 
-  // Settings table (organization-specific configurations)
+  // Settings identity shell retained for normalized settings targets.
   settings: defineTable({
     organizationId: v.id("organizations"),
-    cutoffDates: v.optional(
-      v.object({
-        firstCutoff: v.number(), // Day of month (1-15)
-        secondCutoff: v.number(), // Day of month (16-31)
-      }),
-    ),
-    payrollFrequency: v.optional(
-      v.union(
-        v.literal("weekly"),
-        v.literal("semi-monthly"),
-        v.literal("monthly"),
-      ),
-    ),
-    taxTable: v.optional(v.string()), // Reference to tax table version
-    // Attendance / lunch break (org default when employee has no shift)
-    attendanceSettings: v.optional(
-      v.object({
-        defaultLunchBreakMinutes: v.optional(v.number()), // e.g. 60 (used when no shift or shift has no lunch)
-        defaultLunchStart: v.optional(v.string()), // HH:mm e.g. "12:00"
-        defaultLunchEnd: v.optional(v.string()), // HH:mm e.g. "13:00"
-        graceMinutes: v.optional(v.number()),
-        roundingRule: v.optional(
-          v.union(
-            v.literal("none"),
-            v.literal("nearest_5"),
-            v.literal("nearest_15"),
-            v.literal("floor_15"),
-            v.literal("ceiling_15"),
-          ),
-        ),
-        flexibleShiftsEnabled: v.optional(v.boolean()),
-        overnightShiftCutoffHour: v.optional(v.number()),
-        restDayPolicy: v.optional(
-          v.union(
-            v.literal("fixed_weekly"),
-            v.literal("shift_based"),
-            v.literal("attendance_based"),
-          ),
-        ),
-        geofencePolicy: v.optional(
-          v.object({
-            enabled: v.boolean(),
-            allowedRadiusMeters: v.optional(v.number()),
-            requireForClockIn: v.optional(v.boolean()),
-          }),
-        ),
-        importPolicy: v.optional(
-          v.object({
-            allowCsvImport: v.optional(v.boolean()),
-            requireReviewBeforePosting: v.optional(v.boolean()),
-          }),
-        ),
-        payrollLockPolicy: v.optional(
-          v.object({
-            lockAttendanceAfterPayrollFinalized: v.optional(v.boolean()),
-            allowAdminCorrectionWithReason: v.optional(v.boolean()),
-          }),
-        ),
-      }),
-    ),
-    // Payroll configurations
-    payrollSettings: v.optional(
-      v.object({
-        nightDiffPercent: v.optional(v.number()), // Night differential: full rate for 10 PM–6 AM (default 1.1 = 110%, same convention as other night diff rates)
-        regularHolidayRate: v.optional(v.number()), // Actual rate for regular holidays (default 2.0 = 200% of daily)
-        specialHolidayRate: v.optional(v.number()), // Actual rate for special holidays (default 1.3 = 130% of daily)
-        overtimeRegularRate: v.optional(v.number()), // Regular day OT multiplier (default 1.25 = 125% per hour)
-        overtimeRestDayRate: v.optional(v.number()), // Rest day OT multiplier (default 1.69 = 169%)
-        regularHolidayOtRate: v.optional(v.number()), // Regular holiday OT multiplier (default 2.0 = 200%)
-        specialHolidayOtRate: v.optional(v.number()), // Special holiday OT multiplier (default 1.69 = 169%)
-        // Night differential rates (apply to hours in 10pm–6am; holiday rates apply only to hours on the holiday calendar day)
-        nightDiffOnOtRate: v.optional(v.number()), // Night diff on top of OT (default 1.375 = 137.5% of hourly)
-        nightDiffRegularHolidayRate: v.optional(v.number()), // Night hours on regular holiday (default 2.2 = 220%)
-        nightDiffSpecialHolidayRate: v.optional(v.number()), // Night hours on special non-working holiday (default 1.43 = 143%)
-        nightDiffRegularHolidayOtRate: v.optional(v.number()), // Regular holiday + OT + night (default 2.86 = 286%)
-        nightDiffSpecialHolidayOtRate: v.optional(v.number()), // Special holiday + OT + night (default 1.859 = 185.9%)
-        // Daily rate from monthly: (basic + allowance?) × (12 / workingDaysPerYear)
-        dailyRateIncludesAllowance: v.optional(v.boolean()), // If true, daily rate = (basic + allowance) × 12/261 (default true)
-        dailyRateWorkingDaysPerYear: v.optional(v.number()), // Working days per year for daily rate (default 261)
-        payrollTabPassword: v.optional(v.string()),
-        // Tax deduction: once_per_month = full tax on one pay; twice_per_month = half on 1st, half on 2nd (bimonthly only)
-        taxDeductionFrequency: v.optional(
-          v.union(v.literal("once_per_month"), v.literal("twice_per_month")),
-        ),
-        // When once_per_month: which pay deducts full tax (first = 1st cutoff, second = 2nd cutoff)
-        taxDeductOnPay: v.optional(
-          v.union(v.literal("first"), v.literal("second")),
-        ),
-        // Holiday with "no_work" attendance status: if true, treat as no-work-no-pay (deduct daily pay for monthly).
-        // Default false = no-work-with-pay (no absence deduction).
-        holidayNoWorkNoPay: v.optional(v.boolean()),
-        // If true, employee gets no holiday additional pay when absent the day before the holiday.
-        // Default true.
-        absentBeforeHolidayNoHolidayPay: v.optional(v.boolean()),
-        /**
-         * When true, additions marked non-taxable are applied against the TRAIN Law annual
-         * ₱90,000 non-taxable benefits cap; the excess is shown as taxable.
-         */
-        trainNinetyThousandCapOnAdditions: v.optional(v.boolean()),
-      }),
-    ),
-    // Leave type configurations
-    leaveTypes: v.optional(
-      v.array(
-        v.object({
-          type: v.string(), // e.g., "vacation", "sick", "maternity", "paternity", "anniversary", "emergency", "custom"
-          name: v.string(), // Display name
-          defaultCredits: v.number(), // Default credits per year (0 for anniversary - accrues +1 per year from hire)
-          isPaid: v.boolean(), // Whether this leave type is paid
-          requiresApproval: v.boolean(), // Whether this leave requires approval
-          maxConsecutiveDays: v.optional(v.number()), // Maximum consecutive days allowed
-          carryOver: v.optional(v.boolean()), // Whether unused credits can carry over
-          maxCarryOver: v.optional(v.number()), // Maximum credits that can carry over
-          isAnniversary: v.optional(v.boolean()), // When true, accrues +1 per year from hire/regularization date
-        }),
-      ),
-    ),
-    // Prorated leave: when true, annual leave is prorated by months worked (e.g. new hires get (annual/12)*months)
-    proratedLeave: v.optional(v.boolean()),
-    // Accrual schedule for tracker display and leave availability.
-    leaveAccrualFrequency: v.optional(
-      v.union(
-        v.literal("monthly"),
-        v.literal("semi_annual"),
-        v.literal("annual"),
-      ),
-    ),
-    // Leave tracker mode: "general" uses Annual SIL base, "by_type" uses configured leave types sum.
-    leaveTrackerMode: v.optional(
-      v.union(v.literal("general"), v.literal("by_type")),
-    ),
-    // When true, anniversary leave is included in tracker totals.
-    enableAnniversaryLeave: v.optional(v.boolean()),
-    // Cap for anniversary leave accrual. Default 15.
-    anniversaryLeaveMaxDays: v.optional(v.number()),
-    // Max unused leave days convertible to cash (default 5)
-    maxConvertibleLeaveDays: v.optional(v.number()),
-    // Base annual SIL used by leave tracker formulas
-    annualSil: v.optional(v.number()),
-    // When true, proration starts from regularization date; when false, from hire date
-    grantLeaveUponRegularization: v.optional(v.boolean()),
-    // When true, paid leave entitlement is zero until the employee is regularized.
-    paidLeaveRequiresRegularization: v.optional(v.boolean()),
-    // Employee-facing leave memo / guidelines text.
-    leaveGuidelines: v.optional(v.string()),
-    // Leave request form template (Tiptap JSON string)
-    leaveRequestFormTemplate: v.optional(v.string()),
-    // PDF export: optional header/footer (text or inline image) for leave request PDFs
-    leaveRequestPdfLayout: v.optional(
-      v.object({
-        header: v.optional(
-          v.object({
-            enabled: v.boolean(),
-            kind: v.union(
-              v.literal("none"),
-              v.literal("text"),
-              v.literal("image"),
-            ),
-            text: v.optional(v.string()),
-            imageDataUrl: v.optional(v.string()),
-            align: v.union(
-              v.literal("left"),
-              v.literal("center"),
-              v.literal("right"),
-              v.literal("justify"),
-            ),
-          }),
-        ),
-        footer: v.optional(
-          v.object({
-            enabled: v.boolean(),
-            kind: v.union(
-              v.literal("none"),
-              v.literal("text"),
-              v.literal("image"),
-            ),
-            text: v.optional(v.string()),
-            imageDataUrl: v.optional(v.string()),
-            align: v.union(
-              v.literal("left"),
-              v.literal("center"),
-              v.literal("right"),
-              v.literal("justify"),
-            ),
-          }),
-        ),
-      }),
-    ),
-    // Leave tracker sheet overrides keyed by employee (legacy, no year)
-    leaveTrackerRows: v.optional(
-      v.array(
-        v.object({
-          employeeId: v.id("employees"),
-          annualSilOverride: v.optional(v.number()),
-          availed: v.optional(v.number()),
-        }),
-      ),
-    ),
-    // Leave tracker by year: { year, rows[] } for historical tracking
-    leaveTrackerByYear: v.optional(
-      v.array(
-        v.object({
-          year: v.number(),
-          rows: v.array(
-            v.object({
-              employeeId: v.id("employees"),
-              annualSilOverride: v.optional(v.number()),
-              availed: v.optional(v.number()),
-            }),
-          ),
-          overrideReason: v.optional(v.string()),
-          updatedBy: v.optional(v.id("users")),
-          updatedAt: v.optional(v.number()),
-        }),
-      ),
-    ),
-    // Organization departments
-    // Temporarily accept both old format (string[]) and new format (Department[])
-    // Migration will happen automatically in queries/mutations
-    departments: v.optional(
-      v.union(
-        v.array(v.string()),
-        v.array(
-          v.object({
-            name: v.string(),
-            color: v.string(), // HEX color code
-            departmentHeadUserId: v.optional(v.id("users")),
-            costCenter: v.optional(v.string()),
-            location: v.optional(v.string()),
-            parentDepartmentName: v.optional(v.string()),
-          }),
-        ),
-      ),
-    ),
-    // Evaluation columns configuration
-    evaluationColumns: v.optional(
-      v.array(
-        v.object({
-          id: v.string(),
-          label: v.string(),
-          type: v.union(
-            v.literal("date"),
-            v.literal("number"),
-            v.literal("text"),
-            v.literal("rating"),
-          ),
-          hidden: v.optional(v.boolean()),
-          hasRatingColumn: v.optional(v.boolean()),
-          hasNotesColumn: v.optional(v.boolean()),
-        }),
-      ),
-    ),
-    // Recruitment table columns configuration
-    recruitmentTableColumns: v.optional(
-      v.array(
-        v.object({
-          id: v.string(),
-          label: v.string(),
-          field: v.string(),
-          type: v.union(
-            v.literal("text"),
-            v.literal("number"),
-            v.literal("date"),
-            v.literal("badge"),
-            v.literal("link"),
-          ),
-          sortable: v.optional(v.boolean()),
-          width: v.optional(v.string()),
-          customField: v.optional(v.boolean()),
-        }),
-      ),
-    ),
-    // Requirements table columns configuration
-    requirementsTableColumns: v.optional(
-      v.array(
-        v.object({
-          id: v.string(),
-          label: v.string(),
-          field: v.string(),
-          type: v.union(
-            v.literal("text"),
-            v.literal("number"),
-            v.literal("date"),
-            v.literal("badge"),
-            v.literal("link"),
-          ),
-          sortable: v.optional(v.boolean()),
-          width: v.optional(v.string()),
-          customField: v.optional(v.boolean()),
-        }),
-      ),
-    ),
-    // Leave table columns configuration
-    leaveTableColumns: v.optional(
-      v.array(
-        v.object({
-          id: v.string(),
-          label: v.string(),
-          field: v.string(),
-          type: v.union(
-            v.literal("text"),
-            v.literal("number"),
-            v.literal("date"),
-            v.literal("badge"),
-            v.literal("link"),
-          ),
-          sortable: v.optional(v.boolean()),
-          width: v.optional(v.string()),
-          customField: v.optional(v.boolean()),
-          isDefault: v.optional(v.boolean()),
-          hidden: v.optional(v.boolean()),
-        }),
-      ),
-    ),
-    settingsVersion: v.optional(v.number()),
-    settingsChangeLog: v.optional(
-      v.array(
-        v.object({
-          area: v.string(),
-          version: v.number(),
-          changedBy: v.id("users"),
-          changedAt: v.number(),
-          reason: v.optional(v.string()),
-        }),
-      ),
-    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),
@@ -2714,7 +2127,6 @@ export default defineSchema({
   // Chat conversations
   conversations: defineTable({
     organizationId: v.id("organizations"),
-    participants: v.optional(v.array(v.id("users"))),
     type: v.union(
       v.literal("direct"),
       v.literal("group"),
@@ -2737,8 +2149,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_organization", ["organizationId"])
-    .index("by_participant", ["participants"]),
+    .index("by_organization", ["organizationId"]),
 
   // Chat messages
   messages: defineTable({
@@ -2751,10 +2162,8 @@ export default defineSchema({
       v.literal("file"),
       v.literal("system"),
     ),
-    attachments: v.optional(v.array(v.id("_storage"))),
     payslipId: v.optional(v.id("payslips")), // Link message to payslip for appeals/comments
     replyToMessageId: v.optional(v.id("messages")), // When replying to a specific message
-    readBy: v.optional(v.array(v.id("users"))), // Users who have read this message
     createdAt: v.number(),
   })
     .index("by_conversation", ["conversationId"])
@@ -2765,7 +2174,6 @@ export default defineSchema({
   userChatPreferences: defineTable({
     userId: v.id("users"),
     organizationId: v.id("organizations"),
-    pinnedConversations: v.optional(v.array(v.id("conversations"))),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_user_organization", ["userId", "organizationId"]),
@@ -2828,7 +2236,6 @@ export default defineSchema({
     invitedBy: v.id("users"),
     employeeId: v.optional(v.id("employees")), // Link to employee if applicable
     inviteeName: v.optional(v.string()), // Name from employee record for pre-filled user on accept
-    token: v.optional(v.string()),
     tokenHash: v.optional(v.string()),
     status: v.union(
       v.literal("pending"),
@@ -2842,7 +2249,6 @@ export default defineSchema({
   })
     .index("by_organization", ["organizationId"])
     .index("by_email", ["email"])
-    .index("by_token", ["token"])
     .index("by_token_hash", ["tokenHash"]),
 
   // Documents
@@ -2861,9 +2267,7 @@ export default defineSchema({
       v.literal("other"),
     ),
     category: v.optional(v.string()),
-    attachments: v.optional(v.array(v.id("_storage"))),
     isShared: v.optional(v.boolean()), // If shared with HR/Admin
-    sharedWith: v.optional(v.array(v.id("users"))), // Users who can view this document
     visibilityScope: v.optional(
       v.union(
         v.literal("admins_only"),
@@ -2874,8 +2278,6 @@ export default defineSchema({
         v.literal("payroll_visible"),
       ),
     ),
-    visibleDepartments: v.optional(v.array(v.string())),
-    visibleEmployeeIds: v.optional(v.array(v.id("employees"))),
     createdAt: v.number(),
     updatedAt: v.number(),
     /** Increments when body content is replaced; first version is 1. Used for version history. */
@@ -2990,7 +2392,6 @@ export default defineSchema({
       }),
     ),
     notes: v.optional(v.string()),
-    receipts: v.optional(v.array(v.id("_storage"))),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -3013,12 +2414,6 @@ export default defineSchema({
     supplier: v.optional(v.string()),
     serialNumber: v.optional(v.string()),
     location: v.optional(v.string()),
-    assignedEmployeeId: v.optional(v.id("employees")),
-    assignedAt: v.optional(v.number()),
-    assignedBy: v.optional(v.id("users")),
-    custodyAcknowledgedAt: v.optional(v.number()),
-    returnDueDate: v.optional(v.number()),
-    returnedAt: v.optional(v.number()),
     condition: v.optional(
       v.union(
         v.literal("new"),
@@ -3026,17 +2421,6 @@ export default defineSchema({
         v.literal("fair"),
         v.literal("needs_repair"),
         v.literal("damaged"),
-      ),
-    ),
-    maintenanceHistory: v.optional(
-      v.array(
-        v.object({
-          date: v.number(),
-          description: v.string(),
-          cost: v.optional(v.number()),
-          performedBy: v.optional(v.string()),
-          nextServiceDate: v.optional(v.number()),
-        }),
       ),
     ),
     status: v.optional(
