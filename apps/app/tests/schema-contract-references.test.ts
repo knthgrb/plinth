@@ -251,6 +251,18 @@ describe("schema contract references", () => {
     };
 
     expect(tiers.enforceable.totalMatches).toBeGreaterThan(0);
+    if (process.env.UPDATE_SCHEMA_REFERENCE_BASELINE === "1") {
+      writeFileSync(
+        fileURLToPath(
+          new URL(
+            "./fixtures/schema-contract-reference-baseline.json",
+            import.meta.url,
+          ),
+        ),
+        `${JSON.stringify({ version: 1, tiers }, null, 2)}\n`,
+      );
+      return;
+    }
     expect({ version: 1, tiers }).toEqual(baseline);
   });
 });

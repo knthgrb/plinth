@@ -21,6 +21,10 @@ import {
   upsertPayrollConfiguration,
 } from "./organizationConfiguration";
 import { loadPayslipCredentialHash } from "./payslipPinResetDb";
+import {
+  loadEffectiveEmployeeRequirements,
+  replaceEmployeeRequirements,
+} from "./leaveEmployeeCompatibility";
 
 const defaultRequirementValidator = v.object({
   type: v.string(),
@@ -888,11 +892,13 @@ export const updateDefaultRequirements = mutation({
     requirements: v.array(defaultRequirementValidator),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
+    await checkAuth(ctx, args.organizationId, "hr");
+
+    const now = Date.now();
 
     await ctx.db.patch(args.organizationId, {
       defaultRequirements: args.requirements,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
     await replaceRequirementConfiguration(
       ctx,
@@ -910,7 +916,10 @@ export const updateDefaultRequirements = mutation({
 
     // Update each employee's requirements
     for (const employee of employees) {
-      const currentRequirements = employee.requirements || [];
+      const currentRequirements = await loadEffectiveEmployeeRequirements(
+        ctx,
+        employee,
+      );
       const customRequirements = currentRequirements.filter(
         (r: any) => r.isCustom,
       );
@@ -948,9 +957,15 @@ export const updateDefaultRequirements = mutation({
         ...customRequirements,
       ];
 
+      await replaceEmployeeRequirements(
+        ctx,
+        employee,
+        updatedRequirements,
+        now,
+      );
       await ctx.db.patch(employee._id, {
         requirements: updatedRequirements,
-        updatedAt: Date.now(),
+        updatedAt: now,
       });
     }
 

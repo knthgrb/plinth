@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import {
   buildFinalSettlementPayrollDeductions,
@@ -11,6 +11,7 @@ import {
   type FinalSettlementCustomDeduction,
   type FinalSettlementLoanPayoff,
 } from "@/utils/final-settlement";
+import { loadEffectiveEmployee } from "./leaveEmployeeCompatibility";
 
 const clearanceStatusValidator = v.union(
   v.literal("pending"),
@@ -140,7 +141,10 @@ function normalizeCustomDeduction(
 }
 
 async function enrichSettlement(ctx: any, settlement: any) {
-  const employee = (await ctx.db.get(settlement.employeeId)) as any;
+  const employeeRow = await ctx.db.get(settlement.employeeId);
+  const employee = employeeRow
+    ? await loadEffectiveEmployee(ctx, employeeRow)
+    : null;
   const payrollRun = settlement.payrollRunId
     ? await ctx.db.get(settlement.payrollRunId)
     : null;
@@ -173,11 +177,16 @@ export const getFinalSettlements = query({
       settlements.map((settlement: any) => enrichSettlement(ctx, settlement)),
     );
 
-    const employees = await (ctx.db.query("employees") as any)
+    const employeeRows = await (ctx.db.query("employees") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
+    const employees = await Promise.all(
+      employeeRows.map((employee: Doc<"employees">) =>
+        loadEffectiveEmployee(ctx, employee),
+      ),
+    );
     const settlementEmployeeIds = new Set(
       settlements.map((settlement: any) => String(settlement.employeeId)),
     );
@@ -217,10 +226,11 @@ export const prepareFinalSettlement = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
-    const employee = (await ctx.db.get(args.employeeId)) as any;
-    if (!employee || employee.organizationId !== args.organizationId) {
+    const employeeRow = await ctx.db.get(args.employeeId);
+    if (!employeeRow || employeeRow.organizationId !== args.organizationId) {
       throw new Error("Employee not found");
     }
+    const employee = await loadEffectiveEmployee(ctx, employeeRow);
     if (!isSeparatedEmployee(employee)) {
       throw new Error("Final settlement can only be prepared for resigned or terminated employees");
     }

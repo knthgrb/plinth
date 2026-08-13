@@ -1,6 +1,8 @@
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { normalizeDepartmentName } from "./databaseMigrationPlanner";
+import { getEffectiveOrganizationLeaveSettings } from "./leaveEmployeeCompatibility";
+import { getEffectiveOrganizationUiSettings } from "./workflowCompatibility";
 
 type ReadContext = Pick<QueryCtx, "db">;
 type ConfigurationSource = "normalized" | "legacy" | "default";
@@ -281,11 +283,13 @@ export async function getEffectiveSettings(
   ctx: ReadContext,
   organizationId: Id<"organizations">,
 ) {
-  const [legacySettings, payroll, attendance, normalizedDepartments] =
+  const [legacySettings, payroll, attendance, leave, ui, normalizedDepartments] =
     await Promise.all([
       getLegacySettings(ctx, organizationId),
       getPayrollRow(ctx, organizationId),
       getAttendanceRow(ctx, organizationId),
+      getEffectiveOrganizationLeaveSettings(ctx, organizationId),
+      getEffectiveOrganizationUiSettings(ctx, organizationId),
       getCanonicalDepartments(ctx, organizationId),
     ]);
   const legacyPayrollSettings = sanitizeLegacyPayrollSettings(
@@ -298,6 +302,31 @@ export async function getEffectiveSettings(
     normalizedDepartments.length > 0 || payroll !== null;
   return {
     ...(legacySettings ?? { _id: null, organizationId }),
+    ...(leave
+      ? {
+          proratedLeave: leave.proratedLeave,
+          leaveAccrualFrequency: leave.leaveAccrualFrequency,
+          leaveTrackerMode: leave.leaveTrackerMode,
+          enableAnniversaryLeave: leave.enableAnniversaryLeave,
+          anniversaryLeaveMaxDays: leave.anniversaryLeaveMaxDays,
+          maxConvertibleLeaveDays: leave.maxConvertibleLeaveDays,
+          annualSil: leave.annualSil,
+          grantLeaveUponRegularization: leave.grantLeaveUponRegularization,
+          paidLeaveRequiresRegularization:
+            leave.paidLeaveRequiresRegularization,
+          leaveGuidelines: leave.leaveGuidelines,
+          leaveRequestFormTemplate: leave.leaveRequestFormTemplate,
+          leaveRequestPdfLayout: leave.leaveRequestPdfLayout,
+        }
+      : {}),
+    ...(ui
+      ? {
+          evaluationColumns: ui.evaluationColumns,
+          recruitmentTableColumns: ui.recruitmentTableColumns,
+          requirementsTableColumns: ui.requirementsTableColumns,
+          leaveTableColumns: ui.leaveTableColumns,
+        }
+      : {}),
     cutoffDates: payroll ? payroll.cutoffDates : legacySettings?.cutoffDates,
     payrollSettings: payroll ? payroll.payrollSettings : legacyPayrollSettings,
     attendanceSettings:
@@ -319,6 +348,16 @@ export async function getEffectiveSettings(
       departments: (useNormalizedDepartments
         ? "normalized"
         : legacySettings?.departments
+          ? "legacy"
+          : "default") as ConfigurationSource,
+      leave: (leave
+        ? "normalized"
+        : legacySettings
+          ? "legacy"
+          : "default") as ConfigurationSource,
+      ui: (ui
+        ? "normalized"
+        : legacySettings
           ? "legacy"
           : "default") as ConfigurationSource,
     },

@@ -1,9 +1,13 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import { encryptCompensationForDb } from "./employeeCompensationCrypto";
 import { getEffectiveRequirementDefinitions } from "./organizationConfiguration";
+import {
+  loadEffectiveApplicant,
+  synchronizeEffectiveApplicant,
+} from "./workflowCompatibility";
 import { runOrgQuery } from "./queryAuthGrace";
 
 // Helper to check authorization with organization context
@@ -253,7 +257,11 @@ export const getApplicants = query({
       }
 
       applicants.sort((a: any, b: any) => b.appliedDate - a.appliedDate);
-      return applicants;
+      return Promise.all(
+        applicants.map((applicant: Doc<"applicants">) =>
+          loadEffectiveApplicant(ctx, applicant),
+        ),
+      );
     }, []);
   },
 });
@@ -270,7 +278,7 @@ export const getApplicant = query({
 
       await checkAuth(ctx, applicant.organizationId, "hr");
 
-      return applicant;
+      return loadEffectiveApplicant(ctx, applicant);
     }, null);
   },
 });
@@ -320,6 +328,14 @@ export const createApplicant = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    const applicant = await ctx.db.get(applicantId);
+    if (!applicant) throw new Error("Applicant creation did not persist");
+    await synchronizeEffectiveApplicant(
+      ctx,
+      applicant,
+      { pipelineStageHistory: applicant.pipelineStageHistory },
+      now,
+    );
 
     return applicantId;
   },
@@ -376,6 +392,14 @@ export const createApplicantByHR = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    const applicant = await ctx.db.get(applicantId);
+    if (!applicant) throw new Error("Applicant creation did not persist");
+    await synchronizeEffectiveApplicant(
+      ctx,
+      applicant,
+      { pipelineStageHistory: applicant.pipelineStageHistory },
+      now,
+    );
 
     return applicantId;
   },
@@ -403,6 +427,7 @@ export const updateApplicant = mutation({
     if (!applicant) throw new Error("Applicant not found");
 
     const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
+    const effectiveApplicant = await loadEffectiveApplicant(ctx, applicant);
 
     const updates: any = { updatedAt: Date.now() };
     if (args.firstName !== undefined) updates.firstName = args.firstName;
@@ -423,11 +448,19 @@ export const updateApplicant = mutation({
     if (args.customFields !== undefined) {
       // Merge with existing customFields
       updates.customFields = {
-        ...(applicant.customFields || {}),
+        ...(effectiveApplicant.customFields || {}),
         ...args.customFields,
       };
     }
 
+    if (updates.customFields !== undefined) {
+      await synchronizeEffectiveApplicant(
+        ctx,
+        applicant,
+        { customFields: updates.customFields },
+        updates.updatedAt,
+      );
+    }
     await ctx.db.patch(args.applicantId, updates);
 
     return { success: true };
@@ -455,7 +488,8 @@ export const updateApplicantStatus = mutation({
     const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
 
     const now = Date.now();
-    const pipelineStageHistory = applicant.pipelineStageHistory || [];
+    const effective = await loadEffectiveApplicant(ctx, applicant);
+    const pipelineStageHistory = effective.pipelineStageHistory || [];
     pipelineStageHistory.push({
       from: applicant.status,
       to: args.status,
@@ -463,6 +497,12 @@ export const updateApplicantStatus = mutation({
       changedBy: userRecord._id,
     });
 
+    await synchronizeEffectiveApplicant(
+      ctx,
+      applicant,
+      { pipelineStageHistory },
+      now,
+    );
     await ctx.db.patch(args.applicantId, {
       status: args.status,
       pipelineStageHistory,
@@ -485,16 +525,19 @@ export const addApplicantNote = mutation({
 
     const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
 
-    const notes = applicant.notes || [];
+    const effective = await loadEffectiveApplicant(ctx, applicant);
+    const notes = effective.notes || [];
+    const now = Date.now();
     notes.push({
-      date: Date.now(),
+      date: now,
       author: userRecord._id,
       content: args.content,
     });
 
+    await synchronizeEffectiveApplicant(ctx, applicant, { notes }, now);
     await ctx.db.patch(args.applicantId, {
       notes,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
 
     return { success: true };
@@ -517,7 +560,8 @@ export const scheduleInterview = mutation({
 
     const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
 
-    const interviews = applicant.interviewSchedules || [];
+    const effective = await loadEffectiveApplicant(ctx, applicant);
+    const interviews = effective.interviewSchedules || [];
     interviews.push({
       date: args.date,
       type: args.type,
@@ -526,10 +570,27 @@ export const scheduleInterview = mutation({
       remarks: args.remarks,
     });
 
+    const now = Date.now();
+    const pipelineStageHistory = [
+      ...(effective.pipelineStageHistory ?? []),
+      {
+        from: effective.status,
+        to: "interview",
+        changedAt: now,
+        changedBy: userRecord._id,
+      },
+    ];
+    await synchronizeEffectiveApplicant(
+      ctx,
+      applicant,
+      { interviewSchedules: interviews, pipelineStageHistory },
+      now,
+    );
     await ctx.db.patch(args.applicantId, {
       interviewSchedules: interviews,
       status: "interview",
-      updatedAt: Date.now(),
+      pipelineStageHistory,
+      updatedAt: now,
     });
 
     return { success: true };
@@ -554,7 +615,8 @@ export const addApplicantScorecard = mutation({
     if (!applicant) throw new Error("Applicant not found");
 
     const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
-    const scorecards = applicant.scorecards || [];
+    const effective = await loadEffectiveApplicant(ctx, applicant);
+    const scorecards = effective.scorecards || [];
     const now = Date.now();
     scorecards.push({
       reviewer: userRecord._id,
@@ -564,6 +626,7 @@ export const addApplicantScorecard = mutation({
       submittedAt: now,
     });
 
+    await synchronizeEffectiveApplicant(ctx, applicant, { scorecards }, now);
     await ctx.db.patch(args.applicantId, {
       scorecards,
       rating: args.overallScore,
@@ -585,14 +648,32 @@ export const requestOfferApproval = mutation({
 
     const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
     const now = Date.now();
+    const effective = await loadEffectiveApplicant(ctx, applicant);
+    const offerApproval = {
+      status: "pending" as const,
+      requestedBy: userRecord._id,
+      requestedAt: now,
+      notes: args.notes,
+    };
+    const pipelineStageHistory = [
+      ...(effective.pipelineStageHistory ?? []),
+      {
+        from: effective.status,
+        to: "offer",
+        changedAt: now,
+        changedBy: userRecord._id,
+      },
+    ];
+    await synchronizeEffectiveApplicant(
+      ctx,
+      applicant,
+      { offerApproval, pipelineStageHistory },
+      now,
+    );
     await ctx.db.patch(args.applicantId, {
       status: "offer",
-      offerApproval: {
-        status: "pending",
-        requestedBy: userRecord._id,
-        requestedAt: now,
-        notes: args.notes,
-      },
+      offerApproval,
+      pipelineStageHistory,
       updatedAt: now,
     });
 
@@ -612,14 +693,22 @@ export const approveOffer = mutation({
 
     const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
     const now = Date.now();
-    await ctx.db.patch(args.applicantId, {
-      offerApproval: {
-        ...(applicant.offerApproval || {}),
+    const effective = await loadEffectiveApplicant(ctx, applicant);
+    const offerApproval = {
+        ...(effective.offerApproval || {}),
         status: args.approved ? "approved" : "rejected",
         approvedBy: userRecord._id,
         approvedAt: now,
-        notes: args.notes ?? applicant.offerApproval?.notes,
-      },
+        notes: args.notes ?? effective.offerApproval?.notes,
+      } as const;
+    await synchronizeEffectiveApplicant(
+      ctx,
+      applicant,
+      { offerApproval },
+      now,
+    );
+    await ctx.db.patch(args.applicantId, {
+      offerApproval,
       updatedAt: now,
     });
 
@@ -638,6 +727,23 @@ export const deleteApplicant = mutation({
 
     const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
 
+    await synchronizeEffectiveApplicant(
+      ctx,
+      applicant,
+      {
+        pipelineStageHistory: [],
+        notes: [],
+        interviewSchedules: [],
+        scorecards: [],
+        customFields: {},
+      },
+      Date.now(),
+    );
+    const offerRows = await ctx.db
+      .query("applicantOfferEvents")
+      .withIndex("by_applicant", (q) => q.eq("applicantId", applicant._id))
+      .collect();
+    for (const row of offerRows) await ctx.db.delete(row._id);
     await ctx.db.delete(args.applicantId);
     return { success: true };
   },

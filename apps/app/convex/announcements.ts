@@ -4,6 +4,11 @@ import { runOrgQuery } from "./queryAuthGrace";
 import { requireActiveMembership } from "./access";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import {
+  loadEffectiveMemo,
+  synchronizeEffectiveMemo,
+  type MemoReaction,
+} from "./communicationsCompatibility";
 
 type AnnouncementAudience = Pick<
   Doc<"memos">,
@@ -119,6 +124,10 @@ export const getAnnouncements = query({
         )
         .collect();
 
+      announcements = await Promise.all(
+        announcements.map((memo) => loadEffectiveMemo(ctx, memo)),
+      );
+
       const now = Date.now();
       announcements = announcements.filter(
         (m) =>
@@ -177,6 +186,10 @@ export const getUnreadAnnouncementsCount = query({
           q.eq("organizationId", args.organizationId),
         )
         .collect();
+
+      announcements = await Promise.all(
+        announcements.map((memo) => loadEffectiveMemo(ctx, memo)),
+      );
 
       const now = Date.now();
       announcements = announcements.filter(
@@ -322,6 +335,19 @@ export const createAnnouncement = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    const announcement = await ctx.db.get(announcementId);
+    if (!announcement) throw new Error("Announcement creation did not persist");
+    await synchronizeEffectiveMemo(
+      ctx,
+      announcement,
+      {
+        specificEmployees: args.specificEmployees,
+        departments: args.departments,
+        attachments: args.attachments,
+        attachmentContentTypes: args.attachmentContentTypes,
+      },
+      now,
+    );
 
     return announcementId;
   },
@@ -434,6 +460,7 @@ export const updateAnnouncement = mutation({
       }
     }
 
+    await synchronizeEffectiveMemo(ctx, announcement, updateData, Date.now());
     await ctx.db.patch(args.announcementId, updateData);
     return args.announcementId;
   },
@@ -466,6 +493,19 @@ export const deleteAnnouncement = mutation({
       throw new Error("Only the author can delete this announcement");
     }
 
+    await synchronizeEffectiveMemo(
+      ctx,
+      announcement,
+      {
+        reactions: [],
+        acknowledgedBy: [],
+        specificEmployees: [],
+        departments: [],
+        attachments: [],
+        attachmentContentTypes: [],
+      },
+      Date.now(),
+    );
     await ctx.db.delete(args.announcementId);
     return args.announcementId;
   },
@@ -543,7 +583,8 @@ export const addReaction = mutation({
       throw new Error("Announcement not found");
     }
 
-    const reactions = announcement.reactions || [];
+    const effective = await loadEffectiveMemo(ctx, announcement);
+    const reactions = (effective.reactions || []) as MemoReaction[];
     const now = Date.now();
 
     // Remove existing reaction from this user if any
@@ -558,6 +599,12 @@ export const addReaction = mutation({
       createdAt: now,
     });
 
+    await synchronizeEffectiveMemo(
+      ctx,
+      announcement,
+      { reactions: filteredReactions },
+      now,
+    );
     await ctx.db.patch(args.announcementId, {
       reactions: filteredReactions,
       updatedAt: now,
@@ -581,14 +628,22 @@ export const removeReaction = mutation({
       throw new Error("Announcement not found");
     }
 
-    const reactions = announcement.reactions || [];
+    const effective = await loadEffectiveMemo(ctx, announcement);
+    const reactions = (effective.reactions || []) as MemoReaction[];
     const filteredReactions = reactions.filter(
       (reaction) => reaction.userId !== userRecord._id,
     );
 
+    const now = Date.now();
+    await synchronizeEffectiveMemo(
+      ctx,
+      announcement,
+      { reactions: filteredReactions },
+      now,
+    );
     await ctx.db.patch(args.announcementId, {
       reactions: filteredReactions,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
 
     return args.announcementId;

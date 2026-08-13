@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { authComponent } from "./auth";
 import { requireActiveMembership, requirePayslipMembership } from "./access";
 import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
@@ -73,6 +73,11 @@ import {
   buildFinalSettlementPayrollDeductions,
   isFinalSettlementReadyForPayroll,
 } from "@/utils/final-settlement";
+import {
+  loadEffectivePayrollRunNotes,
+  replacePayrollRunNotes,
+} from "./assetsPayrollCompatibility";
+import { loadEffectiveEmployee } from "./leaveEmployeeCompatibility";
 
 function getPayrollErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message?.trim()) {
@@ -2881,7 +2886,9 @@ async function buildCanonicalPayrollResult(
     suppressRecurringEmployeeLoanDeductions?: boolean;
   },
 ) {
-  const employee = args.employee;
+  const employee = decryptEmployeeFromDb(
+    await loadEffectiveEmployee(ctx, args.employee),
+  );
   const payrollBase = args.payrollBase;
   const now = Date.now();
   const hasWorkedAtLeastOneDay = payrollBase.daysWorked > 0;
@@ -2923,7 +2930,7 @@ async function buildCanonicalPayrollResult(
   const totalNonTaxableIncentives = sumNonTaxableIncentiveAmounts(incentives);
 
   const isDailyizedFirstCutoff = payrollBase.dailyizedFirstCutoff === true;
-  let nonTaxableAllowance =
+  const nonTaxableAllowance =
     args.nonTaxableAllowanceOverride !== undefined
       ? round2(args.nonTaxableAllowanceOverride)
       : isDailyizedFirstCutoff
@@ -4059,10 +4066,10 @@ export const updatePayrollRun = mutation({
     const preserveExistingPayslipEdits =
       args.preserveExistingPayslipEdits !== false;
 
-    let mergedManualDeductions: ManualDeductionEntry[] =
+    const mergedManualDeductions: ManualDeductionEntry[] =
       resolvedManualDeductions;
-    let mergedIncentives: IncentiveEntry[] = resolvedIncentives;
-    let mergedNonTaxableAllowanceOverrides: Array<{
+    const mergedIncentives: IncentiveEntry[] = resolvedIncentives;
+    const mergedNonTaxableAllowanceOverrides: Array<{
       employeeId: any;
       amount: number;
     }> =
@@ -4878,6 +4885,7 @@ export const deletePayrollRun = mutation({
     }
 
     // Delete payroll run
+    await replacePayrollRunNotes(ctx, payrollRun, [], Date.now());
     await ctx.db.delete(args.payrollRunId);
     return { success: true };
   },
@@ -4932,6 +4940,7 @@ export const deletePayrollRuns = mutation({
       }
 
       // Delete payroll run
+      await replacePayrollRunNotes(ctx, payrollRun, [], Date.now());
       await ctx.db.delete(payrollRun._id);
       deletedCount += 1;
     }
@@ -5393,7 +5402,11 @@ export const getPayrollRuns = query({
     runs.sort((a: any, b: any) => b.createdAt - a.createdAt);
     const out: any[] = [];
     for (const run of runs) {
-      const dec = decryptPayrollRunFromDb(run);
+      const notes = await loadEffectivePayrollRunNotes(
+        ctx,
+        run as Doc<"payrollRuns">,
+      );
+      const dec = decryptPayrollRunFromDb({ ...run, notes });
       if (dec.status === "draft") {
         const rt = dec.runType ?? "regular";
         if (
@@ -6419,7 +6432,8 @@ export const getPayrollRunSummary = query({
   handler: async (ctx, args) => {
     const payrollRunRaw = await ctx.db.get(args.payrollRunId);
     if (!payrollRunRaw) throw new Error("Payroll run not found");
-    const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
+    const notes = await loadEffectivePayrollRunNotes(ctx, payrollRunRaw);
+    const payrollRun = decryptPayrollRunFromDb({ ...payrollRunRaw, notes });
     if (!(await checkAuthForQuery(ctx, payrollRun.organizationId))) return null;
     if (await canUsePayrollSummarySnapshot(ctx, payrollRun)) {
       const parsed = tryParsePayrollSummarySnapshot(
@@ -6451,18 +6465,20 @@ export const addPayrollRunNote = mutation({
 
     const userRecord = await checkAuth(ctx, payrollRun.organizationId);
 
-    const notes = payrollRun.notes || [];
+    const notes = await loadEffectivePayrollRunNotes(ctx, payrollRun);
+    const now = Date.now();
     notes.push({
       employeeId: args.employeeId,
       date: args.date,
       note: args.note,
       addedBy: userRecord._id,
-      addedAt: Date.now(),
+      addedAt: now,
     });
 
+    await replacePayrollRunNotes(ctx, payrollRun, notes, now);
     await ctx.db.patch(args.payrollRunId, {
       notes,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
 
     return { success: true };

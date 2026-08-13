@@ -3,6 +3,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import type { Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import { getEffectiveAttendanceSettings } from "./organizationConfiguration";
+import { loadEmployeeScheduleOverridesById } from "./leaveEmployeeCompatibility";
 import { runOrgQuery } from "./queryAuthGrace";
 
 async function checkAuth(
@@ -163,6 +164,15 @@ export async function getScheduleWithLunch(
     if (effectiveFromHistory) {
       effectiveSchedule = effectiveFromHistory.schedule;
       effectiveShiftId = effectiveFromHistory.shiftId;
+    }
+    if (effectiveSchedule) {
+      const scheduleOverrides = await loadEmployeeScheduleOverridesById(
+        ctx,
+        organizationId,
+        employee._id,
+        effectiveSchedule.scheduleOverrides ?? [],
+      );
+      effectiveSchedule = { ...effectiveSchedule, scheduleOverrides };
     }
   }
 

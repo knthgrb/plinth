@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
 import {
@@ -23,6 +23,20 @@ import {
   insertInAppNotification,
 } from "./notificationHelpers";
 import { canUseEmployeeSelfService } from "@/utils/employee-lifecycle";
+import {
+  loadEffectiveEmployee,
+  replaceEmployeeLeaveCredits,
+} from "./leaveEmployeeCompatibility";
+
+async function persistLeaveCredits(
+  ctx: MutationCtx,
+  employee: Doc<"employees">,
+  leaveCredits: NonNullable<Doc<"employees">["leaveCredits"]>,
+): Promise<void> {
+  const now = Date.now();
+  await replaceEmployeeLeaveCredits(ctx, employee, leaveCredits, now);
+  await ctx.db.patch(employee._id, { leaveCredits, updatedAt: now });
+}
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -446,8 +460,9 @@ export const getLeaveRequestApprovalInfo = query({
       return { canApprove: false, blockReason: "Request is no longer pending" };
     }
 
-    const employee = await ctx.db.get(request.employeeId);
-    if (!employee) return { canApprove: false, blockReason: "Employee not found" };
+    const employeeRow = await ctx.db.get(request.employeeId);
+    if (!employeeRow) return { canApprove: false, blockReason: "Employee not found" };
+    const employee = await loadEffectiveEmployee(ctx, employeeRow);
 
     const overlappingApprovedRequest = await findOverlappingLeaveRequest(ctx, {
       organizationId: request.organizationId,
@@ -549,8 +564,9 @@ export const createLeaveRequest = mutation({
       throw new Error("Not authorized");
     }
 
-    const employee = await ctx.db.get(args.employeeId);
-    if (!employee) throw new Error("Employee not found");
+    const employeeRow = await ctx.db.get(args.employeeId);
+    if (!employeeRow) throw new Error("Employee not found");
+    const employee = await loadEffectiveEmployee(ctx, employeeRow);
     if (employee.organizationId !== args.organizationId) {
       throw new Error("Employee is not in this organization");
     }
@@ -704,8 +720,9 @@ export const createManualLeaveRequest = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
-    const employee = await ctx.db.get(args.employeeId);
-    if (!employee) throw new Error("Employee not found");
+    const employeeRow = await ctx.db.get(args.employeeId);
+    if (!employeeRow) throw new Error("Employee not found");
+    const employee = await loadEffectiveEmployee(ctx, employeeRow);
     if (employee.organizationId !== args.organizationId) {
       throw new Error("Employee is not in this organization");
     }
@@ -761,7 +778,7 @@ export const createManualLeaveRequest = mutation({
           );
         }
         deductCreditsGeneralPool(leaveCredits, numberOfDays);
-        await ctx.db.patch(args.employeeId, { leaveCredits });
+        await persistLeaveCredits(ctx, employee, leaveCredits);
       } else {
         const creditType = getCreditType(args.leaveType, args.customLeaveType);
         const trackedCredit = hasTrackedCreditType(leaveCredits, creditType);
@@ -783,7 +800,7 @@ export const createManualLeaveRequest = mutation({
 
         if (trackedCredit) {
           deductCreditsForType(leaveCredits, creditType, numberOfDays);
-          await ctx.db.patch(args.employeeId, { leaveCredits });
+          await persistLeaveCredits(ctx, employee, leaveCredits);
         }
       }
     }
@@ -840,8 +857,9 @@ export const approveLeaveRequest = mutation({
     }
 
     // Check and update leave credits
-    const employee = await ctx.db.get(request.employeeId);
-    if (!employee) throw new Error("Employee not found");
+    const employeeRow = await ctx.db.get(request.employeeId);
+    if (!employeeRow) throw new Error("Employee not found");
+    const employee = await loadEffectiveEmployee(ctx, employeeRow);
 
     const overlappingApprovedRequest = await findOverlappingLeaveRequest(ctx, {
       organizationId: request.organizationId,
@@ -877,7 +895,7 @@ export const approveLeaveRequest = mutation({
           );
         }
         deductCreditsGeneralPool(leaveCredits, request.numberOfDays);
-        await ctx.db.patch(request.employeeId, { leaveCredits });
+        await persistLeaveCredits(ctx, employee, leaveCredits);
       } else {
         const creditType = getCreditType(
           request.leaveType,
@@ -902,7 +920,7 @@ export const approveLeaveRequest = mutation({
 
         if (trackedCredit) {
           deductCreditsForType(leaveCredits, creditType, request.numberOfDays);
-          await ctx.db.patch(request.employeeId, { leaveCredits });
+          await persistLeaveCredits(ctx, employee, leaveCredits);
         }
       }
     }
@@ -1094,8 +1112,9 @@ export const getEmployeeLeaveCredits = query({
       throw new Error("Not authorized");
     }
 
-    const employee = await ctx.db.get(args.employeeId);
-    if (!employee) throw new Error("Employee not found");
+    const employeeRow = await ctx.db.get(args.employeeId);
+    if (!employeeRow) throw new Error("Employee not found");
+    const employee = await loadEffectiveEmployee(ctx, employeeRow);
 
     const settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
@@ -1279,8 +1298,9 @@ export const updateEmployeeLeaveCredits = mutation({
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
 
-    const employee = await ctx.db.get(args.employeeId);
-    if (!employee) throw new Error("Employee not found");
+    const employeeRow = await ctx.db.get(args.employeeId);
+    if (!employeeRow) throw new Error("Employee not found");
+    const employee = await loadEffectiveEmployee(ctx, employeeRow);
 
     const leaveCredits = {
       vacation: { total: 0, used: 0, balance: 0 },
@@ -1358,7 +1378,7 @@ export const updateEmployeeLeaveCredits = mutation({
       }
     }
 
-    await ctx.db.patch(args.employeeId, { leaveCredits });
+    await persistLeaveCredits(ctx, employee, leaveCredits);
 
     return { success: true, leaveCredits };
   },
@@ -1376,8 +1396,9 @@ export const convertLeaveToCash = mutation({
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
 
-    const employee = await ctx.db.get(args.employeeId);
-    if (!employee) throw new Error("Employee not found");
+    const employeeRow = await ctx.db.get(args.employeeId);
+    if (!employeeRow) throw new Error("Employee not found");
+    const employee = await loadEffectiveEmployee(ctx, employeeRow);
 
     const leaveCredits = {
       vacation: { total: 0, used: 0, balance: 0 },
@@ -1418,7 +1439,7 @@ export const convertLeaveToCash = mutation({
     // Note: We're treating converted leave as "used" for accounting purposes
     // The total remains the same since it was already granted
 
-    await ctx.db.patch(args.employeeId, { leaveCredits });
+    await persistLeaveCredits(ctx, employee, leaveCredits);
 
     // In a real system, you would also create a payroll entry or cash conversion record here
     // For now, we just update the leave credits

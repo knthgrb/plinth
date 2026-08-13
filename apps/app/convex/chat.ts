@@ -16,6 +16,14 @@ import { requireActiveMembership } from "./access";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { canUseFullOrganizationAccess } from "@/utils/org-membership-lifecycle";
+import {
+  loadEffectiveConversation,
+  loadEffectiveMessageReadBy,
+  loadEffectivePinnedConversations,
+  replaceConversationMembers,
+  replaceMessageReceipts,
+  replacePinnedConversations,
+} from "./communicationsCompatibility";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -243,7 +251,12 @@ export const getOrCreateConversation = mutation({
       )
       .collect();
 
-    const existing = existingConversations.find((conv) => {
+    const effectiveConversations = await Promise.all(
+      existingConversations.map((conversation) =>
+        loadEffectiveConversation(ctx, conversation),
+      ),
+    );
+    const existing = effectiveConversations.find((conv) => {
       if (
         conv.type !== "direct" ||
         conv.participants.length !== 2 ||
@@ -278,6 +291,9 @@ export const getOrCreateConversation = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    const conversation = await ctx.db.get(conversationId);
+    if (!conversation) throw new Error("Conversation creation did not persist");
+    await replaceConversationMembers(ctx, conversation, conversation.participants, now);
 
     return conversationId;
   },
@@ -301,12 +317,17 @@ export const getConversations = query({
     }
     const limit = args.limit || 20;
 
-    const conversations = await ctx.db
+    const legacyConversations = await ctx.db
       .query("conversations")
       .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId)
       )
       .collect();
+    const conversations = await Promise.all(
+      legacyConversations.map((conversation) =>
+        loadEffectiveConversation(ctx, conversation),
+      ),
+    );
 
     // Filter conversations where user is a participant
     const userConversations = conversations.filter((conv) =>
@@ -385,8 +406,9 @@ export const getMessages = query({
     beforeTimestamp: v.optional(v.number()), // Load messages before this timestamp
   },
   handler: async (ctx, args) => {
-    const conversation = await ctx.db.get(args.conversationId);
-    if (!conversation) throw new Error("Conversation not found");
+    const legacyConversation = await ctx.db.get(args.conversationId);
+    if (!legacyConversation) throw new Error("Conversation not found");
+    const conversation = await loadEffectiveConversation(ctx, legacyConversation);
 
     const userRecord = await checkAuthForQuery(ctx, conversation.organizationId);
     if (!userRecord) {
@@ -419,6 +441,7 @@ export const getMessages = query({
       const enriched = await Promise.all(
         messages.map(async (msg) => {
           const sender = await ctx.db.get(msg.senderId);
+          const readBy = await loadEffectiveMessageReadBy(ctx, conversation, msg);
           let replyTo = null;
           if (msg.replyToMessageId) {
             const replyMsg = await ctx.db.get(msg.replyToMessageId);
@@ -430,6 +453,7 @@ export const getMessages = query({
           if (sender && "email" in sender) {
             return {
               ...msg,
+              readBy,
               sender: {
                 _id: sender._id,
                 name: sender.name || sender.email,
@@ -440,6 +464,7 @@ export const getMessages = query({
           }
           return {
             ...msg,
+            readBy,
             sender: null,
             replyTo,
           };
@@ -461,6 +486,7 @@ export const getMessages = query({
       const enriched = await Promise.all(
         messages.map(async (msg) => {
           const sender = await ctx.db.get(msg.senderId);
+          const readBy = await loadEffectiveMessageReadBy(ctx, conversation, msg);
           let replyTo = null;
           if (msg.replyToMessageId) {
             const replyMsg = await ctx.db.get(msg.replyToMessageId);
@@ -472,6 +498,7 @@ export const getMessages = query({
           if (sender && "email" in sender) {
             return {
               ...msg,
+              readBy,
               sender: {
                 _id: sender._id,
                 name: sender.name || sender.email,
@@ -482,6 +509,7 @@ export const getMessages = query({
           }
           return {
             ...msg,
+            readBy,
             sender: null,
             replyTo,
           };
@@ -515,8 +543,9 @@ export const sendMessage = mutation({
     replyToMessageId: v.optional(v.id("messages")),
   },
   handler: async (ctx, args) => {
-    const conversation = await ctx.db.get(args.conversationId);
-    if (!conversation) throw new Error("Conversation not found");
+    const conversationRow = await ctx.db.get(args.conversationId);
+    if (!conversationRow) throw new Error("Conversation not found");
+    const conversation = await loadEffectiveConversation(ctx, conversationRow);
 
     const userRecord = await checkAuth(ctx, conversation.organizationId);
 
@@ -578,6 +607,15 @@ export const sendMessage = mutation({
       readBy: [userRecord._id], // Sender has read their own message
       createdAt: now,
     });
+    const message = await ctx.db.get(messageId);
+    if (!message) throw new Error("Message creation did not persist");
+    await replaceMessageReceipts(
+      ctx,
+      conversation,
+      message,
+      [userRecord._id],
+      now,
+    );
 
     // Update conversation's lastMessageAt
     await ctx.db.patch(args.conversationId, {
@@ -629,10 +667,11 @@ export const forwardMessage = mutation({
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
 
-    const target = await ctx.db.get(args.targetConversationId);
-    if (!target || target.organizationId !== args.organizationId) {
+    const targetRow = await ctx.db.get(args.targetConversationId);
+    if (!targetRow || targetRow.organizationId !== args.organizationId) {
       throw new Error("Conversation not found");
     }
+    const target = await loadEffectiveConversation(ctx, targetRow);
     if (!target.participants.includes(userRecord._id)) {
       throw new Error("You are not a member of that conversation");
     }
@@ -677,7 +716,7 @@ export const forwardMessage = mutation({
       forwardBody = encryptUtf8(forwardBody, sk);
     }
 
-    await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", {
       conversationId: args.targetConversationId,
       senderId: userRecord._id,
       content: forwardBody,
@@ -686,6 +725,9 @@ export const forwardMessage = mutation({
       readBy: [userRecord._id],
       createdAt: now,
     });
+    const message = await ctx.db.get(messageId);
+    if (!message) throw new Error("Message creation did not persist");
+    await replaceMessageReceipts(ctx, target, message, [userRecord._id], now);
 
     await ctx.db.patch(args.targetConversationId, {
       lastMessageAt: now,
@@ -703,8 +745,9 @@ export const markMessagesAsRead = mutation({
     messageIds: v.array(v.id("messages")),
   },
   handler: async (ctx, args) => {
-    const conversation = await ctx.db.get(args.conversationId);
-    if (!conversation) throw new Error("Conversation not found");
+    const conversationRow = await ctx.db.get(args.conversationId);
+    if (!conversationRow) throw new Error("Conversation not found");
+    const conversation = await loadEffectiveConversation(ctx, conversationRow);
 
     const userRecord = await checkAuth(ctx, conversation.organizationId);
 
@@ -717,10 +760,18 @@ export const markMessagesAsRead = mutation({
     for (const messageId of args.messageIds) {
       const message = await ctx.db.get(messageId);
       if (message && message.conversationId === args.conversationId) {
-        const readBy = message.readBy || [];
+        const readBy = await loadEffectiveMessageReadBy(ctx, conversation, message);
         if (!readBy.includes(userRecord._id)) {
+          const nextReadBy = [...readBy, userRecord._id];
+          await replaceMessageReceipts(
+            ctx,
+            conversation,
+            message,
+            nextReadBy,
+            Date.now(),
+          );
           await ctx.db.patch(messageId, {
-            readBy: [...readBy, userRecord._id],
+            readBy: nextReadBy,
           });
         }
       }
@@ -738,8 +789,11 @@ export const getConversationById = query({
   },
   handler: async (ctx, args) => {
     if (!args.conversationId) return null;
-    const conv = await ctx.db.get(args.conversationId);
-    if (!conv || conv.organizationId !== args.organizationId) return null;
+    const conversationRow = await ctx.db.get(args.conversationId);
+    if (!conversationRow || conversationRow.organizationId !== args.organizationId) {
+      return null;
+    }
+    const conv = await loadEffectiveConversation(ctx, conversationRow);
     if (!Array.isArray(conv.participants) || conv.participants.length === 0)
       return null;
 
@@ -777,12 +831,17 @@ export const getConversationByParticipant = query({
     const userRecord = await checkAuthForQuery(ctx, args.organizationId);
     if (!userRecord) return null;
 
-    const conversations = await ctx.db
+    const conversationRows = await ctx.db
       .query("conversations")
       .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId)
       )
       .collect();
+    const conversations = await Promise.all(
+      conversationRows.map((conversation) =>
+        loadEffectiveConversation(ctx, conversation),
+      ),
+    );
 
     const dms = conversations.filter(
       (conv) =>
@@ -875,6 +934,9 @@ export const createGroupChat = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    const conversation = await ctx.db.get(conversationId);
+    if (!conversation) throw new Error("Conversation creation did not persist");
+    await replaceConversationMembers(ctx, conversation, allParticipants, now);
 
     return conversationId;
   },
@@ -907,6 +969,14 @@ export const createChannel = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    const conversation = await ctx.db.get(conversationId);
+    if (!conversation) throw new Error("Conversation creation did not persist");
+    await replaceConversationMembers(
+      ctx,
+      conversation,
+      [userRecord._id],
+      now,
+    );
 
     return conversationId;
   },
@@ -918,8 +988,9 @@ export const joinChannel = mutation({
     conversationId: v.id("conversations"),
   },
   handler: async (ctx, args) => {
-    const conversation = await ctx.db.get(args.conversationId);
-    if (!conversation) throw new Error("Channel not found");
+    const conversationRow = await ctx.db.get(args.conversationId);
+    if (!conversationRow) throw new Error("Channel not found");
+    const conversation = await loadEffectiveConversation(ctx, conversationRow);
     if (conversation.type !== "channel") {
       throw new Error("Not a channel");
     }
@@ -935,9 +1006,12 @@ export const joinChannel = mutation({
       throw new Error("You can only join this channel by invitation");
     }
 
+    const now = Date.now();
+    const participants = [...conversation.participants, userRecord._id];
+    await replaceConversationMembers(ctx, conversationRow, participants, now);
     await ctx.db.patch(args.conversationId, {
-      participants: [...conversation.participants, userRecord._id],
-      updatedAt: Date.now(),
+      participants,
+      updatedAt: now,
     });
 
     return { success: true, alreadyMember: false };
@@ -953,12 +1027,17 @@ export const listChannels = query({
     const userRecord = await checkAuthForQuery(ctx, args.organizationId);
     if (!userRecord) return [];
 
-    const allChannels = await ctx.db
+    const allChannelRows = await ctx.db
       .query("conversations")
       .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId)
       )
       .collect();
+    const allChannels = await Promise.all(
+      allChannelRows.map((conversation) =>
+        loadEffectiveConversation(ctx, conversation),
+      ),
+    );
 
     const channels = allChannels.filter((conversation) =>
       conversation.type === "channel",
@@ -984,8 +1063,9 @@ export const addMembersToGroup = mutation({
     participantIds: v.array(v.id("users")),
   },
   handler: async (ctx, args) => {
-    const conversation = await ctx.db.get(args.conversationId);
-    if (!conversation) throw new Error("Conversation not found");
+    const conversationRow = await ctx.db.get(args.conversationId);
+    if (!conversationRow) throw new Error("Conversation not found");
+    const conversation = await loadEffectiveConversation(ctx, conversationRow);
 
     const userRecord = await checkAuth(ctx, conversation.organizationId);
 
@@ -1015,9 +1095,12 @@ export const addMembersToGroup = mutation({
       newParticipants,
     );
 
+    const now = Date.now();
+    const participants = [...conversation.participants, ...newParticipants];
+    await replaceConversationMembers(ctx, conversationRow, participants, now);
     await ctx.db.patch(args.conversationId, {
-      participants: [...conversation.participants, ...newParticipants],
-      updatedAt: Date.now(),
+      participants,
+      updatedAt: now,
     });
 
     return { success: true, added: newParticipants.length };
@@ -1031,8 +1114,9 @@ export const removeMemberFromGroup = mutation({
     participantId: v.id("users"),
   },
   handler: async (ctx, args) => {
-    const conversation = await ctx.db.get(args.conversationId);
-    if (!conversation) throw new Error("Conversation not found");
+    const conversationRow = await ctx.db.get(args.conversationId);
+    if (!conversationRow) throw new Error("Conversation not found");
+    const conversation = await loadEffectiveConversation(ctx, conversationRow);
 
     const userRecord = await checkAuth(ctx, conversation.organizationId);
 
@@ -1062,11 +1146,14 @@ export const removeMemberFromGroup = mutation({
       );
     }
 
+    const now = Date.now();
+    const participants = conversation.participants.filter(
+      (id) => id !== args.participantId,
+    );
+    await replaceConversationMembers(ctx, conversationRow, participants, now);
     await ctx.db.patch(args.conversationId, {
-      participants: conversation.participants.filter(
-        (id) => id !== args.participantId
-      ),
-      updatedAt: Date.now(),
+      participants,
+      updatedAt: now,
     });
 
     return { success: true };
@@ -1081,6 +1168,17 @@ export const togglePinConversation = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
+    const conversationRow = await ctx.db.get(args.conversationId);
+    if (
+      !conversationRow ||
+      conversationRow.organizationId !== args.organizationId
+    ) {
+      throw new Error("Conversation not found");
+    }
+    const conversation = await loadEffectiveConversation(ctx, conversationRow);
+    if (!conversation.participants.includes(userRecord._id)) {
+      throw new Error("Not authorized to pin this conversation");
+    }
 
     // Get or create user chat preferences
     const preferences = await ctx.db
@@ -1091,7 +1189,12 @@ export const togglePinConversation = mutation({
       .first();
 
     const now = Date.now();
-    const pinned = preferences?.pinnedConversations || [];
+    const pinned = await loadEffectivePinnedConversations(
+      ctx,
+      args.organizationId,
+      userRecord._id,
+      preferences?.pinnedConversations || [],
+    );
 
     if (pinned.includes(args.conversationId)) {
       // Unpin
@@ -1099,6 +1202,7 @@ export const togglePinConversation = mutation({
         (id) => id !== args.conversationId,
       );
       if (preferences) {
+        await replacePinnedConversations(ctx, preferences, updatedPinned, now);
         await ctx.db.patch(preferences._id, {
           pinnedConversations: updatedPinned,
           updatedAt: now,
@@ -1109,18 +1213,27 @@ export const togglePinConversation = mutation({
       // Pin
       const updatedPinned = [...pinned, args.conversationId];
       if (preferences) {
+        await replacePinnedConversations(ctx, preferences, updatedPinned, now);
         await ctx.db.patch(preferences._id, {
           pinnedConversations: updatedPinned,
           updatedAt: now,
         });
       } else {
-        await ctx.db.insert("userChatPreferences", {
+        const preferencesId = await ctx.db.insert("userChatPreferences", {
           userId: userRecord._id,
           organizationId: args.organizationId,
           pinnedConversations: updatedPinned,
           createdAt: now,
           updatedAt: now,
         });
+        const createdPreferences = await ctx.db.get(preferencesId);
+        if (!createdPreferences) throw new Error("Chat preferences did not persist");
+        await replacePinnedConversations(
+          ctx,
+          createdPreferences,
+          updatedPinned,
+          now,
+        );
       }
       return { pinned: true };
     }
@@ -1133,8 +1246,9 @@ export const deleteConversation = mutation({
     conversationId: v.id("conversations"),
   },
   handler: async (ctx, args) => {
-    const conversation = await ctx.db.get(args.conversationId);
-    if (!conversation) throw new Error("Conversation not found");
+    const conversationRow = await ctx.db.get(args.conversationId);
+    if (!conversationRow) throw new Error("Conversation not found");
+    const conversation = await loadEffectiveConversation(ctx, conversationRow);
 
     const userRecord = await checkAuth(ctx, conversation.organizationId);
     if (!conversation.participants.includes(userRecord._id)) {
@@ -1149,8 +1263,31 @@ export const deleteConversation = mutation({
       )
       .collect();
     for (const msg of messages) {
+      const receipts = await ctx.db
+        .query("messageReceipts")
+        .withIndex("by_message", (q) => q.eq("messageId", msg._id))
+        .collect();
+      for (const receipt of receipts) await ctx.db.delete(receipt._id);
       await ctx.db.delete(msg._id);
     }
+
+    const members = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_conversation", (q) =>
+        q.eq("conversationId", args.conversationId),
+      )
+      .collect();
+    for (const member of members) await ctx.db.delete(member._id);
+
+    const pins = (
+      await ctx.db
+        .query("userPinnedConversations")
+        .withIndex("by_organization", (q) =>
+          q.eq("organizationId", conversation.organizationId),
+        )
+        .collect()
+    ).filter((pin) => pin.conversationId === args.conversationId);
+    for (const pin of pins) await ctx.db.delete(pin._id);
 
     // Remove from any user's pinned list
     const allPrefs = await ctx.db.query("userChatPreferences").collect();
@@ -1190,7 +1327,12 @@ export const getPinnedConversations = query({
       )
       .first();
 
-    return preferences?.pinnedConversations || [];
+    return loadEffectivePinnedConversations(
+      ctx,
+      args.organizationId,
+      userRecord._id,
+      preferences?.pinnedConversations || [],
+    );
   },
 });
 
@@ -1203,12 +1345,17 @@ export const getUnreadCounts = query({
     const userRecord = await checkAuthForQuery(ctx, args.organizationId);
     if (!userRecord) return {};
 
-    const conversations = await ctx.db
+    const conversationRows = await ctx.db
       .query("conversations")
       .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
+    const conversations = await Promise.all(
+      conversationRows.map((conversation) =>
+        loadEffectiveConversation(ctx, conversation),
+      ),
+    );
 
     const userConvs = conversations.filter((conversation) =>
       conversation.participants.includes(userRecord._id),
@@ -1224,12 +1371,18 @@ export const getUnreadCounts = query({
         )
         .collect();
 
-      const unread = messages.filter((msg) => {
-        const readBy = msg.readBy || [];
-        return msg.senderId !== userRecord._id && !readBy.includes(userRecord._id);
-      });
+      let unread = 0;
+      for (const message of messages) {
+        const readBy = await loadEffectiveMessageReadBy(ctx, conv, message);
+        if (
+          message.senderId !== userRecord._id &&
+          !readBy.includes(userRecord._id)
+        ) {
+          unread += 1;
+        }
+      }
 
-      counts[conv._id] = unread.length;
+      counts[conv._id] = unread;
     }
 
     return counts;
@@ -1244,12 +1397,17 @@ export const markAllConversationsAsRead = mutation({
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
 
-    const conversations = await ctx.db
+    const conversationRows = await ctx.db
       .query("conversations")
       .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId)
       )
       .collect();
+    const conversations = await Promise.all(
+      conversationRows.map((conversation) =>
+        loadEffectiveConversation(ctx, conversation),
+      ),
+    );
 
     const userConvs = conversations.filter((conversation) =>
       conversation.participants.includes(userRecord._id),
@@ -1264,10 +1422,18 @@ export const markAllConversationsAsRead = mutation({
         .collect();
 
       for (const msg of messages) {
-        const readBy = msg.readBy || [];
+        const readBy = await loadEffectiveMessageReadBy(ctx, conv, msg);
         if (!readBy.includes(userRecord._id)) {
+          const nextReadBy = [...readBy, userRecord._id];
+          await replaceMessageReceipts(
+            ctx,
+            conv,
+            msg,
+            nextReadBy,
+            Date.now(),
+          );
           await ctx.db.patch(msg._id, {
-            readBy: [...readBy, userRecord._id],
+            readBy: nextReadBy,
           });
         }
       }
@@ -1283,8 +1449,9 @@ export const getChatSessionKey = query({
     conversationId: v.id("conversations"),
   },
   handler: async (ctx, args) => {
-    const conv = await ctx.db.get(args.conversationId);
-    if (!conv) return null;
+    const conversationRow = await ctx.db.get(args.conversationId);
+    if (!conversationRow) return null;
+    const conv = await loadEffectiveConversation(ctx, conversationRow);
     const userRecord = await checkAuthForQuery(ctx, conv.organizationId);
     if (!userRecord || !conv.participants.includes(userRecord._id)) return null;
     if (!conv.chatSessionKeyEnc || !getChatMasterSecret()) return null;
@@ -1308,12 +1475,17 @@ export const listChatSessionKeysForOrganization = query({
     const userRecord = await checkAuthForQuery(ctx, args.organizationId);
     if (!userRecord) return {};
     if (!getChatMasterSecret()) return {};
-    const conversations = await ctx.db
+    const conversationRows = await ctx.db
       .query("conversations")
       .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
+    const conversations = await Promise.all(
+      conversationRows.map((conversation) =>
+        loadEffectiveConversation(ctx, conversation),
+      ),
+    );
     const out: Record<string, string> = {};
     for (const c of conversations) {
       if (!c.participants?.includes(userRecord._id)) continue;

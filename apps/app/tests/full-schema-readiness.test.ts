@@ -118,13 +118,7 @@ describe("full schema cleanup readiness", () => {
     expect(resolveFullSchemaProgramReadiness(additiveDomains)).toEqual({
       readyForRelease2: true,
       readyForRelease3: false,
-      release3Blockers: [
-        "COMPATIBILITY_SWITCH_PENDING:leave_employee_children",
-        "COMPATIBILITY_SWITCH_PENDING:workflow_events",
-        "COMPATIBILITY_SWITCH_PENDING:communications_documents",
-        "COMPATIBILITY_SWITCH_PENDING:assets_payroll_compatibility",
-        "COMPATIBILITY_WINDOW_NOT_COMPLETED",
-      ],
+      release3Blockers: ["COMPATIBILITY_WINDOW_NOT_COMPLETED"],
     });
   });
 

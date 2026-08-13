@@ -1,8 +1,12 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import { runOrgQuery } from "./queryAuthGrace";
+import {
+  loadEffectiveEvaluation,
+  replaceEvaluationProjection,
+} from "./workflowCompatibility";
 
 const templateSectionValidator = v.object({
   label: v.string(),
@@ -46,9 +50,9 @@ async function checkOrgHrAdmin(
 }
 
 function appendEvaluationHistory(
-  evaluation: any,
+  evaluation: Doc<"evaluations">,
   action: string,
-  userId: any,
+  userId: Id<"users">,
   summary?: string,
 ) {
   return [
@@ -63,9 +67,9 @@ function appendEvaluationHistory(
 }
 
 async function validateTemplateForOrganization(
-  ctx: any,
-  templateId: any,
-  organizationId: any,
+  ctx: QueryCtx | MutationCtx,
+  templateId: Id<"evaluationTemplates"> | undefined,
+  organizationId: Id<"organizations">,
 ) {
   if (!templateId) return;
   const template = await ctx.db.get(templateId);
@@ -142,7 +146,11 @@ export const getEvaluations = query({
       }
 
       evaluations.sort((a: any, b: any) => b.evaluationDate - a.evaluationDate);
-      return evaluations;
+      return Promise.all(
+        evaluations.map((evaluation: Doc<"evaluations">) =>
+          loadEffectiveEvaluation(ctx, evaluation),
+        ),
+      );
     }, []);
   },
 });
@@ -199,6 +207,16 @@ export const createEvaluation = mutation({
       updatedAt: now,
     });
 
+    const evaluation = await ctx.db.get(id);
+    if (!evaluation) throw new Error("Evaluation creation did not persist");
+    await replaceEvaluationProjection(
+      ctx,
+      evaluation,
+      args.assignedReviewerIds ?? [],
+      evaluation.history ?? [],
+      now,
+    );
+
     return id;
   },
 });
@@ -232,9 +250,16 @@ export const updateEvaluation = mutation({
       existing.organizationId,
     );
 
-    const updates: any = {
-      updatedAt: Date.now(),
-      history: appendEvaluationHistory(existing, "updated", userRecord._id),
+    const now = Date.now();
+    const effective = await loadEffectiveEvaluation(ctx, existing);
+    const history = appendEvaluationHistory(
+      effective,
+      "updated",
+      userRecord._id,
+    );
+    const updates: Partial<Doc<"evaluations">> = {
+      updatedAt: now,
+      history,
     };
     if (args.templateId !== undefined) updates.templateId = args.templateId;
     if (args.label !== undefined) updates.label = args.label;
@@ -254,6 +279,14 @@ export const updateEvaluation = mutation({
       updates.assignedReviewerIds = args.assignedReviewerIds;
 
     await ctx.db.patch(args.evaluationId, updates);
+    await replaceEvaluationProjection(
+      ctx,
+      existing,
+      args.assignedReviewerIds ??
+        effective.assignedReviewerIds ?? [],
+      history,
+      now,
+    );
     return { success: true };
   },
 });
@@ -272,15 +305,25 @@ export const assignEvaluationReviewers = mutation({
 
     const { userRecord } = await checkOrgHrAdmin(ctx, existing.organizationId);
 
+    const now = Date.now();
+    const effective = await loadEffectiveEvaluation(ctx, existing);
+    const history = appendEvaluationHistory(
+      effective,
+      "reviewers_assigned",
+      userRecord._id,
+      `${args.reviewerIds.length} reviewer(s)`,
+    );
+    await replaceEvaluationProjection(
+      ctx,
+      existing,
+      args.reviewerIds,
+      history,
+      now,
+    );
     await ctx.db.patch(args.evaluationId, {
       assignedReviewerIds: args.reviewerIds,
-      updatedAt: Date.now(),
-      history: appendEvaluationHistory(
-        existing,
-        "reviewers_assigned",
-        userRecord._id,
-        `${args.reviewerIds.length} reviewer(s)`,
-      ),
+      updatedAt: now,
+      history,
     });
 
     return { success: true };
@@ -296,12 +339,26 @@ export const lockEvaluation = mutation({
 
     const { userRecord } = await checkOrgHrAdmin(ctx, existing.organizationId);
     const now = Date.now();
+    const effective = await loadEffectiveEvaluation(ctx, existing);
+    const history = appendEvaluationHistory(
+      effective,
+      "locked",
+      userRecord._id,
+    );
+
+    await replaceEvaluationProjection(
+      ctx,
+      existing,
+      effective.assignedReviewerIds ?? [],
+      history,
+      now,
+    );
 
     await ctx.db.patch(args.evaluationId, {
       lockedAt: now,
       lockedBy: userRecord._id,
       updatedAt: now,
-      history: appendEvaluationHistory(existing, "locked", userRecord._id),
+      history,
     });
 
     return { success: true };
@@ -318,6 +375,7 @@ export const deleteEvaluation = mutation({
     }
 
     await checkOrgHrAdmin(ctx, existing.organizationId);
+    await replaceEvaluationProjection(ctx, existing, [], [], Date.now());
     await ctx.db.delete(args.evaluationId);
     return { success: true };
   },

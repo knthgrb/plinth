@@ -1,12 +1,16 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import { runOrgQuery } from "./queryAuthGrace";
 import {
   canUseAlumniPayslipAccess,
   canUseFullOrganizationAccess,
 } from "@/utils/org-membership-lifecycle";
+import {
+  loadEffectiveDocument,
+  replaceDocumentProjection,
+} from "./communicationsCompatibility";
 
 const documentVisibilityScopeValidator = v.optional(
   v.union(
@@ -212,6 +216,11 @@ export const getDocuments = query({
           q.eq("organizationId", args.organizationId),
         )
         .collect();
+      documents = await Promise.all(
+        documents.map((document: Doc<"documents">) =>
+          loadEffectiveDocument(ctx, document),
+        ),
+      );
 
       const userEmployee = await getUserEmployeeForDocumentAccess(
         ctx,
@@ -248,11 +257,12 @@ export const getDocument = query({
         ctx,
         userRecord,
       );
-      if (!canViewDocument(document, userRecord, userEmployee)) {
+      const effectiveDocument = await loadEffectiveDocument(ctx, document);
+      if (!canViewDocument(effectiveDocument, userRecord, userEmployee)) {
         throw new Error("Not authorized to view this document");
       }
 
-      return document;
+      return effectiveDocument;
     }, null);
   },
 });
@@ -303,6 +313,9 @@ export const createDocument = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    const document = await ctx.db.get(documentId);
+    if (!document) throw new Error("Document creation did not persist");
+    await replaceDocumentProjection(ctx, document, document, now);
 
     return documentId;
   },
@@ -352,6 +365,7 @@ export const updateDocument = mutation({
       );
     }
 
+    const effectiveDocument = await loadEffectiveDocument(ctx, document);
     const now = Date.now();
     const updates: any = { updatedAt: now };
     if (args.title !== undefined) updates.title = args.title;
@@ -385,6 +399,12 @@ export const updateDocument = mutation({
       updates.contentVersion = currentVersion + 1;
     }
 
+    await replaceDocumentProjection(
+      ctx,
+      document,
+      { ...effectiveDocument, ...updates },
+      now,
+    );
     await ctx.db.patch(args.documentId, updates);
     return { success: true };
   },
@@ -415,6 +435,18 @@ export const deleteDocument = mutation({
     for (const row of versionRows) {
       await ctx.db.delete(row._id);
     }
+
+    await replaceDocumentProjection(
+      ctx,
+      document,
+      {
+        sharedWith: [],
+        visibleEmployeeIds: [],
+        visibleDepartments: [],
+        attachments: [],
+      },
+      Date.now(),
+    );
 
     await ctx.db.delete(args.documentId);
     return { success: true };

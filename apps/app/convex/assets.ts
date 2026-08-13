@@ -1,8 +1,12 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import { runOrgQuery } from "./queryAuthGrace";
+import {
+  loadEffectiveAsset,
+  replaceAssetProjection,
+} from "./assetsPayrollCompatibility";
 
 const assetConditionValidator = v.optional(
   v.union(
@@ -86,7 +90,7 @@ export const getAssets = query({
         )
         .collect();
 
-      return assets;
+      return Promise.all(assets.map((asset) => loadEffectiveAsset(ctx, asset)));
     }, []);
   },
 });
@@ -102,7 +106,7 @@ export const getAsset = query({
       if (!asset) throw new Error("Asset not found");
 
       await checkAuth(ctx, asset.organizationId);
-      return asset;
+      return loadEffectiveAsset(ctx, asset);
     }, null);
   },
 });
@@ -167,6 +171,9 @@ export const createAsset = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    const asset = await ctx.db.get(assetId);
+    if (!asset) throw new Error("Asset creation did not persist");
+    await replaceAssetProjection(ctx, asset, asset, now);
 
     return assetId;
   },
@@ -209,7 +216,8 @@ export const updateAsset = mutation({
     const userRecord = await checkAuth(ctx, asset.organizationId);
 
     const now = Date.now();
-    const updates: any = {
+    const effectiveAsset = await loadEffectiveAsset(ctx, asset);
+    const updates: Partial<Doc<"assets">> = {
       ...(args.name !== undefined && { name: args.name }),
       ...(args.description !== undefined && { description: args.description }),
       ...(args.category !== undefined && { category: args.category }),
@@ -252,6 +260,8 @@ export const updateAsset = mutation({
       }
     }
 
+    const projectedAsset = { ...effectiveAsset, ...updates };
+    await replaceAssetProjection(ctx, asset, projectedAsset, now);
     await ctx.db.patch(args.assetId, updates);
 
     return { success: true };
@@ -269,6 +279,20 @@ export const deleteAsset = mutation({
 
     await checkAuth(ctx, asset.organizationId);
 
+    await replaceAssetProjection(
+      ctx,
+      asset,
+      {
+        assignedEmployeeId: undefined,
+        assignedAt: undefined,
+        assignedBy: undefined,
+        custodyAcknowledgedAt: undefined,
+        returnDueDate: undefined,
+        returnedAt: undefined,
+        maintenanceHistory: [],
+      },
+      Date.now(),
+    );
     await ctx.db.delete(args.assetId);
     return { success: true };
   },

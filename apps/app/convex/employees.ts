@@ -1,7 +1,21 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
+import {
+  loadEffectiveEmployee,
+  loadEffectiveEmployeeDeductions,
+  loadEffectiveEmployeeCustomFields,
+  loadEffectiveEmployeeIncentives,
+  loadEffectiveEmployeeRequirements,
+  replaceEmployeeLeaveCredits,
+  replaceEmployeeCustomFields,
+  replaceEmployeePaymentAccount,
+  replaceEmployeeRequirements,
+  replaceEmployeeScheduleOverrides,
+  upsertEmployeeDeduction,
+  upsertEmployeeIncentive,
+} from "./leaveEmployeeCompatibility";
 import {
   encryptCompensationForDb,
   decryptEmployeeFromDb,
@@ -22,7 +36,11 @@ function assertHireDateIsNotFuture(hireDate: number) {
   }
 }
 
-function buildRequirementFromDefault(req: any, now = Date.now()) {
+type DefaultRequirement = NonNullable<
+  Doc<"organizations">["defaultRequirements"]
+>[number];
+
+function buildRequirementFromDefault(req: DefaultRequirement, now = Date.now()) {
   return {
     type: req.type,
     status: "pending" as const,
@@ -210,7 +228,12 @@ export const getEmployees = query({
       return employees.map(toEmployeeDirectoryEntry);
     }
 
-    return employees.map((e: any) => decryptEmployeeFromDb(e));
+    const effectiveEmployees = await Promise.all(
+      employees.map((employee: Doc<"employees">) =>
+        loadEffectiveEmployee(ctx, employee),
+      ),
+    );
+    return effectiveEmployees.map(decryptEmployeeFromDb);
   },
 });
 
@@ -248,7 +271,7 @@ export const getEmployee = query({
       throw new Error("Not authorized");
     }
 
-    return decryptEmployeeFromDb(employee);
+    return decryptEmployeeFromDb(await loadEffectiveEmployee(ctx, employee));
   },
 });
 
@@ -684,6 +707,29 @@ export const createEmployee = mutation({
       updatedAt: now,
     });
 
+    const insertedEmployee = await ctx.db.get(insertedId);
+    if (!insertedEmployee) throw new Error("Employee creation did not persist");
+    await Promise.all([
+      replaceEmployeeRequirements(
+        ctx,
+        insertedEmployee,
+        defaultRequirements,
+        now,
+      ),
+      replaceEmployeeScheduleOverrides(
+        ctx,
+        insertedEmployee,
+        args.schedule.scheduleOverrides ?? [],
+        now,
+      ),
+      replaceEmployeePaymentAccount(
+        ctx,
+        insertedEmployee,
+        args.compensation.bankDetails,
+        now,
+      ),
+    ]);
+
     return insertedId;
   },
 });
@@ -847,10 +893,11 @@ export const updateEmployee = mutation({
     }
 
     const updates: any = { updatedAt: Date.now() };
+    let nextBankDetails: Doc<"employees">["compensation"]["bankDetails"];
     if (args.personalInfo) {
       // If employee has a linked user account, email cannot be changed (auth is tied to it)
       const existingPersonal = (employee as any).personalInfo || {};
-      let personalInfoUpdate = { ...existingPersonal, ...args.personalInfo };
+      const personalInfoUpdate = { ...existingPersonal, ...args.personalInfo };
       const canonicalMemberships = await ctx.db
         .query("userOrganizations")
         .withIndex("by_organization", (q) =>
@@ -896,23 +943,55 @@ export const updateEmployee = mutation({
     if (args.employment) updates.employment = args.employment;
     if (args.compensation) {
       const currentComp = decryptEmployeeFromDb(employee).compensation;
-      updates.compensation = encryptCompensationForDb({
+      const nextCompensation = {
         ...currentComp,
         ...args.compensation,
-      }) as any;
+      };
+      nextBankDetails = nextCompensation.bankDetails;
+      updates.compensation = encryptCompensationForDb(nextCompensation) as any;
     }
     if (args.schedule) updates.schedule = args.schedule;
     if (args.shiftId !== undefined) updates.shiftId = args.shiftId;
+    let nextCustomFields: Record<string, unknown> | undefined;
     if (args.customFields !== undefined) {
       // Merge with existing customFields
-      const existingCustomFields = (employee as any).customFields;
-      updates.customFields = {
+      const existingCustomFields = await loadEffectiveEmployeeCustomFields(
+        ctx,
+        employee,
+      );
+      nextCustomFields = {
         ...(existingCustomFields || {}),
         ...args.customFields,
       };
+      updates.customFields = nextCustomFields;
     }
 
     await ctx.db.patch(args.employeeId, updates);
+    const compatibilityNow = Date.now();
+    if (args.schedule) {
+      await replaceEmployeeScheduleOverrides(
+        ctx,
+        employee,
+        args.schedule.scheduleOverrides ?? [],
+        compatibilityNow,
+      );
+    }
+    if (args.compensation) {
+      await replaceEmployeePaymentAccount(
+        ctx,
+        employee,
+        nextBankDetails,
+        compatibilityNow,
+      );
+    }
+    if (nextCustomFields) {
+      await replaceEmployeeCustomFields(
+        ctx,
+        employee,
+        nextCustomFields,
+        compatibilityNow,
+      );
+    }
 
     const normalizedCurrentShiftId = (employee as any).shiftId ?? null;
     const normalizedNextShiftId =
@@ -1065,11 +1144,14 @@ export const updateLeaveCredits = mutation({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
+    await checkAuth(ctx, employee.organizationId, "hr");
+    const now = Date.now();
+
+    await replaceEmployeeLeaveCredits(ctx, employee, args.leaveCredits, now);
 
     await ctx.db.patch(args.employeeId, {
       leaveCredits: args.leaveCredits,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
 
     return { success: true };
@@ -1102,17 +1184,19 @@ export const addRequirement = mutation({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
+    await checkAuth(ctx, employee.organizationId, "hr");
 
-    const requirements = employee.requirements || [];
+    const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
     requirements.push({
       ...args.requirement,
       isCustom: true, // Mark as custom requirement
     });
 
+    const now = Date.now();
+    await replaceEmployeeRequirements(ctx, employee, requirements, now);
     await ctx.db.patch(args.employeeId, {
       requirements,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
 
     return { success: true };
@@ -1129,16 +1213,18 @@ export const removeRequirement = mutation({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
+    await checkAuth(ctx, employee.organizationId, "hr");
 
-    const requirements = employee.requirements || [];
+    const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
 
     // Only allow removing custom requirements
     if (requirements[args.requirementIndex]?.isCustom) {
       requirements.splice(args.requirementIndex, 1);
+      const now = Date.now();
+      await replaceEmployeeRequirements(ctx, employee, requirements, now);
       await ctx.db.patch(args.employeeId, {
         requirements,
-        updatedAt: Date.now(),
+        updatedAt: now,
       });
       return { success: true };
     } else {
@@ -1168,7 +1254,7 @@ export const updateRequirementStatus = mutation({
 
     const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
 
-    const requirements = employee.requirements || [];
+    const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
     const now = Date.now();
     if (requirements[args.requirementIndex]) {
       const requirement = requirements[args.requirementIndex];
@@ -1194,9 +1280,10 @@ export const updateRequirementStatus = mutation({
       }
     }
 
+    await replaceEmployeeRequirements(ctx, employee, requirements, now);
     await ctx.db.patch(args.employeeId, {
       requirements,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
 
     return { success: true };
@@ -1215,7 +1302,7 @@ export const setEmployeeRequirementsComplete = mutation({
 
     const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
 
-    const requirements = employee.requirements || [];
+    const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
     const newStatus: "pending" | "verified" = args.complete
       ? "verified"
       : "pending";
@@ -1231,9 +1318,10 @@ export const setEmployeeRequirementsComplete = mutation({
       rejectionReason: args.complete ? undefined : r.rejectionReason,
     }));
 
+    await replaceEmployeeRequirements(ctx, employee, updated, now);
     await ctx.db.patch(args.employeeId, {
       requirements: updated,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
 
     return { success: true };
@@ -1261,7 +1349,7 @@ export const updateRequirementFile = mutation({
       throw new Error("Not authorized");
     }
 
-    const requirements = employee.requirements || [];
+    const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
     if (requirements[args.requirementIndex]) {
       requirements[args.requirementIndex].file = args.file;
       if (!requirements[args.requirementIndex].submittedDate) {
@@ -1279,9 +1367,11 @@ export const updateRequirementFile = mutation({
       requirements[args.requirementIndex].rejectionReason = undefined;
     }
 
+    const now = Date.now();
+    await replaceEmployeeRequirements(ctx, employee, requirements, now);
     await ctx.db.patch(args.employeeId, {
       requirements,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
 
     return { success: true };
@@ -1313,12 +1403,14 @@ export const addDeduction = mutation({
 
     const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
 
-    const deductions = employee.deductions || [];
+    const deductions = await loadEffectiveEmployeeDeductions(ctx, employee);
     deductions.push(args.deduction);
+    const now = Date.now();
+    await upsertEmployeeDeduction(ctx, employee, args.deduction, now);
 
     await ctx.db.patch(args.employeeId, {
       deductions,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
 
     return { success: true };
@@ -1345,14 +1437,16 @@ export const addIncentive = mutation({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
+    await checkAuth(ctx, employee.organizationId, "hr");
 
-    const incentives = employee.incentives || [];
+    const incentives = await loadEffectiveEmployeeIncentives(ctx, employee);
     incentives.push(args.incentive);
+    const now = Date.now();
+    await upsertEmployeeIncentive(ctx, employee, args.incentive, now);
 
     await ctx.db.patch(args.employeeId, {
       incentives,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
 
     return { success: true };

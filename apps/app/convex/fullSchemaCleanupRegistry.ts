@@ -41,7 +41,7 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     migrationKey: "full-schema-leave-employee-children",
     migrationVersion: 1,
     implementation: "migration",
-    compatibility: "pending",
+    compatibility: "switched",
     policyDomains: ["leave", "time_holidays", "employee_children"],
   },
   {
@@ -49,7 +49,7 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     migrationKey: "full-schema-workflow-events",
     migrationVersion: 1,
     implementation: "migration",
-    compatibility: "pending",
+    compatibility: "switched",
     policyDomains: ["performance", "recruitment"],
   },
   {
@@ -57,7 +57,7 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     migrationKey: "full-schema-communications-documents",
     migrationVersion: 1,
     implementation: "migration",
-    compatibility: "pending",
+    compatibility: "switched",
     policyDomains: [
       "storage",
       "notifications",
@@ -71,7 +71,7 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     migrationKey: "full-schema-assets-payroll",
     migrationVersion: 1,
     implementation: "migration",
-    compatibility: "pending",
+    compatibility: "switched",
     policyDomains: ["payroll_offboarding", "accounting", "assets"],
   },
 ] as const satisfies readonly FullSchemaCleanupDomainRegistration[];

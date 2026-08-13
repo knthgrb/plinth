@@ -9,6 +9,38 @@ import {
   upsertPayrollConfiguration,
 } from "./organizationConfiguration";
 import { requireActiveMembership } from "./access";
+import { upsertOrganizationLeaveSettings } from "./leaveEmployeeCompatibility";
+import {
+  loadEffectiveSettingsEvents,
+  replaceOrganizationSettingsEvents,
+  upsertOrganizationUiSettings,
+} from "./workflowCompatibility";
+
+async function synchronizeUiSettings(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  now: number,
+): Promise<void> {
+  const rows = await ctx.db
+    .query("settings")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .take(2);
+  if (rows.length !== 1) throw new Error("Organization settings are not unique");
+  await upsertOrganizationUiSettings(ctx, rows[0], now);
+}
+
+async function synchronizeSettingsEventsForOrganization(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  now: number,
+): Promise<void> {
+  const rows = await ctx.db
+    .query("settings")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .take(2);
+  if (rows.length !== 1) throw new Error("Organization settings are not unique");
+  await replaceOrganizationSettingsEvents(ctx, rows[0], now);
+}
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -221,6 +253,7 @@ export const updatePayrollSettings = mutation({
         q.eq("organizationId", args.organizationId),
       )
       .first();
+    if (settings) settings = await loadEffectiveSettingsEvents(ctx, settings);
 
     const now = Date.now();
     if (!settings) {
@@ -247,6 +280,7 @@ export const updatePayrollSettings = mutation({
     await upsertPayrollConfiguration(ctx, args.organizationId, {
       payrollSettings: args.payrollSettings,
     });
+    await synchronizeSettingsEventsForOrganization(ctx, args.organizationId, now);
 
     return { success: true };
   },
@@ -308,16 +342,18 @@ export const updateAttendanceSettings = mutation({
         q.eq("organizationId", args.organizationId),
       )
       .first();
+    if (settings) settings = await loadEffectiveSettingsEvents(ctx, settings);
 
     const now = Date.now();
     if (!settings) {
-      await ctx.db.insert("settings", {
+      const settingsId = await ctx.db.insert("settings", {
         organizationId: args.organizationId,
         attendanceSettings: args.attendanceSettings,
         ...buildSettingsAuditPatch(settings, "attendance", userRecord, now),
         createdAt: now,
         updatedAt: now,
       });
+      settings = await ctx.db.get(settingsId);
     } else {
       await ctx.db.patch(settings._id, {
         attendanceSettings: {
@@ -333,6 +369,7 @@ export const updateAttendanceSettings = mutation({
       args.organizationId,
       args.attendanceSettings,
     );
+    await synchronizeSettingsEventsForOrganization(ctx, args.organizationId, now);
     return { success: true };
   },
 });
@@ -425,6 +462,7 @@ export const updateLeaveTypes = mutation({
         q.eq("organizationId", args.organizationId),
       )
       .first();
+    if (settings) settings = await loadEffectiveSettingsEvents(ctx, settings);
 
     const now = Date.now();
     const patch: any = { updatedAt: now };
@@ -469,8 +507,9 @@ export const updateLeaveTypes = mutation({
       patch.leaveTypes = args.leaveTypes;
     }
 
+    let settingsId: Id<"settings">;
     if (!settings) {
-      await ctx.db.insert("settings", {
+      settingsId = await ctx.db.insert("settings", {
         organizationId: args.organizationId,
         proratedLeave: args.proratedLeave ?? true,
         leaveAccrualFrequency: args.leaveAccrualFrequency ?? "monthly",
@@ -493,12 +532,22 @@ export const updateLeaveTypes = mutation({
         updatedAt: now,
       });
     } else {
+      settingsId = settings._id;
       await ctx.db.patch(settings._id, {
         ...patch,
         ...buildSettingsAuditPatch(settings, "leave", userRecord, now),
       });
     }
 
+    const effectiveSettings = await ctx.db.get(settingsId);
+    if (!effectiveSettings) throw new Error("Leave settings did not persist");
+    await upsertOrganizationLeaveSettings(
+      ctx,
+      args.organizationId,
+      effectiveSettings,
+      now,
+    );
+    await synchronizeSettingsEventsForOrganization(ctx, args.organizationId, now);
     return { success: true };
   },
 });
@@ -523,11 +572,12 @@ export const updateLeaveTracker = mutation({
       throw new Error("Reason for manual leave tracker override is required.");
     }
 
-    const settings = await (ctx.db.query("settings") as any)
+    let settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId),
       )
       .first();
+    if (settings) settings = await loadEffectiveSettingsEvents(ctx, settings);
 
     const now = Date.now();
     const byYear = settings?.leaveTrackerByYear ?? [];
@@ -572,6 +622,7 @@ export const updateLeaveTracker = mutation({
       });
     }
 
+    await synchronizeSettingsEventsForOrganization(ctx, args.organizationId, now);
     return { success: true };
   },
 });
@@ -599,6 +650,7 @@ export const updateDepartments = mutation({
         q.eq("organizationId", args.organizationId),
       )
       .first();
+    if (settings) settings = await loadEffectiveSettingsEvents(ctx, settings);
 
     const now = Date.now();
     if (!settings) {
@@ -632,6 +684,7 @@ export const updateDepartments = mutation({
       args.organizationId,
       args.departments,
     );
+    await synchronizeSettingsEventsForOrganization(ctx, args.organizationId, now);
 
     return { success: true };
   },
@@ -662,7 +715,7 @@ export const updateRecruitmentTableColumns = mutation({
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
 
-    let settings = await (ctx.db.query("settings") as any)
+    const settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId),
       )
@@ -682,6 +735,8 @@ export const updateRecruitmentTableColumns = mutation({
         updatedAt: now,
       });
     }
+
+    await synchronizeUiSettings(ctx, args.organizationId, now);
 
     return { success: true };
   },
@@ -712,7 +767,7 @@ export const updateRequirementsTableColumns = mutation({
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
 
-    let settings = await (ctx.db.query("settings") as any)
+    const settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId),
       )
@@ -732,6 +787,8 @@ export const updateRequirementsTableColumns = mutation({
         updatedAt: now,
       });
     }
+
+    await synchronizeUiSettings(ctx, args.organizationId, now);
 
     return { success: true };
   },
@@ -760,7 +817,7 @@ export const updateEvaluationColumns = mutation({
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
 
-    let settings = await (ctx.db.query("settings") as any)
+    const settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId),
       )
@@ -780,6 +837,8 @@ export const updateEvaluationColumns = mutation({
         updatedAt: now,
       });
     }
+
+    await synchronizeUiSettings(ctx, args.organizationId, now);
 
     return { success: true };
   },
@@ -812,7 +871,7 @@ export const updateLeaveTableColumns = mutation({
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
 
-    let settings = await (ctx.db.query("settings") as any)
+    const settings = await (ctx.db.query("settings") as any)
       .withIndex("by_organization", (q: any) =>
         q.eq("organizationId", args.organizationId),
       )
@@ -832,6 +891,8 @@ export const updateLeaveTableColumns = mutation({
         updatedAt: now,
       });
     }
+
+    await synchronizeUiSettings(ctx, args.organizationId, now);
 
     return { success: true };
   },

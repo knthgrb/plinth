@@ -1,8 +1,12 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import { decryptPayslipRowFromDb } from "./payslipCrypto";
+import {
+  loadEffectiveAccountingReceipts,
+  replaceAccountingReceipts,
+} from "./assetsPayrollCompatibility";
 
 // Helper to check authorization - accounting, admin, and owner can access
 async function checkAuth(
@@ -672,7 +676,7 @@ export const getCostItems = query({
         filteredItems.map(async (item: any) => ({
           ...item,
           receipts:
-            item.receipts ??
+            (await loadEffectiveAccountingReceipts(ctx, item)) ??
             (await buildAttachmentIdsForPayrollCostItem(
               ctx,
               args.organizationId,
@@ -692,7 +696,7 @@ export const getCostItems = query({
       items.map(async (item: any) => ({
         ...item,
         receipts:
-          item.receipts ??
+          (await loadEffectiveAccountingReceipts(ctx, item)) ??
           (await buildAttachmentIdsForPayrollCostItem(
             ctx,
             args.organizationId,
@@ -816,7 +820,7 @@ export const createCostItem = mutation({
       status = "overdue";
     }
 
-    return await ctx.db.insert("accountingCostItems", {
+    const itemId = await ctx.db.insert("accountingCostItems", {
       organizationId: args.organizationId,
       sourceType: "manual",
       sourceKey: `manual:${now}`,
@@ -834,6 +838,10 @@ export const createCostItem = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    const item = await ctx.db.get(itemId);
+    if (!item) throw new Error("Cost item creation did not persist");
+    await replaceAccountingReceipts(ctx, item, args.receipts ?? [], now);
+    return itemId;
   },
 });
 
@@ -887,7 +895,8 @@ export const updateCostItem = mutation({
       throw new Error("Amount paid cannot be greater than the total amount.");
     }
 
-    const updates: any = { updatedAt: Date.now() };
+    const now = Date.now();
+    const updates: Partial<Doc<"accountingCostItems">> = { updatedAt: now };
     if (args.name !== undefined) updates.name = args.name;
     if (args.description !== undefined) updates.description = args.description;
     if (args.amount !== undefined) updates.amount = args.amount;
@@ -934,6 +943,9 @@ export const updateCostItem = mutation({
       }
     }
 
+    if (args.receipts !== undefined) {
+      await replaceAccountingReceipts(ctx, item, args.receipts, now);
+    }
     await ctx.db.patch(args.itemId, updates);
 
     // When the main payroll expense (net pay) is marked paid, set the linked payroll run to paid
@@ -993,6 +1005,7 @@ export const deleteCostItem = mutation({
       throw new Error("Payroll-generated cost records cannot be deleted.");
     }
 
+    await replaceAccountingReceipts(ctx, item, [], Date.now());
     await ctx.db.delete(args.itemId);
   },
 });

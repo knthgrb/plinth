@@ -1,8 +1,12 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
+import {
+  loadEffectiveMemo,
+  synchronizeEffectiveMemo,
+} from "./communicationsCompatibility";
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -91,7 +95,9 @@ export const getMemos = query({
     }
 
     memos.sort((a: any, b: any) => b.publishedDate - a.publishedDate);
-    return memos;
+    return Promise.all(
+      memos.map((memo: Doc<"memos">) => loadEffectiveMemo(ctx, memo)),
+    );
   },
 });
 
@@ -107,7 +113,7 @@ export const getMemo = query({
     const userRecord = await checkAuthForQuery(ctx, memo.organizationId);
     if (!userRecord) return null;
 
-    return memo;
+    return loadEffectiveMemo(ctx, memo);
   },
 });
 
@@ -171,6 +177,18 @@ export const createMemo = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    const memo = await ctx.db.get(memoId);
+    if (!memo) throw new Error("Memo creation did not persist");
+    await synchronizeEffectiveMemo(
+      ctx,
+      memo,
+      {
+        specificEmployees: args.specificEmployees,
+        departments: args.departments,
+        attachments: args.attachments,
+      },
+      now,
+    );
 
     return memoId;
   },
@@ -243,6 +261,7 @@ export const updateMemo = mutation({
       }
     }
 
+    await synchronizeEffectiveMemo(ctx, memo, updates, Date.now());
     await ctx.db.patch(args.memoId, updates);
     return { success: true };
   },
@@ -289,21 +308,24 @@ export const acknowledgeMemo = mutation({
       throw new Error("Not authorized");
     }
 
-    const acknowledgedBy = memo.acknowledgedBy || [];
+    const effective = await loadEffectiveMemo(ctx, memo);
+    const acknowledgedBy = effective.acknowledgedBy || [];
 
     // Check if already acknowledged
     if (acknowledgedBy.some((a: any) => a.employeeId === args.employeeId)) {
       return { success: true, alreadyAcknowledged: true };
     }
 
+    const now = Date.now();
     acknowledgedBy.push({
       employeeId: args.employeeId,
-      date: Date.now(),
+      date: now,
     });
 
+    await synchronizeEffectiveMemo(ctx, memo, { acknowledgedBy }, now);
     await ctx.db.patch(args.memoId, {
       acknowledgedBy,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
 
     return { success: true };
@@ -321,6 +343,19 @@ export const deleteMemo = mutation({
 
     const userRecord = await checkAuth(ctx, memo.organizationId, "hr");
 
+    await synchronizeEffectiveMemo(
+      ctx,
+      memo,
+      {
+        reactions: [],
+        acknowledgedBy: [],
+        specificEmployees: [],
+        departments: [],
+        attachments: [],
+        attachmentContentTypes: [],
+      },
+      Date.now(),
+    );
     await ctx.db.delete(args.memoId);
     return { success: true };
   },

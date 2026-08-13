@@ -30,14 +30,17 @@ Each domain receives a focused compatibility module with three responsibilities:
 
 1. load the unique normalized child rows and reconstruct the existing public
    shape used by current callers;
-2. use normalized data when the normalized parent projection exists and fall
-   back to legacy data only when it does not;
+2. use normalized child rows when present and fall back to legacy data only
+   while no normalized child row exists; empty-set dual writes clear both
+   projections and repeated audits enforce their parity;
 3. replace the normalized child set in the same Convex mutation that updates
    the legacy parent projection.
 
-Normalized rows are authoritative by presence, including an intentionally empty
-set. Duplicate natural keys, parent mismatches, and tenant mismatches fail
-closed. Compatibility helpers never expose secrets or migration-only metadata.
+Normalized rows are authoritative by presence. Intentionally empty child sets
+are written empty to both projections because the current schema has no
+per-parent projection marker. Duplicate natural keys, parent mismatches, and
+tenant mismatches fail closed. Compatibility helpers never expose secrets or
+migration-only metadata.
 
 The four domain switches remain separately registered and separately auditable.
 They are merely deployed together. Program readiness reports all four as
