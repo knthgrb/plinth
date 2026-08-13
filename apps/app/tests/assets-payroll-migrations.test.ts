@@ -223,4 +223,45 @@ describe("assets and payroll migration", () => {
     expect(status.canStartWrite).toBe(false);
     expect(status.issues).toContainEqual(expect.objectContaining({ code: "INVALID_ASSET_CUSTODY_STATE", field: "custody" }));
   });
+
+  it("does not block note projection on an unrelated historical processor", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const source = await t.run(insertSources);
+    await t.run(async (ctx) => {
+      const otherOrganizationId = await ctx.db.insert("organizations", {
+        name: "Historical Processor Org",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const historicalProcessorId = await ctx.db.insert("users", {
+        email: "historical@example.com",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId: historicalProcessorId,
+        organizationId: otherOrganizationId,
+        role: "owner",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.patch(source.payrollRunId, {
+        processedBy: historicalProcessorId,
+      });
+    });
+
+    const dryRun = await t.mutation(startMigration, { dryRun: true });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    const status = await t.query(getRun, { runId: dryRun.runId });
+
+    expect(status.canStartWrite).toBe(true);
+    expect(status.issues).toEqual([]);
+    expect(status.run.counters).toMatchObject({
+      changed: 6,
+      conflicts: 0,
+      errors: 0,
+    });
+  });
 });

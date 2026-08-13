@@ -238,17 +238,6 @@ async function processPayrollRuns(ctx: MutationCtx, run: MigrationRun) {
       }));
       continue;
     }
-    if (!(await userBelongsToOrganization(ctx, payrollRun.processedBy, payrollRun.organizationId))) {
-      counters = addCounters(counters, await recordConflict(ctx, run, {
-        organizationId: payrollRun.organizationId,
-        entityType: "payrollRun",
-        entityId: payrollRun._id,
-        code: "PAYROLL_RUN_USER_TENANT_MISMATCH",
-        field: "processedBy",
-        now,
-      }));
-      continue;
-    }
     for (const [sourceIndex, note] of (payrollRun.notes ?? []).entries()) {
       if (
         !(await employeeBelongsToOrganization(ctx, note.employeeId, payrollRun.organizationId)) ||
