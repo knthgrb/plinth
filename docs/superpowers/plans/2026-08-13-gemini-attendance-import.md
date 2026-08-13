@@ -33,6 +33,7 @@
 - `apps/app/lib/attendance-import/gemini.ts`: prompt, JSON schema, Gemini REST call, provider error mapping, and response validation.
 - `apps/app/lib/attendance-import/authorization.ts`: pure attendance-import role decision.
 - `apps/app/lib/attendance-import/preview.ts`: typed employee lookup and mapping into the existing attendance preview model.
+- `apps/app/lib/attendance-import/client.ts`: browser file validation and typed transform-endpoint adapter.
 - `apps/app/app/api/attendance/import/transform/route.ts`: authenticated multipart orchestration route.
 - `apps/app/app/[organizationId]/attendance/_components/bulk-add-attendance-dialog.tsx`: file uploader, processing state, preview, and final import integration.
 - `apps/app/tests/attendance-import-time.test.ts`: normalization behavior.
@@ -42,7 +43,7 @@
 - `apps/app/tests/attendance-import-gemini.test.ts`: prompt, strict output, timeout, refusal, and rate-limit behavior.
 - `apps/app/tests/attendance-import-route.test.ts`: route authentication, authorization, validation, and orchestration.
 - `apps/app/tests/attendance-import-preview.test.ts`: employee matching, partial success, schedules, and rest days.
-- `apps/app/tests/attendance-import-ui.test.ts`: required uploader text and typed UI wiring.
+- `apps/app/tests/attendance-import-client.test.ts`: browser file validation, multipart request, and response behavior.
 - `README.md`: Gemini environment variables and privacy guidance.
 
 ---
@@ -752,75 +753,109 @@ git commit -m "feat: map AI attendance import previews"
 ### Task 6: Integrate XLSX/CSV processing into the bulk attendance dialog
 
 **Files:**
+- Create: `apps/app/lib/attendance-import/client.ts`
 - Modify: `apps/app/app/[organizationId]/attendance/_components/bulk-add-attendance-dialog.tsx`
-- Create: `apps/app/tests/attendance-import-ui.test.ts`
+- Create: `apps/app/tests/attendance-import-client.test.ts`
 
 **Interfaces:**
 - Consumes: `AttendanceImportTransformResponse`, `buildAttendanceImportPreview`, generated Convex API references, `Doc<"employees">`, and `AttendanceImportPreviewRow`.
-- Produces: the user-facing upload, processing, preview, partial-success, conflict, and final import flow.
+- Produces: `validateAttendanceImportFile(file)`, `transformAttendanceImport(file, organizationId, fetchImpl?)`, and the user-facing upload, processing, preview, partial-success, conflict, and final import flow.
 
-- [ ] **Step 1: Write a failing UI contract test**
+- [ ] **Step 1: Write failing client-boundary behavior tests**
 
-Follow the repository's node-environment source-contract pattern:
+Exercise the browser-facing adapter with real `File`, `FormData`, `Request`, and `Response` objects while injecting only external `fetch`:
 
 ```ts
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  transformAttendanceImport,
+  validateAttendanceImportFile,
+} from "@/lib/attendance-import/client";
 
-const source = readFileSync(
-  new URL(
-    "../app/[organizationId]/attendance/_components/bulk-add-attendance-dialog.tsx",
-    import.meta.url,
-  ),
-  "utf8",
-);
+describe("attendance import client", () => {
+  it("rejects unsupported and oversized files before upload", () => {
+    expect(() =>
+      validateAttendanceImportFile(
+        new File(["name,date"], "attendance.txt", { type: "text/plain" }),
+      ),
+    ).toThrow("Only Excel (.xlsx) and CSV (.csv) files are supported.");
 
-describe("attendance AI import UI", () => {
-  it("accepts only XLSX and CSV and discloses Gemini processing", () => {
-    expect(source).toContain('accept=".xlsx,.csv"');
-    expect(source).toContain("Only Excel (.xlsx) and CSV (.csv) files are supported.");
-    expect(source).toContain("This file will be processed by Google Gemini.");
+    expect(() =>
+      validateAttendanceImportFile(
+        new File([new Uint8Array(10 * 1024 * 1024 + 1)], "attendance.csv"),
+      ),
+    ).toThrow("10 MB");
   });
 
-  it("uses the authenticated transform endpoint and all-file wording", () => {
-    expect(source).toContain('/api/attendance/import/transform');
-    expect(source).toContain("Import Excel / CSV");
-    expect(source).toContain("Processing with Gemini");
+  it("uploads multipart data and returns mixed valid and invalid candidates", async () => {
+    const candidates = [validCandidate, invalidCandidate];
+    const fetchImpl = vi.fn().mockResolvedValue(
+      Response.json({ ok: true, candidates }),
+    );
+
+    const result = await transformAttendanceImport(
+      new File(["Employee,Date"], "attendance.csv", { type: "text/csv" }),
+      "organization1234567890",
+      fetchImpl,
+    );
+
+    expect(result).toEqual(candidates);
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/attendance/import/transform");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeInstanceOf(FormData);
+  });
+
+  it("surfaces the route's fixed safe error message", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      Response.json(
+        { ok: false, code: "rate_limited", message: "Gemini is busy. Try again shortly." },
+        { status: 429 },
+      ),
+    );
+
+    await expect(
+      transformAttendanceImport(validCsvFile, "organization1234567890", fetchImpl),
+    ).rejects.toThrow("Gemini is busy. Try again shortly.");
   });
 });
 ```
 
-Add assertions that the old client-only CSV parsing functions and `accept=".csv"` are absent.
+Use complete literal candidate fixtures matching `NormalizedAttendanceCandidate`; do not compute expected values with production helpers.
 
-- [ ] **Step 2: Run the UI contract test and confirm RED**
+- [ ] **Step 2: Run the client-boundary tests and confirm RED**
 
 Run:
 
 ```bash
-pnpm --filter app test -- attendance-import-ui.test.ts
+pnpm --filter app test -- attendance-import-client.test.ts
 ```
 
-Expected: FAIL because the dialog is still CSV-only.
+Expected: FAIL because the client adapter does not exist.
 
-- [ ] **Step 3: Replace client-only parsing with the transformation request**
+- [ ] **Step 3: Implement browser validation and the typed transform adapter**
+
+Validate the lowercase extension and 10 MB file limit before making a request. Build `FormData` with `file` and `organizationId`, call `/api/attendance/import/transform`, parse the discriminated JSON response with a shared Zod response schema, return candidates on success, and throw only the route's fixed safe message on failure. Reject a malformed response with “The attendance file could not be transformed.”
+
+- [ ] **Step 4: Replace client-only parsing with the transformation request**
 
 Remove `parseCSVLine`, `parseCSV`, biometric parsing, and the old header-alias transformation from the component. On file selection:
 
 1. Reset the preview and prior errors.
 2. Reject a client-visible unsupported extension or file over 10 MB without a request.
 3. Set `isTransformingImport` and display “Processing with Gemini…”.
-4. POST `file` and `organizationId` as `FormData` to `/api/attendance/import/transform`.
-5. Parse the discriminated response and show its fixed safe message on failure.
+4. Call `transformAttendanceImport(file, currentOrganizationId)`.
+5. Show its fixed safe error message on failure.
 6. Map every returned candidate through `buildAttendanceImportPreview`.
 7. Keep valid rows selected except rest days; keep invalid rows visible and unselected.
 
 Retain the existing conflict lookup, overwrite decision, rest-day behavior, and final bulk mutation.
 
-- [ ] **Step 4: Update wording, source display, and 12-hour template**
+- [ ] **Step 5: Update wording, source display, and 12-hour template**
 
 Change the mode label to “Import Excel / CSV”, file label to “Attendance file”, and `accept` to `.xlsx,.csv`. Add both required notes near the input. Add a compact Source column showing `Sheet name · Row N`, which is especially important for multi-sheet errors. Update the downloadable CSV template to use `9:00 AM` and `5:00 PM` values while retaining its supported status and notes columns.
 
-- [ ] **Step 5: Remove `any` from the modified dialog**
+- [ ] **Step 6: Remove `any` from the modified dialog**
 
 Use:
 
@@ -840,20 +875,24 @@ rg -n "\bany\b" 'apps/app/app/[organizationId]/attendance/_components/bulk-add-a
 
 Expected: no matches.
 
-- [ ] **Step 6: Run UI, preview, and existing attendance tests**
+- [ ] **Step 7: Run client, preview, and existing attendance tests**
 
 Run:
 
 ```bash
-pnpm --filter app test -- attendance-import-ui.test.ts attendance-import-preview.test.ts attendance-calculations.test.ts attendance-departments-flexibility.test.ts
+pnpm --filter app test -- attendance-import-client.test.ts attendance-import-preview.test.ts attendance-calculations.test.ts attendance-departments-flexibility.test.ts
 ```
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit the dialog integration**
+- [ ] **Step 8: Manually verify the required visible copy in the rendered component**
+
+Inspect the rendered dialog during local browser verification and confirm it displays “Import Excel / CSV”, “Only Excel (.xlsx) and CSV (.csv) files are supported.”, “This file will be processed by Google Gemini.”, and “Processing with Gemini…” while transforming. Confirm the file picker limits selection to `.xlsx,.csv` and multi-sheet candidates show `Sheet name · Row N`.
+
+- [ ] **Step 9: Commit the dialog integration**
 
 ```bash
-git add 'apps/app/app/[organizationId]/attendance/_components/bulk-add-attendance-dialog.tsx' apps/app/tests/attendance-import-ui.test.ts
+git add apps/app/lib/attendance-import/client.ts 'apps/app/app/[organizationId]/attendance/_components/bulk-add-attendance-dialog.tsx' apps/app/tests/attendance-import-client.test.ts
 git commit -m "feat: import attendance from Excel and CSV"
 ```
 
@@ -869,27 +908,7 @@ git commit -m "feat: import attendance from Excel and CSV"
 - Consumes: all feature interfaces and environment variables.
 - Produces: documented deployment configuration and verified release evidence.
 
-- [ ] **Step 1: Write a failing configuration documentation assertion**
-
-Extend `attendance-import-ui.test.ts` to read the root README and assert:
-
-```ts
-expect(readme).toContain("GEMINI_API_KEY=your_google_ai_studio_api_key");
-expect(readme).toContain("GEMINI_MODEL=gemini-3.5-flash-lite");
-expect(readme).toContain("must not use the NEXT_PUBLIC_ prefix");
-```
-
-- [ ] **Step 2: Run the assertion and confirm RED**
-
-Run:
-
-```bash
-pnpm --filter app test -- attendance-import-ui.test.ts
-```
-
-Expected: FAIL because README does not document Gemini.
-
-- [ ] **Step 3: Document environment configuration and privacy**
+- [ ] **Step 1: Document environment configuration and privacy**
 
 Add to the app environment example in `README.md`:
 
@@ -900,17 +919,21 @@ GEMINI_MODEL=gemini-3.5-flash-lite
 
 State that both variables are server-only and must not use the `NEXT_PUBLIC_` prefix. Explain that the model variable is optional, the code defaults it to `gemini-3.5-flash-lite`, free-tier input may be used by Google for product improvement, and production HR data should use a paid Gemini tier under the organization's privacy review.
 
-- [ ] **Step 4: Run all focused importer tests**
+- [ ] **Step 2: Review the documentation against the approved configuration**
+
+Read the rendered Markdown and confirm the example contains the exact server-only names and default model, explains that `GEMINI_MODEL` is optional, forbids `NEXT_PUBLIC_`, and includes the free-tier product-improvement warning. Human-facing documentation does not receive a source-text change-detector test.
+
+- [ ] **Step 3: Run all focused importer tests**
 
 Run:
 
 ```bash
-pnpm --filter app test -- attendance-import-time.test.ts attendance-import-archive.test.ts attendance-import-workbook.test.ts attendance-import-gemini.test.ts attendance-import-route.test.ts attendance-import-preview.test.ts attendance-import-ui.test.ts
+pnpm --filter app test -- attendance-import-time.test.ts attendance-import-archive.test.ts attendance-import-workbook.test.ts attendance-import-gemini.test.ts attendance-import-route.test.ts attendance-import-preview.test.ts attendance-import-client.test.ts
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Run the complete application test suite**
+- [ ] **Step 4: Run the complete application test suite**
 
 Run:
 
@@ -920,7 +943,7 @@ pnpm --filter app test
 
 Expected: PASS with no unhandled rejection or warning introduced by the importer.
 
-- [ ] **Step 6: Run static and build verification**
+- [ ] **Step 5: Run static and build verification**
 
 Run:
 
@@ -931,7 +954,7 @@ pnpm --filter app build
 
 Expected: both commands exit 0. Fix only feature-owned failures; report unrelated pre-existing failures with their exact output.
 
-- [ ] **Step 7: Run security and clean-code checks**
+- [ ] **Step 6: Run security and clean-code checks**
 
 Run:
 
@@ -944,9 +967,9 @@ git diff --check
 
 Expected: no new high or critical production advisory, no `any` in feature-owned/modified files, no key access in a client component, and no whitespace errors. The `GEMINI_MODEL` string may appear in server code and tests; actual secret values must never appear.
 
-- [ ] **Step 8: Commit documentation and verified cleanup**
+- [ ] **Step 7: Commit documentation and verified cleanup**
 
 ```bash
-git add README.md apps/app/tests/attendance-import-ui.test.ts
+git add README.md
 git commit -m "docs: configure Gemini attendance imports"
 ```
