@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
 import { canUseEmployeeSelfService } from "@/utils/employee-lifecycle";
@@ -966,22 +966,45 @@ export const bulkCreateAttendance = mutation({
     ),
   },
   handler: async (ctx, args) => {
+    if (args.entries.length === 0) {
+      throw new Error("Attendance batch cannot be empty");
+    }
+
     const now = Date.now();
     const results = [];
 
-    // Check auth for first entry's organization (all should be same org)
-    const organizationId =
-      args.entries.length > 0 ? args.entries[0].organizationId : null;
-    if (organizationId) {
-      await checkAuth(ctx, organizationId, "hr");
+    const organizationId = args.entries[0].organizationId;
+
+    if (
+      args.entries.some((entry) => entry.organizationId !== organizationId)
+    ) {
+      throw new Error("All attendance entries must belong to the same organization");
     }
-    const holidays = organizationId
-      ? await (ctx.db.query("holidays") as any)
-          .withIndex("by_organization", (q: any) =>
-            q.eq("organizationId", organizationId),
-          )
-          .collect()
-      : [];
+
+    await checkAuth(ctx, organizationId, "hr");
+
+    const employeesById = new Map<Id<"employees">, Doc<"employees">>();
+
+    for (const entry of args.entries) {
+      if (employeesById.has(entry.employeeId)) {
+        continue;
+      }
+
+      const employee = await ctx.db.get(entry.employeeId);
+
+      if (!employee || employee.organizationId !== organizationId) {
+        throw new Error("Employee does not belong to the attendance organization");
+      }
+
+      employeesById.set(employee._id, employee);
+    }
+
+    const holidays = await ctx.db
+      .query("holidays")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", organizationId),
+      )
+      .collect();
 
     const batchSeen = new Set<string>();
 
@@ -1010,7 +1033,7 @@ export const bulkCreateAttendance = mutation({
         );
       }
 
-      const employee = await ctx.db.get(entry.employeeId);
+      const employee = employeesById.get(entry.employeeId);
       const currentActualIn = entry.actualIn ?? existing?.actualIn;
       const currentActualOut = entry.actualOut ?? existing?.actualOut;
       const canUseNoWork = employee
