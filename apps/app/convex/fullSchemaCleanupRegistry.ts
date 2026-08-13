@@ -51,7 +51,7 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     domain: "communications_documents",
     migrationKey: "full-schema-communications-documents",
     migrationVersion: 1,
-    implementation: "not_started",
+    implementation: "migration",
     policyDomains: [
       "storage",
       "notifications",

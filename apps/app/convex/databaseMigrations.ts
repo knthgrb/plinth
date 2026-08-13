@@ -51,6 +51,7 @@ type FullSchemaCleanupReadinessMode =
   | "identity_credentials"
   | "leave_employee_children"
   | "workflow_events"
+  | "communications_documents"
   | "unsupported";
 
 function addCounters(
@@ -1305,6 +1306,14 @@ export function resolveFullSchemaCleanupReadinessMode(
   ) {
     return "workflow_events";
   }
+  if (
+    registration.implementation === "migration" &&
+    registration.domain === "communications_documents" &&
+    registration.migrationKey === "full-schema-communications-documents" &&
+    registration.migrationVersion === 1
+  ) {
+    return "communications_documents";
+  }
   return "unsupported";
 }
 
@@ -1328,6 +1337,8 @@ async function getFullSchemaDomainReadiness(
     case "leave_employee_children":
       return getOrganizationConfigurationReadiness(ctx, registration);
     case "workflow_events":
+      return getOrganizationConfigurationReadiness(ctx, registration);
+    case "communications_documents":
       return getOrganizationConfigurationReadiness(ctx, registration);
     case "unsupported":
       return {

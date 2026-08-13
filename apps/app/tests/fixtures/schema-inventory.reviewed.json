@@ -1,5 +1,5 @@
 {
-  "tableCount": 64,
+  "tableCount": 72,
   "tables": [
     {
       "name": "accountingCostItems",
@@ -86,6 +86,13 @@
       "indexesSha256": "00f2f5c711a1a3b50c134743bd06247173bc8ea50ffee6e942030099f508f37d"
     },
     {
+      "name": "conversationMembers",
+      "fieldCount": 8,
+      "fieldsSha256": "9e2b7ad823ec9cde2de6f35165894255c69568d9c14c28282b1c9a29f8d36751",
+      "indexCount": 3,
+      "indexesSha256": "cfce871b842c295bcc8bbfb41787cedbb52d74ffbadbb1bb46b23904c12f7fa4"
+    },
+    {
       "name": "conversations",
       "fieldCount": 12,
       "fieldsSha256": "481adcc869ca00ee095fb277cbb26090828e4b712248e69a42184ce80acdeb18",
@@ -98,6 +105,13 @@
       "fieldsSha256": "85b9338cdaeb55d64256521cd3c7f904d562c6cd5e4005016a0f500453e95fed",
       "indexCount": 1,
       "indexesSha256": "57935a1582c632ea88184fe494e265d84fe2f4e00b4761267ec3497628d3566b"
+    },
+    {
+      "name": "documentAccessGrants",
+      "fieldCount": 11,
+      "fieldsSha256": "f5a33f715c8ea395bd4cb991c276ec2dab51728f439e9dee4b4366955c174e0e",
+      "indexCount": 5,
+      "indexesSha256": "c2f91e2d522920b9d9081893c0f26d74a5a9730a07fe0bf40861b25a4c878676"
     },
     {
       "name": "documents",
@@ -247,6 +261,27 @@
       "indexesSha256": "dde6def1f567182041b6202d40db73bef279b255604b5c2f2013df0b81e7fd77"
     },
     {
+      "name": "memoAcknowledgements",
+      "fieldCount": 8,
+      "fieldsSha256": "5a508f25b3dafac91e6daa5281a6ad6e642de1da640ec23002386f6f561b425b",
+      "indexCount": 3,
+      "indexesSha256": "d536eed9614f673364264a3b7845ad6ef2824506c5281dfc13dd77705b2e3b9b"
+    },
+    {
+      "name": "memoAudienceMembers",
+      "fieldCount": 9,
+      "fieldsSha256": "0e05caf5054ea206b72f04f46b891b6ca35b85107fcbc71153e864d1fc528b7d",
+      "indexCount": 4,
+      "indexesSha256": "34b89d2c9529d4072698cde3c982bd5112c7a5f2eb4f45ba9080502a87d29714"
+    },
+    {
+      "name": "memoReactions",
+      "fieldCount": 9,
+      "fieldsSha256": "571f7369a8f96c47c252222a4ebda5845af2c6dc1075507ff2aa39d6ae570ec4",
+      "indexCount": 3,
+      "indexesSha256": "1fac8df6428d15d872d51481f6d344caaf64ed9fd79da6675a7b042ca92d864c"
+    },
+    {
       "name": "memos",
       "fieldCount": 29,
       "fieldsSha256": "23ee5e5499af0ed7091ea3d0d08003a4e0f1fa9be4555be818a7bfce564482d5",
@@ -259,6 +294,13 @@
       "fieldsSha256": "d5c1bf42e72d5801d855b105c2206b06883c25561bcc3e40b13ec4efd49c9e8f",
       "indexCount": 2,
       "indexesSha256": "a44c513df5b3d6e520ff7d7538bfd173767bfe9ca6b4f67fb29392332b78581a"
+    },
+    {
+      "name": "messageReceipts",
+      "fieldCount": 9,
+      "fieldsSha256": "dea6a8963a7d8681f4203e529276604980a1565e8d89d65ea2ebebfe175b55cd",
+      "indexCount": 3,
+      "indexesSha256": "0ad8a3533fbf8f5e81f77efd9c5f75b93c4178ad2c52b41da353f3aaabe349e9"
     },
     {
       "name": "messages",
@@ -415,6 +457,13 @@
       "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
     },
     {
+      "name": "storageObjectLinks",
+      "fieldCount": 10,
+      "fieldsSha256": "686059e9b8bad4b89fb759eac975d18f0787f2d1d4b4ae2aa6e2dabb9910283f",
+      "indexCount": 3,
+      "indexesSha256": "c9112cdefacd6d96e64f9aef109f081e04c17035829572f0d1c98e4b3c0714f5"
+    },
+    {
       "name": "storageObjects",
       "fieldCount": 10,
       "fieldsSha256": "b4d186ff40b5ccf41d071272a645ff6dd189872350e64f0ca442dbed21c4a2d6",
@@ -441,6 +490,13 @@
       "fieldsSha256": "229ce8e59d510d0b686b91bbbae90c3e793d730d8fc74cfd4b7e9ec6289a16bf",
       "indexCount": 4,
       "indexesSha256": "a47803db3a2d91d2dfe40ca16714ed7c35a736b5d32488ae7c17d59f1ba2aecf"
+    },
+    {
+      "name": "userPinnedConversations",
+      "fieldCount": 8,
+      "fieldsSha256": "c62d616a96b7842b0f5f8f59e7fa1d5ae1c7b6729a9207c2bc265a3e550f9306",
+      "indexCount": 3,
+      "indexesSha256": "242d177981999626abe99945e4524754a3292e2cb7b684f548685638b8d2778c"
     },
     {
       "name": "users",

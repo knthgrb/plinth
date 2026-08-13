@@ -192,14 +192,21 @@ Release 2 compatibility mode while the remaining domains advance.
 - Backfill every organization/employee in bounded pages.
 - Reconcile balances with approved leave requests; report rather than guess.
 
-### Release 1D: Workflow and communication expansion
+### Release 1D: Workflow expansion
 
-- Add recruitment, evaluation, memo, chat, document-access, storage-link, and
-  asset-event targets.
+- Add recruitment and evaluation targets.
 - Backfill parent documents and validate tenant/parent integrity.
 - Preserve ordered timestamps and source IDs for deterministic idempotency.
 
-### Release 1E: Global expansion audit
+### Release 1E: Communication and document expansion
+
+- Add memo, chat, document-access, and storage-link targets.
+- Backfill parent documents and validate tenant/parent integrity.
+- Preserve ordered timestamps and source IDs for deterministic idempotency.
+- Keep accounting receipt links and asset-event targets in the final
+  payroll/assets wave.
+
+### Release 1F: Global expansion audit
 
 - Audit all legacy sources against every normalized destination.
 - Verify source/destination and parent/tenant row counts.

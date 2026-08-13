@@ -195,6 +195,12 @@ export default defineSchema({
       v.literal("workflow_settings"),
       v.literal("workflow_evaluations"),
       v.literal("workflow_applicants"),
+      v.literal("communications_memos"),
+      v.literal("communications_conversations"),
+      v.literal("communications_messages"),
+      v.literal("communications_preferences"),
+      v.literal("communications_documents"),
+      v.literal("communications_leave_attachments"),
     ),
     cursor: v.optional(v.string()),
     batchSize: v.number(),
@@ -276,6 +282,16 @@ export default defineSchema({
       v.literal("workflow_target_offer_events"),
       v.literal("workflow_target_custom_definitions"),
       v.literal("workflow_target_custom_values"),
+      v.literal("communications_memos"),
+      v.literal("communications_source_verification"),
+      v.literal("communications_target_memo_reactions"),
+      v.literal("communications_target_memo_acknowledgements"),
+      v.literal("communications_target_memo_audience"),
+      v.literal("communications_target_conversation_members"),
+      v.literal("communications_target_message_receipts"),
+      v.literal("communications_target_pins"),
+      v.literal("communications_target_document_grants"),
+      v.literal("communications_target_storage_links"),
     ),
     cursor: v.optional(v.string()),
     verificationRunId: v.optional(v.id("migrationRuns")),
@@ -419,6 +435,38 @@ export default defineSchema({
     .index("by_storage", ["storageId"])
     .index("by_organization", ["organizationId", "createdAt"])
     .index("by_owner", ["ownerUserId", "createdAt"]),
+
+  storageObjectLinks: defineTable({
+    organizationId: v.id("organizations"),
+    storageId: v.id("_storage"),
+    parentType: v.union(
+      v.literal("memo"),
+      v.literal("message"),
+      v.literal("document"),
+      v.literal("leave_request"),
+    ),
+    parentId: v.union(
+      v.id("memos"),
+      v.id("messages"),
+      v.id("documents"),
+      v.id("leaveRequests"),
+    ),
+    purpose: v.union(
+      v.literal("announcement_attachment"),
+      v.literal("memo_attachment"),
+      v.literal("chat_attachment"),
+      v.literal("document_attachment"),
+      v.literal("leave_attachment"),
+    ),
+    sourceIndex: v.number(),
+    contentType: v.optional(v.string()),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_parent", ["parentType", "parentId"])
+    .index("by_storage_parent", ["storageId", "parentType", "parentId"]),
 
   /** In-app notifications (not chat); excludes new-message events. */
   notifications: defineTable({
@@ -2213,6 +2261,51 @@ export default defineSchema({
     .index("by_published", ["isPublished"])
     .index("by_date", ["publishedDate"]),
 
+  memoReactions: defineTable({
+    organizationId: v.id("organizations"),
+    memoId: v.id("memos"),
+    userId: v.id("users"),
+    emoji: v.string(),
+    reactedAt: v.number(),
+    sourceIndex: v.number(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_memo", ["memoId"])
+    .index("by_memo_user_emoji", ["memoId", "userId", "emoji"]),
+
+  memoAcknowledgements: defineTable({
+    organizationId: v.id("organizations"),
+    memoId: v.id("memos"),
+    employeeId: v.id("employees"),
+    acknowledgedAt: v.number(),
+    sourceIndex: v.number(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_memo", ["memoId"])
+    .index("by_memo_employee", ["memoId", "employeeId"]),
+
+  memoAudienceMembers: defineTable({
+    organizationId: v.id("organizations"),
+    memoId: v.id("memos"),
+    audienceType: v.union(v.literal("employee"), v.literal("department")),
+    employeeId: v.optional(v.id("employees")),
+    department: v.optional(v.string()),
+    sourceIndex: v.number(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_memo", ["memoId"])
+    .index("by_memo_employee", ["memoId", "employeeId"])
+    .index("by_memo_department", ["memoId", "department"]),
+
   // Announcement comments (only org members can view and post)
   announcementComments: defineTable({
     announcementId: v.id("memos"),
@@ -2626,6 +2719,49 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_user_organization", ["userId", "organizationId"]),
 
+  conversationMembers: defineTable({
+    organizationId: v.id("organizations"),
+    conversationId: v.id("conversations"),
+    userId: v.id("users"),
+    status: v.literal("active"),
+    sourceIndex: v.number(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_conversation", ["conversationId"])
+    .index("by_conversation_user", ["conversationId", "userId"]),
+
+  messageReceipts: defineTable({
+    organizationId: v.id("organizations"),
+    conversationId: v.id("conversations"),
+    messageId: v.id("messages"),
+    userId: v.id("users"),
+    state: v.literal("read"),
+    sourceIndex: v.number(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_message", ["messageId"])
+    .index("by_message_user", ["messageId", "userId"]),
+
+  userPinnedConversations: defineTable({
+    organizationId: v.id("organizations"),
+    userId: v.id("users"),
+    conversationId: v.id("conversations"),
+    sourcePreferencesId: v.id("userChatPreferences"),
+    position: v.number(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_user_organization", ["userId", "organizationId"])
+    .index("by_user_conversation", ["userId", "conversationId"]),
+
   // Invitations
   invitations: defineTable({
     organizationId: v.id("organizations"),
@@ -2697,6 +2833,33 @@ export default defineSchema({
     .index("by_organization", ["organizationId"])
     .index("by_employee", ["employeeId"])
     .index("by_creator", ["createdBy"]),
+
+  documentAccessGrants: defineTable({
+    organizationId: v.id("organizations"),
+    documentId: v.id("documents"),
+    grantType: v.union(
+      v.literal("user"),
+      v.literal("employee"),
+      v.literal("department"),
+    ),
+    userId: v.optional(v.id("users")),
+    employeeId: v.optional(v.id("employees")),
+    department: v.optional(v.string()),
+    sourceField: v.union(
+      v.literal("sharedWith"),
+      v.literal("visibleEmployeeIds"),
+      v.literal("visibleDepartments"),
+    ),
+    sourceIndex: v.number(),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_document", ["documentId"])
+    .index("by_document_user", ["documentId", "userId"])
+    .index("by_document_employee", ["documentId", "employeeId"])
+    .index("by_document_department", ["documentId", "department"]),
 
   /** Past snapshots when a Plinth document's body is edited; announcements use copied content, not this table. */
   documentVersions: defineTable({

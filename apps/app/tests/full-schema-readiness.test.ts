@@ -140,9 +140,9 @@ describe("full schema cleanup readiness", () => {
     expect(inventory).toMatchObject({
       programKey: FULL_SCHEMA_CLEANUP_PROGRAM_KEY,
       programVersion: FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
-      currentTableCount: 64,
+      currentTableCount: 72,
     });
-    expect(inventory.tables).toHaveLength(64);
+    expect(inventory.tables).toHaveLength(72);
     expect(inventory.tables).toContainEqual(
       expect.objectContaining({
         table: "organizations",
@@ -235,6 +235,65 @@ describe("full schema cleanup readiness", () => {
         auditedAt: 2,
       }),
     );
+  });
+
+  it("marks communications documents ready from its newest clean write audit", async () => {
+    const t = convexTest(schema, modules);
+    const auditId = await t.run(async (ctx) => {
+      const runId = await ctx.db.insert("migrationRuns", {
+        key: "full-schema-communications-documents",
+        version: 1,
+        dryRun: false,
+        status: "completed",
+        phase: "communications_leave_attachments",
+        batchSize: 20,
+        counters: {
+          scanned: 6,
+          changed: 16,
+          unchanged: 0,
+          skipped: 0,
+          conflicts: 0,
+          errors: 0,
+        },
+        startedAt: 1,
+        updatedAt: 1,
+        completedAt: 1,
+      });
+      return ctx.db.insert("migrationAudits", {
+        migrationRunId: runId,
+        status: "completed",
+        phase: "communications_target_storage_links",
+        batchSize: 5,
+        organizations: 0,
+        destination: {
+          expected: 16,
+          matching: 16,
+          missing: 0,
+          duplicate: 0,
+          mismatched: 0,
+          unexpected: 0,
+          totalRows: 16,
+        },
+        duplicateLegacySettings: 0,
+        sourceConflicts: 0,
+        auditTruncated: false,
+        startedAt: 2,
+        updatedAt: 2,
+        completedAt: 2,
+      });
+    });
+
+    const readiness = await t.query(getFullSchemaCleanupReadiness, {});
+    expect(readiness.domains).toContainEqual(
+      expect.objectContaining({
+        domain: "communications_documents",
+        status: "ready",
+        blockers: [],
+        auditId,
+        auditedAt: 2,
+      }),
+    );
+    expect(readiness.readyForRelease3).toBe(false);
   });
 
   it("marks leave employee children ready from its newest clean write audit", async () => {
