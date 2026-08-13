@@ -8,6 +8,20 @@ export const ATTENDANCE_IMPORT_STATUSES = [
   "no_work",
 ] as const;
 
+export const ATTENDANCE_IMPORT_LIMITS = {
+  maxFileBytes: 10 * 1024 * 1024,
+  maxMultipartBytes: 11 * 1024 * 1024,
+  maxArchiveEntries: 1_000,
+  maxUncompressedBytes: 50 * 1024 * 1024,
+  maxSheets: 20,
+  maxRows: 10_000,
+  maxColumns: 100,
+  maxCells: 500_000,
+  maxCellCharacters: 2_000,
+  maxSerializedCharacters: 4 * 1024 * 1024,
+  maxCandidates: 10_000,
+} as const;
+
 export type AttendanceImportStatus =
   (typeof ATTENDANCE_IMPORT_STATUSES)[number];
 
