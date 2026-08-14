@@ -60,9 +60,9 @@ describe("attendance import client", () => {
     );
 
     expect(markup).toContain("Attendance file");
-    expect(markup).toContain('accept=".xlsx,.csv"');
+    expect(markup).toContain('accept=".xls,.xlsx,.xlsm,.csv"');
     expect(markup).toContain(
-      "Only Excel (.xlsx) and CSV (.csv) files are supported.",
+      "Only Excel (.xls, .xlsx, .xlsm) and CSV (.csv) files are supported.",
     );
     expect(markup).toContain(
       "This file will be processed by Google Gemini.",
@@ -201,17 +201,33 @@ describe("attendance import client", () => {
     expect(loading).toBe(false);
   });
 
+  it("accepts supported lowercase Excel extensions before upload", () => {
+    expect(() =>
+      validateAttendanceImportFile(new File(["legacy"], "attendance.xls")),
+    ).not.toThrow();
+    expect(() =>
+      validateAttendanceImportFile(new File(["ooxml"], "attendance.xlsx")),
+    ).not.toThrow();
+    expect(() =>
+      validateAttendanceImportFile(new File(["macros"], "attendance.xlsm")),
+    ).not.toThrow();
+  });
+
   it("rejects unsupported, uppercase-extension, and oversized files before upload", () => {
     expect(() =>
       validateAttendanceImportFile(
         new File(["name,date"], "attendance.txt", { type: "text/plain" }),
       ),
-    ).toThrow("Only Excel (.xlsx) and CSV (.csv) files are supported.");
+    ).toThrow(
+      "Only Excel (.xls, .xlsx, .xlsm) and CSV (.csv) files are supported.",
+    );
     expect(() =>
       validateAttendanceImportFile(
         new File(["name,date"], "attendance.CSV", { type: "text/csv" }),
       ),
-    ).toThrow("Only Excel (.xlsx) and CSV (.csv) files are supported.");
+    ).toThrow(
+      "Only Excel (.xls, .xlsx, .xlsm) and CSV (.csv) files are supported.",
+    );
     expect(() =>
       validateAttendanceImportFile(
         new File([new Uint8Array(10 * 1024 * 1024 + 1)], "attendance.csv"),

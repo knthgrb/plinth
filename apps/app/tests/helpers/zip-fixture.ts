@@ -137,6 +137,36 @@ export function makeTwoSheetXlsx(
   ]);
 }
 
+export function makeTwoSheetXlsm(): Uint8Array {
+  return makeCentralDirectoryArchive([
+    { name: "[Content_Types].xml", data: macroContentTypesXml() },
+    { name: "_rels/.rels", data: packageRelationshipsXml() },
+    { name: "xl/workbook.xml", data: workbookXml() },
+    {
+      name: "xl/_rels/workbook.xml.rels",
+      data: macroWorkbookRelationshipsXml(),
+    },
+    {
+      name: "xl/worksheets/sheet1.xml",
+      data: worksheetXml("A1:B2", [
+        ["Name", "Date"],
+        ["Ana", "2026-08-13"],
+      ]),
+    },
+    {
+      name: "xl/worksheets/sheet2.xml",
+      data: worksheetXml("A1:B2", [
+        ["Name", "Date"],
+        ["Ben", "2026-08-13"],
+      ]),
+    },
+    {
+      name: "xl/vbaProject.bin",
+      data: new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+    },
+  ]);
+}
+
 export function makeWorksheetXml(dimension: string, rows: string[][]): string {
   return worksheetXml(dimension, rows);
 }
@@ -210,6 +240,18 @@ function contentTypesXml(): string {
 </Types>`;
 }
 
+function macroContentTypesXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.ms-excel.sheet.macroEnabled.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/vbaProject.bin" ContentType="application/vnd.ms-office.vbaProject"/>
+</Types>`;
+}
+
 function workbookXml(): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
@@ -232,6 +274,15 @@ function workbookRelationshipsXml(): string {
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
   <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>
+</Relationships>`;
+}
+
+function macroWorkbookRelationshipsXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/>
 </Relationships>`;
 }
 

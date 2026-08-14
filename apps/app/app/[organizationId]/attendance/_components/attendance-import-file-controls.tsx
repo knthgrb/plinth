@@ -26,7 +26,7 @@ export function AttendanceImportFileControls({
         <Label className="text-xs font-medium">Attendance file</Label>
         <Input
           type="file"
-          accept=".xlsx,.csv"
+          accept=".xls,.xlsx,.xlsm,.csv"
           onChange={onFileChange}
           disabled={!lookupsReady}
           className="max-w-xs text-xs"
@@ -44,7 +44,10 @@ export function AttendanceImportFileControls({
         </Button>
       </div>
       <div className="space-y-0.5 text-xs text-gray-500">
-        <p>Only Excel (.xlsx) and CSV (.csv) files are supported.</p>
+        <p>
+          Only Excel (.xls, .xlsx, .xlsm) and CSV (.csv) files are
+          supported.
+        </p>
         <p>This file will be processed by Google Gemini.</p>
       </div>
       {!lookupsReady && (

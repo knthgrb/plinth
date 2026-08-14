@@ -35,14 +35,27 @@ type BoundedBodyResult =
   | { ok: false; byteCount: number; tooLarge: boolean };
 
 const ORGANIZATION_ID_PATTERN = /^[a-z0-9]{20,64}$/;
-const SUPPORTED_FILE_EXTENSION_PATTERN = /\.(csv|xlsx)$/i;
+const SUPPORTED_FILE_EXTENSION_PATTERN = /\.(csv|xls|xlsx|xlsm)$/i;
 const DECIMAL_CONTENT_LENGTH_PATTERN = /^\d+$/;
+type SupportedFileExtension = "csv" | "xls" | "xlsx" | "xlsm";
+const GENERIC_FILE_MIME_TYPES = new Set(["", "application/octet-stream"]);
+const SUPPORTED_FILE_MIME_TYPES: Record<
+  SupportedFileExtension,
+  readonly string[]
+> = {
+  csv: ["text/csv", "application/csv"],
+  xls: ["application/vnd.ms-excel"],
+  xlsx: [
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ],
+  xlsm: ["application/vnd.ms-excel.sheet.macroenabled.12"],
+};
 
 const ERROR_MESSAGES: Record<AttendanceImportTransformErrorCode, string> = {
   unauthenticated: "Authentication is required.",
   forbidden: "You are not allowed to transform attendance imports.",
   invalid_request: "The attendance import request is invalid.",
-  unsupported_file: "Choose a CSV or XLSX attendance file.",
+  unsupported_file: "Choose a CSV, XLS, XLSX, or XLSM attendance file.",
   unsafe_workbook: "The attendance workbook could not be processed safely.",
   no_attendance: "No attendance candidates were found.",
   not_configured: "Attendance extraction is not configured.",
@@ -191,7 +204,7 @@ export async function POST(
     return errorResponse("invalid_request", 413, metrics);
   }
 
-  if (!SUPPORTED_FILE_EXTENSION_PATTERN.test(fileValue.name)) {
+  if (!isSupportedAttendanceFile(fileValue)) {
     return errorResponse("unsupported_file", 415, metrics);
   }
 
@@ -228,6 +241,24 @@ export async function POST(
   logResult("success", 200, metrics);
 
   return NextResponse.json({ ok: true, candidates }, { status: 200 });
+}
+
+function isSupportedAttendanceFile(file: File): boolean {
+  const extensionMatch = SUPPORTED_FILE_EXTENSION_PATTERN.exec(file.name);
+  const extension = extensionMatch?.[1]?.toLowerCase() as
+    | SupportedFileExtension
+    | undefined;
+
+  if (!extension) {
+    return false;
+  }
+
+  const mimeType = file.type.trim().toLowerCase();
+
+  return (
+    GENERIC_FILE_MIME_TYPES.has(mimeType) ||
+    SUPPORTED_FILE_MIME_TYPES[extension].includes(mimeType)
+  );
 }
 
 function errorResponse(

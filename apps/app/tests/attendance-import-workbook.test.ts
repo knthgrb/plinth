@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { utils, write, type WorkSheet } from "xlsx";
 
 import { readAttendanceWorkbook } from "@/lib/attendance-import/workbook";
 import {
   makeTwoSheetXlsx,
+  makeTwoSheetXlsm,
   makeWorksheetXml,
 } from "./helpers/zip-fixture";
 
@@ -16,6 +18,125 @@ function makeValidatedXlsxFile(): File {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     },
   );
+}
+
+function makeValidatedXlsmFile(): File {
+  return new File(
+    [new Uint8Array(makeTwoSheetXlsm())],
+    "attendance.xlsm",
+    {
+      type: "application/vnd.ms-excel.sheet.macroEnabled.12",
+    },
+  );
+}
+
+function makeLegacyXlsFile(): File {
+  return new File(
+    [
+      new Uint8Array([
+        0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0x00, 0x00,
+      ]),
+    ],
+    "attendance.xls",
+    { type: "application/vnd.ms-excel" },
+  );
+}
+
+function makeRealLegacyXlsFile(): File {
+  const workbook = utils.book_new();
+  const manila = utils.aoa_to_sheet([
+    ["Name", "Date", "Cached Formula"],
+    ["Ana", "2026-08-13", 4],
+  ]);
+  manila.C2 = { t: "n", v: 4, f: "2+2" };
+  utils.book_append_sheet(workbook, manila, "Manila");
+  utils.book_append_sheet(
+    workbook,
+    utils.aoa_to_sheet([
+      ["Name", "Date"],
+      ["Ben", "2026-08-13"],
+    ]),
+    "Cebu",
+  );
+  const output: unknown = write(workbook, {
+    type: "array",
+    bookType: "biff8",
+    bookVBA: false,
+  });
+
+  if (!(output instanceof ArrayBuffer)) {
+    throw new Error("The XLS test fixture could not be generated.");
+  }
+
+  return new File([output], "attendance.xls", {
+    type: "application/vnd.ms-excel",
+  });
+}
+
+function makeLegacyXlsFileWithCell(coordinate: string): File {
+  const workbook = utils.book_new();
+  const worksheet = utils.aoa_to_sheet([["Name"]]);
+  utils.sheet_add_aoa(worksheet, [["Ana"]], { origin: coordinate });
+  utils.book_append_sheet(workbook, worksheet, "Attendance");
+  const output: unknown = write(workbook, {
+    type: "array",
+    bookType: "biff8",
+    bookVBA: false,
+  });
+
+  if (!(output instanceof ArrayBuffer)) {
+    throw new Error("The XLS boundary test fixture could not be generated.");
+  }
+
+  return new File([output], "attendance.xls", {
+    type: "application/vnd.ms-excel",
+  });
+}
+
+function makeLegacyTemporalXlsFile(): File {
+  const workbook = utils.book_new();
+  const worksheet = utils.aoa_to_sheet([
+    ["Date", "Time", "Date and Time"],
+    [46247, 0.375, 46247.375],
+  ]);
+  worksheet.A2.z = "yyyy-mm-dd";
+  worksheet.B2.z = "h:mm AM/PM";
+  worksheet.C2.z = "yyyy-mm-dd h:mm AM/PM";
+  utils.book_append_sheet(workbook, worksheet, "Attendance");
+  const output: unknown = write(workbook, {
+    type: "array",
+    bookType: "biff8",
+    bookVBA: false,
+  });
+
+  if (!(output instanceof ArrayBuffer)) {
+    throw new Error("The XLS temporal test fixture could not be generated.");
+  }
+
+  return new File([output], "attendance.xls", {
+    type: "application/vnd.ms-excel",
+  });
+}
+
+function makeSparseLegacyXlsFile(): File {
+  const workbook = utils.book_new();
+  const worksheet: WorkSheet = {};
+  utils.sheet_add_aoa(worksheet, [["Name"], ["Ana"]], { origin: "A5" });
+  worksheet["!ref"] = "A5:A6";
+  utils.book_append_sheet(workbook, worksheet, "Attendance");
+  const output: unknown = write(workbook, {
+    type: "array",
+    bookType: "biff8",
+    bookVBA: false,
+  });
+
+  if (!(output instanceof ArrayBuffer)) {
+    throw new Error("The sparse XLS test fixture could not be generated.");
+  }
+
+  return new File([output], "attendance.xls", {
+    type: "application/vnd.ms-excel",
+  });
 }
 
 describe("attendance workbook ingestion", () => {
@@ -128,6 +249,100 @@ describe("attendance workbook ingestion", () => {
       rowNumber: 2,
       cells: ["Ben", "2026-08-13"],
     });
+  });
+
+  it("parses every worksheet in an XLSM file without retaining macros", async () => {
+    const workbook = await readAttendanceWorkbook(makeValidatedXlsmFile());
+
+    expect(workbook.sheets.map((sheet) => sheet.name)).toEqual(["Manila", "Cebu"]);
+    expect(workbook.sheets[0]?.rows[1]?.cells).toEqual(["Ana", "2026-08-13"]);
+    expect(workbook.sheets[1]?.rows[1]?.cells).toEqual(["Ben", "2026-08-13"]);
+  });
+
+  it("parses every worksheet in a legacy XLS workbook", async () => {
+    const workbook = await readAttendanceWorkbook(makeLegacyXlsFile(), {
+      readLegacySheets: async () => [
+        {
+          sheet: "Manila",
+          data: [["Name", "Date"], ["Ana", "2026-08-13"]],
+        },
+        {
+          sheet: "Cebu",
+          data: [["Name", "Date"], ["Ben", "2026-08-13"]],
+        },
+      ],
+    });
+
+    expect(workbook.sheets.map((sheet) => sheet.name)).toEqual(["Manila", "Cebu"]);
+    expect(workbook.sheets[0]?.rows[1]?.cells).toEqual(["Ana", "2026-08-13"]);
+    expect(workbook.sheets[1]?.rows[1]?.cells).toEqual(["Ben", "2026-08-13"]);
+  });
+
+  it("parses a real multi-sheet BIFF8 workbook and exposes only cached formula values", async () => {
+    const workbook = await readAttendanceWorkbook(makeRealLegacyXlsFile());
+
+    expect(workbook.sheets.map((sheet) => sheet.name)).toEqual(["Manila", "Cebu"]);
+    expect(workbook.sheets[0]?.rows[1]?.cells).toEqual([
+      "Ana",
+      "2026-08-13",
+      "4",
+    ]);
+    expect(workbook.sheets[1]?.rows[1]?.cells).toEqual(["Ben", "2026-08-13"]);
+  });
+
+  it("preserves cached BIFF8 date, time, and datetime display values", async () => {
+    const workbook = await readAttendanceWorkbook(makeLegacyTemporalXlsFile());
+
+    expect(workbook.sheets[0]?.rows[1]?.cells).toEqual([
+      "2026-08-13",
+      "9:00 AM",
+      "2026-08-13 9:00 AM",
+    ]);
+  });
+
+  it("preserves physical source rows when a BIFF8 sheet starts below row one", async () => {
+    const workbook = await readAttendanceWorkbook(makeSparseLegacyXlsFile());
+
+    expect(workbook.sheets[0]?.rows).toEqual([
+      { rowNumber: 5, cells: ["Name"] },
+      { rowNumber: 6, cells: ["Ana"] },
+    ]);
+  });
+
+  it("rejects a legacy XLS file without an OLE Compound File signature", async () => {
+    let parserWasCalled = false;
+
+    await expect(
+      readAttendanceWorkbook(new File(["not an OLE file"], "attendance.xls"), {
+        readLegacySheets: async () => {
+          parserWasCalled = true;
+          return [];
+        },
+      }),
+    ).rejects.toThrow(/ole.*signature/i);
+    expect(parserWasCalled).toBe(false);
+  });
+
+  it("rejects legacy XLS cells beyond the physical row limit", async () => {
+    await expect(
+      readAttendanceWorkbook(makeLegacyXlsFileWithCell("A10001")),
+    ).rejects.toThrow(/rows|row coordinate/i);
+  });
+
+  it("rejects macro-enabled OOXML mislabeled as XLSX", async () => {
+    await expect(
+      readAttendanceWorkbook(
+        new File([new Uint8Array(makeTwoSheetXlsm())], "attendance.xlsx"),
+      ),
+    ).rejects.toThrow(/content type/i);
+  });
+
+  it("rejects ordinary OOXML mislabeled as XLSM", async () => {
+    await expect(
+      readAttendanceWorkbook(
+        new File([new Uint8Array(makeTwoSheetXlsx())], "attendance.xlsm"),
+      ),
+    ).rejects.toThrow(/content type/i);
   });
 
   it("rejects hostile worksheet dimensions before invoking read-excel-file", async () => {
@@ -297,7 +512,7 @@ describe("attendance workbook ingestion", () => {
 
   it("rejects unsupported workbook extensions at the ingestion boundary", async () => {
     await expect(
-      readAttendanceWorkbook(new File(["Name"], "attendance.xls")),
+      readAttendanceWorkbook(new File(["Name"], "attendance.ods")),
     ).rejects.toThrow(/unsupported/i);
   });
 });

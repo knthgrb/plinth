@@ -8,12 +8,12 @@ import {
 } from "@/lib/attendance-import/types";
 
 const UNSUPPORTED_FILE_MESSAGE =
-  "Only Excel (.xlsx) and CSV (.csv) files are supported.";
+  "Only Excel (.xls, .xlsx, .xlsm) and CSV (.csv) files are supported.";
 const OVERSIZED_FILE_MESSAGE =
   "The attendance file must be 10 MB or smaller.";
 const TRANSFORM_FAILURE_MESSAGE =
   "The attendance file could not be transformed.";
-const SUPPORTED_FILE_EXTENSION_PATTERN = /\.(csv|xlsx)$/;
+const SUPPORTED_FILE_EXTENSION_PATTERN = /\.(csv|xls|xlsx|xlsm)$/;
 
 const SAFE_ERROR_RESPONSES = {
   unauthenticated: { message: "Authentication is required.", statuses: [401] },
@@ -26,7 +26,7 @@ const SAFE_ERROR_RESPONSES = {
     statuses: [400, 413],
   },
   unsupported_file: {
-    message: "Choose a CSV or XLSX attendance file.",
+    message: "Choose a CSV, XLS, XLSX, or XLSM attendance file.",
     statuses: [415],
   },
   unsafe_workbook: {

@@ -129,6 +129,11 @@ pnpm install
    improvement. Production HR data should use a paid Gemini tier under the
    organization's privacy and security review.
 
+   The attendance importer accepts `.csv`, `.xls`, `.xlsx`, and `.xlsm`
+   files. Macro-enabled workbooks are read as worksheet values only; VBA and
+   other embedded active content are removed or ignored and never sent to
+   Gemini. Encrypted workbooks are rejected.
+
    - **Marketing** (optional, for “Log in” / “Get Started” links to the app):
 
    ```env

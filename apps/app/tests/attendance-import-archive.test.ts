@@ -4,7 +4,10 @@ import {
   extractValidatedXlsxArchive,
   validateXlsxArchive,
 } from "@/lib/attendance-import/archive";
-import { makeCentralDirectoryArchive } from "./helpers/zip-fixture";
+import {
+  makeCentralDirectoryArchive,
+  makeTwoSheetXlsm,
+} from "./helpers/zip-fixture";
 
 const REQUIRED_ENTRIES = [
   { name: "[Content_Types].xml", uncompressedSize: 200 },
@@ -193,5 +196,15 @@ describe("XLSX archive validation", () => {
     await expect(extractValidatedXlsxArchive(bytes)).rejects.toThrow(
       /inflated.*declared/i,
     );
+  });
+
+  it("removes macro payloads from extracted OOXML archives", async () => {
+    const extracted = await extractValidatedXlsxArchive(makeTwoSheetXlsm());
+
+    expect(extracted.entries.has("xl/vbaProject.bin")).toBe(false);
+
+    const sanitized = await extractValidatedXlsxArchive(extracted.sanitizedBytes);
+
+    expect(sanitized.entries.has("xl/vbaProject.bin")).toBe(false);
   });
 });

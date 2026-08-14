@@ -161,11 +161,12 @@ describe("Gemini attendance extraction", () => {
       sourceRow: 7,
       employeeKey: "",
       timeIn: "8:00 AM",
-      timeOut: "8:00 AM",
+      timeOut: undefined,
       notes: "Badge number unreadable",
     });
     expect(result[1].issues.map((issue) => issue.code)).toEqual([
       "missing_employee",
+      "missing_time_out",
       "extraction_issue",
     ]);
   });

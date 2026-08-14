@@ -4,6 +4,7 @@ import {
   type Element as XmlElement,
 } from "@xmldom/xmldom";
 import readXlsxFile from "read-excel-file/node";
+import { read, utils, type WorkBook, type WorkSheet } from "xlsx";
 
 import { extractValidatedXlsxArchive } from "@/lib/attendance-import/archive";
 import { ATTENDANCE_IMPORT_LIMITS } from "@/lib/attendance-import/types";
@@ -32,9 +33,16 @@ interface ParsedWorkbookSheet {
   rowNumbers?: number[];
 }
 
+type OoxmlWorkbookKind = "xlsx" | "xlsm";
+
 export interface AttendanceWorkbookDependencies {
   readSheets?: (bytes: Uint8Array) => Promise<ParsedWorkbookSheet[]>;
+  readLegacySheets?: (bytes: Uint8Array) => Promise<ParsedWorkbookSheet[]>;
 }
+
+const OLE_COMPOUND_FILE_SIGNATURE = new Uint8Array([
+  0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1,
+]);
 
 export async function readAttendanceWorkbook(
   file: File,
@@ -57,12 +65,20 @@ export async function readAttendanceWorkbook(
     return convertSheets([{ sheet: "CSV", ...parsedCsv }]);
   }
 
-  if (extension === "xlsx") {
+  if (extension === "xlsx" || extension === "xlsm") {
     const archive = await extractValidatedXlsxArchive(bytes);
-    preflightXlsxContents(archive.entries);
+    preflightXlsxContents(archive.entries, extension);
     const parsedSheets = await (dependencies.readSheets ?? readSheetsWithLibrary)(
       archive.sanitizedBytes,
     );
+    return convertSheets(parsedSheets);
+  }
+
+  if (extension === "xls") {
+    validateLegacyXlsSignature(bytes);
+    const parsedSheets = await (
+      dependencies.readLegacySheets ?? readLegacySheetsWithLibrary
+    )(bytes);
     return convertSheets(parsedSheets);
   }
 
@@ -73,6 +89,94 @@ async function readSheetsWithLibrary(bytes: Uint8Array): Promise<ParsedWorkbookS
   return readXlsxFile(
     Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
   );
+}
+
+async function readLegacySheetsWithLibrary(
+  bytes: Uint8Array,
+): Promise<ParsedWorkbookSheet[]> {
+  const workbookInfo = readLegacyWorkbook(bytes, true);
+
+  if (
+    workbookInfo.SheetNames.length === 0 ||
+    workbookInfo.SheetNames.length > ATTENDANCE_IMPORT_LIMITS.maxSheets
+  ) {
+    throw new Error("The workbook exceeds the 20 worksheets limit or has no worksheets.");
+  }
+
+  const workbook = readLegacyWorkbook(bytes, false);
+
+  return workbook.SheetNames.map((sheet) => ({
+    sheet,
+    ...convertLegacyWorksheet(workbook.Sheets[sheet], sheet),
+  }));
+}
+
+function readLegacyWorkbook(bytes: Uint8Array, sheetNamesOnly: boolean): WorkBook {
+  return read(bytes, {
+    type: "array",
+    bookSheets: sheetNamesOnly,
+    bookProps: false,
+    bookVBA: false,
+    bookFiles: false,
+    bookDeps: false,
+    cellFormula: false,
+    cellHTML: false,
+    cellNF: false,
+    cellStyles: false,
+    cellDates: false,
+    cellText: true,
+    dense: true,
+    nodim: true,
+    sheetRows: ATTENDANCE_IMPORT_LIMITS.maxRows + 1,
+    WTF: false,
+    UTC: true,
+  });
+}
+
+function convertLegacyWorksheet(
+  worksheet: WorkSheet | undefined,
+  sheetName: string,
+): Pick<ParsedWorkbookSheet, "data" | "rowNumbers"> {
+  if (!worksheet) {
+    throw new Error(`The XLS workbook is missing worksheet ${sheetName}.`);
+  }
+
+  const range = worksheet["!fullref"] ?? worksheet["!ref"];
+  let firstRowNumber = 1;
+
+  if (range) {
+    const decodedRange = utils.decode_range(range);
+    firstRowNumber = decodedRange.s.r + 1;
+
+    if (decodedRange.e.r + 1 > ATTENDANCE_IMPORT_LIMITS.maxRows) {
+      throw new Error("The XLS worksheet row coordinate exceeds safe bounds.");
+    }
+
+    if (decodedRange.e.c + 1 > ATTENDANCE_IMPORT_LIMITS.maxColumns) {
+      throw new Error("A workbook row exceeds the 100 columns limit.");
+    }
+  }
+
+  const data = utils.sheet_to_json<unknown[]>(worksheet, {
+    header: 1,
+    raw: false,
+    defval: null,
+    blankrows: true,
+  });
+
+  return {
+    data,
+    rowNumbers: data.map((_, index) => firstRowNumber + index),
+  };
+}
+
+function validateLegacyXlsSignature(bytes: Uint8Array): void {
+  if (
+    bytes.byteLength < OLE_COMPOUND_FILE_SIGNATURE.byteLength ||
+    OLE_COMPOUND_FILE_SIGNATURE.some((byte, index) => bytes[index] !== byte)
+  ) {
+    throw new Error("The XLS file does not have a valid OLE Compound File signature.");
+  }
 }
 
 interface ParsedCsv {
@@ -215,7 +319,10 @@ function parseCsv(bytes: Uint8Array): ParsedCsv {
   return { data: rows, rowNumbers };
 }
 
-function preflightXlsxContents(entries: ReadonlyMap<string, Uint8Array>): void {
+function preflightXlsxContents(
+  entries: ReadonlyMap<string, Uint8Array>,
+  kind: OoxmlWorkbookKind,
+): void {
   const contentTypes = parseXmlEntry(entries, "[Content_Types].xml");
   const packageRelationships = parseXmlEntry(entries, "_rels/.rels");
   const workbook = parseXmlEntry(entries, "xl/workbook.xml");
@@ -226,16 +333,25 @@ function preflightXlsxContents(entries: ReadonlyMap<string, Uint8Array>): void {
   }
 
   const workbookOverrides = elementsByLocalName(contentTypes, "Override").filter(
-    (element) =>
-      element.getAttribute("PartName") === "/xl/workbook.xml" &&
-      element.getAttribute("ContentType")?.includes("spreadsheetml.sheet.main"),
+    (element) => element.getAttribute("PartName") === "/xl/workbook.xml",
   );
+  const expectedWorkbookContentType =
+    kind === "xlsx"
+      ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"
+      : "application/vnd.ms-excel.sheet.macroEnabled.main+xml";
 
   if (
     workbookOverrides.length !== 1 ||
     workbook.documentElement?.localName !== "workbook"
   ) {
     throw new Error("The XLSX workbook structure is invalid.");
+  }
+
+  if (
+    workbookOverrides[0]?.getAttribute("ContentType") !==
+    expectedWorkbookContentType
+  ) {
+    throw new Error("The Excel workbook content type does not match its extension.");
   }
 
   const officeDocumentRelationships = elementsByLocalName(

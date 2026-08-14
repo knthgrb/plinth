@@ -486,9 +486,46 @@ describe("POST /api/attendance/import/transform", () => {
     expectTransformationNotStarted();
   });
 
+  it.each([
+    ["attendance.xls", "application/vnd.ms-excel"],
+    [
+      "attendance.xlsm",
+      "application/vnd.ms-excel.sheet.macroEnabled.12",
+    ],
+  ])("accepts supported workbook %s for parsing", async (name, type) => {
+    const file = new File(["workbook"], name, { type });
+
+    const response = await POST(makeMultipartRequest({ file }));
+
+    expect(response.status).toBe(200);
+    expect(readAttendanceWorkbookMock).toHaveBeenCalledOnce();
+    expect(readAttendanceWorkbookMock.mock.calls[0]?.[0].name).toBe(name);
+  });
+
+  it.each([
+    ["attendance.csv", "application/vnd.ms-excel"],
+    ["attendance.xls", "text/csv"],
+    ["attendance.xlsx", "application/vnd.ms-excel"],
+    ["attendance.xlsm", "application/octet-stream-mismatched"],
+  ])(
+    "rejects %s when its supplied MIME type is %s",
+    async (name, type) => {
+      const response = await POST(
+        makeMultipartRequest({ file: new File(["workbook"], name, { type }) }),
+      );
+
+      expect(response.status).toBe(415);
+      expect(await readJson(response)).toMatchObject({
+        ok: false,
+        code: "unsupported_file",
+      });
+      expectTransformationNotStarted();
+    },
+  );
+
   it("returns 415 for an unsupported file before workbook parsing", async () => {
-    const file = new File(["legacy"], "attendance.xls", {
-      type: "application/vnd.ms-excel",
+    const file = new File(["unsupported"], "attendance.txt", {
+      type: "text/plain",
     });
 
     const response = await POST(makeMultipartRequest({ file }));

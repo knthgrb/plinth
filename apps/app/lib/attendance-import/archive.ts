@@ -54,9 +54,14 @@ export async function extractValidatedXlsxArchive(
 ): Promise<ExtractedXlsxArchive> {
   const metadata = parseArchiveMetadata(bytes);
   const extractedEntries = new Map<string, Uint8Array>();
+  const retainedEntries: ArchiveEntryMetadata[] = [];
   let totalInflatedBytes = 0;
 
   for (const entry of metadata.entries) {
+    if (isActiveContentEntry(entry.name)) {
+      continue;
+    }
+
     const compressedBytes = bytes.subarray(
       entry.dataOffset,
       entry.dataOffset + entry.compressedSize,
@@ -67,12 +72,25 @@ export async function extractValidatedXlsxArchive(
 
     totalInflatedBytes += data.byteLength;
     extractedEntries.set(entry.name, data);
+    retainedEntries.push(entry);
   }
 
   return {
     entries: extractedEntries,
-    sanitizedBytes: createStoredArchive(metadata.entries, extractedEntries),
+    sanitizedBytes: createStoredArchive(retainedEntries, extractedEntries),
   };
+}
+
+function isActiveContentEntry(name: string): boolean {
+  const normalizedName = name.toLowerCase();
+
+  return (
+    normalizedName === "xl/vbaproject.bin" ||
+    normalizedName === "xl/vbaprojectsignature.bin" ||
+    normalizedName.startsWith("xl/activex/") ||
+    normalizedName.startsWith("xl/ctrlprops/") ||
+    normalizedName.startsWith("xl/embeddings/")
+  );
 }
 
 function parseArchiveMetadata(bytes: Uint8Array): ArchiveMetadata {
