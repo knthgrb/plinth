@@ -75,12 +75,78 @@ function successfulResponse(candidates: unknown[]): Response {
   return jsonResponse(completedInteraction(JSON.stringify({ candidates })));
 }
 
+const PROVIDER_SCHEMA_CONSTRAINT_KEYS = new Set([
+  "additionalProperties",
+  "maximum",
+  "maxItems",
+  "maxLength",
+  "minimum",
+  "minItems",
+  "minLength",
+]);
+
+function containsProviderSchemaConstraint(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some(containsProviderSchemaConstraint);
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  return Object.entries(value).some(
+    ([key, nestedValue]) =>
+      PROVIDER_SCHEMA_CONSTRAINT_KEYS.has(key) ||
+      containsProviderSchemaConstraint(nestedValue),
+  );
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
 describe("Gemini attendance extraction", () => {
+  it("sends a provider-compatible schema and validates limits locally", async () => {
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      const body: unknown = JSON.parse(String(init?.body));
+      const responseFormat =
+        typeof body === "object" && body !== null && "response_format" in body
+          ? body.response_format
+          : undefined;
+      const schema =
+        typeof responseFormat === "object" &&
+        responseFormat !== null &&
+        "schema" in responseFormat
+          ? responseFormat.schema
+          : undefined;
+
+      return containsProviderSchemaConstraint(schema)
+        ? jsonResponse(
+            {
+              error: {
+                code: "invalid_request",
+                message: "Request contains an invalid argument.",
+              },
+            },
+            400,
+          )
+        : successfulResponse([validCandidate]);
+    };
+
+    const result = await extractAttendanceWithGemini(twoSheetWorkbook, {
+      apiKey: "test-key",
+      fetchImpl,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(
+      geminiAttendanceResponseSchema.safeParse({
+        candidates: [{ ...validCandidate, notes: "N".repeat(2_001) }],
+      }).success,
+    ).toBe(false);
+  });
+
   it("sends every sheet as untrusted data and requests strict JSON", async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () =>
       successfulResponse([validCandidate]),
@@ -111,7 +177,6 @@ describe("Gemini attendance extraction", () => {
     expect(body.response_format).toMatchObject({
       schema: {
         type: "object",
-        additionalProperties: false,
         required: ["candidates"],
       },
     });

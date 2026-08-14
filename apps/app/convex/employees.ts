@@ -22,11 +22,19 @@ import {
 import {
   deriveAccessStatusForEmployeeArchive,
   deriveAccessStatusForEmploymentStatus,
+  normalizeOrgMembershipAccessStatus,
+  resolveMembershipAccessStatusForEmployeeSync,
 } from "@/utils/org-membership-lifecycle";
 import {
   getEffectiveRequirementDefinitions,
   type RequirementConfigurationInput,
 } from "./organizationConfiguration";
+import { createEmployeeLinkedInvitation } from "./invitationCreation";
+import {
+  cancelPendingEmployeeInvitations,
+  ensureEmployeeLifecycleBaseline,
+  recordEmployeeLifecycleEvent,
+} from "./employeeLifecycle";
 
 function assertHireDateIsNotFuture(hireDate: number) {
   const today = new Date();
@@ -42,6 +50,18 @@ function assertHireDateIsNotFuture(hireDate: number) {
 }
 
 type DefaultRequirement = RequirementConfigurationInput;
+
+const customFieldPrimitive = v.union(
+  v.string(),
+  v.number(),
+  v.boolean(),
+  v.null(),
+);
+const customFieldValue = v.union(
+  customFieldPrimitive,
+  v.array(customFieldPrimitive),
+  v.record(v.string(), customFieldPrimitive),
+);
 
 function buildRequirementFromDefault(req: DefaultRequirement, now = Date.now()) {
   return {
@@ -119,31 +139,6 @@ async function getLinkedEmployeeMemberships(
   }
 
   return memberships;
-}
-
-async function cancelPendingEmployeeInvitations(
-  ctx: MutationCtx,
-  organizationId: Id<"organizations">,
-  employeeId: Id<"employees">,
-): Promise<void> {
-  const invitations = await ctx.db
-    .query("invitations")
-    .withIndex("by_organization", (query) =>
-      query.eq("organizationId", organizationId),
-    )
-    .filter((query) =>
-      query.and(
-        query.eq(query.field("employeeId"), employeeId),
-        query.eq(query.field("status"), "pending"),
-      ),
-    )
-    .collect();
-
-  await Promise.all(
-    invitations.map((invitation) =>
-      ctx.db.patch(invitation._id, { status: "cancelled" }),
-    ),
-  );
 }
 
 // Helper to check authorization with organization context
@@ -262,9 +257,8 @@ export const getEmployees = query({
 
     const statusRank: Record<string, number> = {
       active: 0,
-      inactive: 1,
-      resigned: 2,
-      terminated: 3,
+      resigned: 1,
+      terminated: 2,
     };
     employees.sort((a, b) => {
       const statusDiff =
@@ -328,6 +322,91 @@ export const getEmployee = query({
     }
 
     return decryptEmployeeFromDb(await loadEffectiveEmployee(ctx, employee));
+  },
+});
+
+export const getEmployeeLifecycleTimeline = query({
+  args: { employeeId: v.id("employees") },
+  handler: async (ctx, args) => {
+    const employee = await ctx.db.get(args.employeeId);
+    if (!employee) throw new Error("Employee not found");
+    const userRecord = await checkAuth(ctx, employee.organizationId);
+    if (
+      userRecord.role === "employee" &&
+      userRecord.employeeId !== args.employeeId
+    ) {
+      throw new Error("Not authorized");
+    }
+
+    const events = await ctx.db
+      .query("employeeLifecycleEvents")
+      .withIndex("by_employee_effective_at", (query) =>
+        query.eq("employeeId", args.employeeId),
+      )
+      .order("asc")
+      .collect();
+
+    if (events.length === 0) {
+      const baseline: Array<{
+        _id: string;
+        type: "hired" | "resigned" | "terminated" | "rehired";
+        effectiveAt: number;
+        position: string;
+        department: string;
+        employmentType:
+          | "regular"
+          | "probationary"
+          | "contractual"
+          | "part-time";
+        reason?: string;
+        recordedBy: null;
+        createdAt: number;
+      }> = [
+        {
+          _id: `legacy-hired-${employee._id}`,
+          type: "hired" as const,
+          effectiveAt: employee.employment.hireDate,
+          position: employee.employment.position,
+          department: employee.employment.department,
+          employmentType: employee.employment.employmentType,
+          reason: undefined,
+          recordedBy: null,
+          createdAt: employee.createdAt,
+        },
+      ];
+      if (
+        employee.employment.status === "resigned" ||
+        employee.employment.status === "terminated"
+      ) {
+        baseline.push({
+          _id: `legacy-separated-${employee._id}`,
+          type: employee.employment.status,
+          effectiveAt:
+            employee.employment.separationDate ??
+            employee.employment.lastWorkingDay ??
+            employee.updatedAt,
+          position: employee.employment.position,
+          department: employee.employment.department,
+          employmentType: employee.employment.employmentType,
+          reason: employee.employment.separationReason,
+          recordedBy: null,
+          createdAt: employee.updatedAt,
+        });
+      }
+      return baseline;
+    }
+
+    return Promise.all(
+      events.map(async (event) => {
+        const actor = await ctx.db.get(event.recordedBy);
+        return {
+          ...event,
+          recordedBy: actor
+            ? { _id: actor._id, name: actor.name, email: actor.email }
+            : null,
+        };
+      }),
+    );
   },
 });
 
@@ -582,10 +661,53 @@ export const listEmployeesAvailableForOrgInvite = query({
   },
 });
 
+export const getAvailableOrganizationMembers = query({
+  args: { organizationId: v.id("organizations") },
+  handler: async (ctx, args) => {
+    await checkAuth(ctx, args.organizationId, "hr");
+    const memberships = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_organization", (query) =>
+        query.eq("organizationId", args.organizationId),
+      )
+      .collect();
+    const availableMemberships = memberships.filter(
+      (membership) =>
+        normalizeOrgMembershipAccessStatus(membership.accessStatus) ===
+          "active" && membership.employeeId === undefined,
+    );
+    const members = await Promise.all(
+      availableMemberships.map(async (membership) => {
+        const user = await ctx.db.get(membership.userId);
+        if (!user?.email) return null;
+        return {
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+        };
+      }),
+    );
+    return members.filter((member) => member !== null);
+  },
+});
+
 // Create employee
 export const createEmployee = mutation({
   args: {
     organizationId: v.id("organizations"),
+    accountAccess: v.optional(
+      v.union(
+        v.object({ kind: v.literal("employee_only") }),
+        v.object({
+          kind: v.literal("link_member"),
+          userId: v.id("users"),
+        }),
+        v.object({
+          kind: v.literal("invite_member"),
+          email: v.string(),
+        }),
+      ),
+    ),
     personalInfo: v.object({
       firstName: v.string(),
       lastName: v.string(),
@@ -636,12 +758,7 @@ export const createEmployee = mutation({
           v.literal("waived"),
         ),
       ),
-      status: v.union(
-        v.literal("active"),
-        v.literal("inactive"),
-        v.literal("resigned"),
-        v.literal("terminated"),
-      ),
+      status: v.literal("active"),
     }),
     compensation: v.object({
       basicSalary: v.number(),
@@ -723,10 +840,41 @@ export const createEmployee = mutation({
     shiftId: v.optional(v.union(v.id("shifts"), v.null())),
   },
   handler: async (ctx, args) => {
-    await checkAuth(ctx, args.organizationId, "hr");
+    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
     assertHireDateIsNotFuture(args.employment.hireDate);
 
     const now = Date.now();
+    const accountAccess = args.accountAccess ?? { kind: "employee_only" as const };
+    let membershipToLink: Doc<"userOrganizations"> | null = null;
+    let personalInfo = args.personalInfo;
+
+    if (accountAccess.kind === "link_member") {
+      membershipToLink = await ctx.db
+        .query("userOrganizations")
+        .withIndex("by_user_organization", (query) =>
+          query
+            .eq("userId", accountAccess.userId)
+            .eq("organizationId", args.organizationId),
+        )
+        .unique();
+      if (
+        !membershipToLink ||
+        membershipToLink.employeeId ||
+        membershipToLink.accessStatus === "alumni" ||
+        membershipToLink.accessStatus === "removed" ||
+        membershipToLink.accessStatus === "disabled" ||
+        membershipToLink.accessStatus === "suspended"
+      ) {
+        throw new Error("Selected organization member is not available");
+      }
+      const linkedUser = await ctx.db.get(accountAccess.userId);
+      if (!linkedUser?.email) {
+        throw new Error("Selected organization member has no account email");
+      }
+      personalInfo = { ...args.personalInfo, email: linkedUser.email };
+    } else if (accountAccess.kind === "invite_member") {
+      personalInfo = { ...args.personalInfo, email: accountAccess.email.trim() };
+    }
 
     // Get organization default requirements
     const requirementDefinitions = await getEffectiveRequirementDefinitions(
@@ -747,7 +895,7 @@ export const createEmployee = mutation({
     void ignoredOverrides;
     const insertedId = await ctx.db.insert("employees", {
       organizationId: args.organizationId,
-      personalInfo: args.personalInfo,
+      personalInfo,
       employment: args.employment,
       compensation: encryptCompensationForDb(canonicalCompensation) as Doc<"employees">["compensation"],
       schedule: canonicalSchedule,
@@ -798,7 +946,46 @@ export const createEmployee = mutation({
       ),
     ]);
 
-    return insertedId;
+    if (membershipToLink) {
+      await ctx.db.patch(membershipToLink._id, {
+        employeeId: insertedId,
+        updatedAt: now,
+      });
+    }
+
+    await recordEmployeeLifecycleEvent(ctx, {
+      organizationId: args.organizationId,
+      employeeId: insertedId,
+      type: "hired",
+      effectiveAt: args.employment.hireDate,
+      employment: args.employment,
+      recordedBy: userRecord._id,
+      createdAt: now,
+    });
+
+    const invitation =
+      accountAccess.kind === "invite_member"
+        ? await createEmployeeLinkedInvitation(ctx, {
+            organizationId: args.organizationId,
+            employeeId: insertedId,
+            email: accountAccess.email,
+            invitedBy: userRecord._id,
+            inviteeName: [
+              personalInfo.firstName,
+              personalInfo.middleName,
+              personalInfo.lastName,
+            ]
+              .filter(Boolean)
+              .join(" "),
+          })
+        : null;
+
+    return {
+      employeeId: insertedId,
+      invitationId: invitation?.invitationId,
+      invitationEmail: invitation?.email,
+      invitationToken: invitation?.token,
+    };
   },
 });
 
@@ -861,7 +1048,6 @@ export const updateEmployee = mutation({
         ),
         status: v.union(
           v.literal("active"),
-          v.literal("inactive"),
           v.literal("resigned"),
           v.literal("terminated"),
         ),
@@ -948,7 +1134,7 @@ export const updateEmployee = mutation({
         ),
       }),
     ),
-    customFields: v.optional(v.any()), // Flexible object for custom fields
+    customFields: v.optional(v.record(v.string(), customFieldValue)),
     shiftId: v.optional(v.union(v.id("shifts"), v.null())), // Optional shift (schedule + lunch); null = use defaultSchedule + org default lunch
   },
   handler: async (ctx, args) => {
@@ -958,6 +1144,39 @@ export const updateEmployee = mutation({
     const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
     if (args.employment?.hireDate !== undefined) {
       assertHireDateIsNotFuture(args.employment.hireDate);
+    }
+    if (
+      employee.employment.status !== "active" &&
+      args.employment?.status === "active"
+    ) {
+      throw new Error("Use Rehire Employee to restore an alumni employee");
+    }
+    if (
+      employee.employment.status !== "active" &&
+      args.employment?.status !== undefined &&
+      args.employment.status !== employee.employment.status
+    ) {
+      throw new Error(
+        "A separated employee status cannot be changed through generic editing",
+      );
+    }
+    if (
+      args.employment &&
+      (args.employment.status === "resigned" ||
+        args.employment.status === "terminated")
+    ) {
+      if (args.employment.hireDate !== employee.employment.hireDate) {
+        throw new Error("Hire date cannot be changed during separation");
+      }
+      const effectiveAt =
+        args.employment.separationDate ??
+        args.employment.lastWorkingDay ??
+        Date.now();
+      if (effectiveAt < employee.employment.hireDate) {
+        throw new Error(
+          "Separation date must be on or after the current hire date",
+        );
+      }
     }
 
     const updates: Partial<Doc<"employees">> = { updatedAt: Date.now() };
@@ -1115,18 +1334,25 @@ export const updateEmployee = mutation({
     // not the user's global Plinth account.
     if (args.employment?.status) {
       const newStatus = args.employment.status;
+      const isNewSeparation =
+        employee.employment.status === "active" &&
+        (newStatus === "resigned" || newStatus === "terminated");
       const linkedMemberships = await getLinkedEmployeeMemberships(
         ctx,
         employee.organizationId,
         args.employeeId,
       );
 
-      const accessStatus =
+      const derivedAccessStatus =
         employee.archivedAt !== undefined
           ? deriveAccessStatusForEmployeeArchive(newStatus)
           : deriveAccessStatusForEmploymentStatus(newStatus);
       const now = Date.now();
       for (const membership of linkedMemberships) {
+        const accessStatus = resolveMembershipAccessStatusForEmployeeSync(
+          membership.accessStatus,
+          derivedAccessStatus,
+        );
         if (membership.role === "owner" && accessStatus !== "active") {
           throw new Error(
             "Transfer organization ownership before separating this employee",
@@ -1142,6 +1368,22 @@ export const updateEmployee = mutation({
       }
 
       if (newStatus === "resigned" || newStatus === "terminated") {
+        if (isNewSeparation) {
+          await ensureEmployeeLifecycleBaseline(ctx, employee, userRecord._id);
+          await recordEmployeeLifecycleEvent(ctx, {
+            organizationId: employee.organizationId,
+            employeeId: args.employeeId,
+            type: newStatus,
+            effectiveAt:
+              args.employment.separationDate ??
+              args.employment.lastWorkingDay ??
+              now,
+            employment: args.employment,
+            reason: args.employment.separationReason,
+            recordedBy: userRecord._id,
+            createdAt: now,
+          });
+        }
         await cancelPendingEmployeeInvitations(
           ctx,
           employee.organizationId,
@@ -1151,6 +1393,115 @@ export const updateEmployee = mutation({
     }
 
     return { success: true };
+  },
+});
+
+export const rehireEmployee = mutation({
+  args: {
+    employeeId: v.id("employees"),
+    hireDate: v.number(),
+    position: v.string(),
+    department: v.string(),
+    employmentType: v.union(
+      v.literal("regular"),
+      v.literal("probationary"),
+      v.literal("contractual"),
+      v.literal("part-time"),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const employee = await ctx.db.get(args.employeeId);
+    if (!employee) throw new Error("Employee not found");
+    if (employee.employment.status === "active") {
+      throw new Error("Employee is already active");
+    }
+
+    const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
+    assertHireDateIsNotFuture(args.hireDate);
+    const lifecycleEvents = await ctx.db
+      .query("employeeLifecycleEvents")
+      .withIndex("by_employee_effective_at", (query) =>
+        query.eq("employeeId", employee._id),
+      )
+      .collect();
+    const latestSeparationAt = Math.max(
+      employee.employment.separationDate ??
+        employee.employment.lastWorkingDay ??
+        employee.updatedAt,
+      ...lifecycleEvents
+        .filter(
+          (event) =>
+            event.type === "resigned" || event.type === "terminated",
+        )
+        .map((event) => event.effectiveAt),
+    );
+    if (args.hireDate <= latestSeparationAt) {
+      throw new Error("Rehire date must be after the latest separation date");
+    }
+    const linkedMemberships = await getLinkedEmployeeMemberships(
+      ctx,
+      employee.organizationId,
+      employee._id,
+    );
+    if (linkedMemberships.length > 1) {
+      throw new Error("Employee has multiple organization memberships");
+    }
+    const membership = linkedMemberships[0];
+    if (
+      membership &&
+      normalizeOrgMembershipAccessStatus(membership.accessStatus) !== "alumni"
+    ) {
+      throw new Error("Rehire requires an existing alumni membership");
+    }
+
+    await ensureEmployeeLifecycleBaseline(ctx, employee, userRecord._id);
+    const {
+      separationDate: ignoredSeparationDate,
+      lastWorkingDay: ignoredLastWorkingDay,
+      separationReason: ignoredSeparationReason,
+      ...retainedEmployment
+    } = employee.employment;
+    void ignoredSeparationDate;
+    void ignoredLastWorkingDay;
+    void ignoredSeparationReason;
+
+    const nextEmployment: Doc<"employees">["employment"] = {
+      ...retainedEmployment,
+      hireDate: args.hireDate,
+      position: args.position,
+      department: args.department,
+      employmentType: args.employmentType,
+      status: "active",
+      finalPayStatus: "not_started",
+      clearanceStatus: "not_started",
+    };
+    const now = Date.now();
+
+    await ctx.db.patch(employee._id, {
+      employment: nextEmployment,
+      archivedAt: undefined,
+      archivedBy: undefined,
+      updatedAt: now,
+    });
+    if (membership) {
+      await ctx.db.patch(membership._id, {
+        accessStatus: "active",
+        accessUpdatedAt: now,
+        accessUpdatedBy: userRecord._id,
+        updatedAt: now,
+      });
+    }
+    await recordEmployeeLifecycleEvent(ctx, {
+      organizationId: employee.organizationId,
+      employeeId: employee._id,
+      type: "rehired",
+      effectiveAt: args.hireDate,
+      employment: nextEmployment,
+      recordedBy: userRecord._id,
+      createdAt: now,
+    });
+
+    return { success: true, membershipReactivated: membership !== undefined };
   },
 });
 
@@ -1474,13 +1825,11 @@ export const deleteEmployee = mutation({
     const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
     const now = Date.now();
 
-    const employment =
-      employee.employment.status === "active"
-        ? {
-            ...employee.employment,
-            status: "inactive" as const,
-          }
-        : employee.employment;
+    if (employee.employment.status === "active") {
+      throw new Error("Separate the employee before archiving their record");
+    }
+
+    const employment = employee.employment;
 
     await ctx.db.patch(args.employeeId, {
       employment,
@@ -1494,11 +1843,15 @@ export const deleteEmployee = mutation({
       employee.organizationId,
       args.employeeId,
     );
-    const accessStatus = deriveAccessStatusForEmployeeArchive(
+    const derivedAccessStatus = deriveAccessStatusForEmployeeArchive(
       employment.status,
     );
 
     for (const membership of linkedMemberships) {
+      const accessStatus = resolveMembershipAccessStatusForEmployeeSync(
+        membership.accessStatus,
+        derivedAccessStatus,
+      );
       if (membership.role === "owner") {
         throw new Error(
           "Transfer organization ownership before archiving this employee",

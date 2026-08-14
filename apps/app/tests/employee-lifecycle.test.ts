@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  canRehireEmployee,
   canUseEmployeeSelfService,
   getEmployeeLifecycleImpact,
 } from "@/utils/employee-lifecycle";
 
 describe("employee lifecycle", () => {
+  it("requires an explicit rehire flow for separated employees", () => {
+    expect(canRehireEmployee("active")).toBe(false);
+    expect(canRehireEmployee("resigned")).toBe(true);
+    expect(canRehireEmployee("terminated")).toBe(true);
+  });
+
   it("allows self-service only for active employees", () => {
     expect(canUseEmployeeSelfService("active")).toBe(true);
-    expect(canUseEmployeeSelfService("inactive")).toBe(false);
     expect(canUseEmployeeSelfService("resigned")).toBe(false);
     expect(canUseEmployeeSelfService("terminated")).toBe(false);
   });
@@ -20,13 +26,6 @@ describe("employee lifecycle", () => {
       payslips: "Can view current and historical payslips.",
     });
 
-    expect(getEmployeeLifecycleImpact("inactive")).toMatchObject({
-      label: "Suspended",
-      accessLabel: "Access suspended",
-      login: "Cannot access this organization until reactivated.",
-      payroll: "Can remain in payroll history; include in new runs only when selected by payroll policy.",
-    });
-
     expect(getEmployeeLifecycleImpact("resigned")).toMatchObject({
       accessLabel: "Alumni read-only",
       chat: "Chat access is disabled for this organization.",
@@ -35,9 +34,9 @@ describe("employee lifecycle", () => {
     });
 
     expect(getEmployeeLifecycleImpact("terminated")).toMatchObject({
-      accessLabel: "Org access disabled",
-      login: "Cannot access this organization.",
-      payslips: "Historical payroll data is preserved for admins.",
+      accessLabel: "Alumni read-only",
+      login: "Can only access alumni-allowed history for this organization.",
+      payslips: "Can keep read-only access to historical payslips.",
       finalPay: "Should be reviewed for final pay, clearance, and offboarding records.",
     });
   });

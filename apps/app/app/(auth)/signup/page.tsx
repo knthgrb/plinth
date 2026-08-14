@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
+import { getInvitationAuthContext } from "@/lib/invitation-auth";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,16 @@ function getErrorMessage(error: unknown, fallback: string): string {
 export default function SignupPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const invitationContext = getInvitationAuthContext(searchParams);
+  const invitedEmail = invitationContext?.email;
+  const invitationRedirect = invitationContext?.redirect;
+  const loginPath = invitationContext
+    ? `/login?${new URLSearchParams({
+        email: invitationContext.email,
+        redirect: invitationContext.redirect,
+        invite: "1",
+      }).toString()}`
+    : "/login";
   const { toast } = useToast();
   const createOrganization = useMutation(
     api.organizations.createOrganization,
@@ -36,12 +47,12 @@ export default function SignupPage() {
   // Check if user is already logged in and has no organizations
   const userOrganizations = useQuery(
     api.organizations.getUserOrganizations,
-    {},
+    invitationContext ? "skip" : {},
   );
 
   const [step, setStep] = useState<SignupStep>(1);
   const [formData, setFormData] = useState({
-    email: "",
+    email: invitedEmail ?? "",
     password: "",
     organizationName: "",
   });
@@ -61,6 +72,11 @@ export default function SignupPage() {
         const userEmail = session?.data?.user.email;
 
         if (userEmail) {
+          if (invitationRedirect) {
+            window.location.assign(invitationRedirect);
+            return;
+          }
+
           // User is logged in, check if they need to complete setup
           setFormData((prev) => ({ ...prev, email: userEmail }));
 
@@ -125,10 +141,13 @@ export default function SignupPage() {
           }
         } else {
           // No session - user needs to sign up from step 1
+          if (invitedEmail) {
+            setFormData((prev) => ({ ...prev, email: invitedEmail }));
+          }
           setCheckingSession(false);
           setHasCheckedSession(true);
         }
-      } catch (error) {
+      } catch {
         // No session or error - user needs to sign up from step 1
         setCheckingSession(false);
         setHasCheckedSession(true);
@@ -136,7 +155,16 @@ export default function SignupPage() {
     };
 
     checkSessionAndSetup();
-  }, [userOrganizations, searchParams, router, toast, hasCheckedSession]);
+  }, [
+    userOrganizations,
+    searchParams,
+    router,
+    toast,
+    hasCheckedSession,
+    invitedEmail,
+    invitationRedirect,
+    ensureUserRecord,
+  ]);
 
   if (checkingSession) return <MainLoader />;
 
@@ -194,7 +222,7 @@ export default function SignupPage() {
             setLoading(false);
             // Redirect to login after a delay
             setTimeout(() => {
-              router.push("/login");
+              router.push(loginPath);
             }, 2000);
             return;
           }
@@ -204,6 +232,16 @@ export default function SignupPage() {
       if (userRecordCreated) {
         // Brief delay so Convex replication sees the new user before we re-render and run org queries
         await new Promise((resolve) => setTimeout(resolve, 400));
+
+        if (invitationRedirect) {
+          toast({
+            title: "Account created",
+            description: "Return to the invitation to finish joining",
+          });
+          window.location.assign(invitationRedirect);
+          return;
+        }
+
         setStep(2);
         toast({
           title: "Account created",
@@ -242,9 +280,7 @@ export default function SignupPage() {
       // Wait for organization context to be established and session to sync
       await new Promise((resolve) => setTimeout(resolve, 1500));
 
-      // Use window.location for a full page reload to ensure session is established
-      // This ensures all context providers are properly initialized
-      window.location.href = "/walkthrough/prompt";
+      router.push("/walkthrough/prompt");
     } catch (err: unknown) {
       toast({
         title: "Error",
@@ -273,26 +309,34 @@ export default function SignupPage() {
           </Link>
           <div className="space-y-2">
             <h1 className="text-3xl font-light tracking-tight text-gray-900">
-              {step === 1 ? "Get started" : "Let's add some details"}
+              {invitationContext
+                ? "Create your account"
+                : step === 1
+                  ? "Get started"
+                  : "Let's add some details"}
             </h1>
             <p className="text-sm text-gray-500">
-              {step === 1
+              {invitationContext
+                ? "Use the invited email address to continue"
+                : step === 1
                 ? "Create your account to get started"
                 : "Tell us about your organization"}
             </p>
             {/* Progress indicator */}
-            <div className="flex items-center gap-2 pt-2">
-              <div
-                className={`h-1 flex-1 rounded-full ${
-                  step >= 1 ? "bg-brand-purple" : "bg-gray-200"
-                }`}
-              />
-              <div
-                className={`h-1 flex-1 rounded-full ${
-                  step >= 2 ? "bg-brand-purple" : "bg-gray-200"
-                }`}
-              />
-            </div>
+            {!invitationContext && (
+              <div className="flex items-center gap-2 pt-2">
+                <div
+                  className={`h-1 flex-1 rounded-full ${
+                    step >= 1 ? "bg-brand-purple" : "bg-gray-200"
+                  }`}
+                />
+                <div
+                  className={`h-1 flex-1 rounded-full ${
+                    step >= 2 ? "bg-brand-purple" : "bg-gray-200"
+                  }`}
+                />
+              </div>
+            )}
           </div>
 
           {step === 1 ? (
@@ -307,8 +351,9 @@ export default function SignupPage() {
                     onChange={(e) =>
                       setFormData({ ...formData, email: e.target.value })
                     }
+                    readOnly={Boolean(invitationContext)}
                     required
-                    className="h-12 border-gray-300 bg-white text-base"
+                    className="h-12 border-gray-300 bg-white text-base read-only:bg-gray-50 read-only:text-gray-600"
                   />
                 </div>
                 <div className="relative">
@@ -395,7 +440,7 @@ export default function SignupPage() {
             <p className="text-sm text-gray-500">
               Already have an account?{" "}
               <Link
-                href="/login"
+                href={loginPath}
                 className="text-brand-purple hover:text-brand-purple-hover font-medium"
               >
                 Sign in

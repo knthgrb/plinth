@@ -3,6 +3,10 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
+import {
+  getInvitationAuthContext,
+  getSafeInternalRedirect,
+} from "@/lib/invitation-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
@@ -25,8 +29,23 @@ async function clearRoleCacheCookie() {
 const marketingUrl =
   process.env.NEXT_PUBLIC_MARKETING_APP_URL ?? process.env.NEXT_PUBLIC_MARKETING_URL ?? "/";
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 export default function LoginPage() {
   const searchParams = useSearchParams();
+  const invitationContext = getInvitationAuthContext(searchParams);
+  const invitedEmail = invitationContext?.email;
+  const redirectPath = invitationContext?.redirect
+    ?? getSafeInternalRedirect(searchParams);
+  const signupPath = invitationContext
+    ? `/signup?${new URLSearchParams({
+        email: invitationContext.email,
+        redirect: invitationContext.redirect,
+        invite: "1",
+      }).toString()}`
+    : "/signup";
   const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -34,9 +53,9 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const e = searchParams.get("email");
-    if (e) setEmail(e);
-  }, [searchParams]);
+    const emailParam = invitedEmail ?? searchParams.get("email");
+    if (emailParam) setEmail(emailParam);
+  }, [invitedEmail, searchParams]);
 
   // Complete sign-out after navigating here (org tree is unmounted, so no Convex auth errors)
   useEffect(() => {
@@ -73,13 +92,12 @@ export default function LoginPage() {
           authClient.getSession(),
           clearRoleCacheCookie(),
         ]);
-        const redirectParam = searchParams.get("redirect");
-        window.location.assign(redirectParam || "/");
+        window.location.assign(redirectPath);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast({
         title: "Error",
-        description: err.message || "An error occurred",
+        description: getErrorMessage(err, "An error occurred"),
         variant: "destructive",
       });
     } finally {
@@ -115,8 +133,9 @@ export default function LoginPage() {
                   placeholder="Email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  readOnly={Boolean(invitationContext)}
                   required
-                  className="h-12 border-gray-300 bg-white text-base"
+                  className="h-12 border-gray-300 bg-white text-base read-only:bg-gray-50 read-only:text-gray-600"
                 />
               </div>
               <div className="relative">
@@ -165,9 +184,9 @@ export default function LoginPage() {
 
           <div className="text-center">
             <p className="text-sm text-gray-500">
-              Don't have an account?{" "}
+              New to Plinth?{" "}
               <Link
-                href="/signup"
+                href={signupPath}
                 className="text-brand-purple hover:text-brand-purple-hover font-medium"
               >
                 Sign up

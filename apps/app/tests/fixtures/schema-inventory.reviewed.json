@@ -1,5 +1,5 @@
 {
-  "tableCount": 75,
+  "tableCount": 76,
   "tables": [
     {
       "name": "accountingCostItems",
@@ -168,6 +168,13 @@
       "fieldsSha256": "690908c81403b21dd0a74bf9d765cae37e90f0ff0270db3993a0d95a29b8bd0b",
       "indexCount": 2,
       "indexesSha256": "e72554642d1a3ba77916f169585ac450a973462c2dcb8e19e44175cb3d8c2a83"
+    },
+    {
+      "name": "employeeLifecycleEvents",
+      "fieldCount": 10,
+      "fieldsSha256": "fe42c151e2ae7caa809baa5422652143a287f1d3babc3aa720a67f55e4ad6076",
+      "indexCount": 2,
+      "indexesSha256": "8d94e2f844244acfd21589ea0c497de1a5d434bd511f953af086fe8ff8e63405"
     },
     {
       "name": "employeePaymentAccounts",

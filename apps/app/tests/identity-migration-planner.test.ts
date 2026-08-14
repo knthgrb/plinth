@@ -59,9 +59,9 @@ describe("identity migration planner", () => {
   });
 
   it.each([
-    ["inactive", "suspended"],
+    ["inactive", "alumni"],
     ["resigned", "alumni"],
-    ["terminated", "disabled"],
+    ["terminated", "alumni"],
   ] as const)(
     "creates %s employee membership with %s access",
     (employmentStatus, accessStatus) => {

@@ -45,9 +45,7 @@ const SUPPORTED_FILE_MIME_TYPES: Record<
 > = {
   csv: ["text/csv", "application/csv"],
   xls: ["application/vnd.ms-excel"],
-  xlsx: [
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  ],
+  xlsx: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
   xlsm: ["application/vnd.ms-excel.sheet.macroenabled.12"],
 };
 
@@ -107,7 +105,9 @@ export async function POST(
     return errorResponse("invalid_request", 413, metrics);
   }
 
-  if (!request.headers.get("content-type")?.startsWith("multipart/form-data;")) {
+  if (
+    !request.headers.get("content-type")?.startsWith("multipart/form-data;")
+  ) {
     return errorResponse("invalid_request", 400, metrics);
   }
 
@@ -274,7 +274,9 @@ function errorResponse(
   );
 }
 
-async function readBoundedBody(request: NextRequest): Promise<BoundedBodyResult> {
+async function readBoundedBody(
+  request: NextRequest,
+): Promise<BoundedBodyResult> {
   const reader = request.body?.getReader();
 
   if (!reader) {

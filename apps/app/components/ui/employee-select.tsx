@@ -22,7 +22,7 @@ interface Employee {
     employeeId: string;
     position?: string;
     department?: string;
-    status?: "active" | "inactive" | "resigned" | "terminated";
+    status?: "active" | "resigned" | "terminated";
   };
 }
 

@@ -27,11 +27,13 @@ type CreatedDateFilter = {
 interface EmployeesFiltersProps {
   departmentFilter: string;
   setDepartmentFilter: Dispatch<SetStateAction<string>>;
-  statusFilter: "all" | "active" | "inactive" | "resigned" | "terminated";
+  statusFilter: "all" | "active" | "resigned" | "terminated";
   setStatusFilter: Dispatch<
-    SetStateAction<"all" | "active" | "inactive" | "resigned" | "terminated">
+    SetStateAction<"all" | "active" | "resigned" | "terminated">
   >;
-  settingsForDepartments: any;
+  settingsForDepartments?: {
+    departments?: Array<string | { name: string; color?: string }>;
+  } | null;
   nameFilter: string;
   setNameFilter: Dispatch<SetStateAction<string>>;
   positionFilter: string;
@@ -50,7 +52,6 @@ interface EmployeesFiltersProps {
 const STATUS_COLORS: Record<string, string> = {
   all: "#6B7280", // neutral gray
   active: "#22C55E", // green
-  inactive: "#9CA3AF", // gray
   resigned: "#F97316", // orange
   terminated: "#EF4444", // red/coral
 };
@@ -58,7 +59,6 @@ const STATUS_COLORS: Record<string, string> = {
 const STATUS_LABELS: Record<string, string> = {
   all: "All statuses",
   active: "Active",
-  inactive: "Inactive (Archived)",
   resigned: "Resigned",
   terminated: "Terminated",
 };
@@ -347,7 +347,6 @@ export function EmployeesFilters({
                     value as
                       | "all"
                       | "active"
-                      | "inactive"
                       | "resigned"
                       | "terminated",
                   );

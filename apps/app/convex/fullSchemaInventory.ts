@@ -76,6 +76,7 @@ export const CURRENT_SCHEMA_TABLES = [
   "employees",
   "organizationLeaveSettings",
   "employeeLeaveBalances",
+  "employeeLifecycleEvents",
   "employeeRequirements",
   "employeeDeductions",
   "employeeIncentives",
@@ -216,6 +217,11 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "normalized_target",
   ),
   employeeLeaveBalances: tablePolicy("leave", "retain", "normalized_target"),
+  employeeLifecycleEvents: tablePolicy(
+    "employee_children",
+    "retain",
+    "historical_snapshot",
+  ),
   employeeRequirements: tablePolicy(
     "employee_children",
     "retain",

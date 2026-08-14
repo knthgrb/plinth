@@ -27,6 +27,11 @@ import {
   replaceEmployeeRequirements,
 } from "./leaveEmployeeCompatibility";
 import { findUserByEmail, normalizeUserEmail } from "./userEmail";
+import {
+  cancelPendingEmployeeInvitations,
+  ensureEmployeeLifecycleBaseline,
+  recordEmployeeLifecycleEvent,
+} from "./employeeLifecycle";
 
 const defaultRequirementValidator = v.object({
   type: v.string(),
@@ -618,12 +623,11 @@ export const getOrganizationMembers = query({
     // Fetch user details
     const members = await Promise.all(
       userOrgs.map(async (userOrg) => {
-        if (
-          normalizeOrgMembershipAccessStatus(userOrg.accessStatus) === "removed"
-        ) {
+        if (!canUseFullOrganizationAccess(userOrg.accessStatus)) {
           return null;
         }
         const user = await ctx.db.get(userOrg.userId);
+        if (!user) return null;
         return {
           ...user,
           role: userOrg.role,
@@ -645,6 +649,13 @@ export const removeUserFromOrganization = mutation({
   args: {
     organizationId: v.id("organizations"),
     userId: v.id("users"),
+    separation: v.optional(
+      v.object({
+        type: v.union(v.literal("resigned"), v.literal("terminated")),
+        effectiveAt: v.number(),
+        reason: v.optional(v.string()),
+      }),
+    ),
   },
   handler: async (ctx, args) => {
     const { user, membership } = await requireActiveMembership(
@@ -690,14 +701,67 @@ export const removeUserFromOrganization = mutation({
       throw new Error(removalDecision.reason);
     }
 
-    await ctx.db.patch(targetUserOrg._id, {
-      accessStatus: "removed",
-      accessUpdatedAt: Date.now(),
-      accessUpdatedBy: user._id,
-      updatedAt: Date.now(),
-    });
+    const now = Date.now();
+    if (!targetUserOrg.employeeId) {
+      await ctx.db.delete(targetUserOrg._id);
+      return { success: true, outcome: "deleted" as const };
+    }
 
-    return { success: true };
+    if (!args.separation) {
+      throw new Error(
+        "Choose resigned or terminated before removing a linked employee",
+      );
+    }
+
+    const employee = await ctx.db.get(targetUserOrg.employeeId);
+    if (!employee || employee.organizationId !== args.organizationId) {
+      throw new Error("Linked employee record not found");
+    }
+    if (employee.employment.status !== "active") {
+      throw new Error("Employee has already been separated");
+    }
+    if (args.separation.effectiveAt < employee.employment.hireDate) {
+      throw new Error(
+        "Separation date must be on or after the current hire date",
+      );
+    }
+
+    await ctx.db.patch(employee._id, {
+      employment: {
+        ...employee.employment,
+        status: args.separation.type,
+        separationDate: args.separation.effectiveAt,
+        lastWorkingDay: args.separation.effectiveAt,
+        separationReason: args.separation.reason,
+      },
+      updatedAt: now,
+    });
+    await ensureEmployeeLifecycleBaseline(ctx, employee, user._id);
+    await recordEmployeeLifecycleEvent(ctx, {
+      organizationId: employee.organizationId,
+      employeeId: employee._id,
+      type: args.separation.type,
+      effectiveAt: args.separation.effectiveAt,
+      employment: {
+        ...employee.employment,
+      },
+      reason: args.separation.reason,
+      recordedBy: user._id,
+      createdAt: now,
+    });
+    await ctx.db.patch(targetUserOrg._id, {
+      accessStatus: "alumni",
+      accessUpdatedAt: now,
+      accessUpdatedBy: user._id,
+      updatedAt: now,
+    });
+    await cancelPendingEmployeeInvitations(
+      ctx,
+      employee.organizationId,
+      employee._id,
+    );
+
+    return { success: true, outcome: "alumni" as const };
   },
 });
 

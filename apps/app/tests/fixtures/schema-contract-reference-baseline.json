@@ -19,9 +19,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 7098,
-      "fileCount": 238,
-      "fingerprint": "9bb1de4a00c8c573fe0e439553f797a677a15808969896958b1f4394e89751a1",
+      "totalMatches": 7175,
+      "fileCount": 244,
+      "fingerprint": "25102d5c4c3a94b50e5fd546107ca5562b3e0d31f1e62774420bf4862f1e6f63",
       "symbols": [
         {
           "symbol": "acknowledgedBy",
@@ -80,8 +80,8 @@
         },
         {
           "symbol": "customFields",
-          "matches": 31,
-          "files": 13
+          "matches": 29,
+          "files": 11
         },
         {
           "symbol": "cutoffDates",
@@ -100,7 +100,7 @@
         },
         {
           "symbol": "departments",
-          "matches": 151,
+          "matches": 140,
           "files": 27
         },
         {
@@ -110,8 +110,8 @@
         },
         {
           "symbol": "employeeId",
-          "matches": 1255,
-          "files": 108
+          "matches": 1293,
+          "files": 113
         },
         {
           "symbol": "enableAnniversaryLeave",
@@ -140,8 +140,8 @@
         },
         {
           "symbol": "history",
-          "matches": 61,
-          "files": 18
+          "matches": 62,
+          "files": 19
         },
         {
           "symbol": "incentives",
@@ -230,8 +230,8 @@
         },
         {
           "symbol": "organizationId",
-          "matches": 1678,
-          "files": 157
+          "matches": 1700,
+          "files": 159
         },
         {
           "symbol": "paidLeaveRequiresRegularization",
@@ -310,7 +310,7 @@
         },
         {
           "symbol": "role",
-          "matches": 445,
+          "matches": 440,
           "files": 77
         },
         {
@@ -340,8 +340,8 @@
         },
         {
           "symbol": "status",
-          "matches": 860,
-          "files": 92
+          "matches": 880,
+          "files": 94
         },
         {
           "symbol": "supportingDocuments",
@@ -350,8 +350,8 @@
         },
         {
           "symbol": "token",
-          "matches": 132,
-          "files": 21
+          "matches": 146,
+          "files": 23
         },
         {
           "symbol": "visibleDepartments",

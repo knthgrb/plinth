@@ -556,7 +556,6 @@ export default defineSchema({
       ),
       status: v.union(
         v.literal("active"),
-        v.literal("inactive"),
         v.literal("resigned"),
         v.literal("terminated"),
       ),
@@ -634,6 +633,31 @@ export default defineSchema({
     .index("by_shift", ["shiftId"])
     .index("by_status", ["employment.status"])
     .index("by_department", ["employment.department"]),
+
+  employeeLifecycleEvents: defineTable({
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    type: v.union(
+      v.literal("hired"),
+      v.literal("resigned"),
+      v.literal("terminated"),
+      v.literal("rehired"),
+    ),
+    effectiveAt: v.number(),
+    position: v.string(),
+    department: v.string(),
+    employmentType: v.union(
+      v.literal("regular"),
+      v.literal("probationary"),
+      v.literal("contractual"),
+      v.literal("part-time"),
+    ),
+    reason: v.optional(v.string()),
+    recordedBy: v.id("users"),
+    createdAt: v.number(),
+  })
+    .index("by_employee_effective_at", ["employeeId", "effectiveAt"])
+    .index("by_organization_effective_at", ["organizationId", "effectiveAt"]),
 
   organizationLeaveSettings: defineTable({
     organizationId: v.id("organizations"),

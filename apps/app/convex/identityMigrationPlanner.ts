@@ -23,9 +23,9 @@ type EmployeeLifecycleStatus =
 function accessStatusForEmployee(
   status: EmployeeLifecycleStatus | undefined,
 ): PlannedUserMembership["accessStatus"] {
-  if (status === "inactive") return "suspended";
+  if (status === "inactive") return "alumni";
   if (status === "resigned") return "alumni";
-  if (status === "terminated") return "disabled";
+  if (status === "terminated") return "alumni";
   return "active";
 }
 

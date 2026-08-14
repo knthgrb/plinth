@@ -20,32 +20,27 @@ const GEMINI_ATTENDANCE_SYSTEM_INSTRUCTION =
 
 export const GEMINI_ATTENDANCE_JSON_SCHEMA = {
   type: "object",
-  additionalProperties: false,
   properties: {
     candidates: {
       type: "array",
-      maxItems: ATTENDANCE_IMPORT_LIMITS.maxCandidates,
       items: {
         type: "object",
-        additionalProperties: false,
         properties: {
-          sourceSheet: { type: "string", minLength: 1, maxLength: 200 },
-          sourceRow: { type: "integer", minimum: 1, maximum: 10_000 },
-          employeeKey: { type: "string", maxLength: 300 },
-          date: { type: "string", maxLength: 40 },
-          explicitTimeIn: { type: "string", maxLength: 40 },
-          explicitTimeOut: { type: "string", maxLength: 40 },
+          sourceSheet: { type: "string" },
+          sourceRow: { type: "integer" },
+          employeeKey: { type: "string" },
+          date: { type: "string" },
+          explicitTimeIn: { type: "string" },
+          explicitTimeOut: { type: "string" },
           punches: {
             type: "array",
-            maxItems: 100,
-            items: { type: "string", maxLength: 40 },
+            items: { type: "string" },
           },
-          status: { type: "string", maxLength: 50 },
-          notes: { type: "string", maxLength: 2_000 },
+          status: { type: "string" },
+          notes: { type: "string" },
           extractionIssues: {
             type: "array",
-            maxItems: 20,
-            items: { type: "string", minLength: 1, maxLength: 300 },
+            items: { type: "string" },
           },
         },
         required: [

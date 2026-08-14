@@ -18,16 +18,16 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Plus, Loader2, Columns2, FileSpreadsheet } from "lucide-react";
 import { createEmployee } from "@/actions/employees";
 import { useOrganization } from "@/hooks/organization-context";
 import { useRouter } from "next/navigation";
 import { sendMessageToEmployee } from "@/actions/chat";
 import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/components/ui/use-toast";
 import dynamic from "next/dynamic";
 import { EmployeesFilters } from "./_components/employees-filters";
+import type { EmployeeTableRow } from "./_components/employees-table";
 import { DepartmentSelect } from "@/components/ui/department-select";
 import {
   EmploymentTypeSelect,
@@ -59,13 +59,9 @@ import {
 import { PH_PROVINCES } from "@/utils/ph-provinces";
 import { cn } from "@/utils/utils";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  resolveEmployeeEmailField,
+  type EmployeeAccountAccess,
+} from "@/utils/employee-account-linking";
 
 const EmployeesTable = dynamic(
   () => import("./_components/employees-table").then((m) => m.EmployeesTable),
@@ -110,10 +106,9 @@ type CreatedDateFilter = {
 };
 
 export default function EmployeesPage() {
-  const { toast } = useToast();
   const { currentOrganizationId } = useOrganization();
   const router = useRouter();
-  const user = useQuery((api as any).organizations.getCurrentUser, {
+  const user = useQuery(api.organizations.getCurrentUser, {
     organizationId: currentOrganizationId || undefined,
   });
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(
@@ -122,7 +117,7 @@ export default function EmployeesPage() {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [panelMode, setPanelMode] = useState<"view" | "edit">("view");
   const [statusFilter, setStatusFilter] = useState<
-    "all" | "active" | "inactive" | "resigned" | "terminated"
+    "all" | "active" | "resigned" | "terminated"
   >("all");
   const [departmentFilter, setDepartmentFilter] = useState<string>("all");
   const [nameFilter, setNameFilter] = useState("");
@@ -133,32 +128,19 @@ export default function EmployeesPage() {
   const [initializedFromUrl, setInitializedFromUrl] = useState(false);
 
   const settings = useQuery(
-    (api as any).settings.getSettings,
+    api.settings.getSettings,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
+  const organizationMembers = useQuery(
+    api.employees.getAvailableOrganizationMembers,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
+  const availableMembers = organizationMembers ?? [];
 
-  // Handle migration from old format to new format
-  const departments = settings?.departments
-    ? settings.departments.length > 0 &&
-      typeof settings.departments[0] === "string"
-      ? (settings.departments as string[]).map((name, index) => ({
-          name,
-          color: [
-            "#9CA3AF",
-            "#EF4444",
-            "#F97316",
-            "#EAB308",
-            "#22C55E",
-            "#3B82F6",
-            "#A855F7",
-            "#EC4899",
-          ][index % 8],
-        }))
-      : (settings.departments as { name: string; color: string }[])
-    : [];
+  const departments = settings?.departments ?? [];
 
   const employees = useQuery(
-    (api as any).employees.getEmployees,
+    api.employees.getEmployees,
     currentOrganizationId
       ? {
           organizationId: currentOrganizationId,
@@ -178,7 +160,6 @@ export default function EmployeesPage() {
     if (
       statusParam === "all" ||
       statusParam === "active" ||
-      statusParam === "inactive" ||
       statusParam === "resigned" ||
       statusParam === "terminated"
     ) {
@@ -229,27 +210,32 @@ export default function EmployeesPage() {
 
   // Check which employees have user accounts
   const employeesUserAccounts: Record<string, boolean> | undefined = useQuery(
-    (api as any).employees.checkEmployeesUserAccounts,
+    api.employees.checkEmployeesUserAccounts,
     currentOrganizationId && employees && employees.length > 0
       ? {
           organizationId: currentOrganizationId,
-          employeeIds: employees.map((emp: any) => emp._id),
+          employeeIds: employees.map((employee) => employee._id),
         }
       : "skip",
   );
 
   const employeesInOrganization: Record<string, boolean> | undefined =
     useQuery(
-      (api as any).employees.checkEmployeesInOrganization,
+      api.employees.checkEmployeesInOrganization,
       currentOrganizationId && employees && employees.length > 0
         ? {
             organizationId: currentOrganizationId,
-            employeeIds: employees.map((emp: any) => emp._id),
+            employeeIds: employees.map((employee) => employee._id),
           }
         : "skip",
     );
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [accountMode, setAccountMode] = useState<
+    EmployeeAccountAccess["kind"]
+  >("employee_only");
+  const [selectedMemberId, setSelectedMemberId] = useState("");
+  const [invitationEmail, setInvitationEmail] = useState("");
   const [isBulkAddOpen, setIsBulkAddOpen] = useState(false);
   const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
   const [isMessageDialogOpen, setIsMessageDialogOpen] = useState(false);
@@ -285,6 +271,7 @@ export default function EmployeesPage() {
     formState: { errors: addFormErrors },
     control: addFormControl,
     reset: resetAddForm,
+    setValue: setAddFormValue,
   } = addEmployeeForm;
   const [enableSchedule, setEnableSchedule] = useState(false);
   const [scheduleType, setScheduleType] = useState<"one-time" | "regular">(
@@ -322,13 +309,30 @@ export default function EmployeesPage() {
   ]);
 
   const filteredEmployees = useMemo(() => {
-    let list = employees || [];
+    let list: EmployeeTableRow[] = (employees ?? []).map((employee) => ({
+      _id: employee._id,
+      personalInfo: {
+        firstName: employee.personalInfo.firstName,
+        lastName: employee.personalInfo.lastName,
+        email: employee.personalInfo.email,
+        phone:
+          "phone" in employee.personalInfo
+            ? employee.personalInfo.phone
+            : undefined,
+      },
+      employment: {
+        position: employee.employment.position,
+        department: employee.employment.department,
+        status: employee.employment.status,
+      },
+      createdAt: "createdAt" in employee ? employee.createdAt : undefined,
+    }));
 
     if (nameFilter.trim()) {
       const term = nameFilter.toLowerCase();
-      list = list.filter((e: any) => {
-        const first = e.personalInfo.firstName?.toLowerCase() || "";
-        const last = e.personalInfo.lastName?.toLowerCase() || "";
+      list = list.filter((employee) => {
+        const first = employee.personalInfo.firstName?.toLowerCase() || "";
+        const last = employee.personalInfo.lastName?.toLowerCase() || "";
         return (
           first.includes(term) ||
           last.includes(term) ||
@@ -339,15 +343,15 @@ export default function EmployeesPage() {
 
     if (positionFilter.trim()) {
       const term = positionFilter.toLowerCase();
-      list = list.filter((e: any) =>
-        e.employment.position.toLowerCase().includes(term),
+      list = list.filter((employee) =>
+        employee.employment.position.toLowerCase().includes(term),
       );
     }
 
     if (phoneFilter.trim()) {
       const term = phoneFilter.toLowerCase();
-      list = list.filter((e: any) =>
-        (e.personalInfo.phone || "").toLowerCase().includes(term),
+      list = list.filter((employee) =>
+        (employee.personalInfo.phone || "").toLowerCase().includes(term),
       );
     }
 
@@ -361,16 +365,15 @@ export default function EmployeesPage() {
             : 30;
       const threshold =
         now - createdDateFilter.value * unitDays * 24 * 60 * 60 * 1000;
-      list = list.filter((e: any) => (e.createdAt || 0) >= threshold);
+      list = list.filter((employee) => (employee.createdAt || 0) >= threshold);
     }
 
     const statusRank: Record<string, number> = {
       active: 0,
-      inactive: 1,
-      resigned: 2,
-      terminated: 3,
+      resigned: 1,
+      terminated: 2,
     };
-    return [...list].sort((a: any, b: any) => {
+    return [...list].sort((a, b) => {
       const statusDiff =
         (statusRank[a?.employment?.status] ?? 99) -
         (statusRank[b?.employment?.status] ?? 99);
@@ -385,13 +388,6 @@ export default function EmployeesPage() {
   }, [employees, nameFilter, positionFilter, phoneFilter, createdDateFilter]);
   const totalEmployees = filteredEmployees?.length || 0;
   const pageSize = 10;
-
-  // Owner has all admin privileges - treat owner the same as admin
-  const isAdmin =
-    user?.role === "admin" ||
-    user?.role === "hr" ||
-    user?.role === "manager" ||
-    user?.role === "owner";
 
   useEffect(() => {
     // Reset to first page when filters or search change
@@ -524,9 +520,13 @@ export default function EmployeesPage() {
       setIsMessageDialogOpen(false);
       setMessageEmployeeId(null);
       alert("Message sent successfully!");
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error sending message:", error);
-      alert(error.message || "Failed to send message. Please try again.");
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to send message. Please try again.",
+      );
     } finally {
       setSendingMessage(false);
     }
@@ -534,6 +534,24 @@ export default function EmployeesPage() {
 
   const onValidAddSubmit = async (data: EmployeeFormValues) => {
     if (!currentOrganizationId || isCreatingEmployee) return;
+
+    const selectedMember = availableMembers.find(
+      (member) => member._id === selectedMemberId,
+    );
+    if (accountMode === "link_member" && !selectedMember) {
+      alert("Select an available organization member.");
+      return;
+    }
+    const accountAccess: EmployeeAccountAccess =
+      accountMode === "link_member"
+        ? { kind: "link_member", userId: selectedMemberId }
+        : accountMode === "invite_member"
+          ? { kind: "invite_member", email: invitationEmail.trim() }
+          : { kind: "employee_only" };
+    const emailField = resolveEmployeeEmailField(accountAccess, {
+      employeeEmail: data.email,
+      selectedMemberEmail: selectedMember?.email,
+    });
 
     setIsCreatingEmployee(true);
     try {
@@ -556,11 +574,12 @@ export default function EmployeesPage() {
 
       await createEmployee({
         organizationId: currentOrganizationId,
+        accountAccess,
         personalInfo: {
           firstName: data.firstName,
           lastName: data.lastName,
           middleName: data.middleName || undefined,
-          email: data.email,
+          email: emailField.email,
           phone: data.phone || undefined,
           province: data.province || undefined,
         },
@@ -687,6 +706,9 @@ export default function EmployeesPage() {
       });
       setIsDialogOpen(false);
       resetAddForm(defaultAddFormValues);
+      setAccountMode("employee_only");
+      setSelectedMemberId("");
+      setInvitationEmail("");
       setEnableSchedule(false);
       setScheduleType("one-time");
       setOneTimeSchedule({
@@ -714,9 +736,13 @@ export default function EmployeesPage() {
       setIsDialogOpen(false);
       // Refresh the router to show new employee without full page reload
       router.refresh();
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Error creating employee:", error);
-      alert("Failed to create employee. Please try again.");
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to create employee. Please try again.",
+      );
     } finally {
       setIsCreatingEmployee(false);
     }
@@ -759,6 +785,113 @@ export default function EmployeesPage() {
                       className="space-y-4"
                     >
                       <div className="grid gap-4 py-4">
+                        <div className="rounded-lg border p-4 space-y-3">
+                          <div>
+                            <Label htmlFor="employee-account-mode" required>
+                              Account access
+                            </Label>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Create an employee-only record, link an available
+                              member, or send a new invitation.
+                            </p>
+                          </div>
+                          <Select
+                            value={accountMode}
+                            onValueChange={(
+                              value: EmployeeAccountAccess["kind"],
+                            ) => {
+                              setAccountMode(value);
+                              setSelectedMemberId("");
+                              setInvitationEmail("");
+                              setAddFormValue("email", "", {
+                                shouldValidate: false,
+                              });
+                            }}
+                          >
+                            <SelectTrigger id="employee-account-mode">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="employee_only">
+                                Employee record only
+                              </SelectItem>
+                              <SelectItem value="link_member">
+                                Link existing organization member
+                              </SelectItem>
+                              <SelectItem value="invite_member">
+                                Invite a new organization member
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+
+                          {accountMode === "link_member" && (
+                            <div className="space-y-2">
+                              <Label htmlFor="employee-member-link" required>
+                                Organization member
+                              </Label>
+                              <Select
+                                value={selectedMemberId}
+                                onValueChange={(userId) => {
+                                  setSelectedMemberId(userId);
+                                  const member = availableMembers.find(
+                                    (candidate) => candidate._id === userId,
+                                  );
+                                  setAddFormValue(
+                                    "email",
+                                    member?.email ?? "",
+                                    { shouldValidate: true },
+                                  );
+                                }}
+                              >
+                                <SelectTrigger id="employee-member-link">
+                                  <SelectValue placeholder="Select an unlinked member" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {availableMembers.map((member) => (
+                                    <SelectItem
+                                      key={member._id}
+                                      value={member._id}
+                                    >
+                                      {member.name || member.email} ·{" "}
+                                      {member.email}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              {availableMembers.length === 0 && (
+                                <p className="text-xs text-muted-foreground">
+                                  Every active organization member is already
+                                  linked.
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          {accountMode === "invite_member" && (
+                            <div className="space-y-2">
+                              <Label
+                                htmlFor="employee-invitation-email"
+                                required
+                              >
+                                Invitation email
+                              </Label>
+                              <Input
+                                id="employee-invitation-email"
+                                type="email"
+                                value={invitationEmail}
+                                onChange={(event) => {
+                                  setInvitationEmail(event.target.value);
+                                  setAddFormValue(
+                                    "email",
+                                    event.target.value,
+                                    { shouldValidate: true },
+                                  );
+                                }}
+                                placeholder="employee@example.com"
+                              />
+                            </div>
+                          )}
+                        </div>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                           <div className="space-y-2">
                             <Label htmlFor="firstName" required>
@@ -813,6 +946,7 @@ export default function EmployeesPage() {
                             <Input
                               id="email"
                               type="email"
+                              readOnly={accountMode !== "employee_only"}
                               {...registerAdd("email")}
                               className={cn(
                                 addFormErrors.email &&
@@ -1462,13 +1596,6 @@ export default function EmployeesPage() {
           onOpenChange={setIsPanelOpen}
           mode={panelMode}
           onModeChange={setPanelMode}
-          employeeData={
-            selectedEmployeeId
-              ? filteredEmployees?.find(
-                  (emp: any) => emp._id === selectedEmployeeId,
-                )
-              : undefined
-          }
           hasUserAccount={
             selectedEmployeeId
               ? !!employeesUserAccounts?.[selectedEmployeeId]

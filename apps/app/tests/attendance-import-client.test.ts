@@ -64,9 +64,6 @@ describe("attendance import client", () => {
     expect(markup).toContain(
       "Only Excel (.xls, .xlsx, .xlsm) and CSV (.csv) files are supported.",
     );
-    expect(markup).toContain(
-      "This file will be processed by Google Gemini.",
-    );
     expect(markup).toContain("Processing with Gemini…");
   });
 
@@ -237,9 +234,9 @@ describe("attendance import client", () => {
 
   it("uploads the organization in the header and multipart body and keeps every candidate", async () => {
     const candidates = [validCandidate, invalidCandidate];
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
-      Response.json({ ok: true, candidates }),
-    );
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json({ ok: true, candidates }));
 
     const controller = new AbortController();
     const result = await transformAttendanceImport(

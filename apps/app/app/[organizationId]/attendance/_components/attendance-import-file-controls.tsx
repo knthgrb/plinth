@@ -45,10 +45,8 @@ export function AttendanceImportFileControls({
       </div>
       <div className="space-y-0.5 text-xs text-gray-500">
         <p>
-          Only Excel (.xls, .xlsx, .xlsm) and CSV (.csv) files are
-          supported.
+          Only Excel (.xls, .xlsx, .xlsm) and CSV (.csv) files are supported.
         </p>
-        <p>This file will be processed by Google Gemini.</p>
       </div>
       {!lookupsReady && (
         <p className="text-xs text-gray-500">

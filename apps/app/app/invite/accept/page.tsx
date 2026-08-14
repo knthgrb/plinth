@@ -2,12 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
+import { buildInvitationAuthPath } from "@/lib/invitation-auth";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -32,9 +32,9 @@ export default function AcceptInvitationPage() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
 
-  const [password, setPassword] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState("");
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [currentSessionEmail, setCurrentSessionEmail] = useState<string | null>(
     null
   );
@@ -57,6 +57,7 @@ export default function AcceptInvitationPage() {
   // Check for existing session when invitation loads
   useEffect(() => {
     const checkSession = async () => {
+      setIsCheckingSession(true);
       try {
         const session = await authClient.getSession();
         const userEmail = session?.data?.user.email;
@@ -70,10 +71,13 @@ export default function AcceptInvitationPage() {
           ) {
             setShowSwitchAccountDialog(true);
           }
+        } else {
+          setCurrentSessionEmail(null);
         }
-      } catch (error) {
-        // No session or error checking session
+      } catch {
         setCurrentSessionEmail(null);
+      } finally {
+        setIsCheckingSession(false);
       }
     };
 
@@ -87,7 +91,6 @@ export default function AcceptInvitationPage() {
       await authClient.signOut();
       setCurrentSessionEmail(null);
       setShowSwitchAccountDialog(false);
-      setPassword("");
     } catch (error: unknown) {
       setError(getErrorMessage(error, "Failed to sign out"));
     }
@@ -97,94 +100,27 @@ export default function AcceptInvitationPage() {
     e.preventDefault();
     if (!token || !invitation) return;
 
-    // If there's a different account logged in, require sign out first
-    if (
-      currentSessionEmail &&
-      normEmail(currentSessionEmail) !== normEmail(invitation.email) &&
-      !showSwitchAccountDialog
-    ) {
-      setShowSwitchAccountDialog(true);
+    if (normEmail(currentSessionEmail) !== normEmail(invitation.email)) {
+      setError("Sign in with the invited email address before accepting.");
       return;
     }
 
     setError("");
     setIsProcessing(true);
 
-    const isAlreadyLoggedInAsInvitee =
-      normEmail(currentSessionEmail) === normEmail(invitation.email);
-
     try {
-      // Already logged in as invitee: just add org and set as active, no password
-      if (isAlreadyLoggedInAsInvitee) {
-        const result = await acceptInvitationMutation({ token });
-        setRedirectingAfterAccept(true);
-        if (result?.organizationId) {
-          await updateLastActiveOrganizationMutation({
-            organizationId: result.organizationId,
-          });
-        }
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        const role = invitation.role;
-        let path = "/dashboard";
-        if (role === "accounting") path = "/accounting";
-        else if (role === "employee") path = "/announcements";
-        const redirectUrl = result?.organizationId
-          ? `/${result.organizationId}${path}`
-          : path;
-        window.location.href = redirectUrl;
-        return;
-      }
-
-      // Validate password (for not-logged-in or different-account flow)
-      if (!password || password.length < 6) {
-        setError("Password must be at least 6 characters");
-        setIsProcessing(false);
-        return;
-      }
-
-      if (
-        currentSessionEmail &&
-        normEmail(currentSessionEmail) !== normEmail(invitation.email)
-      ) {
-        await authClient.signOut();
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
-
-      const signInResult = await authClient.signIn.email({
-        email: invitation.email,
-        password,
-      });
-
-      if (signInResult.error) {
-        const signUpResult = await authClient.signUp.email({
-          email: invitation.email,
-          password,
-          name:
-            invitation.inviteeName ??
-            invitation.email.split("@")[0],
-        });
-
-        if (signUpResult.error) {
-          setError(
-            "Unable to continue with this password. Check it or reset your password before trying again.",
-          );
-          setIsProcessing(false);
-          return;
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-
-      // Wait for session to propagate (needed for acceptInvitation auth check when email matches)
-      await new Promise((resolve) => setTimeout(resolve, 800));
-
-      // Accept invitation - creates user record in Convex if needed, adds to org (no ensureUserRecord needed)
       const result = await acceptInvitationMutation({
         token,
       });
 
       // Mark as redirecting so we don't show "already been accepted" when the query updates
       setRedirectingAfterAccept(true);
+
+      if (result?.organizationId) {
+        await updateLastActiveOrganizationMutation({
+          organizationId: result.organizationId,
+        });
+      }
 
       // Wait for organization context and replication so getCurrentUser/getUserOrganizations see the new org
       await new Promise((resolve) => setTimeout(resolve, 800));
@@ -269,6 +205,19 @@ export default function AcceptInvitationPage() {
     );
   }
 
+  const signInPath = buildInvitationAuthPath("login", {
+    email: invitation.email,
+    token,
+  });
+  const signUpPath = buildInvitationAuthPath("signup", {
+    email: invitation.email,
+    token,
+  });
+  const isSignedInAsInvitee =
+    normEmail(currentSessionEmail) === normEmail(invitation.email);
+  const isSignedInAsDifferentUser =
+    Boolean(currentSessionEmail) && !isSignedInAsInvitee;
+
   return (
     <>
       <div className="flex min-h-screen items-center justify-center bg-gray-50 px-6">
@@ -325,74 +274,63 @@ export default function AcceptInvitationPage() {
               )}
             </div>
 
-            <form onSubmit={handleAccept} className="space-y-4">
-              {currentSessionEmail &&
-              normEmail(currentSessionEmail) === normEmail(invitation.email) ? (
-                <>
-                  <p className="text-sm text-muted-foreground">
-                    You're signed in as <strong>{invitation.email}</strong>. Click below to join this organization.
-                  </p>
-                  {error && (
-                    <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
-                      {error}
-                    </div>
-                  )}
-                  <Button type="submit" className="w-full" disabled={isProcessing}>
-                    {isProcessing ? "Processing..." : "Accept invitation"}
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="password">Password *</Label>
-                    <Input
-                      id="password"
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                      minLength={6}
-                      placeholder="Enter your password or create one"
-                      disabled={
-                        !!(
-                          currentSessionEmail &&
-                          normEmail(currentSessionEmail) !==
-                            normEmail(invitation.email)
-                        )
-                      }
-                    />
-                    <p className="text-xs text-gray-500">
-                      Enter your existing password, or choose one if this is your
-                      first Plinth invitation.
-                    </p>
+            {isCheckingSession ? (
+              <p className="text-center text-sm text-muted-foreground">
+                Checking your account...
+              </p>
+            ) : isSignedInAsInvitee ? (
+              <form onSubmit={handleAccept} className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Signed in as <strong>{invitation.email}</strong>. Click below
+                  to join this organization.
+                </p>
+                {error && (
+                  <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
+                    {error}
                   </div>
-
-                  {error && (
-                    <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
-                      {error}
-                    </div>
-                  )}
-
-                  <Button
-                    type="submit"
-                    className="w-full"
-                    disabled={
-                      isProcessing ||
-                      !password ||
-                      !!(
-                        currentSessionEmail &&
-                        normEmail(currentSessionEmail) !==
-                          normEmail(invitation.email)
-                      )
-                    }
-                  >
-                    {isProcessing
-                      ? "Processing..."
-                      : "Continue & Accept Invitation"}
-                  </Button>
-                </>
-              )}
-            </form>
+                )}
+                <Button
+                  type="submit"
+                  className="w-full"
+                  disabled={isProcessing}
+                >
+                  {isProcessing ? "Processing..." : "Accept invitation"}
+                </Button>
+              </form>
+            ) : isSignedInAsDifferentUser ? (
+              <div className="space-y-4">
+                {error && (
+                  <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
+                    {error}
+                  </div>
+                )}
+                <Button
+                  type="button"
+                  className="w-full"
+                  onClick={() => setShowSwitchAccountDialog(true)}
+                >
+                  Switch account
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Sign in if you already have a Plinth account, or create one
+                  using the invited email address.
+                </p>
+                <Button asChild className="w-full">
+                  <Link href={signInPath}>Sign in</Link>
+                </Button>
+                <Button asChild variant="outline" className="w-full">
+                  <Link href={signUpPath}>Create account</Link>
+                </Button>
+                {error && (
+                  <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
+                    {error}
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

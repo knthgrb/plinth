@@ -1,14 +1,22 @@
 "use server";
 
-import { EmployeesService } from "@/services/employees-service";
+import {
+  EmployeesService,
+  type UpdateEmployeeInput,
+} from "@/services/employees-service";
 import { ChatService } from "@/services/chat-service";
 import { getAuthedConvexClient } from "@/lib/convex-client";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { OrganizationRole } from "@/utils/organization-roles";
+import { InvitationsService } from "@/services/invitations-service";
 
 export async function createEmployee(data: {
   organizationId: string;
+  accountAccess?:
+    | { kind: "employee_only" }
+    | { kind: "link_member"; userId: string }
+    | { kind: "invite_member"; email: string };
   personalInfo: {
     firstName: string;
     lastName: string;
@@ -42,7 +50,7 @@ export async function createEmployee(data: {
       | "paid"
       | "not_applicable";
     clearanceStatus?: "not_started" | "pending" | "cleared" | "waived";
-    status: "active" | "inactive" | "resigned" | "terminated";
+    status: "active";
   };
   compensation: {
     basicSalary: number;
@@ -81,90 +89,40 @@ export async function createEmployee(data: {
   };
   shiftId?: Id<"shifts"> | null;
 }) {
-  return EmployeesService.createEmployee(data);
+  const result = await EmployeesService.createEmployee(data);
+  if (
+    result.invitationId &&
+    result.invitationEmail &&
+    result.invitationToken
+  ) {
+    await InvitationsService.sendCreatedInvitation({
+      invitationId: result.invitationId,
+      email: result.invitationEmail,
+      token: result.invitationToken,
+    });
+  }
+  return result.employeeId;
 }
 
 export async function updateEmployee(
   employeeId: string,
-  data: {
-    personalInfo?: {
-      firstName?: string;
-      lastName?: string;
-      middleName?: string;
-      email?: string;
-      phone?: string;
-      address?: string;
-      province?: string;
-      dateOfBirth?: number;
-      civilStatus?: string;
-      emergencyContact?: {
-        name: string;
-        relationship: string;
-        phone: string;
-      };
-    };
-    employment?: {
-      employeeId?: string;
-      position?: string;
-      department?: string;
-      employmentType?: "regular" | "probationary" | "contractual" | "part-time";
-      hireDate?: number;
-      regularizationDate?: number;
-      separationDate?: number;
-      lastWorkingDay?: number;
-      separationReason?: string;
-      finalPayStatus?:
-        | "not_started"
-        | "pending"
-        | "processing"
-        | "paid"
-        | "not_applicable";
-      clearanceStatus?: "not_started" | "pending" | "cleared" | "waived";
-      status?: "active" | "inactive" | "resigned" | "terminated";
-    };
-    compensation?: {
-      basicSalary?: number;
-      allowance?: number;
-      salaryType?: "monthly" | "daily" | "hourly";
-      bankDetails?: {
-        bankName: string;
-        accountNumber: string;
-        accountName: string;
-      };
-      regularHolidayRate?: number;
-      specialHolidayRate?: number;
-      nightDiffPercent?: number;
-      overtimeRegularRate?: number;
-      overtimeRestDayRate?: number;
-      regularHolidayOtRate?: number;
-      specialHolidayOtRate?: number;
-    };
-    schedule?: {
-      defaultSchedule?: {
-        monday?: { in: string; out: string; isWorkday: boolean };
-        tuesday?: { in: string; out: string; isWorkday: boolean };
-        wednesday?: { in: string; out: string; isWorkday: boolean };
-        thursday?: { in: string; out: string; isWorkday: boolean };
-        friday?: { in: string; out: string; isWorkday: boolean };
-        saturday?: { in: string; out: string; isWorkday: boolean };
-        sunday?: { in: string; out: string; isWorkday: boolean };
-      };
-      scheduleOverrides?: Array<{
-        date: number;
-        in: string;
-        out: string;
-        reason: string;
-      }>;
-    };
-    shiftId?: Id<"shifts"> | null;
-    customFields?: Record<string, unknown>;
-  },
+  data: UpdateEmployeeInput,
 ) {
   return EmployeesService.updateEmployee(employeeId, data);
 }
 
 export async function getEmployee(employeeId: string) {
   return EmployeesService.getEmployee(employeeId);
+}
+
+export async function rehireEmployee(data: {
+  employeeId: string;
+  hireDate: number;
+  position: string;
+  department: string;
+  employmentType: "regular" | "probationary" | "contractual" | "part-time";
+}) {
+  return EmployeesService.rehireEmployee(data);
 }
 
 // Get user ID from employee ID

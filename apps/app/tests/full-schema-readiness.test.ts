@@ -178,14 +178,22 @@ describe("full schema cleanup readiness", () => {
     expect(inventory).toMatchObject({
       programKey: FULL_SCHEMA_CLEANUP_PROGRAM_KEY,
       programVersion: FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
-      currentTableCount: 75,
+      currentTableCount: 76,
     });
-    expect(inventory.tables).toHaveLength(75);
+    expect(inventory.tables).toHaveLength(76);
     expect(inventory.tables).toContainEqual(
       expect.objectContaining({
         table: "organizations",
         domain: "organization_configuration",
         disposition: "contract_legacy",
+      }),
+    );
+    expect(inventory.tables).toContainEqual(
+      expect.objectContaining({
+        table: "employeeLifecycleEvents",
+        domain: "employee_children",
+        disposition: "retain",
+        defaultFieldClassification: "historical_snapshot",
       }),
     );
 

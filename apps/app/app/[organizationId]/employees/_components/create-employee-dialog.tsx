@@ -5,7 +5,7 @@ import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { Id } from "@/convex/_generated/dataModel";
+import type { Id } from "@/convex/_generated/dataModel";
 import { createEmployee } from "@/actions/employees";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +44,10 @@ import {
 } from "./employee-form-validation";
 import { cn } from "@/utils/utils";
 import { PH_PROVINCES } from "@/utils/ph-provinces";
+import {
+  resolveEmployeeEmailField,
+  type EmployeeAccountAccess,
+} from "@/utils/employee-account-linking";
 
 const defaultFormData = {
   firstName: "",
@@ -103,28 +107,33 @@ export function CreateEmployeeDialog({
   onEditDepartments,
 }: CreateEmployeeDialogProps) {
   const settings = useQuery(
-    (api as any).settings.getSettings,
+    api.settings.getSettings,
     organizationId ? { organizationId } : "skip",
   );
+  const organizationMembers = useQuery(
+    api.employees.getAvailableOrganizationMembers,
+    organizationId ? { organizationId } : "skip",
+  );
+  const availableMembers = organizationMembers ?? [];
 
-  const departments = settings?.departments
-    ? settings.departments.length > 0 &&
-      typeof settings.departments[0] === "string"
-      ? (settings.departments as string[]).map((name, index) => ({
-          name,
-          color: [
-            "#9CA3AF",
-            "#EF4444",
-            "#F97316",
-            "#EAB308",
-            "#22C55E",
-            "#3B82F6",
-            "#A855F7",
-            "#EC4899",
-          ][index % 8],
-        }))
-      : (settings.departments as { name: string; color: string }[])
-    : [];
+  const departments = (settings?.departments ?? []).map(
+    (department, index) =>
+      typeof department === "string"
+        ? {
+            name: department,
+            color: [
+              "#9CA3AF",
+              "#EF4444",
+              "#F97316",
+              "#EAB308",
+              "#22C55E",
+              "#3B82F6",
+              "#A855F7",
+              "#EC4899",
+            ][index % 8],
+          }
+        : { name: department.name, color: department.color },
+  );
 
   const form = useForm<EmployeeFormValues>({
     resolver: zodResolver(employeeFormSchema),
@@ -136,9 +145,15 @@ export function CreateEmployeeDialog({
     formState: { errors },
     control,
     reset,
+    setValue,
   } = form;
 
   const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
+  const [accountMode, setAccountMode] = useState<
+    EmployeeAccountAccess["kind"]
+  >("employee_only");
+  const [selectedMemberId, setSelectedMemberId] = useState("");
+  const [invitationEmail, setInvitationEmail] = useState("");
   const [enableSchedule, setEnableSchedule] = useState(false);
   const [scheduleType, setScheduleType] = useState<"one-time" | "regular">(
     "one-time",
@@ -150,6 +165,24 @@ export function CreateEmployeeDialog({
 
   const onValidSubmit = async (data: EmployeeFormValues) => {
     if (!organizationId || isCreatingEmployee) return;
+
+    const selectedMember = availableMembers.find(
+      (member) => member._id === selectedMemberId,
+    );
+    if (accountMode === "link_member" && !selectedMember) {
+      alert("Select an available organization member.");
+      return;
+    }
+    const accountAccess: EmployeeAccountAccess =
+      accountMode === "link_member"
+        ? { kind: "link_member", userId: selectedMemberId }
+        : accountMode === "invite_member"
+          ? { kind: "invite_member", email: invitationEmail.trim() }
+          : { kind: "employee_only" };
+    const emailField = resolveEmployeeEmailField(accountAccess, {
+      employeeEmail: data.email,
+      selectedMemberEmail: selectedMember?.email,
+    });
 
     setIsCreatingEmployee(true);
     try {
@@ -178,11 +211,12 @@ export function CreateEmployeeDialog({
 
       const newId = await createEmployee({
         organizationId,
+        accountAccess,
         personalInfo: {
           firstName: data.firstName,
           lastName: data.lastName,
           middleName: data.middleName || undefined,
-          email: data.email,
+          email: emailField.email,
           phone: data.phone || undefined,
           province: data.province || undefined,
         },
@@ -309,13 +343,20 @@ export function CreateEmployeeDialog({
       onSuccess?.(newId as string);
       onOpenChange(false);
       reset(defaultFormData);
+      setAccountMode("employee_only");
+      setSelectedMemberId("");
+      setInvitationEmail("");
       setEnableSchedule(false);
       setScheduleType("one-time");
       setOneTimeSchedule(defaultOneTimeSchedule);
       setScheduleForm(defaultScheduleForm);
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Error creating employee:", error);
-      alert("Failed to create employee. Please try again.");
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to create employee. Please try again.",
+      );
     } finally {
       setIsCreatingEmployee(false);
     }
@@ -340,6 +381,97 @@ export function CreateEmployeeDialog({
           <form onSubmit={formHandleSubmit(onValidSubmit)}>
             <fieldset disabled={isCreatingEmployee} className="space-y-4">
               <div className="grid gap-4 py-4">
+                <div className="rounded-lg border p-4 space-y-3">
+                  <div>
+                    <Label htmlFor="ce-account-mode" required>
+                      Account access
+                    </Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Choose whether this record stands alone, links an existing
+                      member, or sends a new invitation.
+                    </p>
+                  </div>
+                  <Select
+                    value={accountMode}
+                    onValueChange={(value: EmployeeAccountAccess["kind"]) => {
+                      setAccountMode(value);
+                      setSelectedMemberId("");
+                      setInvitationEmail("");
+                      setValue("email", "", { shouldValidate: false });
+                    }}
+                  >
+                    <SelectTrigger id="ce-account-mode">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="employee_only">
+                        Employee record only
+                      </SelectItem>
+                      <SelectItem value="link_member">
+                        Link existing organization member
+                      </SelectItem>
+                      <SelectItem value="invite_member">
+                        Invite a new organization member
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  {accountMode === "link_member" && (
+                    <div className="space-y-2">
+                      <Label htmlFor="ce-member-link" required>
+                        Organization member
+                      </Label>
+                      <Select
+                        value={selectedMemberId}
+                        onValueChange={(userId) => {
+                          setSelectedMemberId(userId);
+                          const member = availableMembers.find(
+                            (candidate) => candidate._id === userId,
+                          );
+                          setValue("email", member?.email ?? "", {
+                            shouldValidate: true,
+                          });
+                        }}
+                      >
+                        <SelectTrigger id="ce-member-link">
+                          <SelectValue placeholder="Select an unlinked member" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableMembers.map((member) => (
+                            <SelectItem key={member._id} value={member._id}>
+                              {member.name || member.email} · {member.email}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {availableMembers.length === 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          Every active organization member is already linked.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {accountMode === "invite_member" && (
+                    <div className="space-y-2">
+                      <Label htmlFor="ce-invitation-email" required>
+                        Invitation email
+                      </Label>
+                      <Input
+                        id="ce-invitation-email"
+                        type="email"
+                        value={invitationEmail}
+                        onChange={(event) => {
+                          setInvitationEmail(event.target.value);
+                          setValue("email", event.target.value, {
+                            shouldValidate: true,
+                          });
+                        }}
+                        placeholder="employee@example.com"
+                      />
+                    </div>
+                  )}
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="ce-firstName" required>
@@ -390,6 +522,7 @@ export function CreateEmployeeDialog({
                     <Input
                       id="ce-email"
                       type="email"
+                      readOnly={accountMode !== "employee_only"}
                       {...register("email")}
                       className={cn(
                         errors.email &&

@@ -15,6 +15,9 @@ import { canAccessRoute } from "@/utils/role-access";
 type Organization = {
   _id: Id<"organizations">;
   name: string;
+  address?: string;
+  phone?: string;
+  taxId?: string;
   role: "admin" | "owner" | "hr" | "manager" | "employee" | "accounting";
   accessStatus?: "active" | "suspended" | "alumni" | "disabled" | "removed";
   employeeId?: Id<"employees">;

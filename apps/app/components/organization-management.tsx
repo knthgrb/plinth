@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
@@ -52,7 +53,6 @@ import {
   batchCreateInvitations,
   type BatchCreateInvitationsItem,
 } from "@/actions/invitations";
-import { CreateOrganizationDialog } from "@/components/create-organization-dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -72,6 +72,23 @@ type InviteableEmployeeRow = {
   email: string;
 };
 
+type PendingMemberRemoval = {
+  userId: string;
+  name: string;
+  email: string;
+  employeeId: string;
+};
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function getTodayDateInput(): string {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
+
 function normalizeInviteEmailUi(email: string): string {
   return email.trim().toLowerCase();
 }
@@ -82,6 +99,7 @@ function isValidEmailFormat(email: string): boolean {
 }
 
 export function OrganizationManagement(): React.ReactElement {
+  const router = useRouter();
   const {
     currentOrganizationId,
     organizations,
@@ -115,19 +133,27 @@ export function OrganizationManagement(): React.ReactElement {
     useState(false);
   const [isSendingInvite, setIsSendingInvite] = useState(false);
   const [resendingId, setResendingId] = useState<string | null>(null);
+  const [pendingMemberRemoval, setPendingMemberRemoval] =
+    useState<PendingMemberRemoval | null>(null);
+  const [separationType, setSeparationType] = useState<
+    "resigned" | "terminated"
+  >("resigned");
+  const [separationDate, setSeparationDate] = useState(getTodayDateInput);
+  const [separationReason, setSeparationReason] = useState("");
+  const [isRemovingMember, setIsRemovingMember] = useState(false);
 
   const inviteableEmployees = useQuery(
-    (api as any).employees.listEmployeesAvailableForOrgInvite,
+    api.employees.listEmployeesAvailableForOrgInvite,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   ) as InviteableEmployeeRow[] | undefined;
 
   const members = useQuery(
-    (api as any).organizations.getOrganizationMembers,
+    api.organizations.getOrganizationMembers,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   const invitations = useQuery(
-    (api as any).invitations.getInvitations,
+    api.invitations.getInvitations,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
@@ -140,14 +166,14 @@ export function OrganizationManagement(): React.ReactElement {
   }, [invitations]);
 
   const cancelInvitationMutation = useMutation(
-    (api as any).invitations.cancelInvitation,
+    api.invitations.cancelInvitation,
   );
 
   const currentUser = useQuery(
-    (api as any).organizations.getCurrentUser,
+    api.organizations.getCurrentUser,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
-  const currentUserId = (currentUser as any)?._id ?? null;
+  const currentUserId = currentUser?._id ?? null;
 
   const { toast } = useToast();
   const role = normalizeOrganizationRole(currentOrganization?.role);
@@ -175,7 +201,7 @@ export function OrganizationManagement(): React.ReactElement {
   const ownerCount = useMemo(
     () =>
       Array.isArray(members)
-        ? members.filter((member: any) => member.role === "owner").length
+        ? members.filter((member) => member?.role === "owner").length
         : 0,
     [members],
   );
@@ -208,10 +234,10 @@ export function OrganizationManagement(): React.ReactElement {
         taxId: "",
       });
       refreshOrganizations();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Could not save organization",
-        description: error.message || "Failed to update organization",
+        description: getErrorMessage(error) || "Failed to update organization",
         variant: "destructive",
       });
     }
@@ -376,7 +402,8 @@ export function OrganizationManagement(): React.ReactElement {
 
   const handleRemoveUser = async (userId: string) => {
     if (!currentOrganizationId || !isOwnerOrAdmin) return;
-    const targetMember = members?.find((member: any) => member._id === userId);
+    const targetMember = members?.find((member) => member?._id === userId);
+    if (!targetMember) return;
     const decision = canRemoveOrganizationMember({
       actorRole: role,
       targetRole: targetMember?.role,
@@ -391,16 +418,70 @@ export function OrganizationManagement(): React.ReactElement {
       });
       return;
     }
+    if (targetMember.employeeId) {
+      setPendingMemberRemoval({
+        userId,
+        employeeId: targetMember.employeeId,
+        name: targetMember.name || targetMember.email || "Employee",
+        email: targetMember.email || "",
+      });
+      setSeparationType("resigned");
+      setSeparationDate(getTodayDateInput());
+      setSeparationReason("");
+      return;
+    }
     if (!confirm("Are you sure you want to remove this user?")) return;
 
     try {
       await removeUserFromOrganization(currentOrganizationId, userId);
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Could not remove user",
-        description: error.message || "Failed to remove user",
+        description: getErrorMessage(error) || "Failed to remove user",
         variant: "destructive",
       });
+    }
+  };
+
+  const handleSeparateLinkedMember = async () => {
+    if (!currentOrganizationId || !pendingMemberRemoval || isRemovingMember) {
+      return;
+    }
+    const effectiveAt = new Date(`${separationDate}T00:00:00`).getTime();
+    if (!separationDate || Number.isNaN(effectiveAt)) {
+      toast({
+        title: "Separation date required",
+        description: "Choose the employee's effective separation date.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsRemovingMember(true);
+    try {
+      await removeUserFromOrganization(
+        currentOrganizationId,
+        pendingMemberRemoval.userId,
+        {
+          type: separationType,
+          effectiveAt,
+          reason: separationReason.trim() || undefined,
+        },
+      );
+      setPendingMemberRemoval(null);
+      toast({
+        title: "Employee separated",
+        description:
+          "The employee now has alumni access to historical payslips and documents.",
+      });
+    } catch (error: unknown) {
+      toast({
+        title: "Could not separate employee",
+        description: getErrorMessage(error),
+        variant: "destructive",
+      });
+    } finally {
+      setIsRemovingMember(false);
     }
   };
 
@@ -409,7 +490,7 @@ export function OrganizationManagement(): React.ReactElement {
     newRole: OrganizationRole,
   ) => {
     if (!currentOrganizationId || !canEditMemberRoles) return;
-    const targetMember = members?.find((member: any) => member._id === userId);
+    const targetMember = members?.find((member) => member?._id === userId);
     const decision = canUpdateOrganizationMemberRole({
       actorRole: role,
       targetRole: targetMember?.role,
@@ -432,10 +513,10 @@ export function OrganizationManagement(): React.ReactElement {
         userId,
         role: newRole,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Could not update role",
-        description: error.message || "Failed to update role",
+        description: getErrorMessage(error) || "Failed to update role",
         variant: "destructive",
       });
     }
@@ -454,17 +535,17 @@ export function OrganizationManagement(): React.ReactElement {
           (org) => org._id !== currentOrganizationId,
         );
         if (remainingOrg) {
-          window.location.href = `/${remainingOrg._id}/dashboard`;
+          router.push(`/${remainingOrg._id}/dashboard`);
         } else {
-          window.location.href = "/dashboard";
+          router.push("/dashboard");
         }
       } else {
-        window.location.href = "/dashboard";
+        router.push("/dashboard");
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Could not delete organization",
-        description: error.message || "Failed to delete organization",
+        description: getErrorMessage(error) || "Failed to delete organization",
         variant: "destructive",
       });
       setIsDeleting(false);
@@ -479,9 +560,9 @@ export function OrganizationManagement(): React.ReactElement {
     if (currentOrgDetails) {
       setEditFormData({
         name: currentOrgDetails.name || "",
-        address: (currentOrgDetails as any)?.address || "",
-        phone: (currentOrgDetails as any)?.phone || "",
-        taxId: (currentOrgDetails as any)?.taxId || "",
+        address: currentOrgDetails.address || "",
+        phone: currentOrgDetails.phone || "",
+        taxId: currentOrgDetails.taxId || "",
       });
       setIsEditDialogOpen(true);
     }
@@ -536,13 +617,13 @@ export function OrganizationManagement(): React.ReactElement {
               <div>
                 <div className="text-sm font-medium text-gray-500">Phone</div>
                 <div className="text-lg">
-                  {(currentOrgDetails as any)?.phone || "-"}
+                  {currentOrgDetails?.phone || "-"}
                 </div>
               </div>
               <div>
                 <div className="text-sm font-medium text-gray-500">Address</div>
                 <div className="text-lg">
-                  {(currentOrgDetails as any)?.address || "-"}
+                  {currentOrgDetails?.address || "-"}
                 </div>
               </div>
             </div>
@@ -575,7 +656,8 @@ export function OrganizationManagement(): React.ReactElement {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {members?.map((member: any, index: number) => {
+                  {members?.map((member, index) => {
+                    if (!member) return null;
                     const isCurrentUser = member._id === currentUserId;
                     const roleDecision = canUpdateOrganizationMemberRole({
                       actorRole: role,
@@ -602,8 +684,11 @@ export function OrganizationManagement(): React.ReactElement {
                           ) : (
                             <Select
                               value={member.role}
-                              onValueChange={(value: any) =>
-                                handleUpdateRole(member._id, value)
+                              onValueChange={(value) =>
+                                handleUpdateRole(
+                                  member._id,
+                                  value as OrganizationRole,
+                                )
                               }
                             >
                               <SelectTrigger className="w-32">
@@ -649,7 +734,7 @@ export function OrganizationManagement(): React.ReactElement {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {pendingInvitationsToShow.map((invitation: any) => (
+                {pendingInvitationsToShow.map((invitation) => (
                     <div
                       key={invitation._id}
                       className="flex items-center justify-between p-3 border rounded-lg"
@@ -706,11 +791,12 @@ export function OrganizationManagement(): React.ReactElement {
                               await cancelInvitationMutation({
                                 invitationId: invitation._id,
                               });
-                            } catch (error: any) {
+                            } catch (error: unknown) {
                               toast({
                                 title: "Could not cancel invitation",
                                 description:
-                                  error.message || "Failed to cancel invitation",
+                                  getErrorMessage(error) ||
+                                  "Failed to cancel invitation",
                                 variant: "destructive",
                               });
                             }
@@ -727,6 +813,79 @@ export function OrganizationManagement(): React.ReactElement {
           </Card>
         )}
       </div>
+
+      <Dialog
+        open={pendingMemberRemoval !== null}
+        onOpenChange={(open) => {
+          if (!open && !isRemovingMember) setPendingMemberRemoval(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Separate linked employee</DialogTitle>
+            <DialogDescription>
+              {pendingMemberRemoval?.name} has a linked employee record. Choose
+              the separation type to preserve alumni payslip and document
+              access.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="member-separation-type">Separation type</Label>
+              <Select
+                value={separationType}
+                onValueChange={(value) =>
+                  setSeparationType(value as "resigned" | "terminated")
+                }
+              >
+                <SelectTrigger id="member-separation-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="resigned">Resigned</SelectItem>
+                  <SelectItem value="terminated">Terminated</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="member-separation-date">Effective date</Label>
+              <Input
+                id="member-separation-date"
+                type="date"
+                value={separationDate}
+                onChange={(event) => setSeparationDate(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="member-separation-reason">Reason</Label>
+              <Input
+                id="member-separation-reason"
+                value={separationReason}
+                onChange={(event) => setSeparationReason(event.target.value)}
+                placeholder="Optional"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isRemovingMember}
+              onClick={() => setPendingMemberRemoval(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={isRemovingMember}
+              onClick={() => void handleSeparateLinkedMember()}
+            >
+              {isRemovingMember ? "Separating…" : "Confirm separation"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent>
@@ -1027,7 +1186,8 @@ export function OrganizationManagement(): React.ReactElement {
           <DialogHeader>
             <DialogTitle>Delete Organization</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete "{currentOrganization?.name}"?
+              Are you sure you want to delete &quot;
+              {currentOrganization?.name}&quot;?
               This action cannot be undone. All members will be removed from
               this organization, but employee and payroll records will be
               preserved.

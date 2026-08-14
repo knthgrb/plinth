@@ -6,6 +6,40 @@ import { generateInvitationEmail } from "@/helpers/email-templates";
 import type { OrganizationRole } from "@/utils/organization-roles";
 
 export class InvitationsService {
+  static async sendCreatedInvitation(data: {
+    invitationId: Id<"invitations">;
+    email: string;
+    token: string;
+  }): Promise<void> {
+    const convex = await getAuthedConvexClient();
+    const invitation = await convex.query(api.invitations.getInvitationById, {
+      invitationId: data.invitationId,
+    });
+    if (!invitation?.organization || !invitation.inviter) return;
+
+    const baseUrl =
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      process.env.SITE_URL ||
+      "http://localhost:3000";
+    const emailContent = generateInvitationEmail(
+      invitation.organization.name,
+      invitation.inviter.name || invitation.inviter.email,
+      invitation.role,
+      `${baseUrl}/invite/accept?token=${data.token}`,
+    );
+
+    try {
+      await sendEmail({
+        to: data.email,
+        subject: emailContent.subject,
+        html: emailContent.html,
+        text: emailContent.text,
+      });
+    } catch (error: unknown) {
+      console.error("Failed to send invitation email:", error);
+    }
+  }
+
   static async createInvitation(data: {
     organizationId: string;
     email: string;
@@ -25,39 +59,11 @@ export class InvitationsService {
         data.confirmInviteToExistingPlinthUser === true ? true : undefined,
     });
 
-    // Get invitation details to send email
-    const invitation = await convex.query(api.invitations.getInvitationById, {
+    await this.sendCreatedInvitation({
       invitationId: created.invitationId,
+      email: data.email,
+      token: created.token,
     });
-
-    if (invitation?.organization && invitation.inviter) {
-      // Generate invitation link
-      const baseUrl =
-        process.env.NEXT_PUBLIC_SITE_URL ||
-        process.env.SITE_URL ||
-        "http://localhost:3000";
-      const invitationLink = `${baseUrl}/invite/accept?token=${created.token}`;
-
-      // Send email
-      const emailContent = generateInvitationEmail(
-        invitation.organization.name,
-        invitation.inviter.name || invitation.inviter.email,
-        invitation.role,
-        invitationLink,
-      );
-
-      try {
-        await sendEmail({
-          to: data.email,
-          subject: emailContent.subject,
-          html: emailContent.html,
-          text: emailContent.text,
-        });
-      } catch (error: unknown) {
-        console.error("Failed to send invitation email:", error);
-        // Don't throw - invitation is created, email failure is logged
-      }
-    }
 
     return created.invitationId;
   }

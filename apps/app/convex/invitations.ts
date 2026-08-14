@@ -1,24 +1,16 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { randomBytes } from "@noble/ciphers/utils.js";
 import { authComponent } from "./auth";
 import { getAssignableOrganizationRoleOptions } from "@/utils/organization-roles";
 import { requireActiveMembership, requireIdentity } from "./access";
-import { bytesToBase64 } from "./binaryBase64";
 import { hashInvitationToken } from "./invitationTokenHash";
+import { createInvitationToken } from "./invitationCreation";
 import type { Doc, Id } from "./_generated/dataModel";
 import { normalizeOrgMembershipAccessStatus } from "@/utils/org-membership-lifecycle";
 import { findUserByEmail, normalizeUserEmail } from "./userEmail";
 
 function normalizeInviteEmail(email: string): string {
   return email.trim().toLowerCase();
-}
-
-function createInvitationToken(): string {
-  return bytesToBase64(randomBytes(32))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
 }
 
 function assertCanInviteRole(actorRole: string | null, nextRole: string) {

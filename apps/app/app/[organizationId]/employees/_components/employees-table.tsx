@@ -31,7 +31,7 @@ type EmployeeColumnId =
   | "createdAt";
 
 interface EmployeesTableProps {
-  employees: any[] | undefined;
+  employees: EmployeeTableRow[] | undefined;
   isLoading?: boolean;
   isCreatingEmployee: boolean;
   onRowClick: (employeeId: string) => void;
@@ -45,6 +45,22 @@ interface EmployeesTableProps {
   employeesInOrganization: Record<string, boolean>;
   visibleColumns: EmployeeColumnId[];
 }
+
+export type EmployeeTableRow = {
+  _id: string;
+  personalInfo: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone?: string;
+  };
+  employment: {
+    position: string;
+    department: string;
+    status: "active" | "resigned" | "terminated";
+  };
+  createdAt?: number;
+};
 
 export function EmployeesTable({
   employees,
@@ -172,7 +188,7 @@ export function EmployeesTable({
                     </TableCell>
                   </TableRow>
                 ) : (
-                  paginatedEmployees.map((employee: any) => (
+                  paginatedEmployees.map((employee) => (
                     <TableRow
                       key={employee._id}
                       className="cursor-pointer hover:bg-[rgb(250,250,250)] text-sm h-9"

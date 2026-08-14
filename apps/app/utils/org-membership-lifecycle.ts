@@ -1,6 +1,5 @@
 export type EmploymentLifecycleStatus =
   | "active"
-  | "inactive"
   | "resigned"
   | "terminated";
 
@@ -69,14 +68,21 @@ export function deriveAccessStatusForEmploymentStatus(
   status: EmploymentLifecycleStatus,
 ): OrgMembershipAccessStatus {
   if (status === "active") return "active";
-  if (status === "inactive") return "suspended";
   return "alumni";
 }
 
 export function deriveAccessStatusForEmployeeArchive(
   status: EmploymentLifecycleStatus,
 ): OrgMembershipAccessStatus {
-  return status === "resigned" || status === "terminated"
-    ? "alumni"
-    : "disabled";
+  return status === "active" ? "disabled" : "alumni";
+}
+
+export function resolveMembershipAccessStatusForEmployeeSync(
+  currentStatus: string | null | undefined,
+  derivedStatus: OrgMembershipAccessStatus,
+): OrgMembershipAccessStatus {
+  const currentAccessStatus = normalizeOrgMembershipAccessStatus(currentStatus);
+  return currentAccessStatus === "removed" || currentAccessStatus === "disabled"
+    ? currentAccessStatus
+    : derivedStatus;
 }

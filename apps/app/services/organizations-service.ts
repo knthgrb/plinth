@@ -68,7 +68,12 @@ export class OrganizationsService {
 
   static async removeUserFromOrganization(
     organizationId: string,
-    userId: string
+    userId: string,
+    separation?: {
+      type: "resigned" | "terminated";
+      effectiveAt: number;
+      reason?: string;
+    },
   ) {
     const convex = await getAuthedConvexClient();
     return await convex.mutation(
@@ -76,6 +81,7 @@ export class OrganizationsService {
       {
         organizationId: organizationId as Id<"organizations">,
         userId: userId as Id<"users">,
+        separation,
       },
     );
   }

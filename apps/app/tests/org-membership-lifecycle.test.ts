@@ -4,6 +4,7 @@ import {
   deriveAccessStatusForEmployeeArchive,
   deriveAccessStatusForEmploymentStatus,
   normalizeOrgMembershipAccessStatus,
+  resolveMembershipAccessStatusForEmployeeSync,
   selectPreferredOrganizationForEntry,
 } from "@/utils/org-membership-lifecycle";
 import { canAccessRoute } from "@/utils/role-access";
@@ -11,7 +12,6 @@ import { canAccessRoute } from "@/utils/role-access";
 describe("organization membership lifecycle", () => {
   it("maps employment status to org-scoped access status", () => {
     expect(deriveAccessStatusForEmploymentStatus("active")).toBe("active");
-    expect(deriveAccessStatusForEmploymentStatus("inactive")).toBe("suspended");
     expect(deriveAccessStatusForEmploymentStatus("resigned")).toBe("alumni");
     expect(deriveAccessStatusForEmploymentStatus("terminated")).toBe("alumni");
   });
@@ -20,7 +20,12 @@ describe("organization membership lifecycle", () => {
     expect(deriveAccessStatusForEmployeeArchive("resigned")).toBe("alumni");
     expect(deriveAccessStatusForEmployeeArchive("terminated")).toBe("alumni");
     expect(deriveAccessStatusForEmployeeArchive("active")).toBe("disabled");
-    expect(deriveAccessStatusForEmployeeArchive("inactive")).toBe("disabled");
+  });
+
+  it("preserves security-disabled membership during employee synchronization", () => {
+    expect(
+      resolveMembershipAccessStatusForEmployeeSync("disabled", "active"),
+    ).toBe("disabled");
   });
 
   it("treats missing access status as active for migrated memberships", () => {

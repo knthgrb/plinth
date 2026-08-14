@@ -29,7 +29,7 @@ export const employeeFormSchema = z.object({
   position: z.string().trim().min(1, "Position is required"),
   department: z.string().trim().min(1, "Department is required"),
   employmentType: z.string().trim().min(1, "Employment type is required"),
-  status: z.enum(["active", "inactive", "resigned", "terminated"]),
+  status: z.enum(["active", "resigned", "terminated"]),
   separationDate: z.string().trim().optional(),
   separationReason: z.string().trim().optional(),
   finalPayStatus: z

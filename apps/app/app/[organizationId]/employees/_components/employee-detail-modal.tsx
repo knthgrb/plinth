@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { api } from "@/convex/_generated/api";
 import { useRouter } from "next/navigation";
 import {
@@ -26,6 +27,7 @@ import {
   TrendingDown,
   Pencil,
   Loader2,
+  RefreshCcw,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -51,7 +53,7 @@ function getManilaTodayStartUtcMs(): number {
   );
 }
 import { updateEmployee } from "@/actions/employees";
-import { Id } from "@/convex/_generated/dataModel";
+import type { Id } from "@/convex/_generated/dataModel";
 import { useOrganization } from "@/hooks/organization-context";
 import { EmploymentTypeSelect } from "@/components/ui/employment-type-select";
 import { SalaryTypeSelect } from "@/components/ui/salary-type-select";
@@ -75,39 +77,22 @@ import {
 import { cn } from "@/utils/utils";
 import { recalculateEmployeeAttendance } from "@/actions/attendance";
 import { useToast } from "@/components/ui/use-toast";
-import { getEmployeeLifecycleImpact } from "@/utils/employee-lifecycle";
+import { canRehireEmployee } from "@/utils/employee-lifecycle";
+import { EmployeeLifecycleTimeline } from "./employee-lifecycle-timeline";
+import { RehireEmployeeDialog } from "./rehire-employee-dialog";
 
-// BASE CONFIGS: 5 rates as % additional (on top of regular). Stored as multiplier in DB; UI shows additional.
-const BASE_RATE_FIELD_CONFIG: Record<
-  string,
-  { label: string; placeholder: string; step: string }
-> = {
-  nightDiffPercent: {
-    label: "Night Differential (% additional)",
-    placeholder: "10",
-    step: "0.01",
-  },
-  regularHolidayRate: {
-    label: "Regular Holiday (% additional)",
-    placeholder: "100",
-    step: "0.01",
-  },
-  specialHolidayRate: {
-    label: "Special non-working holiday (% additional)",
-    placeholder: "30",
-    step: "0.01",
-  },
-  overtimeRegularRate: {
-    label: "Overtime Regular (% additional)",
-    placeholder: "25",
-    step: "0.01",
-  },
-  overtimeRestDayRate: {
-    label: "Rest Day Premium (% additional)",
-    placeholder: "30",
-    step: "0.01",
-  },
+type ShiftOption = {
+  _id: Id<"shifts">;
+  name: string;
+  scheduleIn: string;
+  scheduleOut: string;
+  lunchStart: string;
+  lunchEnd: string;
 };
+
+type EmployeeDetail = NonNullable<
+  FunctionReturnType<typeof api.employees.getEmployee>
+>;
 
 interface EmployeeDetailModalProps {
   employeeId: string | null;
@@ -115,7 +100,7 @@ interface EmployeeDetailModalProps {
   onOpenChange: (open: boolean) => void;
   mode: "view" | "edit";
   onModeChange?: (mode: "view" | "edit") => void;
-  employeeData?: any; // Optional pre-fetched employee data to avoid refetching
+  employeeData?: EmployeeDetail;
   hasUserAccount?: boolean; // When true, email cannot be edited (tied to auth account)
 }
 
@@ -171,19 +156,6 @@ export function EmployeeDetailModal({
     control,
     reset,
   } = editForm;
-  const lifecycleImpact = getEmployeeLifecycleImpact(editForm.watch("status"));
-  const lifecycleImpactRows = [
-    ["Login", lifecycleImpact.login],
-    ["Chat", lifecycleImpact.chat],
-    ["Leave", lifecycleImpact.leave],
-    ["Attendance", lifecycleImpact.attendance],
-    ["Payroll", lifecycleImpact.payroll],
-    ["Payslips", lifecycleImpact.payslips],
-    ["Assets", lifecycleImpact.assets],
-    ["Documents", lifecycleImpact.documents],
-    ["Final pay", lifecycleImpact.finalPay],
-  ] as const;
-
   const [scheduleType, setScheduleType] = useState<"one-time" | "regular">(
     "one-time",
   );
@@ -216,18 +188,19 @@ export function EmployeeDetailModal({
 
   const [isSaving, setIsSaving] = useState(false);
   const [showAllRateFields, setShowAllRateFields] = useState(false);
+  const [isRehireDialogOpen, setIsRehireDialogOpen] = useState(false);
 
   // Use pre-fetched data if available, otherwise fetch
   const fetchedEmployee = useQuery(
-    (api as any).employees.getEmployee,
+    api.employees.getEmployee,
     employeeData || !employeeId
       ? "skip"
       : { employeeId: employeeId as Id<"employees"> },
   );
-  const employee = employeeData || fetchedEmployee;
+  const employee = employeeData ?? fetchedEmployee;
 
   const settings = useQuery(
-    (api as any).settings.getSettings,
+    api.settings.getSettings,
     employee
       ? ({ organizationId: employee.organizationId } as {
           organizationId: Id<"organizations">;
@@ -253,7 +226,7 @@ export function EmployeeDetailModal({
 
   const overriddenRateKeys: (keyof typeof orgRates)[] = employee
     ? BASE_RATE_KEYS.filter((key) => {
-        const empVal = (employee.compensation as any)[key];
+        const empVal = employee.compensation[key];
         if (empVal == null) return false;
         const orgVal = orgRates[key];
         return Math.abs(Number(empVal) - Number(orgVal)) > 0.0001;
@@ -261,8 +234,8 @@ export function EmployeeDetailModal({
     : [];
   const hasAnyOverrides = overriddenRateKeys.length > 0;
 
-  const shifts = useQuery(
-    (api as any).shifts.listShifts,
+  const shifts: ShiftOption[] | undefined = useQuery(
+    api.shifts.listShifts,
     employee && currentOrganizationId
       ? { organizationId: currentOrganizationId as Id<"organizations"> }
       : "skip",
@@ -293,18 +266,18 @@ export function EmployeeDetailModal({
       const { start, end, workday } = scheduleForm[day];
       if (!workday) continue;
       const matched = shifts.find(
-        (s: any) => s.scheduleIn === start && s.scheduleOut === end,
+        (shift) => shift.scheduleIn === start && shift.scheduleOut === end,
       );
       if (!matched) out[day] = true;
     }
     return out;
   }, [scheduleType, scheduleForm, shifts]);
 
-  const departments =
-    settings?.departments && settings.departments.length > 0
-      ? typeof settings.departments[0] === "string"
-        ? (settings.departments as string[]).map((name, index) => ({
-            name,
+  const departments = (settings?.departments ?? []).map(
+    (department, index) =>
+      typeof department === "string"
+        ? {
+            name: department,
             color: [
               "#9CA3AF",
               "#EF4444",
@@ -315,14 +288,14 @@ export function EmployeeDetailModal({
               "#A855F7",
               "#EC4899",
             ][index % 8],
-          }))
-        : (settings.departments as { name: string; color: string }[])
-      : [];
+          }
+        : { name: department.name, color: department.color },
+  );
 
   // Populate edit form when opening in edit mode
   useEffect(() => {
     if (!open || mode !== "edit" || !employee) return;
-    const sid = (employee as any).shiftId;
+    const sid = employee.shiftId;
     setEditShiftId(sid != null && sid !== "" ? String(sid) : null);
     const daysOrder = [
       "monday",
@@ -511,7 +484,8 @@ export function EmployeeDetailModal({
           const { start, end, workday } = scheduleForm[day];
           if (!workday) continue;
           const matchedShift = (shifts ?? []).find(
-            (s: any) => s.scheduleIn === start && s.scheduleOut === end,
+            (shift) =>
+              shift.scheduleIn === start && shift.scheduleOut === end,
           );
           if (!matchedShift) {
             nextErrors[day] = true;
@@ -641,7 +615,7 @@ export function EmployeeDetailModal({
               },
             };
 
-      const nextEmployment: any = {
+      const nextEmployment: EmployeeDetail["employment"] = {
         ...employee.employment,
         position: data.position,
         department: data.department,
@@ -652,7 +626,6 @@ export function EmployeeDetailModal({
           | "part-time",
         status: data.status as
           | "active"
-          | "inactive"
           | "resigned"
           | "terminated",
         hireDate: data.hireDate
@@ -718,11 +691,12 @@ export function EmployeeDetailModal({
       onModeChange?.("view");
       router.refresh();
       toast({ title: "Saved", description: "Employee updated successfully." });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error updating employee:", error);
       toast({
         title: "Failed to update employee",
-        description: error?.message ?? "Please try again.",
+        description:
+          error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -816,17 +790,30 @@ export function EmployeeDetailModal({
                     </div>
                   )}
                 </div>
-                {!isEditing && onModeChange && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    onClick={() => onModeChange("edit")}
-                  >
-                    <Pencil className="h-4 w-4 mr-1.5" />
-                    Edit
-                  </Button>
+                {!isEditing && (
+                  <div className="flex shrink-0 gap-2">
+                    {canRehireEmployee(employee.employment.status) && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => setIsRehireDialogOpen(true)}
+                      >
+                        <RefreshCcw className="h-4 w-4 mr-1.5" />
+                        Rehire
+                      </Button>
+                    )}
+                    {onModeChange && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onModeChange("edit")}
+                      >
+                        <Pencil className="h-4 w-4 mr-1.5" />
+                        Edit
+                      </Button>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -1373,10 +1360,14 @@ export function EmployeeDetailModal({
                             <SelectTrigger id="edit-status">
                               <SelectValue placeholder="Select status" />
                             </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="active">Active</SelectItem>
-                              <SelectItem value="inactive">
-                                Suspended
+                            <SelectContent>
+                              <SelectItem
+                                value="active"
+                                disabled={canRehireEmployee(
+                                  employee.employment.status,
+                                )}
+                              >
+                                Active
                               </SelectItem>
                               <SelectItem value="resigned">Resigned</SelectItem>
                               <SelectItem value="terminated">
@@ -1392,32 +1383,6 @@ export function EmployeeDetailModal({
                         </p>
                       )}
                     </div>
-                  </div>
-                  <div className="rounded-md border border-amber-200 bg-amber-50/60 p-3">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">
-                          Lifecycle impact
-                        </p>
-                        <p className="text-xs text-gray-600">
-                          {lifecycleImpact.label} changes this employee&apos;s
-                          org access and downstream workflows.
-                        </p>
-                      </div>
-                      <Badge className="w-fit bg-white text-amber-800 border-amber-200 hover:bg-white">
-                        {lifecycleImpact.accessLabel}
-                      </Badge>
-                    </div>
-                    <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      {lifecycleImpactRows.map(([label, value]) => (
-                        <div key={label} className="text-xs">
-                          <dt className="font-medium text-gray-700">
-                            {label}
-                          </dt>
-                          <dd className="mt-0.5 text-gray-600">{value}</dd>
-                        </div>
-                      ))}
-                    </dl>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1.5">
@@ -1483,7 +1448,10 @@ export function EmployeeDetailModal({
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="edit-separationReason" className="text-sm">
+                      <Label
+                        htmlFor="edit-separationReason"
+                        className="text-sm"
+                      >
                         Separation Reason
                       </Label>
                       <Input
@@ -2065,17 +2033,20 @@ export function EmployeeDetailModal({
                         <SelectItem value={SHIFT_NONE}>
                           None (use default lunch)
                         </SelectItem>
-                        {(shifts ?? []).map((s: any) => (
-                          <SelectItem key={String(s._id)} value={String(s._id)}>
-                            {s.name} ({s.scheduleIn}–{s.scheduleOut}, lunch{" "}
-                            {formatTime12Hour(s.lunchStart)} –{" "}
-                            {formatTime12Hour(s.lunchEnd)})
+                        {(shifts ?? []).map((shift) => (
+                          <SelectItem
+                            key={String(shift._id)}
+                            value={String(shift._id)}
+                          >
+                            {shift.name} ({shift.scheduleIn}–{shift.scheduleOut}, lunch{" "}
+                            {formatTime12Hour(shift.lunchStart)} –{" "}
+                            {formatTime12Hour(shift.lunchEnd)})
                           </SelectItem>
                         ))}
                         {editShiftId &&
                           editShiftId !== SHIFT_NONE &&
                           !(shifts ?? []).some(
-                            (s: any) => String(s._id) === editShiftId,
+                            (shift) => String(shift._id) === editShiftId,
                           ) && (
                             <SelectItem value={editShiftId}>
                               Unknown shift (no longer in list)
@@ -2087,7 +2058,7 @@ export function EmployeeDetailModal({
                       editShiftId !== SHIFT_NONE &&
                       (() => {
                         const selected = (shifts ?? []).find(
-                          (s: any) => String(s._id) === editShiftId,
+                          (shift) => String(shift._id) === editShiftId,
                         );
                         return selected ? (
                           <p className="text-xs text-muted-foreground">
@@ -2272,15 +2243,17 @@ export function EmployeeDetailModal({
                               </div>
                               {(() => {
                                 const matched = (shifts ?? []).find(
-                                  (s: any) =>
-                                    s.scheduleIn === scheduleForm[day].start &&
-                                    s.scheduleOut === scheduleForm[day].end,
+                                  (shift) =>
+                                    shift.scheduleIn ===
+                                      scheduleForm[day].start &&
+                                    shift.scheduleOut === scheduleForm[day].end,
                                 );
                                 if (matched) {
                                   return (
                                     <p className="text-xs text-muted-foreground">
-                                      Lunch: {formatTime12Hour(matched.lunchStart)}{" "}
-                                      – {formatTime12Hour(matched.lunchEnd)} (
+                                      Lunch:{" "}
+                                      {formatTime12Hour(matched.lunchStart)} –{" "}
+                                      {formatTime12Hour(matched.lunchEnd)} (
                                       {matched.name})
                                     </p>
                                   );
@@ -2306,10 +2279,15 @@ export function EmployeeDetailModal({
               )}
             </div>
 
+            {!isEditing && (
+              <EmployeeLifecycleTimeline employeeId={employee._id} />
+            )}
+
             {/* Active Deductions */}
             {!isEditing &&
               employee.deductions &&
-              employee.deductions.filter((d: any) => d.isActive).length > 0 && (
+              employee.deductions.filter((deduction) => deduction.isActive)
+                .length > 0 && (
                 <>
                   <div className="border-t border-gray-100" />
                   <Card className="border-gray-100">
@@ -2322,8 +2300,8 @@ export function EmployeeDetailModal({
                     <CardContent>
                       <div className="space-y-2">
                         {employee.deductions
-                          .filter((d: any) => d.isActive)
-                          .map((deduction: any, idx: number) => (
+                          .filter((deduction) => deduction.isActive)
+                          .map((deduction, idx) => (
                             <div
                               key={idx}
                               className="flex items-center justify-between text-sm p-3 rounded-lg border bg-muted/30"
@@ -2353,7 +2331,8 @@ export function EmployeeDetailModal({
             {/* Active Incentives */}
             {!isEditing &&
               employee.incentives &&
-              employee.incentives.filter((i: any) => i.isActive).length > 0 && (
+              employee.incentives.filter((incentive) => incentive.isActive)
+                .length > 0 && (
                 <>
                   <div className="border-t border-gray-100" />
                   <Card className="border-gray-100">
@@ -2366,8 +2345,8 @@ export function EmployeeDetailModal({
                     <CardContent>
                       <div className="space-y-2">
                         {employee.incentives
-                          .filter((i: any) => i.isActive)
-                          .map((incentive: any, idx: number) => (
+                          .filter((incentive) => incentive.isActive)
+                          .map((incentive, idx) => (
                             <div
                               key={idx}
                               className="flex items-center justify-between text-sm p-3 rounded-lg border bg-muted/30"
@@ -2423,6 +2402,16 @@ export function EmployeeDetailModal({
             )}
           </div>
         </div>
+        <RehireEmployeeDialog
+          open={isRehireDialogOpen}
+          onOpenChange={setIsRehireDialogOpen}
+          employee={employee}
+          hasMembership={hasUserAccount}
+          onSuccess={() => {
+            onModeChange?.("view");
+            router.refresh();
+          }}
+        />
       </SheetContent>
     </Sheet>
   );

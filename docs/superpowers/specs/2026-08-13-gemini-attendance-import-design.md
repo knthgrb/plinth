@@ -15,7 +15,7 @@ Supported uploads are:
 - Macro-enabled Excel `.xlsm`
 - Comma-separated values `.csv`
 
-Encrypted workbooks and all other formats are rejected. The uploader says: “Only Excel (.xls, .xlsx, .xlsm) and CSV (.csv) files are supported.” It also discloses: “This file will be processed by Google Gemini.” Macros embedded in `.xls` or `.xlsm` files are never executed, extracted, or forwarded to Gemini.
+Encrypted workbooks and all other formats are rejected. The uploader says: “Only Excel (.xls, .xlsx, .xlsm) and CSV (.csv) files are supported.” It also discloses: Macros embedded in `.xls` or `.xlsm` files are never executed, extracted, or forwarded to Gemini.
 
 ## Model and Configuration
 

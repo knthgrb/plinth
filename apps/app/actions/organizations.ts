@@ -49,9 +49,18 @@ export async function updateOrganization(
 
 export async function removeUserFromOrganization(
   organizationId: string,
-  userId: string
+  userId: string,
+  separation?: {
+    type: "resigned" | "terminated";
+    effectiveAt: number;
+    reason?: string;
+  },
 ) {
-  return OrganizationsService.removeUserFromOrganization(organizationId, userId);
+  return OrganizationsService.removeUserFromOrganization(
+    organizationId,
+    userId,
+    separation,
+  );
 }
 
 export async function updateUserRoleInOrganization(data: {
