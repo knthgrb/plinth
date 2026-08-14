@@ -35,6 +35,37 @@ import {
 } from "./employeeLifecycle";
 import { requireRegisteredStorageObject } from "./files";
 
+const PUBLIC_APPLICANT_UPLOAD_TTL_MS = 10 * 60 * 1000;
+const MAX_APPLICANT_RESUME_BYTES = 10 * 1024 * 1024;
+const APPLICANT_RESUME_CONTENT_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+
+function assertApplicantResumeMetadata(
+  metadata: {
+    contentType?: string;
+    size: number;
+  },
+  fileName?: string,
+  allowUnknownContentType = false,
+): void {
+  const validFileName = fileName
+    ? /\.(pdf|doc|docx)$/i.test(fileName.trim())
+    : false;
+  if (
+    (metadata.contentType !== undefined &&
+      !APPLICANT_RESUME_CONTENT_TYPES.has(metadata.contentType)) ||
+    (metadata.contentType === undefined &&
+      !validFileName &&
+      !allowUnknownContentType) ||
+    metadata.size > MAX_APPLICANT_RESUME_BYTES
+  ) {
+    throw new Error("Resume must be a PDF, DOC, or DOCX file up to 10 MB");
+  }
+}
+
 const customFieldPrimitive = v.union(
   v.string(),
   v.number(),
@@ -111,6 +142,25 @@ function validateSalaryRange(
     );
   }
   return range;
+}
+
+async function hasApplicantEmailDuplicate(
+  ctx: QueryCtx | MutationCtx,
+  jobId: Id<"jobs">,
+  normalizedEmail: string,
+  excludedApplicantId?: Id<"applicants">,
+): Promise<boolean> {
+  if (!normalizedEmail) return false;
+  const candidates = await ctx.db
+    .query("applicants")
+    .withIndex("by_job", (query) => query.eq("jobId", jobId))
+    .collect();
+  return candidates.some(
+    (candidate) =>
+      candidate._id !== excludedApplicantId &&
+      candidate.archivedAt === undefined &&
+      candidate.email.trim().toLocaleLowerCase() === normalizedEmail,
+  );
 }
 
 async function assertOrganizationUsers(
@@ -411,6 +461,110 @@ export const getApplicants = query({
   },
 });
 
+export const getRecruitmentMetrics = query({
+  args: { organizationId: v.id("organizations") },
+  handler: async (ctx, args) =>
+    runOrgQuery(async () => {
+      await checkAuth(ctx, args.organizationId, "hr");
+      const [jobs, rows] = await Promise.all([
+        ctx.db
+          .query("jobs")
+          .withIndex("by_organization", (query) =>
+            query.eq("organizationId", args.organizationId),
+          )
+          .collect(),
+        ctx.db
+          .query("applicants")
+          .withIndex("by_organization", (query) =>
+            query.eq("organizationId", args.organizationId),
+          )
+          .collect(),
+      ]);
+      const stages: ApplicantStage[] = [
+        "new",
+        "screening",
+        "interview",
+        "assessment",
+        "offer",
+        "hired",
+        "rejected",
+      ];
+      const emptyStageCounts = (): Record<ApplicantStage, number> =>
+        Object.fromEntries(stages.map((stage) => [stage, 0])) as Record<
+          ApplicantStage,
+          number
+        >;
+      const stageCounts = emptyStageCounts();
+      const byJob = new Map<
+        Id<"jobs">,
+        {
+          total: number;
+          hired: number;
+          activeCandidates: number;
+          awaitingDecision: number;
+          staleCandidates: number;
+          stageCounts: Record<ApplicantStage, number>;
+        }
+      >();
+      const now = Date.now();
+      let activeCandidates = 0;
+      let awaitingDecision = 0;
+      let staleCandidates = 0;
+      const applicants = rows.filter(
+        (applicant) => applicant.archivedAt === undefined,
+      );
+      for (const applicant of applicants) {
+        const stage = applicant.status as ApplicantStage;
+        stageCounts[stage] += 1;
+        const jobMetrics = byJob.get(applicant.jobId) ?? {
+          total: 0,
+          hired: 0,
+          activeCandidates: 0,
+          awaitingDecision: 0,
+          staleCandidates: 0,
+          stageCounts: emptyStageCounts(),
+        };
+        jobMetrics.total += 1;
+        jobMetrics.stageCounts[stage] += 1;
+        if (stage === "hired") jobMetrics.hired += 1;
+        if (stage !== "hired" && stage !== "rejected") {
+          activeCandidates += 1;
+          jobMetrics.activeCandidates += 1;
+          const stageChangedAt =
+            applicant.currentStageChangedAt ?? applicant.updatedAt;
+          if (now - stageChangedAt >= 14 * 24 * 60 * 60 * 1000) {
+            staleCandidates += 1;
+            jobMetrics.staleCandidates += 1;
+          }
+        }
+        if (stage === "assessment" || stage === "offer") {
+          awaitingDecision += 1;
+          jobMetrics.awaitingDecision += 1;
+        }
+        byJob.set(applicant.jobId, jobMetrics);
+      }
+      const openJobs = jobs.filter((job) => job.status === "open");
+      return {
+        activePositions: openJobs.length,
+        openHeadcount: openJobs.reduce(
+          (total, job) =>
+            total +
+            Math.max(
+              0,
+              job.numberOfOpenings - (byJob.get(job._id)?.hired ?? 0),
+            ),
+          0,
+        ),
+        totalApplicants: applicants.length,
+        activeCandidates,
+        awaitingDecision,
+        staleCandidates,
+        stageCounts,
+        byJob: [...byJob].map(([jobId, metrics]) => ({ jobId, ...metrics })),
+      };
+    }, null),
+});
+
 // Get single applicant
 export const getApplicant = query({
   args: {
@@ -428,6 +582,132 @@ export const getApplicant = query({
   },
 });
 
+export const createApplicantUploadIntent = mutation({
+  args: { organizationId: v.id("organizations"), jobId: v.id("jobs") },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (
+      !job ||
+      job.organizationId !== args.organizationId ||
+      job.status !== "open"
+    ) {
+      throw new Error("Job posting is unavailable");
+    }
+    const createdAt = Date.now();
+    const intentId = await ctx.db.insert("applicantUploadIntents", {
+      organizationId: args.organizationId,
+      jobId: args.jobId,
+      expiresAt: createdAt + PUBLIC_APPLICANT_UPLOAD_TTL_MS,
+      createdAt,
+    });
+    return { intentId, uploadUrl: await ctx.storage.generateUploadUrl() };
+  },
+});
+
+export const registerApplicantResumeUpload = mutation({
+  args: {
+    intentId: v.id("applicantUploadIntents"),
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const intent = await ctx.db.get(args.intentId);
+    if (
+      !intent ||
+      intent.expiresAt <= Date.now() ||
+      intent.registeredAt !== undefined ||
+      intent.claimedAt !== undefined
+    ) {
+      throw new Error("Upload intent is invalid or expired");
+    }
+    const [metadata, existingIntent, registeredObject] = await Promise.all([
+      ctx.db.system.get("_storage", args.storageId),
+      ctx.db
+        .query("applicantUploadIntents")
+        .withIndex("by_storage", (query) =>
+          query.eq("storageId", args.storageId),
+        )
+        .unique(),
+      ctx.db
+        .query("storageObjects")
+        .withIndex("by_storage", (query) =>
+          query.eq("storageId", args.storageId),
+        )
+        .unique(),
+    ]);
+    if (
+      !metadata ||
+      metadata._creationTime < intent.createdAt ||
+      existingIntent ||
+      registeredObject
+    ) {
+      throw new Error("Uploaded resume is not valid for this application");
+    }
+    assertApplicantResumeMetadata(metadata, args.fileName);
+    await ctx.db.patch(intent._id, {
+      storageId: args.storageId,
+      registeredAt: Date.now(),
+    });
+    return { success: true };
+  },
+});
+
+async function resolvePublicApplicantUpload(
+  ctx: MutationCtx,
+  args: {
+    organizationId: Id<"organizations">;
+    jobId: Id<"jobs">;
+    storageId: Id<"_storage">;
+    uploadIntentId?: Id<"applicantUploadIntents">;
+  },
+): Promise<Id<"applicantUploadIntents">> {
+  const now = Date.now();
+  if (args.uploadIntentId) {
+    const intent = await ctx.db.get(args.uploadIntentId);
+    if (
+      !intent ||
+      intent.organizationId !== args.organizationId ||
+      intent.jobId !== args.jobId ||
+      intent.storageId !== args.storageId ||
+      intent.registeredAt === undefined ||
+      intent.claimedAt !== undefined ||
+      intent.expiresAt <= now
+    ) {
+      throw new Error("Resume upload is invalid or expired");
+    }
+    return intent._id;
+  }
+
+  const [metadata, existingIntent, registeredObject] = await Promise.all([
+    ctx.db.system.get("_storage", args.storageId),
+    ctx.db
+      .query("applicantUploadIntents")
+      .withIndex("by_storage", (query) => query.eq("storageId", args.storageId))
+      .unique(),
+    ctx.db
+      .query("storageObjects")
+      .withIndex("by_storage", (query) => query.eq("storageId", args.storageId))
+      .unique(),
+  ]);
+  if (
+    !metadata ||
+    now - metadata._creationTime > PUBLIC_APPLICANT_UPLOAD_TTL_MS ||
+    existingIntent ||
+    registeredObject
+  ) {
+    throw new Error("Create and register a resume upload intent first");
+  }
+  assertApplicantResumeMetadata(metadata, undefined, true);
+  return ctx.db.insert("applicantUploadIntents", {
+    organizationId: args.organizationId,
+    jobId: args.jobId,
+    expiresAt: now + PUBLIC_APPLICANT_UPLOAD_TTL_MS,
+    storageId: args.storageId,
+    registeredAt: now,
+    createdAt: metadata._creationTime,
+  });
+}
+
 // Create applicant
 export const createApplicant = mutation({
   args: {
@@ -438,6 +718,7 @@ export const createApplicant = mutation({
     email: v.string(),
     phone: v.string(),
     resume: v.id("_storage"),
+    uploadIntentId: v.optional(v.id("applicantUploadIntents")),
     coverLetter: v.optional(v.string()),
     source: v.optional(v.string()),
     sourceDetails: v.optional(v.string()),
@@ -454,13 +735,15 @@ export const createApplicant = mutation({
       throw new Error("Job posting is closed");
     }
 
+    const uploadIntentId = await resolvePublicApplicantUpload(ctx, {
+      organizationId: args.organizationId,
+      jobId: args.jobId,
+      storageId: args.resume,
+      uploadIntentId: args.uploadIntentId,
+    });
+
     const normalizedEmail = args.email.trim().toLocaleLowerCase();
-    const duplicates = await ctx.db
-      .query("applicants")
-      .withIndex("by_job", (query) => query.eq("jobId", job._id))
-      .filter((query) => query.eq(query.field("email"), normalizedEmail))
-      .take(1);
-    if (duplicates.length > 0) {
+    if (await hasApplicantEmailDuplicate(ctx, job._id, normalizedEmail)) {
       throw new Error(
         "An applicant with this email already exists for the position",
       );
@@ -481,9 +764,11 @@ export const createApplicant = mutation({
       sourceDetails: args.sourceDetails,
       status: "new",
       appliedDate: now,
+      currentStageChangedAt: now,
       createdAt: now,
       updatedAt: now,
     });
+    await ctx.db.patch(uploadIntentId, { claimedAt: now });
     const applicant = await ctx.db.get(applicantId);
     if (!applicant) throw new Error("Applicant creation did not persist");
     await synchronizeEffectiveApplicant(
@@ -534,17 +819,10 @@ export const createApplicantByHR = mutation({
     }
 
     const normalizedEmail = args.email?.trim().toLocaleLowerCase() ?? "";
-    if (normalizedEmail) {
-      const duplicates = await ctx.db
-        .query("applicants")
-        .withIndex("by_job", (query) => query.eq("jobId", job._id))
-        .filter((query) => query.eq(query.field("email"), normalizedEmail))
-        .take(1);
-      if (duplicates.length > 0) {
-        throw new Error(
-          "An applicant with this email already exists for the position",
-        );
-      }
+    if (await hasApplicantEmailDuplicate(ctx, job._id, normalizedEmail)) {
+      throw new Error(
+        "An applicant with this email already exists for the position",
+      );
     }
 
     const now = Date.now();
@@ -567,6 +845,7 @@ export const createApplicantByHR = mutation({
       portfolioLink: args.portfolioLink,
       status: "new",
       appliedDate: now,
+      currentStageChangedAt: now,
       createdAt: now,
       updatedAt: now,
     });
@@ -620,17 +899,17 @@ export const updateApplicant = mutation({
       updates.lastName = requireNonEmpty(args.lastName, "Last name");
     if (args.email !== undefined) {
       const normalizedEmail = args.email.trim().toLocaleLowerCase();
-      if (normalizedEmail) {
-        const matches = await ctx.db
-          .query("applicants")
-          .withIndex("by_job", (query) => query.eq("jobId", applicant.jobId))
-          .filter((query) => query.eq(query.field("email"), normalizedEmail))
-          .take(2);
-        if (matches.some((match) => match._id !== applicant._id)) {
-          throw new Error(
-            "An applicant with this email already exists for the position",
-          );
-        }
+      if (
+        await hasApplicantEmailDuplicate(
+          ctx,
+          applicant.jobId,
+          normalizedEmail,
+          applicant._id,
+        )
+      ) {
+        throw new Error(
+          "An applicant with this email already exists for the position",
+        );
       }
       updates.email = normalizedEmail;
     }
@@ -758,6 +1037,7 @@ export const updateApplicantStatus = mutation({
     }
     await ctx.db.patch(args.applicantId, {
       status: args.status,
+      currentStageChangedAt: now,
       updatedAt: now,
     });
 
@@ -857,6 +1137,7 @@ export const scheduleInterview = mutation({
     );
     await ctx.db.patch(args.applicantId, {
       status: "interview",
+      currentStageChangedAt: now,
       updatedAt: now,
     });
 
@@ -966,6 +1247,7 @@ export const requestOfferApproval = mutation({
     await appendApplicantOfferEvent(ctx, applicant, offerApproval, now, true);
     await ctx.db.patch(args.applicantId, {
       status: "offer",
+      currentStageChangedAt: now,
       updatedAt: now,
     });
 
@@ -1034,6 +1316,7 @@ export const approveOffer = mutation({
     await appendApplicantOfferEvent(ctx, applicant, offerApproval, now, false);
     await ctx.db.patch(args.applicantId, {
       status: args.approved ? "offer" : "assessment",
+      ...(args.approved ? {} : { currentStageChangedAt: now }),
       updatedAt: now,
     });
 
@@ -1041,28 +1324,36 @@ export const approveOffer = mutation({
   },
 });
 
+async function archiveApplicantById(
+  ctx: MutationCtx,
+  applicantId: Id<"applicants">,
+) {
+  const applicant = await ctx.db.get(applicantId);
+  if (!applicant) throw new Error("Applicant not found");
+
+  const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
+
+  if (applicant.convertedEmployeeId) {
+    throw new Error("Converted applicants cannot be archived");
+  }
+  if (applicant.archivedAt !== undefined) return { success: true };
+  const now = Date.now();
+  await ctx.db.patch(applicantId, {
+    archivedAt: now,
+    archivedBy: userRecord._id,
+    updatedAt: now,
+  });
+  return { success: true, archived: true };
+}
+
+export const archiveApplicant = mutation({
+  args: { applicantId: v.id("applicants") },
+  handler: (ctx, args) => archiveApplicantById(ctx, args.applicantId),
+});
+
 export const deleteApplicant = mutation({
-  args: {
-    applicantId: v.id("applicants"),
-  },
-  handler: async (ctx, args) => {
-    const applicant = await ctx.db.get(args.applicantId);
-    if (!applicant) throw new Error("Applicant not found");
-
-    const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
-
-    if (applicant.convertedEmployeeId) {
-      throw new Error("Converted applicants cannot be archived");
-    }
-    if (applicant.archivedAt !== undefined) return { success: true };
-    const now = Date.now();
-    await ctx.db.patch(args.applicantId, {
-      archivedAt: now,
-      archivedBy: userRecord._id,
-      updatedAt: now,
-    });
-    return { success: true, archived: true };
-  },
+  args: { applicantId: v.id("applicants") },
+  handler: (ctx, args) => archiveApplicantById(ctx, args.applicantId),
 });
 
 // Convert applicant to employee
@@ -1222,6 +1513,7 @@ export const convertApplicantToEmployee = mutation({
     );
     await ctx.db.patch(args.applicantId, {
       status: "hired",
+      currentStageChangedAt: now,
       convertedEmployeeId: employeeId,
       updatedAt: now,
     });

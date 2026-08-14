@@ -165,7 +165,8 @@ describe("full schema cleanup readiness", () => {
     const assetsPayroll = FULL_SCHEMA_CLEANUP_DOMAINS.find(
       ({ domain }) => domain === "assets_payroll_compatibility",
     );
-    if (!assetsPayroll) throw new Error("Assets payroll registration was not found");
+    if (!assetsPayroll)
+      throw new Error("Assets payroll registration was not found");
     expect(resolveFullSchemaCleanupReadinessMode(assetsPayroll)).toBe(
       "assets_payroll_compatibility",
     );
@@ -178,9 +179,9 @@ describe("full schema cleanup readiness", () => {
     expect(inventory).toMatchObject({
       programKey: FULL_SCHEMA_CLEANUP_PROGRAM_KEY,
       programVersion: FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
-      currentTableCount: 76,
+      currentTableCount: 78,
     });
-    expect(inventory.tables).toHaveLength(76);
+    expect(inventory.tables).toHaveLength(78);
     expect(inventory.tables).toContainEqual(
       expect.objectContaining({
         table: "organizations",

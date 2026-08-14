@@ -406,6 +406,19 @@ export default defineSchema({
     .index("by_owner", ["ownerUserId", "createdAt"])
     .index("by_expiry", ["expiresAt"]),
 
+  applicantUploadIntents: defineTable({
+    organizationId: v.id("organizations"),
+    jobId: v.id("jobs"),
+    expiresAt: v.number(),
+    storageId: v.optional(v.id("_storage")),
+    registeredAt: v.optional(v.number()),
+    claimedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_job", ["jobId", "createdAt"])
+    .index("by_storage", ["storageId"])
+    .index("by_expiry", ["expiresAt"]),
+
   storageObjects: defineTable({
     storageId: v.id("_storage"),
     organizationId: v.id("organizations"),
@@ -783,6 +796,8 @@ export default defineSchema({
     rejectedBy: v.optional(v.id("users")),
     rejectionReason: v.optional(v.string()),
     reminderSentAt: v.optional(v.number()),
+    archivedAt: v.optional(v.number()),
+    archivedBy: v.optional(v.id("users")),
     isDefault: v.optional(v.boolean()),
     isCustom: v.optional(v.boolean()),
     migrationVersion: v.number(),
@@ -792,6 +807,28 @@ export default defineSchema({
     .index("by_employee_source_key", ["employeeId", "sourceKey"])
     .index("by_organization", ["organizationId"])
     .index("by_definition", ["requirementDefinitionId"]),
+
+  employeeRequirementEvents: defineTable({
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    requirementId: v.id("employeeRequirements"),
+    type: v.union(
+      v.literal("submitted"),
+      v.literal("verified"),
+      v.literal("rejected"),
+      v.literal("archived"),
+    ),
+    file: v.optional(v.id("_storage")),
+    occurredAt: v.number(),
+    actorUserId: v.id("users"),
+    notes: v.optional(v.string()),
+    expiryDate: v.optional(v.number()),
+    migrationVersion: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_requirement_occurred_at", ["requirementId", "occurredAt"])
+    .index("by_employee", ["employeeId", "occurredAt"])
+    .index("by_organization", ["organizationId", "occurredAt"]),
 
   employeeDeductions: defineTable({
     organizationId: v.id("organizations"),
@@ -1987,6 +2024,7 @@ export default defineSchema({
     convertedEmployeeId: v.optional(v.id("employees")),
     archivedAt: v.optional(v.number()),
     archivedBy: v.optional(v.id("users")),
+    currentStageChangedAt: v.optional(v.number()),
     rating: v.optional(v.number()),
     googleMeetLink: v.optional(v.string()),
     interviewVideoLink: v.optional(v.string()),

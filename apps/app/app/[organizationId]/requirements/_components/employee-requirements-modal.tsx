@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery } from "convex/react";
 import { format } from "date-fns";
+import { api } from "@/convex/_generated/api";
 import {
   removeRequirement,
   updateRequirementFile,
@@ -84,6 +86,10 @@ export function EmployeeRequirementsModal({
   const [rejectionReasons, setRejectionReasons] = useState<
     Record<number, string>
   >({});
+  const requirementEvents = useQuery(
+    api.employees.getEmployeeRequirementEvents,
+    isOpen ? { employeeId: employee._id } : "skip",
+  );
   const requirements = getApplicableEmployeeRequirements(employee, policies);
   const historicalRequirements = getHistoricalEmployeeRequirements(
     employee,
@@ -198,6 +204,9 @@ export function EmployeeRequirementsModal({
           ) : (
             requirements.map(({ requirement, index }) => {
               const derived = deriveRequirementState(requirement);
+              const auditEvents = (requirementEvents ?? []).filter(
+                (event) => event.requirementId === requirement.requirementId,
+              );
               return (
                 <section
                   key={requirement.requirementId}
@@ -255,6 +264,17 @@ export function EmployeeRequirementsModal({
                         {requirement.verificationNotes && (
                           <p>Review note: {requirement.verificationNotes}</p>
                         )}
+                        {auditEvents[0] && (
+                          <p>
+                            Audit trail: {auditEvents.length} event
+                            {auditEvents.length === 1 ? "" : "s"} · Latest{" "}
+                            {auditEvents[0].type}{" "}
+                            {format(
+                              new Date(auditEvents[0].occurredAt),
+                              "MMM d, yyyy",
+                            )}
+                          </p>
+                        )}
                       </div>
                     </div>
                     {requirement.isCustom && (
@@ -271,7 +291,7 @@ export function EmployeeRequirementsModal({
                                 employeeId: employee._id,
                                 requirementId: requirement.requirementId,
                               }),
-                            "Custom requirement removed",
+                            "Custom requirement archived",
                           )
                         }
                       >
@@ -389,8 +409,8 @@ export function EmployeeRequirementsModal({
             <div>
               <h3 className="text-sm font-semibold">Historical evidence</h3>
               <p className="text-xs text-[#77727F]">
-                Retained from policies that no longer apply. These records do
-                not affect current compliance.
+                Retained from archived custom requirements and policies that no
+                longer apply. These records do not affect current compliance.
               </p>
             </div>
             {historicalRequirements.map(({ requirement }) => (
@@ -399,7 +419,12 @@ export function EmployeeRequirementsModal({
                 className="flex items-center justify-between gap-3 rounded-xl border bg-[#FAFAFC] p-4"
               >
                 <div>
-                  <p className="text-sm font-medium">{requirement.type}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium">{requirement.type}</p>
+                    {requirement.archivedAt !== undefined && (
+                      <Badge variant="outline">Archived</Badge>
+                    )}
+                  </div>
                   <p className="text-xs capitalize text-[#77727F]">
                     {requirement.status.replace("_", " ")}
                     {requirement.submittedDate

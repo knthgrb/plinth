@@ -49,6 +49,7 @@ export function getApplicableEmployeeRequirements(
     policies.map((policy) => [normalizeType(policy.type), policy]),
   );
   return employee.requirements.flatMap((requirement, index) => {
+    if (requirement.archivedAt !== undefined) return [];
     if (requirement.isCustom) return [{ requirement, index }];
     const policy = policiesByType.get(normalizeType(requirement.type));
     if (!policy || !isRequirementApplicable(policy, employee.employment)) {
@@ -66,6 +67,7 @@ export function getHistoricalEmployeeRequirements(
     policies.map((policy) => [normalizeType(policy.type), policy]),
   );
   return employee.requirements.flatMap((requirement, index) => {
+    if (requirement.archivedAt !== undefined) return [{ requirement, index }];
     if (requirement.isCustom) return [];
     const policy = policiesByType.get(normalizeType(requirement.type));
     if (policy && isRequirementApplicable(policy, employee.employment)) {

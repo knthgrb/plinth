@@ -19,9 +19,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 7185,
+      "totalMatches": 7214,
       "fileCount": 248,
-      "fingerprint": "afe54b946083cb5c14acd913985fa79e4d7887b78831ce5493be235e23741c95",
+      "fingerprint": "5faaa7ea50ec7caaf0e2a024a3836cf5dfdcc7ada61f05e21095c8e1e05bddc4",
       "symbols": [
         {
           "symbol": "acknowledgedBy",
@@ -110,7 +110,7 @@
         },
         {
           "symbol": "employeeId",
-          "matches": 1287,
+          "matches": 1296,
           "files": 111
         },
         {
@@ -220,8 +220,8 @@
         },
         {
           "symbol": "notes",
-          "matches": 215,
-          "files": 36
+          "matches": 219,
+          "files": 37
         },
         {
           "symbol": "offerApproval",
@@ -230,7 +230,7 @@
         },
         {
           "symbol": "organizationId",
-          "matches": 1727,
+          "matches": 1734,
           "files": 158
         },
         {
@@ -260,8 +260,8 @@
         },
         {
           "symbol": "pipelineStageHistory",
-          "matches": 27,
-          "files": 5
+          "matches": 26,
+          "files": 4
         },
         {
           "symbol": "proratedLeave",
@@ -290,7 +290,7 @@
         },
         {
           "symbol": "requirements",
-          "matches": 109,
+          "matches": 112,
           "files": 23
         },
         {
@@ -310,7 +310,7 @@
         },
         {
           "symbol": "role",
-          "matches": 416,
+          "matches": 417,
           "files": 77
         },
         {
@@ -340,7 +340,7 @@
         },
         {
           "symbol": "status",
-          "matches": 913,
+          "matches": 919,
           "files": 96
         },
         {

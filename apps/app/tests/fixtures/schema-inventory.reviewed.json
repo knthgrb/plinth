@@ -1,5 +1,5 @@
 {
-  "tableCount": 76,
+  "tableCount": 78,
   "tables": [
     {
       "name": "accountingCostItems",
@@ -52,8 +52,8 @@
     },
     {
       "name": "applicants",
-      "fieldCount": 21,
-      "fieldsSha256": "3434e4440af50a44806726fda78b96b0993eda5fc5aba7eb7ac8984045e066cb",
+      "fieldCount": 22,
+      "fieldsSha256": "910e31895d75a6b3ef7ae915f680e30c40abb611d6c5ff05b11acf6ff4e7664f",
       "indexCount": 3,
       "indexesSha256": "d69967249f003c9f4eb0e9bf9841d5430dde49e8f442fa9b560a1922d3a32239"
     },
@@ -70,6 +70,13 @@
       "fieldsSha256": "ccb76b4f2f07bb65945e15a1ea1b6335b71011f031fe28aff94996444c79b5ad",
       "indexCount": 2,
       "indexesSha256": "fa93e537c57fdb3dd2a88148a2f7a4a3dfcc6d8f05569b9373cae8ca37e7d022"
+    },
+    {
+      "name": "applicantUploadIntents",
+      "fieldCount": 7,
+      "fieldsSha256": "ebf258c34f6d29fdb6d726bfb5b0e52bdcae8df5e0be5ef284ad8072f911bd3d",
+      "indexCount": 3,
+      "indexesSha256": "c651caa5af4be8e9bc24260c98d911a2f43e12da0134ef3eee5dbe258dc97624"
     },
     {
       "name": "assetCustodyEvents",
@@ -184,9 +191,16 @@
       "indexesSha256": "db8b6c9f85a3a577e91fab98f3c43a9212989281de1060e869a0f6a6f952e859"
     },
     {
+      "name": "employeeRequirementEvents",
+      "fieldCount": 11,
+      "fieldsSha256": "8b4e5987a4c0a91ac9517bde6528630926b1cafb2a400dc4a63cf1655acb62eb",
+      "indexCount": 3,
+      "indexesSha256": "b941c97449f3099578ac8cfbc128f811caed38d006bc3c4173273e989c4507cc"
+    },
+    {
       "name": "employeeRequirements",
-      "fieldCount": 26,
-      "fieldsSha256": "8966cd67bfa1351bceda9d724b9864cdc34367f3ee8ac0883740c629e094c28a",
+      "fieldCount": 28,
+      "fieldsSha256": "b56a126284cc274f698f9f815edeb85f716a26d62ad6b4d726d5599024055f1f",
       "indexCount": 3,
       "indexesSha256": "a876a504ff787748a36b5975c93f00afcb0dc529cd5083086987b29b6e5747e0"
     },

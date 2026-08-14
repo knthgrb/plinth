@@ -341,6 +341,90 @@ describe("requirements integrity", () => {
       }),
     ).rejects.toThrow("Not authorized");
   });
+
+  it("forces custom requirements through evidence review and retains their audit", async () => {
+    const { t, hr, organizationId, hrUserId, employeeId } = await setup();
+    await expect(
+      hr.mutation(api.employees.addRequirement, {
+        employeeId,
+        requirement: { type: "Special License", status: "verified" },
+      }),
+    ).rejects.toThrow("pending");
+    await hr.mutation(api.employees.addRequirement, {
+      employeeId,
+      requirement: { type: "Special License", status: "pending" },
+    });
+    const requirement = await t.run(async (ctx) =>
+      ctx.db
+        .query("employeeRequirements")
+        .withIndex("by_employee_source_key", (query) =>
+          query.eq("employeeId", employeeId),
+        )
+        .filter((query) => query.eq(query.field("type"), "Special License"))
+        .unique(),
+    );
+    if (!requirement) throw new Error("Missing custom requirement");
+    const storeEvidence = async (contents: string) =>
+      t.run(async (ctx) => {
+        const storageId = await ctx.storage.store(new Blob([contents]));
+        await ctx.db.insert("storageObjects", {
+          storageId,
+          organizationId,
+          ownerUserId: hrUserId,
+          purpose: "employee_requirement",
+          state: "active",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+        return storageId;
+      });
+    const firstEvidence = await storeEvidence("first");
+    await hr.mutation(api.employees.updateRequirementFile, {
+      employeeId,
+      requirementId: requirement._id,
+      file: firstEvidence,
+    });
+    await hr.mutation(api.employees.updateRequirementStatus, {
+      employeeId,
+      requirementId: requirement._id,
+      status: "verified",
+    });
+    const secondEvidence = await storeEvidence("second");
+    await hr.mutation(api.employees.updateRequirementFile, {
+      employeeId,
+      requirementId: requirement._id,
+      file: secondEvidence,
+    });
+    await hr.mutation(api.employees.removeRequirement, {
+      employeeId,
+      requirementId: requirement._id,
+    });
+    const state = await t.run(async (ctx) => ({
+      requirement: await ctx.db.get(requirement._id),
+      events: await ctx.db
+        .query("employeeRequirementEvents")
+        .withIndex("by_requirement_occurred_at", (query) =>
+          query.eq("requirementId", requirement._id),
+        )
+        .collect(),
+    }));
+    expect(state.requirement).toMatchObject({
+      file: secondEvidence,
+      archivedBy: hrUserId,
+    });
+    expect(state.events.map((event) => event.type)).toEqual([
+      "submitted",
+      "verified",
+      "submitted",
+      "archived",
+    ]);
+    expect(state.events.map((event) => event.file)).toEqual([
+      firstEvidence,
+      firstEvidence,
+      secondEvidence,
+      secondEvidence,
+    ]);
+  });
 });
 
 describe("recruitment integrity", () => {
@@ -376,6 +460,64 @@ describe("recruitment integrity", () => {
     expect((await t.run((ctx) => ctx.db.get(duplicateId)))?.email).toBe(
       "unique@example.com",
     );
+  });
+
+  it("binds public resume uploads to one open job and one application", async () => {
+    const { t, organizationId, jobId } = await setup();
+    const intent = await t.mutation(
+      api.recruitment.createApplicantUploadIntent,
+      { organizationId, jobId },
+    );
+    const resume = await t.run((ctx) =>
+      ctx.storage.store(
+        new Blob(["public resume"], { type: "application/pdf" }),
+      ),
+    );
+    await t.mutation(api.recruitment.registerApplicantResumeUpload, {
+      intentId: intent.intentId,
+      storageId: resume,
+      fileName: "resume.pdf",
+    });
+    const otherJobId = await t.run((ctx) =>
+      ctx.db.insert("jobs", {
+        organizationId,
+        title: "Other role",
+        department: "Operations",
+        position: "Other role",
+        employmentType: "regular",
+        numberOfOpenings: 1,
+        description: "Other role",
+        requirements: [],
+        qualifications: [],
+        status: "open",
+        postedDate: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    const application = {
+      organizationId,
+      jobId,
+      firstName: "Public",
+      lastName: "Candidate",
+      email: "public@example.com",
+      phone: "",
+      resume,
+      uploadIntentId: intent.intentId,
+    };
+    await expect(
+      t.mutation(api.recruitment.createApplicant, {
+        ...application,
+        jobId: otherJobId,
+      }),
+    ).rejects.toThrow("invalid");
+    await t.mutation(api.recruitment.createApplicant, application);
+    await expect(
+      t.mutation(api.recruitment.createApplicant, {
+        ...application,
+        email: "second@example.com",
+      }),
+    ).rejects.toThrow("expired");
   });
 
   it("rejects scorecards outside interview and assessment", async () => {
@@ -459,6 +601,10 @@ describe("recruitment integrity", () => {
     });
     expect(page.page).toHaveLength(50);
     expect(page.isDone).toBe(false);
+    const metrics = await hr.query(api.recruitment.getRecruitmentMetrics, {
+      organizationId,
+    });
+    expect(metrics?.totalApplicants).toBe(56);
   });
 
   it("archives applicants without deleting their audit records", async () => {

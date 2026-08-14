@@ -206,10 +206,14 @@ export class RecruitmentService {
     return this.updateJob(jobId, { status });
   }
 
-  static async deleteApplicant(applicantId: string) {
+  static async archiveApplicant(applicantId: string) {
     const convex = await getAuthedConvexClient();
-    return convex.mutation(api.recruitment.deleteApplicant, {
+    return convex.mutation(api.recruitment.archiveApplicant, {
       applicantId: applicantId as Id<"applicants">,
     });
+  }
+
+  static async deleteApplicant(applicantId: string) {
+    return this.archiveApplicant(applicantId);
   }
 }

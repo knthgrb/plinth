@@ -255,31 +255,27 @@ export async function loadEffectiveApplicant(
     await Promise.all([
       ctx.db
         .query("applicantStageEvents")
-        .withIndex("by_organization", (q) =>
-          q.eq("organizationId", applicant.organizationId),
+        .withIndex("by_applicant_source_index", (q) =>
+          q.eq("applicantId", applicant._id),
         )
-        .filter((q) => q.eq(q.field("applicantId"), applicant._id))
         .collect(),
       ctx.db
         .query("applicantNotes")
-        .withIndex("by_organization", (q) =>
-          q.eq("organizationId", applicant.organizationId),
+        .withIndex("by_applicant_source_index", (q) =>
+          q.eq("applicantId", applicant._id),
         )
-        .filter((q) => q.eq(q.field("applicantId"), applicant._id))
         .collect(),
       ctx.db
         .query("applicantInterviews")
-        .withIndex("by_organization", (q) =>
-          q.eq("organizationId", applicant.organizationId),
+        .withIndex("by_applicant_source_index", (q) =>
+          q.eq("applicantId", applicant._id),
         )
-        .filter((q) => q.eq(q.field("applicantId"), applicant._id))
         .collect(),
       ctx.db
         .query("applicantScorecards")
-        .withIndex("by_organization", (q) =>
-          q.eq("organizationId", applicant.organizationId),
+        .withIndex("by_applicant_source_index", (q) =>
+          q.eq("applicantId", applicant._id),
         )
-        .filter((q) => q.eq(q.field("applicantId"), applicant._id))
         .collect(),
       ctx.db
         .query("applicantOfferEvents")
@@ -287,10 +283,9 @@ export async function loadEffectiveApplicant(
         .collect(),
       ctx.db
         .query("applicantCustomFieldValues")
-        .withIndex("by_organization", (q) =>
-          q.eq("organizationId", applicant.organizationId),
+        .withIndex("by_applicant_source_key", (q) =>
+          q.eq("applicantId", applicant._id),
         )
-        .filter((q) => q.eq(q.field("applicantId"), applicant._id))
         .collect(),
     ]);
   const assertChild = (child: {
@@ -397,31 +392,27 @@ export async function replaceApplicantProjection(
   const existing = await Promise.all([
     ctx.db
       .query("applicantStageEvents")
-      .withIndex("by_organization", (q) =>
-        q.eq("organizationId", applicant.organizationId),
+      .withIndex("by_applicant_source_index", (q) =>
+        q.eq("applicantId", applicant._id),
       )
-      .filter((q) => q.eq(q.field("applicantId"), applicant._id))
       .collect(),
     ctx.db
       .query("applicantNotes")
-      .withIndex("by_organization", (q) =>
-        q.eq("organizationId", applicant.organizationId),
+      .withIndex("by_applicant_source_index", (q) =>
+        q.eq("applicantId", applicant._id),
       )
-      .filter((q) => q.eq(q.field("applicantId"), applicant._id))
       .collect(),
     ctx.db
       .query("applicantInterviews")
-      .withIndex("by_organization", (q) =>
-        q.eq("organizationId", applicant.organizationId),
+      .withIndex("by_applicant_source_index", (q) =>
+        q.eq("applicantId", applicant._id),
       )
-      .filter((q) => q.eq(q.field("applicantId"), applicant._id))
       .collect(),
     ctx.db
       .query("applicantScorecards")
-      .withIndex("by_organization", (q) =>
-        q.eq("organizationId", applicant.organizationId),
+      .withIndex("by_applicant_source_index", (q) =>
+        q.eq("applicantId", applicant._id),
       )
-      .filter((q) => q.eq(q.field("applicantId"), applicant._id))
       .collect(),
   ]);
   for (const rows of existing)
@@ -544,10 +535,9 @@ export async function synchronizeEffectiveApplicant(
   if (patch.customFields !== undefined) {
     const existing = await ctx.db
       .query("applicantCustomFieldValues")
-      .withIndex("by_organization", (q) =>
-        q.eq("organizationId", applicant.organizationId),
+      .withIndex("by_applicant_source_key", (q) =>
+        q.eq("applicantId", applicant._id),
       )
-      .filter((q) => q.eq(q.field("applicantId"), applicant._id))
       .collect();
     for (const row of existing) await ctx.db.delete(row._id);
     const fields = patch.customFields as Record<string, unknown>;

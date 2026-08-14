@@ -70,6 +70,7 @@ export const CURRENT_SCHEMA_TABLES = [
   "users",
   "userOrganizations",
   "storageUploadIntents",
+  "applicantUploadIntents",
   "storageObjects",
   "storageObjectLinks",
   "notifications",
@@ -78,6 +79,7 @@ export const CURRENT_SCHEMA_TABLES = [
   "employeeLeaveBalances",
   "employeeLifecycleEvents",
   "employeeRequirements",
+  "employeeRequirementEvents",
   "employeeDeductions",
   "employeeIncentives",
   "employeeScheduleOverrides",
@@ -203,6 +205,7 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "canonical_row",
   ),
   storageUploadIntents: tablePolicy("storage", "retain", "canonical_row"),
+  applicantUploadIntents: tablePolicy("storage", "retain", "canonical_row"),
   storageObjects: tablePolicy("storage", "retain", "canonical_row"),
   storageObjectLinks: tablePolicy("storage", "retain", "normalized_target"),
   notifications: tablePolicy("notifications", "retain", "canonical_row"),
@@ -226,6 +229,11 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "employee_children",
     "retain",
     "normalized_target",
+  ),
+  employeeRequirementEvents: tablePolicy(
+    "employee_children",
+    "retain",
+    "historical_snapshot",
   ),
   employeeDeductions: tablePolicy(
     "employee_children",
@@ -418,11 +426,7 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "normalize_children",
     "canonical_embedded",
   ),
-  userPinnedConversations: tablePolicy(
-    "chat",
-    "retain",
-    "normalized_target",
-  ),
+  userPinnedConversations: tablePolicy("chat", "retain", "normalized_target"),
   invitations: tablePolicy(
     "identity_membership",
     "contract_legacy",
@@ -433,11 +437,7 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "normalize_children",
     "canonical_embedded",
   ),
-  documentAccessGrants: tablePolicy(
-    "documents",
-    "retain",
-    "normalized_target",
-  ),
+  documentAccessGrants: tablePolicy("documents", "retain", "normalized_target"),
   documentVersions: tablePolicy("documents", "retain", "historical_snapshot"),
   accountingCostItems: tablePolicy(
     "accounting",
@@ -446,11 +446,7 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
   ),
   assets: tablePolicy("assets", "normalize_children", "canonical_embedded"),
   assetCustodyEvents: tablePolicy("assets", "retain", "normalized_target"),
-  assetMaintenanceEvents: tablePolicy(
-    "assets",
-    "retain",
-    "normalized_target",
-  ),
+  assetMaintenanceEvents: tablePolicy("assets", "retain", "normalized_target"),
 } as const satisfies Record<CurrentSchemaTable, SchemaTablePolicy>;
 
 const override = (

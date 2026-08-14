@@ -85,8 +85,12 @@ export async function archiveJob(jobId: string) {
   return RecruitmentService.setJobStatus(jobId, "closed");
 }
 
+export async function archiveApplicant(applicantId: string) {
+  return RecruitmentService.archiveApplicant(applicantId);
+}
+
 export async function deleteApplicant(applicantId: string) {
-  return RecruitmentService.deleteApplicant(applicantId);
+  return archiveApplicant(applicantId);
 }
 
 export async function addApplicantScorecard(data: {

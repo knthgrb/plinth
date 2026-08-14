@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { usePaginatedQuery, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { api } from "@/convex/_generated/api";
 import { createJob } from "@/actions/recruitment";
@@ -58,16 +58,11 @@ export default function RecruitmentPage() {
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
-  const {
-    results: applicants,
-    status: applicantPageStatus,
-    loadMore: loadMoreApplicants,
-  } = usePaginatedQuery(
-    api.recruitment.getApplicants,
+  const metrics = useQuery(
+    api.recruitment.getRecruitmentMetrics,
     effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
-    { initialNumItems: 50 },
   );
   const settings = useQuery(
     api.settings.getSettings,
@@ -87,20 +82,20 @@ export default function RecruitmentPage() {
 
   const summary = useMemo(
     () =>
+      metrics ??
       summarizeRecruitmentPipeline(
         (jobs ?? []).map((job) => ({
           id: job._id,
           status: job.status,
           numberOfOpenings: job.numberOfOpenings,
         })),
-        (applicants ?? []).map((applicant) => ({
-          jobId: applicant.jobId,
-          status: applicant.status,
-          appliedDate: applicant.appliedDate,
-          pipelineStageHistory: applicant.pipelineStageHistory,
-        })),
+        [],
       ),
-    [applicants, jobs],
+    [jobs, metrics],
+  );
+  const metricsByJob = useMemo(
+    () => new Map(metrics?.byJob.map((item) => [item.jobId, item]) ?? []),
+    [metrics?.byJob],
   );
 
   const filteredJobs = useMemo(() => {
@@ -463,12 +458,9 @@ export default function RecruitmentPage() {
             ))
           ) : filteredJobs.length > 0 ? (
             filteredJobs.map((job) => {
-              const jobApplicants = (applicants ?? []).filter(
-                (applicant) => applicant.jobId === job._id,
-              );
-              const hired = jobApplicants.filter(
-                (applicant) => applicant.status === "hired",
-              ).length;
+              const jobMetrics = metricsByJob.get(job._id);
+              const applicantCount = jobMetrics?.total ?? 0;
+              const hired = jobMetrics?.hired ?? 0;
               return (
                 <Card
                   key={job._id}
@@ -497,8 +489,8 @@ export default function RecruitmentPage() {
                           {job.numberOfOpenings === 1 ? "" : "s"}
                         </p>
                         <p className="mt-1 text-xs text-[#77727F]">
-                          {jobApplicants.length} applicant
-                          {jobApplicants.length === 1 ? "" : "s"} · {hired}/
+                          {applicantCount} applicant
+                          {applicantCount === 1 ? "" : "s"} · {hired}/
                           {job.numberOfOpenings} filled
                         </p>
                       </div>
@@ -531,13 +523,6 @@ export default function RecruitmentPage() {
             </Card>
           )}
         </div>
-        {applicantPageStatus === "CanLoadMore" && (
-          <div className="flex justify-center">
-            <Button variant="outline" onClick={() => loadMoreApplicants(50)}>
-              Load more candidate metrics
-            </Button>
-          </div>
-        )}
       </div>
     </MainLayout>
   );

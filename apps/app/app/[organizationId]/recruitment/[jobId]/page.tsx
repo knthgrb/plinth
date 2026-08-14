@@ -8,8 +8,8 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import {
   addApplicantNote,
+  archiveApplicant,
   createApplicant,
-  deleteApplicant,
   deleteJob,
   setJobStatus,
 } from "@/actions/recruitment";
@@ -172,6 +172,10 @@ export default function JobDetailPage({
       : "skip",
     { initialNumItems: 50 },
   );
+  const recruitmentMetrics = useQuery(
+    api.recruitment.getRecruitmentMetrics,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
   const settings = useQuery(
     api.settings.getSettings,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
@@ -233,27 +237,38 @@ export default function JobDetailPage({
     () => (members ?? []).filter((member) => member !== null),
     [members],
   );
-  const summary = useMemo(
-    () =>
-      summarizeRecruitmentPipeline(
-        job
-          ? [
-              {
-                id: job._id,
-                status: job.status,
-                numberOfOpenings: job.numberOfOpenings,
-              },
-            ]
-          : [],
-        (applicants ?? []).map((applicant) => ({
-          jobId: applicant.jobId,
-          status: applicant.status,
-          appliedDate: applicant.appliedDate,
-          pipelineStageHistory: applicant.pipelineStageHistory,
-        })),
-      ),
-    [applicants, job],
-  );
+  const summary = useMemo(() => {
+    const loadedSummary = summarizeRecruitmentPipeline(
+      job
+        ? [
+            {
+              id: job._id,
+              status: job.status,
+              numberOfOpenings: job.numberOfOpenings,
+            },
+          ]
+        : [],
+      (applicants ?? []).map((applicant) => ({
+        jobId: applicant.jobId,
+        status: applicant.status,
+        appliedDate: applicant.appliedDate,
+        pipelineStageHistory: applicant.pipelineStageHistory,
+      })),
+    );
+    const jobMetrics = recruitmentMetrics?.byJob.find(
+      (candidate) => candidate.jobId === job?._id,
+    );
+    return jobMetrics
+      ? {
+          ...loadedSummary,
+          totalApplicants: jobMetrics.total,
+          activeCandidates: jobMetrics.activeCandidates,
+          awaitingDecision: jobMetrics.awaitingDecision,
+          staleCandidates: jobMetrics.staleCandidates,
+          stageCounts: jobMetrics.stageCounts,
+        }
+      : loadedSummary;
+  }, [applicants, job, recruitmentMetrics?.byJob]);
 
   useEffect(() => {
     if (!currentOrganizationId || !selectedApplicant?.resume) {
@@ -378,7 +393,7 @@ export default function JobDetailPage({
   async function removeApplicant() {
     if (!selectedApplicant) return;
     try {
-      await deleteApplicant(selectedApplicant._id);
+      await archiveApplicant(selectedApplicant._id);
       setIsArchiveApplicantOpen(false);
       setSelectedApplicantId(null);
       toast({ title: "Applicant archived" });

@@ -49,6 +49,69 @@ import {
 import { requireRegisteredStorageObject } from "./files";
 
 type DefaultRequirement = RequirementConfigurationInput;
+type RequirementEventType = Doc<"employeeRequirementEvents">["type"];
+
+async function appendRequirementEvent(
+  ctx: MutationCtx,
+  args: {
+    requirement: Doc<"employeeRequirements">;
+    type: RequirementEventType;
+    actorUserId: Id<"users">;
+    occurredAt: number;
+    file?: Id<"_storage">;
+    notes?: string;
+    expiryDate?: number;
+  },
+): Promise<void> {
+  await ctx.db.insert("employeeRequirementEvents", {
+    organizationId: args.requirement.organizationId,
+    employeeId: args.requirement.employeeId,
+    requirementId: args.requirement._id,
+    type: args.type,
+    actorUserId: args.actorUserId,
+    occurredAt: args.occurredAt,
+    file: args.file,
+    notes: args.notes,
+    expiryDate: args.expiryDate,
+    migrationVersion: 1,
+    createdAt: Date.now(),
+  });
+}
+
+async function ensureRequirementAuditBaseline(
+  ctx: MutationCtx,
+  requirement: Doc<"employeeRequirements">,
+  fallbackActorUserId: Id<"users">,
+): Promise<void> {
+  if (!requirement.file) return;
+  const existing = await ctx.db
+    .query("employeeRequirementEvents")
+    .withIndex("by_requirement_occurred_at", (query) =>
+      query.eq("requirementId", requirement._id),
+    )
+    .first();
+  if (existing) return;
+  const type: RequirementEventType = requirement.rejectedAt
+    ? "rejected"
+    : requirement.status === "verified"
+      ? "verified"
+      : "submitted";
+  await appendRequirementEvent(ctx, {
+    requirement,
+    type,
+    actorUserId:
+      requirement.rejectedBy ?? requirement.verifiedBy ?? fallbackActorUserId,
+    occurredAt:
+      requirement.rejectedAt ??
+      requirement.verifiedAt ??
+      requirement.submittedDate ??
+      requirement.updatedAt,
+    file: requirement.file,
+    notes:
+      requirement.rejectionReason ?? requirement.verificationNotes ?? undefined,
+    expiryDate: requirement.expiryDate,
+  });
+}
 
 const customFieldPrimitive = v.union(
   v.string(),
@@ -1558,6 +1621,32 @@ export const updateLeaveCredits = mutation({
   },
 });
 
+export const getEmployeeRequirementEvents = query({
+  args: { employeeId: v.id("employees") },
+  handler: async (ctx, args) => {
+    const employee = await ctx.db.get(args.employeeId);
+    if (!employee) throw new Error("Employee not found");
+    const userRecord = await checkAuth(ctx, employee.organizationId);
+    if (
+      userRecord.role === "employee" &&
+      userRecord.employeeId !== employee._id
+    ) {
+      throw new Error("Not authorized");
+    }
+    const events = await ctx.db
+      .query("employeeRequirementEvents")
+      .withIndex("by_employee", (query) => query.eq("employeeId", employee._id))
+      .order("desc")
+      .take(200);
+    if (
+      events.some((event) => event.organizationId !== employee.organizationId)
+    ) {
+      throw new Error("Requirement audit tenant mismatch");
+    }
+    return events;
+  },
+});
+
 // Add requirement document (custom requirement for specific employee)
 export const addRequirement = mutation({
   args: {
@@ -1584,23 +1673,25 @@ export const addRequirement = mutation({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
+    await checkAuth(ctx, employee.organizationId, "hr");
 
-    if (args.requirement.file) {
-      await requireRegisteredStorageObject(ctx, {
-        organizationId: employee.organizationId,
-        storageId: args.requirement.file,
-        ownerUserId: userRecord._id,
-        purpose: "employee_requirement",
-      });
+    if (
+      args.requirement.status !== "pending" ||
+      args.requirement.file !== undefined ||
+      args.requirement.submittedDate !== undefined ||
+      args.requirement.expiryDate !== undefined
+    ) {
+      throw new Error(
+        "Create custom requirements as pending, then submit evidence through review",
+      );
     }
-
     const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
     const normalizedType = args.requirement.type.trim().toLocaleLowerCase();
     if (!normalizedType) throw new Error("Requirement type is required");
     if (
       requirements.some(
         (requirement) =>
+          requirement.archivedAt === undefined &&
           requirement.type.trim().toLocaleLowerCase() === normalizedType,
       )
     ) {
@@ -1609,8 +1700,13 @@ export const addRequirement = mutation({
     const updatedRequirements = [
       ...requirements,
       {
-        ...args.requirement,
         type: args.requirement.type.trim(),
+        status: "pending" as const,
+        isRequired: args.requirement.isRequired,
+        appliesToDepartments: args.requirement.appliesToDepartments,
+        appliesToEmploymentTypes: args.requirement.appliesToEmploymentTypes,
+        reminderDaysBeforeDue: args.requirement.reminderDaysBeforeDue,
+        requiresVerification: args.requirement.requiresVerification,
         isCustom: true,
       },
     ];
@@ -1633,7 +1729,7 @@ export const removeRequirement = mutation({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    await checkAuth(ctx, employee.organizationId, "hr");
+    const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
 
     const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
 
@@ -1641,24 +1737,37 @@ export const removeRequirement = mutation({
       (candidate) => candidate.requirementId === args.requirementId,
     );
     if (!requirement) throw new Error("Requirement not found");
-    if (requirement.isCustom) {
-      const updatedRequirements = requirements.filter(
-        (candidate) => candidate.requirementId !== args.requirementId,
-      );
-      const now = Date.now();
-      await replaceEmployeeRequirements(
-        ctx,
-        employee,
-        updatedRequirements,
-        now,
-      );
-      await ctx.db.patch(args.employeeId, { updatedAt: now });
-      return { success: true };
-    } else {
+    if (!requirement.isCustom) {
       throw new Error(
         "Cannot remove default requirements. Disable them in organization settings instead.",
       );
     }
+    if (requirement.archivedAt !== undefined) return { success: true };
+    const row = await ctx.db.get(args.requirementId);
+    if (
+      !row ||
+      row.employeeId !== employee._id ||
+      row.organizationId !== employee.organizationId
+    ) {
+      throw new Error("Requirement not found");
+    }
+    const now = Date.now();
+    await ensureRequirementAuditBaseline(ctx, row, userRecord._id);
+    await appendRequirementEvent(ctx, {
+      requirement: row,
+      type: "archived",
+      actorUserId: userRecord._id,
+      occurredAt: now,
+      file: row.file,
+      expiryDate: row.expiryDate,
+    });
+    await ctx.db.patch(args.requirementId, {
+      archivedAt: now,
+      archivedBy: userRecord._id,
+      updatedAt: now,
+    });
+    await ctx.db.patch(args.employeeId, { updatedAt: now });
+    return { success: true, archived: true };
   },
 });
 
@@ -1687,6 +1796,18 @@ export const updateRequirementStatus = mutation({
       (candidate) => candidate.requirementId === args.requirementId,
     );
     if (!requirement) throw new Error("Requirement not found");
+    if (requirement.archivedAt !== undefined) {
+      throw new Error("Archived requirements cannot be reviewed");
+    }
+    const row = await ctx.db.get(args.requirementId);
+    if (
+      !row ||
+      row.employeeId !== employee._id ||
+      row.organizationId !== employee.organizationId
+    ) {
+      throw new Error("Requirement not found");
+    }
+    await ensureRequirementAuditBaseline(ctx, row, userRecord._id);
     if (
       (args.status === "submitted" || args.status === "verified") &&
       !requirement.file
@@ -1723,6 +1844,28 @@ export const updateRequirementStatus = mutation({
     }
 
     await replaceEmployeeRequirements(ctx, employee, requirements, now);
+    const eventType: RequirementEventType | undefined =
+      args.status === "verified"
+        ? "verified"
+        : args.status === "submitted"
+          ? "submitted"
+          : requirement.file
+            ? "rejected"
+            : undefined;
+    if (eventType) {
+      await appendRequirementEvent(ctx, {
+        requirement: row,
+        type: eventType,
+        actorUserId: userRecord._id,
+        occurredAt: now,
+        file: requirement.file,
+        notes:
+          eventType === "rejected"
+            ? requirement.rejectionReason
+            : requirement.verificationNotes,
+        expiryDate: requirement.expiryDate,
+      });
+    }
     await ctx.db.patch(args.employeeId, { updatedAt: now });
 
     return { success: true };
@@ -1762,6 +1905,18 @@ export const updateRequirementFile = mutation({
       (candidate) => candidate.requirementId === args.requirementId,
     );
     if (!requirement) throw new Error("Requirement not found");
+    if (requirement.archivedAt !== undefined) {
+      throw new Error("Archived requirements cannot accept evidence");
+    }
+    const row = await ctx.db.get(args.requirementId);
+    if (
+      !row ||
+      row.employeeId !== employee._id ||
+      row.organizationId !== employee.organizationId
+    ) {
+      throw new Error("Requirement not found");
+    }
+    await ensureRequirementAuditBaseline(ctx, row, userRecord._id);
     const submittedAt = Date.now();
     const definitions = await getEffectiveRequirementDefinitions(
       ctx,
@@ -1790,6 +1945,24 @@ export const updateRequirementFile = mutation({
 
     const now = Date.now();
     await replaceEmployeeRequirements(ctx, employee, requirements, now);
+    await appendRequirementEvent(ctx, {
+      requirement: row,
+      type: "submitted",
+      actorUserId: userRecord._id,
+      occurredAt: submittedAt,
+      file: args.file,
+      expiryDate: requirement.expiryDate,
+    });
+    if (requirement.status === "verified") {
+      await appendRequirementEvent(ctx, {
+        requirement: row,
+        type: "verified",
+        actorUserId: userRecord._id,
+        occurredAt: submittedAt,
+        file: args.file,
+        expiryDate: requirement.expiryDate,
+      });
+    }
     await ctx.db.patch(args.employeeId, { updatedAt: now });
 
     return { success: true };
