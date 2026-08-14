@@ -374,19 +374,23 @@ export const getApplicants = query({
             throw new Error("Invalid job");
           }
         }
+        const paginationOpts = {
+          ...args.paginationOpts,
+          numItems: Math.max(1, Math.min(args.paginationOpts.numItems, 50)),
+        };
         const result = args.jobId
           ? await ctx.db
               .query("applicants")
               .withIndex("by_job", (query) => query.eq("jobId", args.jobId!))
               .order("desc")
-              .paginate(args.paginationOpts)
+              .paginate(paginationOpts)
           : await ctx.db
               .query("applicants")
               .withIndex("by_organization", (query) =>
                 query.eq("organizationId", args.organizationId),
               )
               .order("desc")
-              .paginate(args.paginationOpts);
+              .paginate(paginationOpts);
         const visibleApplicants = result.page.filter(
           (applicant) =>
             applicant.organizationId === args.organizationId &&

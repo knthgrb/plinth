@@ -67,7 +67,7 @@ export default function RecruitmentPage() {
     effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
-    { initialNumItems: 200 },
+    { initialNumItems: 50 },
   );
   const settings = useQuery(
     api.settings.getSettings,
@@ -533,7 +533,7 @@ export default function RecruitmentPage() {
         </div>
         {applicantPageStatus === "CanLoadMore" && (
           <div className="flex justify-center">
-            <Button variant="outline" onClick={() => loadMoreApplicants(200)}>
+            <Button variant="outline" onClick={() => loadMoreApplicants(50)}>
               Load more candidate metrics
             </Button>
           </div>

@@ -225,6 +225,52 @@ describe("requirements integrity", () => {
     });
   });
 
+  it("continues policy reconciliation in bounded scheduled batches", async () => {
+    vi.useFakeTimers();
+    const { t, hr, organizationId, employeeId } = await setup();
+    await t.run(async (ctx) => {
+      const employee = await ctx.db.get(employeeId);
+      if (!employee) throw new Error("Missing employee fixture");
+      const { _id, _creationTime, ...employeeValue } = employee;
+      void _id;
+      void _creationTime;
+      for (let index = 0; index < 55; index += 1) {
+        await ctx.db.insert("employees", {
+          ...employeeValue,
+          personalInfo: {
+            ...employee.personalInfo,
+            email: `batch-${index}@example.com`,
+          },
+          employment: {
+            ...employee.employment,
+            employeeId: `BATCH-${index}`,
+          },
+        });
+      }
+    });
+
+    const result = await hr.mutation(
+      api.organizations.updateDefaultRequirements,
+      {
+        organizationId,
+        requirements: [{ type: "Government ID", isRequired: true }],
+      },
+    );
+    expect(result.processed).toBe(50);
+    expect(result.isDone).toBe(false);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const requirements = await t.run((ctx) =>
+      ctx.db
+        .query("employeeRequirements")
+        .withIndex("by_organization", (query) =>
+          query.eq("organizationId", organizationId),
+        )
+        .collect(),
+    );
+    expect(requirements).toHaveLength(56);
+  });
+
   it("rejects requirement identifiers and evidence from another tenant", async () => {
     const { t, hr, organizationId, otherOrganizationId, hrUserId, employeeId } =
       await setup();
@@ -390,6 +436,29 @@ describe("recruitment integrity", () => {
         approved: true,
       }),
     ).rejects.toThrow("another owner or admin");
+  });
+
+  it("caps applicant hydration pages", async () => {
+    const { t, hr, organizationId, applicantId } = await setup();
+    await t.run(async (ctx) => {
+      const applicant = await ctx.db.get(applicantId);
+      if (!applicant) throw new Error("Missing applicant fixture");
+      const { _id, _creationTime, ...applicantValue } = applicant;
+      void _id;
+      void _creationTime;
+      for (let index = 0; index < 55; index += 1) {
+        await ctx.db.insert("applicants", {
+          ...applicantValue,
+          email: `candidate-${index}@example.com`,
+        });
+      }
+    });
+    const page = await hr.query(api.recruitment.getApplicants, {
+      organizationId,
+      paginationOpts: { cursor: null, numItems: 500 },
+    });
+    expect(page.page).toHaveLength(50);
+    expect(page.isDone).toBe(false);
   });
 
   it("archives applicants without deleting their audit records", async () => {

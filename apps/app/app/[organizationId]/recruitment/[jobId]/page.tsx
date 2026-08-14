@@ -170,7 +170,7 @@ export default function JobDetailPage({
     currentOrganizationId
       ? { organizationId: currentOrganizationId, jobId: jobId as Id<"jobs"> }
       : "skip",
-    { initialNumItems: 100 },
+    { initialNumItems: 50 },
   );
   const settings = useQuery(
     api.settings.getSettings,
@@ -737,7 +737,7 @@ export default function JobDetailPage({
               <div className="mt-4 flex justify-center">
                 <Button
                   variant="outline"
-                  onClick={() => loadMoreApplicants(100)}
+                  onClick={() => loadMoreApplicants(50)}
                 >
                   Load more applicants
                 </Button>
