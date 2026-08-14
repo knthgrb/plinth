@@ -92,7 +92,6 @@ export async function deleteApplicant(applicantId: string) {
 export async function addApplicantScorecard(data: {
   applicantId: string;
   criteria: { label: string; score: number; notes?: string }[];
-  overallScore: number;
   recommendation?: string;
 }) {
   return RecruitmentService.addApplicantScorecard(data);

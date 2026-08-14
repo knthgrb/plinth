@@ -29,6 +29,7 @@ import {
 import {
   errorMessage,
   getApplicableEmployeeRequirements,
+  getHistoricalEmployeeRequirements,
   type RequirementsEmployee,
 } from "@/lib/requirements/ui-types";
 import {
@@ -84,6 +85,10 @@ export function EmployeeRequirementsModal({
     Record<number, string>
   >({});
   const requirements = getApplicableEmployeeRequirements(employee, policies);
+  const historicalRequirements = getHistoricalEmployeeRequirements(
+    employee,
+    policies,
+  );
   const employeeName =
     `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`.trim();
 
@@ -107,7 +112,7 @@ export function EmployeeRequirementsModal({
     }
   }
 
-  function uploadEvidence(index: number, file: File) {
+  function uploadEvidence(index: number, requirementId: string, file: File) {
     if (file.size > 10 * 1024 * 1024) {
       toast({
         title: "Files must be 10 MB or smaller",
@@ -125,7 +130,7 @@ export function EmployeeRequirementsModal({
         });
         await updateRequirementFile({
           employeeId: employee._id,
-          requirementIndex: index,
+          requirementId,
           file: storageId,
         });
       },
@@ -133,13 +138,13 @@ export function EmployeeRequirementsModal({
     );
   }
 
-  function verify(index: number) {
+  function verify(index: number, requirementId: string) {
     return perform(
       index,
       () =>
         updateRequirementStatus({
           employeeId: employee._id,
-          requirementIndex: index,
+          requirementId,
           status: "verified",
           verificationNotes: reviewNotes[index]?.trim() || undefined,
         }),
@@ -147,13 +152,13 @@ export function EmployeeRequirementsModal({
     );
   }
 
-  function reject(index: number) {
+  function reject(index: number, requirementId: string) {
     return perform(
       index,
       () =>
         updateRequirementStatus({
           employeeId: employee._id,
-          requirementIndex: index,
+          requirementId,
           status: "pending",
           rejectionReason: rejectionReasons[index],
         }),
@@ -195,7 +200,7 @@ export function EmployeeRequirementsModal({
               const derived = deriveRequirementState(requirement);
               return (
                 <section
-                  key={`${requirement.type}-${index}`}
+                  key={requirement.requirementId}
                   className="rounded-xl border border-[#E7E5F4] p-4"
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -264,7 +269,7 @@ export function EmployeeRequirementsModal({
                             () =>
                               removeRequirement({
                                 employeeId: employee._id,
-                                requirementIndex: index,
+                                requirementId: requirement.requirementId,
                               }),
                             "Custom requirement removed",
                           )
@@ -283,7 +288,12 @@ export function EmployeeRequirementsModal({
                         disabled={busyIndex !== null}
                         onChange={(event) => {
                           const file = event.target.files?.[0];
-                          if (file) uploadEvidence(index, file);
+                          if (file)
+                            uploadEvidence(
+                              index,
+                              requirement.requirementId,
+                              file,
+                            );
                           event.target.value = "";
                         }}
                       />
@@ -331,7 +341,7 @@ export function EmployeeRequirementsModal({
                         size="sm"
                         className="w-fit bg-emerald-600 hover:bg-emerald-700"
                         disabled={busyIndex !== null}
-                        onClick={() => verify(index)}
+                        onClick={() => verify(index, requirement.requirementId)}
                       >
                         <CheckCircle2 className="mr-2 h-4 w-4" /> Verify
                       </Button>
@@ -357,7 +367,7 @@ export function EmployeeRequirementsModal({
                         disabled={
                           busyIndex !== null || !rejectionReasons[index]?.trim()
                         }
-                        onClick={() => reject(index)}
+                        onClick={() => reject(index, requirement.requirementId)}
                       >
                         <XCircle className="mr-2 h-4 w-4" /> Return submission
                       </Button>
@@ -374,6 +384,47 @@ export function EmployeeRequirementsModal({
             })
           )}
         </div>
+        {historicalRequirements.length > 0 && (
+          <section className="space-y-3 border-t pt-5">
+            <div>
+              <h3 className="text-sm font-semibold">Historical evidence</h3>
+              <p className="text-xs text-[#77727F]">
+                Retained from policies that no longer apply. These records do
+                not affect current compliance.
+              </p>
+            </div>
+            {historicalRequirements.map(({ requirement }) => (
+              <div
+                key={requirement.requirementId}
+                className="flex items-center justify-between gap-3 rounded-xl border bg-[#FAFAFC] p-4"
+              >
+                <div>
+                  <p className="text-sm font-medium">{requirement.type}</p>
+                  <p className="text-xs capitalize text-[#77727F]">
+                    {requirement.status.replace("_", " ")}
+                    {requirement.submittedDate
+                      ? ` · ${format(new Date(requirement.submittedDate), "MMM d, yyyy")}`
+                      : ""}
+                  </p>
+                </div>
+                {requirement.file && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      onPreviewFile(
+                        requirement.file as string,
+                        requirement.type,
+                      )
+                    }
+                  >
+                    <Eye className="mr-2 h-4 w-4" /> View evidence
+                  </Button>
+                )}
+              </div>
+            ))}
+          </section>
+        )}
       </DialogContent>
     </Dialog>
   );

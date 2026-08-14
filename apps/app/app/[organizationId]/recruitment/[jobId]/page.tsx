@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "convex/react";
+import { usePaginatedQuery, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { api } from "@/convex/_generated/api";
@@ -161,11 +161,16 @@ export default function JobDetailPage({
     api.recruitment.getJobs,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
-  const applicants = useQuery(
+  const {
+    results: applicants,
+    status: applicantPageStatus,
+    loadMore: loadMoreApplicants,
+  } = usePaginatedQuery(
     api.recruitment.getApplicants,
     currentOrganizationId
       ? { organizationId: currentOrganizationId, jobId: jobId as Id<"jobs"> }
       : "skip",
+    { initialNumItems: 100 },
   );
   const settings = useQuery(
     api.settings.getSettings,
@@ -189,6 +194,7 @@ export default function JobDetailPage({
   const [isColumnModalOpen, setIsColumnModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isArchiveApplicantOpen, setIsArchiveApplicantOpen] = useState(false);
   const [applicantForm, setApplicantForm] = useState(emptyApplicantForm);
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [resumeUrl, setResumeUrl] = useState<string | null>(null);
@@ -373,14 +379,15 @@ export default function JobDetailPage({
     if (!selectedApplicant) return;
     try {
       await deleteApplicant(selectedApplicant._id);
+      setIsArchiveApplicantOpen(false);
       setSelectedApplicantId(null);
-      toast({ title: "Applicant removed" });
+      toast({ title: "Applicant archived" });
     } catch (error: unknown) {
       toast({
-        title: "Unable to remove applicant",
+        title: "Unable to archive applicant",
         description: errorMessage(
           error,
-          "Converted employees cannot be removed.",
+          "Converted employees cannot be archived.",
         ),
         variant: "destructive",
       });
@@ -536,7 +543,7 @@ export default function JobDetailPage({
                 </Button>
                 <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
                   <DialogTrigger asChild>
-                    <Button size="sm">
+                    <Button size="sm" disabled={job.status !== "open"}>
                       <Plus className="mr-2 h-4 w-4" /> Add applicant
                     </Button>
                   </DialogTrigger>
@@ -726,6 +733,16 @@ export default function JobDetailPage({
               columns={tableColumns}
               onRowClick={(applicant) => setSelectedApplicantId(applicant._id)}
             />
+            {applicantPageStatus === "CanLoadMore" && (
+              <div className="mt-4 flex justify-center">
+                <Button
+                  variant="outline"
+                  onClick={() => loadMoreApplicants(100)}
+                >
+                  Load more applicants
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
         <ColumnManagementModal
@@ -794,6 +811,7 @@ export default function JobDetailPage({
                 canApproveOffer={
                   currentUser?.role === "owner" || currentUser?.role === "admin"
                 }
+                currentUserId={currentUser?._id}
               />
               <section>
                 <h3 className="text-sm font-semibold">Notes</h3>
@@ -834,14 +852,40 @@ export default function JobDetailPage({
               <Button
                 variant="outline"
                 className="w-full text-red-600"
-                onClick={removeApplicant}
+                onClick={() => setIsArchiveApplicantOpen(true)}
               >
-                <Trash2 className="mr-2 h-4 w-4" /> Remove applicant
+                <Trash2 className="mr-2 h-4 w-4" /> Archive applicant
               </Button>
             </div>
           </SheetContent>
         )}
       </Sheet>
+      <Dialog
+        open={isArchiveApplicantOpen}
+        onOpenChange={setIsArchiveApplicantOpen}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Archive applicant?</DialogTitle>
+            <DialogDescription>
+              The candidate will leave the active pipeline while their notes,
+              interviews, scorecards, stages, and offer decisions remain in the
+              audit record.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsArchiveApplicantOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={removeApplicant}>
+              Archive applicant
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </MainLayout>
   );
 }

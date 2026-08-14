@@ -40,23 +40,13 @@ import {
 } from "@/lib/requirements/workflow";
 import { createEmployeeLinkedInvitation } from "./invitationCreation";
 import {
+  assertHireDateIsNotFuture,
   cancelPendingEmployeeInvitations,
   ensureEmployeeLifecycleBaseline,
   recordEmployeeLifecycleEvent,
+  toManilaDayStartUtcMs,
 } from "./employeeLifecycle";
-
-function assertHireDateIsNotFuture(hireDate: number) {
-  const today = new Date();
-  const todayStart = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate(),
-  ).getTime();
-
-  if (hireDate > todayStart) {
-    throw new Error("Hire date cannot be in the future");
-  }
-}
+import { requireRegisteredStorageObject } from "./files";
 
 type DefaultRequirement = RequirementConfigurationInput;
 
@@ -105,21 +95,6 @@ function toEmployeeDirectoryEntry(employee: Doc<"employees">) {
       status: employee.employment.status,
     },
   };
-}
-
-const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
-
-function toManilaDayStartUtcMs(ts: number): number {
-  const d = new Date(ts + MANILA_OFFSET_MS);
-  return Date.UTC(
-    d.getUTCFullYear(),
-    d.getUTCMonth(),
-    d.getUTCDate(),
-    0,
-    0,
-    0,
-    0,
-  );
 }
 
 function getErrorMessage(error: unknown): string {
@@ -1609,7 +1584,16 @@ export const addRequirement = mutation({
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
 
-    await checkAuth(ctx, employee.organizationId, "hr");
+    const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
+
+    if (args.requirement.file) {
+      await requireRegisteredStorageObject(ctx, {
+        organizationId: employee.organizationId,
+        storageId: args.requirement.file,
+        ownerUserId: userRecord._id,
+        purpose: "employee_requirement",
+      });
+    }
 
     const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
     const normalizedType = args.requirement.type.trim().toLocaleLowerCase();
@@ -1622,14 +1606,17 @@ export const addRequirement = mutation({
     ) {
       throw new Error("This employee already has that requirement");
     }
-    requirements.push({
-      ...args.requirement,
-      type: args.requirement.type.trim(),
-      isCustom: true, // Mark as custom requirement
-    });
+    const updatedRequirements = [
+      ...requirements,
+      {
+        ...args.requirement,
+        type: args.requirement.type.trim(),
+        isCustom: true,
+      },
+    ];
 
     const now = Date.now();
-    await replaceEmployeeRequirements(ctx, employee, requirements, now);
+    await replaceEmployeeRequirements(ctx, employee, updatedRequirements, now);
     await ctx.db.patch(args.employeeId, { updatedAt: now });
 
     return { success: true };
@@ -1640,7 +1627,7 @@ export const addRequirement = mutation({
 export const removeRequirement = mutation({
   args: {
     employeeId: v.id("employees"),
-    requirementIndex: v.number(),
+    requirementId: v.id("employeeRequirements"),
   },
   handler: async (ctx, args) => {
     const employee = await ctx.db.get(args.employeeId);
@@ -1650,12 +1637,21 @@ export const removeRequirement = mutation({
 
     const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
 
-    const requirement = requirements[args.requirementIndex];
+    const requirement = requirements.find(
+      (candidate) => candidate.requirementId === args.requirementId,
+    );
     if (!requirement) throw new Error("Requirement not found");
     if (requirement.isCustom) {
-      requirements.splice(args.requirementIndex, 1);
+      const updatedRequirements = requirements.filter(
+        (candidate) => candidate.requirementId !== args.requirementId,
+      );
       const now = Date.now();
-      await replaceEmployeeRequirements(ctx, employee, requirements, now);
+      await replaceEmployeeRequirements(
+        ctx,
+        employee,
+        updatedRequirements,
+        now,
+      );
       await ctx.db.patch(args.employeeId, { updatedAt: now });
       return { success: true };
     } else {
@@ -1670,7 +1666,7 @@ export const removeRequirement = mutation({
 export const updateRequirementStatus = mutation({
   args: {
     employeeId: v.id("employees"),
-    requirementIndex: v.number(),
+    requirementId: v.id("employeeRequirements"),
     status: v.union(
       v.literal("pending"),
       v.literal("submitted"),
@@ -1687,7 +1683,9 @@ export const updateRequirementStatus = mutation({
 
     const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
     const now = Date.now();
-    const requirement = requirements[args.requirementIndex];
+    const requirement = requirements.find(
+      (candidate) => candidate.requirementId === args.requirementId,
+    );
     if (!requirement) throw new Error("Requirement not found");
     if (
       (args.status === "submitted" || args.status === "verified") &&
@@ -1731,54 +1729,11 @@ export const updateRequirementStatus = mutation({
   },
 });
 
-// Set all requirements for an employee to complete (verified) or incomplete (pending)
-export const setEmployeeRequirementsComplete = mutation({
-  args: {
-    employeeId: v.id("employees"),
-    complete: v.boolean(),
-  },
-  handler: async (ctx, args) => {
-    const employee = await ctx.db.get(args.employeeId);
-    if (!employee) throw new Error("Employee not found");
-
-    const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
-
-    const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
-    const newStatus: "pending" | "verified" = args.complete
-      ? "verified"
-      : "pending";
-    const now = Date.now();
-    if (
-      args.complete &&
-      requirements.some(
-        (requirement) => requirement.isRequired !== false && !requirement.file,
-      )
-    ) {
-      throw new Error("Every required item needs evidence before completion");
-    }
-    const updated = requirements.map((r) => ({
-      ...r,
-      status: newStatus,
-      verifiedAt: args.complete ? now : undefined,
-      verifiedBy: args.complete ? userRecord._id : undefined,
-      verificationNotes: args.complete ? r.verificationNotes : undefined,
-      rejectedAt: args.complete ? undefined : r.rejectedAt,
-      rejectedBy: args.complete ? undefined : r.rejectedBy,
-      rejectionReason: args.complete ? undefined : r.rejectionReason,
-    }));
-
-    await replaceEmployeeRequirements(ctx, employee, updated, now);
-    await ctx.db.patch(args.employeeId, { updatedAt: now });
-
-    return { success: true };
-  },
-});
-
 // Update requirement file (can be called by employee or HR)
 export const updateRequirementFile = mutation({
   args: {
     employeeId: v.id("employees"),
-    requirementIndex: v.number(),
+    requirementId: v.id("employeeRequirements"),
     file: v.id("_storage"),
   },
   handler: async (ctx, args) => {
@@ -1795,8 +1750,17 @@ export const updateRequirementFile = mutation({
       throw new Error("Not authorized");
     }
 
+    await requireRegisteredStorageObject(ctx, {
+      organizationId: employee.organizationId,
+      storageId: args.file,
+      ownerUserId: userRecord._id,
+      purpose: "employee_requirement",
+    });
+
     const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
-    const requirement = requirements[args.requirementIndex];
+    const requirement = requirements.find(
+      (candidate) => candidate.requirementId === args.requirementId,
+    );
     if (!requirement) throw new Error("Requirement not found");
     const submittedAt = Date.now();
     const definitions = await getEffectiveRequirementDefinitions(
@@ -1812,7 +1776,7 @@ export const updateRequirementFile = mutation({
     requirement.submittedDate = submittedAt;
     requirement.expiryDate = definition
       ? calculateSubmissionExpiry(definition, submittedAt)
-      : requirement.expiryDate;
+      : undefined;
     requirement.status =
       requirement.requiresVerification === false ? "verified" : "submitted";
     requirement.verifiedAt =

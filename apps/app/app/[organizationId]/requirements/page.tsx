@@ -296,6 +296,7 @@ export default function RequirementsPage() {
   async function uploadEmployeeEvidence(
     employee: RequirementsEmployee,
     index: number,
+    requirementId: string,
     file: File,
   ) {
     if (!effectiveOrganizationId) return;
@@ -315,7 +316,7 @@ export default function RequirementsPage() {
       });
       await updateRequirementFile({
         employeeId: employee._id,
-        requirementIndex: index,
+        requirementId,
         file: storageId,
       });
       toast({
@@ -463,6 +464,7 @@ export default function RequirementsPage() {
                                   uploadEmployeeEvidence(
                                     currentEmployee,
                                     index,
+                                    requirement.requirementId,
                                     file,
                                   );
                                 event.target.value = "";

@@ -34,7 +34,12 @@ export type EmployeeRequirement = Omit<
   | "migrationVersion"
   | "createdAt"
   | "updatedAt"
->;
+> & {
+  requirementId?: Id<"employeeRequirements">;
+};
+export type StoredEmployeeRequirement = EmployeeRequirement & {
+  requirementId: Id<"employeeRequirements">;
+};
 export type EmployeeScheduleOverride = Pick<
   Doc<"employeeScheduleOverrides">,
   "date" | "in" | "out" | "reason"
@@ -58,7 +63,7 @@ type CustomFields = Record<string, unknown>;
 export type EffectiveEmployee = Doc<"employees"> & {
   deductions: EmployeeDeduction[];
   incentives: EmployeeIncentive[];
-  requirements: EmployeeRequirement[];
+  requirements: StoredEmployeeRequirement[];
   leaveCredits?: EmployeeLeaveCredits;
   customFields?: CustomFields;
   compensation: Doc<"employees">["compensation"] & {
@@ -148,7 +153,7 @@ export async function loadEffectiveEmployeeIncentives(
 export async function loadEffectiveEmployeeRequirements(
   ctx: DatabaseContext,
   employee: Doc<"employees">,
-): Promise<EmployeeRequirement[]> {
+): Promise<StoredEmployeeRequirement[]> {
   const rows = await ctx.db
     .query("employeeRequirements")
     .withIndex("by_organization", (q) =>
@@ -186,7 +191,7 @@ export async function loadEffectiveEmployeeRequirements(
       void migrationVersion;
       void createdAt;
       void updatedAt;
-      return requirement;
+      return { ...requirement, requirementId: _id };
     });
 }
 
@@ -229,12 +234,14 @@ export async function loadEmployeeScheduleOverridesById(
     .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
     .filter((q) => q.eq(q.field("employeeId"), employeeId))
     .collect();
-  return rows.sort((a, b) => a.date - b.date).map((row) => ({
-    date: row.date,
-    in: row.in,
-    out: row.out,
-    reason: row.reason,
-  }));
+  return rows
+    .sort((a, b) => a.date - b.date)
+    .map((row) => ({
+      date: row.date,
+      in: row.in,
+      out: row.out,
+      reason: row.reason,
+    }));
 }
 
 export async function loadEffectiveEmployeePaymentAccount(
@@ -317,20 +324,25 @@ export async function loadEffectiveEmployeeCustomFields(
 ): Promise<CustomFields | undefined> {
   const rows = await ctx.db
     .query("employeeCustomFieldValues")
-    .withIndex("by_organization", (q) => q.eq("organizationId", employee.organizationId))
+    .withIndex("by_organization", (q) =>
+      q.eq("organizationId", employee.organizationId),
+    )
     .filter((q) => q.eq(q.field("employeeId"), employee._id))
     .collect();
   if (rows.length === 0) return undefined;
   const fields: CustomFields = {};
   for (const row of rows) {
     assertEmployeeChild(employee, row, "Employee custom field");
-    if (Object.hasOwn(fields, row.sourceKey)) throw new Error("Employee custom field is not unique");
+    if (Object.hasOwn(fields, row.sourceKey))
+      throw new Error("Employee custom field is not unique");
     fields[row.sourceKey] = JSON.parse(row.valueJson) as unknown;
   }
   return fields;
 }
 
-function customValueType(value: unknown): "string" | "number" | "boolean" | "null" | "array" | "object" {
+function customValueType(
+  value: unknown,
+): "string" | "number" | "boolean" | "null" | "array" | "object" {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
   if (typeof value === "string") return "string";
@@ -345,14 +357,51 @@ export async function replaceEmployeeCustomFields(
   fields: CustomFields,
   now: number,
 ): Promise<void> {
-  const existing = await ctx.db.query("employeeCustomFieldValues").withIndex("by_organization", (q) => q.eq("organizationId", employee.organizationId)).filter((q) => q.eq(q.field("employeeId"), employee._id)).collect();
+  const existing = await ctx.db
+    .query("employeeCustomFieldValues")
+    .withIndex("by_organization", (q) =>
+      q.eq("organizationId", employee.organizationId),
+    )
+    .filter((q) => q.eq(q.field("employeeId"), employee._id))
+    .collect();
   for (const row of existing) await ctx.db.delete(row._id);
   for (const [rawKey, value] of Object.entries(fields)) {
     const sourceKey = normalizeMigrationSourceKey(rawKey);
-    const definitions = await ctx.db.query("organizationCustomFieldDefinitions").withIndex("by_organization_entity_key", (q) => q.eq("organizationId", employee.organizationId).eq("entityType", "employee").eq("sourceKey", sourceKey)).take(2);
-    if (definitions.length > 1) throw new Error("Employee custom field definition is not unique");
-    const definitionId = definitions[0]?._id ?? await ctx.db.insert("organizationCustomFieldDefinitions", { organizationId: employee.organizationId, entityType: "employee", sourceKey, label: rawKey, valueType: "mixed", isActive: true, migrationVersion: MIGRATION_VERSION, createdAt: now, updatedAt: now });
-    await ctx.db.insert("employeeCustomFieldValues", { organizationId: employee.organizationId, employeeId: employee._id, definitionId, sourceKey, valueType: customValueType(value), valueJson: JSON.stringify(value), migrationVersion: MIGRATION_VERSION, createdAt: now, updatedAt: now });
+    const definitions = await ctx.db
+      .query("organizationCustomFieldDefinitions")
+      .withIndex("by_organization_entity_key", (q) =>
+        q
+          .eq("organizationId", employee.organizationId)
+          .eq("entityType", "employee")
+          .eq("sourceKey", sourceKey),
+      )
+      .take(2);
+    if (definitions.length > 1)
+      throw new Error("Employee custom field definition is not unique");
+    const definitionId =
+      definitions[0]?._id ??
+      (await ctx.db.insert("organizationCustomFieldDefinitions", {
+        organizationId: employee.organizationId,
+        entityType: "employee",
+        sourceKey,
+        label: rawKey,
+        valueType: "mixed",
+        isActive: true,
+        migrationVersion: MIGRATION_VERSION,
+        createdAt: now,
+        updatedAt: now,
+      }));
+    await ctx.db.insert("employeeCustomFieldValues", {
+      organizationId: employee.organizationId,
+      employeeId: employee._id,
+      definitionId,
+      sourceKey,
+      valueType: customValueType(value),
+      valueJson: JSON.stringify(value),
+      migrationVersion: MIGRATION_VERSION,
+      createdAt: now,
+      updatedAt: now,
+    });
   }
 }
 
@@ -483,21 +532,39 @@ export async function replaceEmployeeRequirements(
     )
     .filter((q) => q.eq(q.field("employeeId"), employee._id))
     .collect();
-  for (const row of existing) await ctx.db.delete(row._id);
+  const existingById = new Map(existing.map((row) => [row._id, row]));
+  const retainedIds = new Set<Id<"employeeRequirements">>();
   const sequenceByType = new Map<string, number>();
   for (const requirement of requirements) {
     const baseKey = normalizeMigrationSourceKey(requirement.type);
     const sequence = sequenceByType.get(baseKey) ?? 0;
     sequenceByType.set(baseKey, sequence + 1);
-    await ctx.db.insert("employeeRequirements", {
+    const sourceKey = `${baseKey}:${sequence}`;
+    const { requirementId, ...value } = requirement;
+    if (requirementId) {
+      const row = existingById.get(requirementId);
+      if (!row) throw new Error("Requirement does not belong to employee");
+      retainedIds.add(requirementId);
+      await ctx.db.patch(requirementId, {
+        sourceKey,
+        ...value,
+        updatedAt: now,
+      });
+      continue;
+    }
+    const insertedId = await ctx.db.insert("employeeRequirements", {
       organizationId: employee.organizationId,
       employeeId: employee._id,
-      sourceKey: `${baseKey}:${sequence}`,
-      ...requirement,
+      sourceKey,
+      ...value,
       migrationVersion: MIGRATION_VERSION,
       createdAt: now,
       updatedAt: now,
     });
+    retainedIds.add(insertedId);
+  }
+  for (const row of existing) {
+    if (!retainedIds.has(row._id)) await ctx.db.delete(row._id);
   }
 }
 
@@ -560,7 +627,10 @@ export async function replaceEmployeePaymentAccount(
     assertEmployeeChild(employee, existing[0], "Employee payment account");
     await ctx.db.patch(existing[0]._id, value);
   } else {
-    await ctx.db.insert("employeePaymentAccounts", { ...value, createdAt: now });
+    await ctx.db.insert("employeePaymentAccounts", {
+      ...value,
+      createdAt: now,
+    });
   }
 }
 
@@ -666,7 +736,10 @@ export async function upsertOrganizationLeaveSettings(
   if (existing) {
     await ctx.db.patch(existing._id, value);
   } else {
-    await ctx.db.insert("organizationLeaveSettings", { ...value, createdAt: now });
+    await ctx.db.insert("organizationLeaveSettings", {
+      ...value,
+      createdAt: now,
+    });
   }
 }
 
@@ -674,16 +747,23 @@ export async function loadEffectiveEmployee(
   ctx: DatabaseContext,
   employee: Doc<"employees">,
 ): Promise<EffectiveEmployee> {
-  const [deductions, incentives, requirements, scheduleOverrides, bankDetails, leaveCredits, customFields] =
-    await Promise.all([
-      loadEffectiveEmployeeDeductions(ctx, employee),
-      loadEffectiveEmployeeIncentives(ctx, employee),
-      loadEffectiveEmployeeRequirements(ctx, employee),
-      loadEffectiveEmployeeScheduleOverrides(ctx, employee),
-      loadEffectiveEmployeePaymentAccount(ctx, employee),
-      loadEffectiveEmployeeLeaveCredits(ctx, employee),
-      loadEffectiveEmployeeCustomFields(ctx, employee),
-    ]);
+  const [
+    deductions,
+    incentives,
+    requirements,
+    scheduleOverrides,
+    bankDetails,
+    leaveCredits,
+    customFields,
+  ] = await Promise.all([
+    loadEffectiveEmployeeDeductions(ctx, employee),
+    loadEffectiveEmployeeIncentives(ctx, employee),
+    loadEffectiveEmployeeRequirements(ctx, employee),
+    loadEffectiveEmployeeScheduleOverrides(ctx, employee),
+    loadEffectiveEmployeePaymentAccount(ctx, employee),
+    loadEffectiveEmployeeLeaveCredits(ctx, employee),
+    loadEffectiveEmployeeCustomFields(ctx, employee),
+  ]);
   return {
     ...employee,
     deductions,

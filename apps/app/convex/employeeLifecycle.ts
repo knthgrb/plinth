@@ -1,16 +1,39 @@
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 
-type LifecycleEventType =
-  | "hired"
-  | "resigned"
-  | "terminated"
-  | "rehired";
+type LifecycleEventType = "hired" | "resigned" | "terminated" | "rehired";
 
 type EmploymentSnapshot = Pick<
   Doc<"employees">["employment"],
   "position" | "department" | "employmentType"
 >;
+
+const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+export function assertHireDateIsNotFuture(hireDate: number): void {
+  const today = new Date();
+  const todayStart = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  ).getTime();
+  if (hireDate > todayStart) {
+    throw new Error("Hire date cannot be in the future");
+  }
+}
+
+export function toManilaDayStartUtcMs(timestamp: number): number {
+  const date = new Date(timestamp + MANILA_OFFSET_MS);
+  return Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+    0,
+    0,
+    0,
+    0,
+  );
+}
 
 export async function cancelPendingEmployeeInvitations(
   ctx: MutationCtx,

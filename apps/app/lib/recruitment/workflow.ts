@@ -43,6 +43,16 @@ export interface ScorecardCriterion {
   notes?: string;
 }
 
+export interface ApplicantWorkflowPrerequisites {
+  status: ApplicantStage;
+  convertedEmployeeId?: string;
+  scorecardCount?: number;
+  offerStatus?: OfferApprovalStatus;
+  offerRequestedBy?: string;
+  currentUserId?: string;
+  canApproveOffer?: boolean;
+}
+
 export interface RecruitmentPositionSnapshot {
   id: string;
   status: "open" | "closed" | "on-hold";
@@ -146,6 +156,47 @@ export function validateScorecard(criteria: readonly ScorecardCriterion[]): {
   }
   const total = criteria.reduce((sum, criterion) => sum + criterion.score, 0);
   return { overallScore: Math.round((total / criteria.length) * 100) / 100 };
+}
+
+export function canScheduleApplicantInterview(
+  applicant: ApplicantWorkflowPrerequisites,
+): boolean {
+  return (
+    !applicant.convertedEmployeeId &&
+    ["screening", "interview", "assessment"].includes(applicant.status)
+  );
+}
+
+export function canSubmitApplicantScorecard(
+  applicant: ApplicantWorkflowPrerequisites,
+): boolean {
+  return (
+    !applicant.convertedEmployeeId &&
+    ["interview", "assessment"].includes(applicant.status)
+  );
+}
+
+export function canRequestApplicantOffer(
+  applicant: ApplicantWorkflowPrerequisites,
+): boolean {
+  return (
+    !applicant.convertedEmployeeId &&
+    ["interview", "assessment"].includes(applicant.status) &&
+    (applicant.scorecardCount ?? 0) > 0 &&
+    applicant.offerStatus !== "pending" &&
+    applicant.offerStatus !== "approved"
+  );
+}
+
+export function canDecideApplicantOffer(
+  applicant: ApplicantWorkflowPrerequisites,
+): boolean {
+  return (
+    applicant.offerStatus === "pending" &&
+    applicant.canApproveOffer === true &&
+    Boolean(applicant.currentUserId) &&
+    applicant.offerRequestedBy !== applicant.currentUserId
+  );
 }
 
 export function summarizeRecruitmentPipeline(

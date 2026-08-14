@@ -58,6 +58,23 @@ export function getApplicableEmployeeRequirements(
   });
 }
 
+export function getHistoricalEmployeeRequirements(
+  employee: RequirementsEmployee,
+  policies: readonly RequirementPolicy[],
+): IndexedRequirement[] {
+  const policiesByType = new Map(
+    policies.map((policy) => [normalizeType(policy.type), policy]),
+  );
+  return employee.requirements.flatMap((requirement, index) => {
+    if (requirement.isCustom) return [];
+    const policy = policiesByType.get(normalizeType(requirement.type));
+    if (policy && isRequirementApplicable(policy, employee.employment)) {
+      return [];
+    }
+    return [{ requirement, index }];
+  });
+}
+
 export function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }

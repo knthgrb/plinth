@@ -90,11 +90,7 @@ export async function createEmployee(data: {
   shiftId?: Id<"shifts"> | null;
 }) {
   const result = await EmployeesService.createEmployee(data);
-  if (
-    result.invitationId &&
-    result.invitationEmail &&
-    result.invitationToken
-  ) {
+  if (result.invitationId && result.invitationEmail && result.invitationToken) {
     await InvitationsService.sendCreatedInvitation({
       invitationId: result.invitationId,
       email: result.invitationEmail,
@@ -139,13 +135,10 @@ export async function checkEmployeeHasUserAccount(data: {
   employeeId: string;
 }) {
   const convex = await getAuthedConvexClient();
-  return await convex.query(
-    api.employees.employeeHasUserAccount,
-    {
-      organizationId: data.organizationId as Id<"organizations">,
-      employeeId: data.employeeId as Id<"employees">,
-    },
-  );
+  return await convex.query(api.employees.employeeHasUserAccount, {
+    organizationId: data.organizationId as Id<"organizations">,
+    employeeId: data.employeeId as Id<"employees">,
+  });
 }
 
 // Create user account for employee and send invitation
@@ -158,22 +151,18 @@ export async function createUserForEmployee(data: {
   const convex = await getAuthedConvexClient();
 
   // Create invitation in Convex (this creates the invitation record)
-  const result = await convex.mutation(
-    api.invitations.createUserForEmployee,
-    {
-      organizationId: data.organizationId as Id<"organizations">,
-      employeeId: data.employeeId as Id<"employees">,
-      role: data.role,
-      confirmInviteToExistingPlinthUser:
-        data.confirmInviteToExistingPlinthUser === true ? true : undefined,
-    },
-  );
+  const result = await convex.mutation(api.invitations.createUserForEmployee, {
+    organizationId: data.organizationId as Id<"organizations">,
+    employeeId: data.employeeId as Id<"employees">,
+    role: data.role,
+    confirmInviteToExistingPlinthUser:
+      data.confirmInviteToExistingPlinthUser === true ? true : undefined,
+  });
 
   // Get invitation details to send email
-  const invitation = await convex.query(
-    api.invitations.getInvitationById,
-    { invitationId: result.invitationId as Id<"invitations"> },
-  );
+  const invitation = await convex.query(api.invitations.getInvitationById, {
+    invitationId: result.invitationId as Id<"invitations">,
+  });
 
   if (invitation?.organization && invitation.inviter) {
     // Generate invitation link
@@ -236,7 +225,7 @@ export async function addRequirement(data: {
 
 export async function updateRequirementStatus(data: {
   employeeId: string;
-  requirementIndex: number;
+  requirementId: string;
   status: "pending" | "submitted" | "verified";
   verificationNotes?: string;
   rejectionReason?: string;
@@ -244,16 +233,9 @@ export async function updateRequirementStatus(data: {
   return EmployeesService.updateRequirementStatus(data);
 }
 
-export async function setEmployeeRequirementsComplete(data: {
-  employeeId: string;
-  complete: boolean;
-}) {
-  return EmployeesService.setEmployeeRequirementsComplete(data);
-}
-
 export async function updateRequirementFile(data: {
   employeeId: string;
-  requirementIndex: number;
+  requirementId: string;
   file: string;
 }) {
   return EmployeesService.updateRequirementFile(data);
@@ -261,7 +243,7 @@ export async function updateRequirementFile(data: {
 
 export async function removeRequirement(data: {
   employeeId: string;
-  requirementIndex: number;
+  requirementId: string;
 }) {
   return EmployeesService.removeRequirement(data);
 }

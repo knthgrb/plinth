@@ -39,7 +39,10 @@ export async function upsertOrganizationUiSettings(
   >,
   now: number,
 ): Promise<void> {
-  const existing = await getEffectiveOrganizationUiSettings(ctx, organizationId);
+  const existing = await getEffectiveOrganizationUiSettings(
+    ctx,
+    organizationId,
+  );
   const value = {
     organizationId,
     ...patch,
@@ -48,7 +51,8 @@ export async function upsertOrganizationUiSettings(
     updatedAt: now,
   };
   if (existing) await ctx.db.patch(existing._id, value);
-  else await ctx.db.insert("organizationUiSettings", { ...value, createdAt: now });
+  else
+    await ctx.db.insert("organizationUiSettings", { ...value, createdAt: now });
 }
 
 export async function appendOrganizationSettingsEvent(
@@ -66,7 +70,9 @@ export async function appendOrganizationSettingsEvent(
       q.eq("sourceSettingsId", settingsId),
     )
     .collect();
-  const last = rows.sort((left, right) => left.sourceIndex - right.sourceIndex).at(-1);
+  const last = rows
+    .sort((left, right) => left.sourceIndex - right.sourceIndex)
+    .at(-1);
   await ctx.db.insert("organizationSettingsEvents", {
     organizationId,
     sourceSettingsId: settingsId,
@@ -84,7 +90,10 @@ export async function appendOrganizationSettingsEvent(
 
 function assertEvaluationChild(
   evaluation: Doc<"evaluations">,
-  child: { organizationId: Id<"organizations">; evaluationId: Id<"evaluations"> },
+  child: {
+    organizationId: Id<"organizations">;
+    evaluationId: Id<"evaluations">;
+  },
 ): void {
   if (
     child.organizationId !== evaluation.organizationId ||
@@ -218,6 +227,8 @@ type ApplicantScorecards = Array<
 >;
 type ApplicantOffer = Pick<
   Doc<"applicantOfferEvents">,
+  | "cycle"
+  | "eventIndex"
   | "status"
   | "requestedBy"
   | "requestedAt"
@@ -232,6 +243,7 @@ export type EffectiveApplicant = Doc<"applicants"> & {
   interviewSchedules: ApplicantInterviews;
   scorecards: ApplicantScorecards;
   offerApproval?: ApplicantOffer;
+  offerHistory: ApplicantOffer[];
   customFields?: ApplicantCustomFields;
 };
 
@@ -239,32 +251,134 @@ export async function loadEffectiveApplicant(
   ctx: DatabaseContext,
   applicant: Doc<"applicants">,
 ): Promise<EffectiveApplicant> {
-  const [stages, notes, interviews, scorecards, offers, customValues] = await Promise.all([
-    ctx.db.query("applicantStageEvents").withIndex("by_organization", (q) => q.eq("organizationId", applicant.organizationId)).filter((q) => q.eq(q.field("applicantId"), applicant._id)).collect(),
-    ctx.db.query("applicantNotes").withIndex("by_organization", (q) => q.eq("organizationId", applicant.organizationId)).filter((q) => q.eq(q.field("applicantId"), applicant._id)).collect(),
-    ctx.db.query("applicantInterviews").withIndex("by_organization", (q) => q.eq("organizationId", applicant.organizationId)).filter((q) => q.eq(q.field("applicantId"), applicant._id)).collect(),
-    ctx.db.query("applicantScorecards").withIndex("by_organization", (q) => q.eq("organizationId", applicant.organizationId)).filter((q) => q.eq(q.field("applicantId"), applicant._id)).collect(),
-    ctx.db.query("applicantOfferEvents").withIndex("by_applicant", (q) => q.eq("applicantId", applicant._id)).take(2),
-    ctx.db.query("applicantCustomFieldValues").withIndex("by_organization", (q) => q.eq("organizationId", applicant.organizationId)).filter((q) => q.eq(q.field("applicantId"), applicant._id)).collect(),
-  ]);
-  const assertChild = (child: { organizationId: Id<"organizations">; applicantId: Id<"applicants"> }) => {
-    if (child.organizationId !== applicant.organizationId || child.applicantId !== applicant._id) throw new Error("Applicant child tenant mismatch");
+  const [stages, notes, interviews, scorecards, offers, customValues] =
+    await Promise.all([
+      ctx.db
+        .query("applicantStageEvents")
+        .withIndex("by_organization", (q) =>
+          q.eq("organizationId", applicant.organizationId),
+        )
+        .filter((q) => q.eq(q.field("applicantId"), applicant._id))
+        .collect(),
+      ctx.db
+        .query("applicantNotes")
+        .withIndex("by_organization", (q) =>
+          q.eq("organizationId", applicant.organizationId),
+        )
+        .filter((q) => q.eq(q.field("applicantId"), applicant._id))
+        .collect(),
+      ctx.db
+        .query("applicantInterviews")
+        .withIndex("by_organization", (q) =>
+          q.eq("organizationId", applicant.organizationId),
+        )
+        .filter((q) => q.eq(q.field("applicantId"), applicant._id))
+        .collect(),
+      ctx.db
+        .query("applicantScorecards")
+        .withIndex("by_organization", (q) =>
+          q.eq("organizationId", applicant.organizationId),
+        )
+        .filter((q) => q.eq(q.field("applicantId"), applicant._id))
+        .collect(),
+      ctx.db
+        .query("applicantOfferEvents")
+        .withIndex("by_applicant", (q) => q.eq("applicantId", applicant._id))
+        .collect(),
+      ctx.db
+        .query("applicantCustomFieldValues")
+        .withIndex("by_organization", (q) =>
+          q.eq("organizationId", applicant.organizationId),
+        )
+        .filter((q) => q.eq(q.field("applicantId"), applicant._id))
+        .collect(),
+    ]);
+  const assertChild = (child: {
+    organizationId: Id<"organizations">;
+    applicantId: Id<"applicants">;
+  }) => {
+    if (
+      child.organizationId !== applicant.organizationId ||
+      child.applicantId !== applicant._id
+    )
+      throw new Error("Applicant child tenant mismatch");
   };
-  const ordered = <T extends { sourceIndex: number }>(rows: T[]) => rows.slice().sort((a, b) => a.sourceIndex - b.sourceIndex);
-  for (const row of [...stages, ...notes, ...interviews, ...scorecards]) assertChild(row);
-  if (offers.length > 1) throw new Error("Applicant offer state is not unique");
-  if (offers[0]) assertChild(offers[0]);
+  const ordered = <T extends { sourceIndex: number }>(rows: T[]) =>
+    rows.slice().sort((a, b) => a.sourceIndex - b.sourceIndex);
+  for (const row of [...stages, ...notes, ...interviews, ...scorecards])
+    assertChild(row);
+  for (const offer of offers) assertChild(offer);
   for (const row of customValues) assertChild(row);
   const customFields = Object.fromEntries(
-    customValues.map((row) => [row.sourceKey, JSON.parse(row.valueJson) as unknown]),
+    customValues.map((row) => [
+      row.sourceKey,
+      JSON.parse(row.valueJson) as unknown,
+    ]),
   );
+  const offerHistory = offers
+    .slice()
+    .sort(
+      (left, right) =>
+        (left.cycle ?? 0) - (right.cycle ?? 0) ||
+        (left.eventIndex ?? 0) - (right.eventIndex ?? 0) ||
+        left.createdAt - right.createdAt,
+    )
+    .map(
+      ({
+        cycle,
+        eventIndex,
+        status,
+        requestedBy,
+        requestedAt,
+        approvedBy,
+        approvedAt,
+        notes,
+      }) => ({
+        cycle,
+        eventIndex,
+        status,
+        requestedBy,
+        requestedAt,
+        approvedBy,
+        approvedAt,
+        notes,
+      }),
+    );
   return {
     ...applicant,
-    pipelineStageHistory: ordered(stages).map(({ from, to, changedAt, changedBy }) => ({ from, to, changedAt, changedBy })),
-    notes: ordered(notes).map(({ date, author, content }) => ({ date, author, content })),
-    interviewSchedules: ordered(interviews).map(({ date, type, interviewer, interviewers, remarks }) => ({ date, type, interviewer, interviewers, remarks })),
-    scorecards: ordered(scorecards).map(({ reviewer, criteria, overallScore, recommendation, submittedAt }) => ({ reviewer, criteria, overallScore, recommendation, submittedAt })),
-    offerApproval: offers[0] ? { status: offers[0].status, requestedBy: offers[0].requestedBy, requestedAt: offers[0].requestedAt, approvedBy: offers[0].approvedBy, approvedAt: offers[0].approvedAt, notes: offers[0].notes } : undefined,
+    pipelineStageHistory: ordered(stages).map(
+      ({ from, to, changedAt, changedBy }) => ({
+        from,
+        to,
+        changedAt,
+        changedBy,
+      }),
+    ),
+    notes: ordered(notes).map(({ date, author, content }) => ({
+      date,
+      author,
+      content,
+    })),
+    interviewSchedules: ordered(interviews).map(
+      ({ date, type, interviewer, interviewers, remarks }) => ({
+        date,
+        type,
+        interviewer,
+        interviewers,
+        remarks,
+      }),
+    ),
+    scorecards: ordered(scorecards).map(
+      ({ reviewer, criteria, overallScore, recommendation, submittedAt }) => ({
+        reviewer,
+        criteria,
+        overallScore,
+        recommendation,
+        submittedAt,
+      }),
+    ),
+    offerApproval: offerHistory.at(-1),
+    offerHistory,
     customFields: customValues.length > 0 ? customFields : undefined,
   };
 }
@@ -277,23 +391,125 @@ export async function replaceApplicantProjection(
     notes: ApplicantNotes;
     interviews: ApplicantInterviews;
     scorecards: ApplicantScorecards;
-    offer?: ApplicantOffer;
   },
   now: number,
 ): Promise<void> {
   const existing = await Promise.all([
-    ctx.db.query("applicantStageEvents").withIndex("by_organization", (q) => q.eq("organizationId", applicant.organizationId)).filter((q) => q.eq(q.field("applicantId"), applicant._id)).collect(),
-    ctx.db.query("applicantNotes").withIndex("by_organization", (q) => q.eq("organizationId", applicant.organizationId)).filter((q) => q.eq(q.field("applicantId"), applicant._id)).collect(),
-    ctx.db.query("applicantInterviews").withIndex("by_organization", (q) => q.eq("organizationId", applicant.organizationId)).filter((q) => q.eq(q.field("applicantId"), applicant._id)).collect(),
-    ctx.db.query("applicantScorecards").withIndex("by_organization", (q) => q.eq("organizationId", applicant.organizationId)).filter((q) => q.eq(q.field("applicantId"), applicant._id)).collect(),
-    ctx.db.query("applicantOfferEvents").withIndex("by_applicant", (q) => q.eq("applicantId", applicant._id)).collect(),
+    ctx.db
+      .query("applicantStageEvents")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", applicant.organizationId),
+      )
+      .filter((q) => q.eq(q.field("applicantId"), applicant._id))
+      .collect(),
+    ctx.db
+      .query("applicantNotes")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", applicant.organizationId),
+      )
+      .filter((q) => q.eq(q.field("applicantId"), applicant._id))
+      .collect(),
+    ctx.db
+      .query("applicantInterviews")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", applicant.organizationId),
+      )
+      .filter((q) => q.eq(q.field("applicantId"), applicant._id))
+      .collect(),
+    ctx.db
+      .query("applicantScorecards")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", applicant.organizationId),
+      )
+      .filter((q) => q.eq(q.field("applicantId"), applicant._id))
+      .collect(),
   ]);
-  for (const rows of existing) for (const row of rows) await ctx.db.delete(row._id);
-  for (const [sourceIndex, stage] of values.stages.entries()) await ctx.db.insert("applicantStageEvents", { organizationId: applicant.organizationId, applicantId: applicant._id, sourceIndex, ...stage, migrationVersion: MIGRATION_VERSION, createdAt: now, updatedAt: now });
-  for (const [sourceIndex, note] of values.notes.entries()) await ctx.db.insert("applicantNotes", { organizationId: applicant.organizationId, applicantId: applicant._id, sourceIndex, ...note, migrationVersion: MIGRATION_VERSION, createdAt: now, updatedAt: now });
-  for (const [sourceIndex, interview] of values.interviews.entries()) await ctx.db.insert("applicantInterviews", { organizationId: applicant.organizationId, applicantId: applicant._id, sourceIndex, ...interview, migrationVersion: MIGRATION_VERSION, createdAt: now, updatedAt: now });
-  for (const [sourceIndex, scorecard] of values.scorecards.entries()) await ctx.db.insert("applicantScorecards", { organizationId: applicant.organizationId, applicantId: applicant._id, sourceIndex, ...scorecard, migrationVersion: MIGRATION_VERSION, createdAt: now, updatedAt: now });
-  if (values.offer) await ctx.db.insert("applicantOfferEvents", { organizationId: applicant.organizationId, applicantId: applicant._id, ...values.offer, migrationVersion: MIGRATION_VERSION, createdAt: now, updatedAt: now });
+  for (const rows of existing)
+    for (const row of rows) await ctx.db.delete(row._id);
+  for (const [sourceIndex, stage] of values.stages.entries())
+    await ctx.db.insert("applicantStageEvents", {
+      organizationId: applicant.organizationId,
+      applicantId: applicant._id,
+      sourceIndex,
+      ...stage,
+      migrationVersion: MIGRATION_VERSION,
+      createdAt: now,
+      updatedAt: now,
+    });
+  for (const [sourceIndex, note] of values.notes.entries())
+    await ctx.db.insert("applicantNotes", {
+      organizationId: applicant.organizationId,
+      applicantId: applicant._id,
+      sourceIndex,
+      ...note,
+      migrationVersion: MIGRATION_VERSION,
+      createdAt: now,
+      updatedAt: now,
+    });
+  for (const [sourceIndex, interview] of values.interviews.entries())
+    await ctx.db.insert("applicantInterviews", {
+      organizationId: applicant.organizationId,
+      applicantId: applicant._id,
+      sourceIndex,
+      ...interview,
+      migrationVersion: MIGRATION_VERSION,
+      createdAt: now,
+      updatedAt: now,
+    });
+  for (const [sourceIndex, scorecard] of values.scorecards.entries())
+    await ctx.db.insert("applicantScorecards", {
+      organizationId: applicant.organizationId,
+      applicantId: applicant._id,
+      sourceIndex,
+      ...scorecard,
+      migrationVersion: MIGRATION_VERSION,
+      createdAt: now,
+      updatedAt: now,
+    });
+}
+
+export async function appendApplicantOfferEvent(
+  ctx: MutationCtx,
+  applicant: Doc<"applicants">,
+  event: Omit<ApplicantOffer, "cycle" | "eventIndex">,
+  now: number,
+  startNewCycle: boolean,
+): Promise<void> {
+  const existing = await ctx.db
+    .query("applicantOfferEvents")
+    .withIndex("by_applicant", (query) =>
+      query.eq("applicantId", applicant._id),
+    )
+    .collect();
+  for (const row of existing) {
+    if (
+      row.organizationId !== applicant.organizationId ||
+      row.applicantId !== applicant._id
+    ) {
+      throw new Error("Applicant child tenant mismatch");
+    }
+  }
+  const highestCycle = existing.reduce(
+    (highest, row) => Math.max(highest, row.cycle ?? 0),
+    0,
+  );
+  const cycle = startNewCycle ? highestCycle + 1 : Math.max(highestCycle, 1);
+  const eventIndex = startNewCycle
+    ? 0
+    : existing
+        .filter((row) => (row.cycle ?? 0) === cycle)
+        .reduce((highest, row) => Math.max(highest, row.eventIndex ?? 0), -1) +
+      1;
+  await ctx.db.insert("applicantOfferEvents", {
+    organizationId: applicant.organizationId,
+    applicantId: applicant._id,
+    cycle,
+    eventIndex,
+    ...event,
+    migrationVersion: MIGRATION_VERSION,
+    createdAt: now,
+    updatedAt: now,
+  });
 }
 
 export async function synchronizeEffectiveApplicant(
@@ -306,31 +522,84 @@ export async function synchronizeEffectiveApplicant(
       | "notes"
       | "interviewSchedules"
       | "scorecards"
-      | "offerApproval"
       | "customFields"
     >
   >,
   now: number,
 ): Promise<void> {
   const effective = await loadEffectiveApplicant(ctx, applicant);
-  await replaceApplicantProjection(ctx, applicant, {
-    stages: patch.pipelineStageHistory ?? effective.pipelineStageHistory ?? [],
-    notes: patch.notes ?? effective.notes ?? [],
-    interviews: patch.interviewSchedules ?? effective.interviewSchedules ?? [],
-    scorecards: patch.scorecards ?? effective.scorecards ?? [],
-    offer: patch.offerApproval ?? effective.offerApproval,
-  }, now);
+  await replaceApplicantProjection(
+    ctx,
+    applicant,
+    {
+      stages:
+        patch.pipelineStageHistory ?? effective.pipelineStageHistory ?? [],
+      notes: patch.notes ?? effective.notes ?? [],
+      interviews:
+        patch.interviewSchedules ?? effective.interviewSchedules ?? [],
+      scorecards: patch.scorecards ?? effective.scorecards ?? [],
+    },
+    now,
+  );
   if (patch.customFields !== undefined) {
-    const existing = await ctx.db.query("applicantCustomFieldValues").withIndex("by_organization", (q) => q.eq("organizationId", applicant.organizationId)).filter((q) => q.eq(q.field("applicantId"), applicant._id)).collect();
+    const existing = await ctx.db
+      .query("applicantCustomFieldValues")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", applicant.organizationId),
+      )
+      .filter((q) => q.eq(q.field("applicantId"), applicant._id))
+      .collect();
     for (const row of existing) await ctx.db.delete(row._id);
     const fields = patch.customFields as Record<string, unknown>;
     for (const [rawKey, value] of Object.entries(fields)) {
       const sourceKey = normalizeMigrationSourceKey(rawKey);
-      const definitions = await ctx.db.query("organizationCustomFieldDefinitions").withIndex("by_organization_entity_key", (q) => q.eq("organizationId", applicant.organizationId).eq("entityType", "applicant").eq("sourceKey", sourceKey)).take(2);
-      if (definitions.length > 1) throw new Error("Applicant custom field definition is not unique");
-      const definitionId = definitions[0]?._id ?? await ctx.db.insert("organizationCustomFieldDefinitions", { organizationId: applicant.organizationId, entityType: "applicant", sourceKey, label: rawKey, valueType: "mixed", isActive: true, migrationVersion: MIGRATION_VERSION, createdAt: now, updatedAt: now });
-      const valueType = value === null ? "null" : Array.isArray(value) ? "array" : typeof value === "string" ? "string" : typeof value === "number" ? "number" : typeof value === "boolean" ? "boolean" : "object";
-      await ctx.db.insert("applicantCustomFieldValues", { organizationId: applicant.organizationId, applicantId: applicant._id, definitionId, sourceKey, valueType, valueJson: JSON.stringify(value), migrationVersion: MIGRATION_VERSION, createdAt: now, updatedAt: now });
+      const definitions = await ctx.db
+        .query("organizationCustomFieldDefinitions")
+        .withIndex("by_organization_entity_key", (q) =>
+          q
+            .eq("organizationId", applicant.organizationId)
+            .eq("entityType", "applicant")
+            .eq("sourceKey", sourceKey),
+        )
+        .take(2);
+      if (definitions.length > 1)
+        throw new Error("Applicant custom field definition is not unique");
+      const definitionId =
+        definitions[0]?._id ??
+        (await ctx.db.insert("organizationCustomFieldDefinitions", {
+          organizationId: applicant.organizationId,
+          entityType: "applicant",
+          sourceKey,
+          label: rawKey,
+          valueType: "mixed",
+          isActive: true,
+          migrationVersion: MIGRATION_VERSION,
+          createdAt: now,
+          updatedAt: now,
+        }));
+      const valueType =
+        value === null
+          ? "null"
+          : Array.isArray(value)
+            ? "array"
+            : typeof value === "string"
+              ? "string"
+              : typeof value === "number"
+                ? "number"
+                : typeof value === "boolean"
+                  ? "boolean"
+                  : "object";
+      await ctx.db.insert("applicantCustomFieldValues", {
+        organizationId: applicant.organizationId,
+        applicantId: applicant._id,
+        definitionId,
+        sourceKey,
+        valueType,
+        valueJson: JSON.stringify(value),
+        migrationVersion: MIGRATION_VERSION,
+        createdAt: now,
+        updatedAt: now,
+      });
     }
   }
 }

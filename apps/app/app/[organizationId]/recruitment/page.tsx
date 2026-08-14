@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "convex/react";
+import { usePaginatedQuery, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { api } from "@/convex/_generated/api";
 import { createJob } from "@/actions/recruitment";
@@ -58,11 +58,16 @@ export default function RecruitmentPage() {
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
-  const applicants = useQuery(
+  const {
+    results: applicants,
+    status: applicantPageStatus,
+    loadMore: loadMoreApplicants,
+  } = usePaginatedQuery(
     api.recruitment.getApplicants,
     effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
+    { initialNumItems: 200 },
   );
   const settings = useQuery(
     api.settings.getSettings,
@@ -526,6 +531,13 @@ export default function RecruitmentPage() {
             </Card>
           )}
         </div>
+        {applicantPageStatus === "CanLoadMore" && (
+          <div className="flex justify-center">
+            <Button variant="outline" onClick={() => loadMoreApplicants(200)}>
+              Load more candidate metrics
+            </Button>
+          </div>
+        )}
       </div>
     </MainLayout>
   );

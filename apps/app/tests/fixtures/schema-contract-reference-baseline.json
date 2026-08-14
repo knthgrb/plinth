@@ -19,9 +19,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 7153,
+      "totalMatches": 7185,
       "fileCount": 248,
-      "fingerprint": "14a625c4cf67945d7d9621eaf17db09b5637cbe22d2c08cd168e72c6bbf2094e",
+      "fingerprint": "afe54b946083cb5c14acd913985fa79e4d7887b78831ce5493be235e23741c95",
       "symbols": [
         {
           "symbol": "acknowledgedBy",
@@ -80,7 +80,7 @@
         },
         {
           "symbol": "customFields",
-          "matches": 26,
+          "matches": 25,
           "files": 8
         },
         {
@@ -110,7 +110,7 @@
         },
         {
           "symbol": "employeeId",
-          "matches": 1291,
+          "matches": 1287,
           "files": 111
         },
         {
@@ -150,7 +150,7 @@
         },
         {
           "symbol": "interviewSchedules",
-          "matches": 9,
+          "matches": 8,
           "files": 3
         },
         {
@@ -220,17 +220,17 @@
         },
         {
           "symbol": "notes",
-          "matches": 212,
+          "matches": 215,
           "files": 36
         },
         {
           "symbol": "offerApproval",
-          "matches": 22,
+          "matches": 33,
           "files": 3
         },
         {
           "symbol": "organizationId",
-          "matches": 1710,
+          "matches": 1727,
           "files": 158
         },
         {
@@ -260,7 +260,7 @@
         },
         {
           "symbol": "pipelineStageHistory",
-          "matches": 28,
+          "matches": 27,
           "files": 5
         },
         {
@@ -290,7 +290,7 @@
         },
         {
           "symbol": "requirements",
-          "matches": 120,
+          "matches": 109,
           "files": 23
         },
         {
@@ -320,8 +320,8 @@
         },
         {
           "symbol": "scorecards",
-          "matches": 17,
-          "files": 3
+          "matches": 16,
+          "files": 4
         },
         {
           "symbol": "secondPayDate",
@@ -340,7 +340,7 @@
         },
         {
           "symbol": "status",
-          "matches": 893,
+          "matches": 913,
           "files": 96
         },
         {

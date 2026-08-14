@@ -45,15 +45,15 @@
     },
     {
       "name": "applicantOfferEvents",
-      "fieldCount": 11,
-      "fieldsSha256": "46c820897bae103d3f4f759f39630617a6f8cb9817a6c855603f8811aba1f44c",
-      "indexCount": 2,
-      "indexesSha256": "7c518a01244f076eea2153a11c08e497066fa49b66f6dc9de45425795c86e97d"
+      "fieldCount": 13,
+      "fieldsSha256": "bc5e62a5cc13df1af2c9c549e8274d7e226eb0b7cb93656d24bab220721b61b8",
+      "indexCount": 3,
+      "indexesSha256": "f0c01e5cd31eb7a9b10db50a08b48404c1c517e2c0f97b996b9c633b7599d9c2"
     },
     {
       "name": "applicants",
-      "fieldCount": 19,
-      "fieldsSha256": "48fbeccb2ebec4cb5e0c840ee803c77662e9b0780fe7c8e2cdf40374210ce2b8",
+      "fieldCount": 21,
+      "fieldsSha256": "3434e4440af50a44806726fda78b96b0993eda5fc5aba7eb7ac8984045e066cb",
       "indexCount": 3,
       "indexesSha256": "d69967249f003c9f4eb0e9bf9841d5430dde49e8f442fa9b560a1922d3a32239"
     },

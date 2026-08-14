@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   allowedApplicantTransitions,
   assertApplicantTransition,
+  canDecideApplicantOffer,
+  canRequestApplicantOffer,
+  canScheduleApplicantInterview,
+  canSubmitApplicantScorecard,
   getApplicantStageAge,
   summarizeRecruitmentPipeline,
   validateScorecard,
@@ -101,6 +105,44 @@ describe("recruitment workflow domain", () => {
       validateScorecard([{ label: "Role expertise", score: 6 }]),
     ).toThrow("between 1 and 5");
     expect(() => validateScorecard([])).toThrow("at least one criterion");
+  });
+
+  it("aligns workflow controls with server prerequisites", () => {
+    expect(canScheduleApplicantInterview({ status: "new" })).toBe(false);
+    expect(canScheduleApplicantInterview({ status: "screening" })).toBe(true);
+    expect(canSubmitApplicantScorecard({ status: "rejected" })).toBe(false);
+    expect(canSubmitApplicantScorecard({ status: "assessment" })).toBe(true);
+    expect(
+      canRequestApplicantOffer({
+        status: "assessment",
+        scorecardCount: 1,
+        offerStatus: "rejected",
+      }),
+    ).toBe(true);
+    expect(
+      canRequestApplicantOffer({
+        status: "assessment",
+        scorecardCount: 0,
+      }),
+    ).toBe(false);
+    expect(
+      canDecideApplicantOffer({
+        status: "offer",
+        offerStatus: "pending",
+        offerRequestedBy: "owner-1",
+        currentUserId: "owner-1",
+        canApproveOffer: true,
+      }),
+    ).toBe(false);
+    expect(
+      canDecideApplicantOffer({
+        status: "offer",
+        offerStatus: "pending",
+        offerRequestedBy: "hr-1",
+        currentUserId: "owner-1",
+        canApproveOffer: true,
+      }),
+    ).toBe(true);
   });
 
   it("summarizes positions, openings, pipeline stages, and stale candidates", () => {

@@ -25,6 +25,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import {
   allowedApplicantTransitions,
+  canDecideApplicantOffer,
+  canRequestApplicantOffer,
+  canScheduleApplicantInterview,
+  canSubmitApplicantScorecard,
   formatApplicantStage,
   getApplicantStageAge,
   validateScorecard,
@@ -51,6 +55,7 @@ interface ApplicantWorkflowPanelProps {
   job: RecruitmentJob;
   members: readonly OrganizationMember[];
   canApproveOffer: boolean;
+  currentUserId?: string;
 }
 
 const scorecardLabels = ["Role expertise", "Communication", "Values alignment"];
@@ -60,6 +65,7 @@ export function ApplicantWorkflowPanel({
   job,
   members,
   canApproveOffer,
+  currentUserId,
 }: ApplicantWorkflowPanelProps) {
   const { toast } = useToast();
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -97,6 +103,21 @@ export function ApplicantWorkflowPanel({
     () => members.filter((member) => member.accessStatus === "active"),
     [members],
   );
+  const workflowPrerequisites = {
+    status: applicant.status,
+    convertedEmployeeId: applicant.convertedEmployeeId,
+    scorecardCount: applicant.scorecards.length,
+    offerStatus: applicant.offerApproval?.status,
+    offerRequestedBy: applicant.offerApproval?.requestedBy,
+    currentUserId,
+    canApproveOffer,
+  };
+  const canScheduleInterview = canScheduleApplicantInterview(
+    workflowPrerequisites,
+  );
+  const canSubmitScorecard = canSubmitApplicantScorecard(workflowPrerequisites);
+  const canRequestOffer = canRequestApplicantOffer(workflowPrerequisites);
+  const canDecideOffer = canDecideApplicantOffer(workflowPrerequisites);
 
   async function perform(action: string, operation: () => Promise<unknown>) {
     setBusyAction(action);
@@ -153,9 +174,8 @@ export function ApplicantWorkflowPanel({
       label,
       score: Number(scores[label]),
     }));
-    let overallScore: number;
     try {
-      overallScore = validateScorecard(criteria).overallScore;
+      validateScorecard(criteria);
     } catch (error: unknown) {
       toast({
         title: "Scorecard is incomplete",
@@ -171,7 +191,6 @@ export function ApplicantWorkflowPanel({
       await addApplicantScorecard({
         applicantId: applicant._id,
         criteria,
-        overallScore,
         recommendation: recommendation.trim() || undefined,
       });
       setScores(
@@ -298,6 +317,7 @@ export function ApplicantWorkflowPanel({
               id="interviewDate"
               type="datetime-local"
               value={interview.date}
+              disabled={!canScheduleInterview}
               onChange={(event) =>
                 setInterview({ ...interview, date: event.target.value })
               }
@@ -307,6 +327,7 @@ export function ApplicantWorkflowPanel({
             <Label>Interviewer</Label>
             <Select
               value={interview.interviewer}
+              disabled={!canScheduleInterview}
               onValueChange={(interviewer) =>
                 setInterview({ ...interview, interviewer })
               }
@@ -329,6 +350,7 @@ export function ApplicantWorkflowPanel({
               id="interviewRemarks"
               rows={2}
               value={interview.remarks}
+              disabled={!canScheduleInterview}
               onChange={(event) =>
                 setInterview({ ...interview, remarks: event.target.value })
               }
@@ -337,7 +359,10 @@ export function ApplicantWorkflowPanel({
           <Button
             className="sm:col-span-2"
             disabled={
-              !interview.date || !interview.interviewer || busyAction !== null
+              !interview.date ||
+              !interview.interviewer ||
+              busyAction !== null ||
+              !canScheduleInterview
             }
             onClick={submitInterview}
           >
@@ -384,6 +409,7 @@ export function ApplicantWorkflowPanel({
                 min="1"
                 max="5"
                 value={scores[label]}
+                disabled={!canSubmitScorecard}
                 onChange={(event) =>
                   setScores({ ...scores, [label]: event.target.value })
                 }
@@ -394,10 +420,14 @@ export function ApplicantWorkflowPanel({
           <Textarea
             rows={2}
             value={recommendation}
+            disabled={!canSubmitScorecard}
             onChange={(event) => setRecommendation(event.target.value)}
             placeholder="Recommendation and evidence"
           />
-          <Button disabled={busyAction !== null} onClick={submitScorecard}>
+          <Button
+            disabled={busyAction !== null || !canSubmitScorecard}
+            onClick={submitScorecard}
+          >
             Submit scorecard
           </Button>
         </div>
@@ -429,24 +459,38 @@ export function ApplicantWorkflowPanel({
               {applicant.offerApproval?.status ?? "not requested"}
             </span>
           </p>
+          {applicant.offerHistory.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {applicant.offerHistory.map((event, index) => (
+                <Badge
+                  key={`${event.cycle ?? 0}-${event.eventIndex ?? index}`}
+                  variant="outline"
+                  className="capitalize"
+                >
+                  Cycle {event.cycle ?? 1}: {event.status}
+                </Badge>
+              ))}
+            </div>
+          )}
           <Textarea
             rows={2}
             value={offerNotes}
+            disabled={
+              applicant.offerApproval?.status === "approved" ||
+              applicant.convertedEmployeeId !== undefined
+            }
             onChange={(event) => setOfferNotes(event.target.value)}
             placeholder="Compensation context or approval notes"
           />
           {!applicant.offerApproval ||
           applicant.offerApproval.status === "rejected" ? (
             <Button
-              disabled={
-                busyAction !== null || applicant.scorecards.length === 0
-              }
+              disabled={busyAction !== null || !canRequestOffer}
               onClick={requestOffer}
             >
               Request offer approval
             </Button>
-          ) : applicant.offerApproval.status === "pending" &&
-            canApproveOffer ? (
+          ) : applicant.offerApproval.status === "pending" && canDecideOffer ? (
             <div className="flex gap-2">
               <Button
                 disabled={busyAction !== null}

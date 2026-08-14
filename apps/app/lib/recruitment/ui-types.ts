@@ -6,7 +6,7 @@ export type RecruitmentJob = FunctionReturnType<
 >[number];
 export type RecruitmentApplicant = FunctionReturnType<
   typeof api.recruitment.getApplicants
->[number];
+>["page"][number];
 type OrganizationMemberResult = FunctionReturnType<
   typeof api.organizations.getOrganizationMembers
 >[number];

@@ -159,7 +159,6 @@ export class RecruitmentService {
   static async addApplicantScorecard(data: {
     applicantId: string;
     criteria: { label: string; score: number; notes?: string }[];
-    overallScore: number;
     recommendation?: string;
   }) {
     const convex = await getAuthedConvexClient();

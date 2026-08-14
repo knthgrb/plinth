@@ -1107,6 +1107,8 @@ export default defineSchema({
   applicantOfferEvents: defineTable({
     organizationId: v.id("organizations"),
     applicantId: v.id("applicants"),
+    cycle: v.optional(v.number()),
+    eventIndex: v.optional(v.number()),
     status: v.union(
       v.literal("not_requested"),
       v.literal("pending"),
@@ -1123,6 +1125,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_applicant", ["applicantId"])
+    .index("by_applicant_cycle_event", ["applicantId", "cycle", "eventIndex"])
     .index("by_organization", ["organizationId"]),
 
   applicantCustomFieldValues: defineTable({
@@ -1982,6 +1985,8 @@ export default defineSchema({
     ),
     appliedDate: v.number(),
     convertedEmployeeId: v.optional(v.id("employees")),
+    archivedAt: v.optional(v.number()),
+    archivedBy: v.optional(v.id("users")),
     rating: v.optional(v.number()),
     googleMeetLink: v.optional(v.string()),
     interviewVideoLink: v.optional(v.string()),
@@ -2050,11 +2055,7 @@ export default defineSchema({
     author: v.id("users"),
     authorDisplayName: v.optional(v.string()),
     authorPersona: v.optional(
-      v.union(
-        v.literal("admin"),
-        v.literal("employee"),
-        v.literal("member"),
-      ),
+      v.union(v.literal("admin"), v.literal("employee"), v.literal("member")),
     ),
     authorEmployeeId: v.optional(v.id("employees")),
     targetAudience: v.union(
@@ -2136,11 +2137,7 @@ export default defineSchema({
     author: v.id("users"),
     authorDisplayName: v.optional(v.string()),
     authorPersona: v.optional(
-      v.union(
-        v.literal("admin"),
-        v.literal("employee"),
-        v.literal("member"),
-      ),
+      v.union(v.literal("admin"), v.literal("employee"), v.literal("member")),
     ),
     authorEmployeeId: v.optional(v.id("employees")),
     content: v.string(),
@@ -2189,8 +2186,7 @@ export default defineSchema({
     adminPersonaUserId: v.optional(v.id("users")),
     createdAt: v.number(),
     updatedAt: v.number(),
-  })
-    .index("by_organization", ["organizationId"]),
+  }).index("by_organization", ["organizationId"]),
 
   // Chat messages
   messages: defineTable({
