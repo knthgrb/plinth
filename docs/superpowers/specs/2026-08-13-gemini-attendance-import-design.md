@@ -2,7 +2,7 @@
 
 ## Goal
 
-Extend bulk attendance import so authorized users can upload `.xlsx` and `.csv` files in varied layouts, have Gemini extract attendance records from every worksheet, review valid and invalid rows, and import only approved valid records through the existing attendance safeguards.
+Extend bulk attendance import so authorized users can upload `.xls`, `.xlsx`, `.xlsm`, and `.csv` files in varied layouts, have Gemini extract attendance records from every worksheet, review valid and invalid rows, and import only approved valid records through the existing attendance safeguards.
 
 ## Scope
 
@@ -10,10 +10,12 @@ The feature replaces the CSV-only interpretation path in the bulk attendance dia
 
 Supported uploads are:
 
+- Legacy Excel `.xls`
 - Excel `.xlsx`
+- Macro-enabled Excel `.xlsm`
 - Comma-separated values `.csv`
 
-Legacy `.xls`, macro-enabled workbooks, encrypted workbooks, and all other formats are rejected. The uploader says: “Only Excel (.xlsx) and CSV (.csv) files are supported.” It also discloses: “This file will be processed by Google Gemini.”
+Encrypted workbooks and all other formats are rejected. The uploader says: “Only Excel (.xls, .xlsx, .xlsm) and CSV (.csv) files are supported.” It also discloses: “This file will be processed by Google Gemini.” Macros embedded in `.xls` or `.xlsm` files are never executed, extracted, or forwarded to Gemini.
 
 ## Model and Configuration
 
@@ -51,16 +53,17 @@ The route requires a signed-in user who belongs to the supplied organization and
 The route applies these upload controls before calling Gemini:
 
 - Maximum request file size: 10 MB.
-- Accepted extensions: `.xlsx` and `.csv` only.
+- Accepted extensions: `.xls`, `.xlsx`, `.xlsm`, and `.csv` only.
 - Accepted MIME types must agree with the extension when the browser supplies a specific MIME type.
-- `.xlsx` content must have a ZIP signature and a valid OOXML workbook structure.
+- `.xlsx` and `.xlsm` content must have a ZIP signature and a valid OOXML workbook structure matching the extension.
+- `.xls` content must have a valid OLE Compound File signature and a readable BIFF workbook stream.
 - ZIP central-directory metadata is inspected before decompression. Encrypted entries, ZIP64 archives, unsafe paths, more than 1,000 archive entries, or more than 50 MB total declared uncompressed content are rejected.
 - CSV content containing NUL bytes or invalid UTF-8 is rejected.
 - A workbook may contain at most 20 worksheets, 10,000 non-empty rows in total, 100 columns per row, 500,000 non-empty cells, and 2,000 characters per cell.
 - Serialized workbook content sent to Gemini is capped at 4 MB.
 - Gemini may return at most 10,000 candidates.
 
-Use the maintained `read-excel-file` package rather than the npm `xlsx` package, whose registry release has unresolved advisories for parsing crafted workbooks. Pin the parser version and run the package audit after installation. If installation introduces a high or critical production vulnerability that cannot be safely overridden, implementation stops and selects a different parser.
+Keep the pinned `read-excel-file` parser for OOXML `.xlsx` and `.xlsm` workbooks so the existing ZIP and XML preflight remains authoritative. Accept the macro-enabled OOXML workbook content type, strip macro payload entries from the sanitized archive, and parse only worksheet cached values. Parse legacy BIFF `.xls` workbooks with the official pinned SheetJS Community Edition release from the SheetJS distribution CDN rather than the outdated npm-registry release. SheetJS is limited to `.xls`, uses bounded dense parsing, and leaves `bookVBA`, formula extraction, raw-file access, and external behavior disabled. Run the production dependency audit after installation. If installation introduces a high or critical production vulnerability, implementation stops and selects a different parser.
 
 Workbook parsing never evaluates formulas, macros, hyperlinks, or external references. Formula cells contribute only a bounded cached display value when the parser exposes one safely; otherwise they are treated as empty. Uploaded bytes and extracted employee data are held only for the request lifetime and are not written to disk or application logs.
 
@@ -150,10 +153,10 @@ The Gemini call uses an abort timeout and does not retry validation errors. A si
 
 Unit tests cover:
 
-- `.csv` and `.xlsx` acceptance and all unsupported formats
+- `.csv`, `.xls`, `.xlsx`, and `.xlsm` acceptance and all unsupported formats
 - extension, MIME, signature, archive, encoding, and resource-limit validation
 - all-sheet extraction with sheet names and source row numbers
-- formula and active-content handling
+- formula, macro, and active-content handling
 - prompt-injection text remaining inert data
 - strict Gemini response validation and output bounds
 - explicit Time In/Time Out priority
