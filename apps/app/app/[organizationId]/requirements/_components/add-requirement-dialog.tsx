@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Plus } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { addRequirement } from "@/actions/employees";
+import { errorMessage } from "@/lib/requirements/ui-types";
 
 interface AddRequirementDialogProps {
   employeeId: string;
@@ -64,10 +65,10 @@ export function AddRequirementDialog({
         description: "Custom requirement added successfully",
       });
       onSuccess();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to add requirement",
+        description: errorMessage(error, "Failed to add requirement"),
         variant: "destructive",
       });
     }
@@ -90,7 +91,9 @@ export function AddRequirementDialog({
         </DialogHeader>
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label htmlFor="type">Requirement Type <span className="text-red-500">*</span></Label>
+            <Label htmlFor="type">
+              Requirement Type <span className="text-red-500">*</span>
+            </Label>
             <Input
               id="type"
               value={formData.type}

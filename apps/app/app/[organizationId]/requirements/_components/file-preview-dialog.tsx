@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { FileText, Download } from "lucide-react";
+import Image from "next/image";
 
 interface FilePreviewDialogProps {
   previewFile: {
@@ -45,25 +46,13 @@ export function FilePreviewDialog({
             <div className="space-y-4">
               {previewFile.type === "image" ? (
                 <div className="flex items-center justify-center">
-                  <img
+                  <Image
                     src={previewFile.url}
                     alt={previewFile.name}
+                    width={1200}
+                    height={800}
+                    unoptimized
                     className="max-w-full max-h-[70vh] rounded-lg object-contain"
-                    onError={(e) => {
-                      console.error("Image failed to load:", previewFile.url);
-                      e.currentTarget.style.display = "none";
-                      const parent = e.currentTarget.parentElement;
-                      if (parent) {
-                        parent.innerHTML = `
-                          <div class="flex flex-col items-center justify-center p-8 border rounded-lg">
-                            <p class="text-gray-600 mb-4">Failed to load image</p>
-                            <button class="px-4 py-2 bg-brand-purple text-white rounded" onclick="window.open('${previewFile.url}', '_blank')">
-                              Open in New Tab
-                            </button>
-                          </div>
-                        `;
-                      }
-                    }}
                   />
                 </div>
               ) : previewFile.type === "pdf" ? (

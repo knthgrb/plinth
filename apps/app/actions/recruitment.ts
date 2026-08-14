@@ -1,53 +1,37 @@
 "use server";
 
-import { RecruitmentService } from "@/services/recruitment-service";
+import type { ApplicantStage } from "@/lib/recruitment/workflow";
+import {
+  RecruitmentService,
+  type ApplicantInput,
+  type ApplicantUpdate,
+  type EmployeeConversionInput,
+  type JobInput,
+} from "@/services/recruitment-service";
 
-export async function createJob(data: {
-  organizationId: string;
-  title?: string;
-  department?: string;
-  employmentType?: string;
-  numberOfOpenings?: number;
-  description?: string;
-  requirements?: string[];
-  qualifications?: string[];
-  salaryRange?: { min: number; max: number };
-  closingDate?: number;
-}) {
+export async function createJob(data: JobInput) {
   return RecruitmentService.createJob(data);
 }
 
 export async function updateJob(
   jobId: string,
-  data: {
-    title?: string;
-    department?: string;
-    position?: string;
-    employmentType?: string;
-    numberOfOpenings?: number;
-    description?: string;
-    requirements?: string[];
-    qualifications?: string[];
-    salaryRange?: { min: number; max: number };
+  data: Omit<Partial<JobInput>, "organizationId"> & {
     status?: "open" | "closed" | "on-hold";
-    closingDate?: number;
-  }
+  },
 ) {
   return RecruitmentService.updateJob(jobId, data);
 }
 
 export async function updateApplicantStatus(
   applicantId: string,
-  status:
-    | "new"
-    | "screening"
-    | "interview"
-    | "assessment"
-    | "offer"
-    | "hired"
-    | "rejected"
+  status: ApplicantStage,
+  rejectionReason?: string,
 ) {
-  return RecruitmentService.updateApplicantStatus(applicantId, status);
+  return RecruitmentService.updateApplicantStatus(
+    applicantId,
+    status,
+    rejectionReason,
+  );
 }
 
 export async function addApplicantNote(applicantId: string, content: string) {
@@ -65,18 +49,9 @@ export async function scheduleInterview(data: {
   return RecruitmentService.scheduleInterview(data);
 }
 
-export async function convertApplicantToEmployee(data: {
-  applicantId: string;
-  employeeData: {
-    employeeId: string;
-    position: string;
-    department: string;
-    employmentType: "regular" | "probationary" | "contractual" | "part-time";
-    hireDate: number;
-    basicSalary: number;
-    salaryType: "monthly" | "daily" | "hourly";
-  };
-}) {
+export async function convertApplicantToEmployee(
+  data: EmployeeConversionInput,
+) {
   return RecruitmentService.convertApplicantToEmployee(data);
 }
 
@@ -84,39 +59,13 @@ export async function getApplicant(applicantId: string) {
   return RecruitmentService.getApplicant(applicantId);
 }
 
-export async function createApplicant(data: {
-  organizationId: string;
-  jobId: string;
-  firstName: string;
-  lastName: string;
-  email?: string;
-  phone?: string;
-  resume: string; // storage ID
-  coverLetter?: string;
-  source?: string;
-  sourceDetails?: string;
-  googleMeetLink?: string;
-  interviewVideoLink?: string;
-  portfolioLink?: string;
-}) {
+export async function createApplicant(data: ApplicantInput) {
   return RecruitmentService.createApplicant(data);
 }
 
 export async function updateApplicant(
   applicantId: string,
-  data: {
-    firstName?: string;
-    lastName?: string;
-    email?: string;
-    phone?: string;
-    resume?: string; // storage ID
-    coverLetter?: string;
-    source?: string;
-    sourceDetails?: string;
-    googleMeetLink?: string;
-    interviewVideoLink?: string;
-    portfolioLink?: string;
-  }
+  data: ApplicantUpdate,
 ) {
   return RecruitmentService.updateApplicant(applicantId, data);
 }
@@ -125,8 +74,15 @@ export async function deleteJob(jobId: string) {
   return RecruitmentService.deleteJob(jobId);
 }
 
+export async function setJobStatus(
+  jobId: string,
+  status: "open" | "closed" | "on-hold",
+) {
+  return RecruitmentService.setJobStatus(jobId, status);
+}
+
 export async function archiveJob(jobId: string) {
-  return RecruitmentService.archiveJob(jobId);
+  return RecruitmentService.setJobStatus(jobId, "closed");
 }
 
 export async function deleteApplicant(applicantId: string) {

@@ -1,5 +1,10 @@
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import { encryptCompensationForDb } from "./employeeCompensationCrypto";
@@ -14,12 +19,30 @@ import {
   replaceEmployeeIncentives,
   replaceEmployeeRequirements,
 } from "./leaveEmployeeCompatibility";
+import { filterApplicableRequirementPolicies } from "@/lib/requirements/workflow";
+import {
+  assertApplicantTransition,
+  validateScorecard,
+  type ApplicantStage,
+} from "@/lib/recruitment/workflow";
+
+const customFieldPrimitive = v.union(
+  v.string(),
+  v.number(),
+  v.boolean(),
+  v.null(),
+);
+const customFieldValue = v.union(
+  customFieldPrimitive,
+  v.array(customFieldPrimitive),
+  v.record(v.string(), customFieldPrimitive),
+);
 
 // Helper to check authorization with organization context
 async function checkAuth(
   ctx: QueryCtx | MutationCtx,
   organizationId: Id<"organizations">,
-  requiredRole?: "owner" | "admin" | "hr",
+  requiredRole?: "hr" | "approver",
 ) {
   const { user, membership } = await requireActiveMembership(
     ctx,
@@ -27,19 +50,13 @@ async function checkAuth(
   );
   const userRole = membership.role;
 
-  // Owner and admin have access to everything
-  // If requiredRole is specified, allow owner, admin, hr, or the requiredRole itself
   if (requiredRole) {
-    if (
-      userRole !== requiredRole &&
-      userRole !== "owner" &&
-      userRole !== "admin" &&
-      userRole !== "hr"
-    ) {
+    const hasHrAccess = ["owner", "admin", "hr"].includes(userRole);
+    const canApprove = ["owner", "admin"].includes(userRole);
+    if (!hasHrAccess || (requiredRole === "approver" && !canApprove)) {
       throw new Error("Not authorized");
     }
   }
-  // If no requiredRole specified, allow all authenticated users (read access)
 
   return {
     ...user,
@@ -50,22 +67,63 @@ async function checkAuth(
   };
 }
 
-function buildDefaultRequirementsForConvertedEmployee(requirements: any[]) {
-  const now = Date.now();
-  return requirements.map((req: any) => ({
-    type: req.type,
-    status: "pending" as const,
-    isRequired: req.isRequired ?? true,
-    appliesToDepartments: req.appliesToDepartments,
-    appliesToEmploymentTypes: req.appliesToEmploymentTypes,
-    reminderDaysBeforeDue: req.reminderDaysBeforeDue,
-    requiresVerification: req.requiresVerification ?? true,
-    expiryDate: req.expiryDaysAfterSubmission
-      ? now + req.expiryDaysAfterSubmission * 24 * 60 * 60 * 1000
-      : undefined,
-    isDefault: true,
-    isCustom: false,
-  }));
+function requireNonEmpty(value: string | undefined, label: string): string {
+  const normalized = value?.trim();
+  if (!normalized) throw new Error(`${label} is required`);
+  return normalized;
+}
+
+function cleanList(values: readonly string[] | undefined): string[] {
+  return [
+    ...new Set((values ?? []).map((value) => value.trim()).filter(Boolean)),
+  ];
+}
+
+function assertPositiveOpenings(value: number | undefined): number {
+  const openings = value ?? 1;
+  if (!Number.isInteger(openings) || openings < 1) {
+    throw new Error("Number of openings must be a positive whole number");
+  }
+  return openings;
+}
+
+async function assertOrganizationUsers(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  userIds: readonly Id<"users">[],
+): Promise<void> {
+  for (const userId of new Set(userIds)) {
+    const membership = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_user_organization", (query) =>
+        query.eq("userId", userId).eq("organizationId", organizationId),
+      )
+      .unique();
+    if (!membership || membership.accessStatus !== "active") {
+      throw new Error(
+        "Every interviewer must be an active organization member",
+      );
+    }
+  }
+}
+
+function buildDefaultRequirementsForConvertedEmployee(
+  requirements: readonly import("./organizationConfiguration").RequirementConfigurationInput[],
+  employment: { department: string; employmentType: string },
+) {
+  return filterApplicableRequirementPolicies(requirements, employment).map(
+    (req) => ({
+      type: req.type,
+      status: "pending" as const,
+      isRequired: req.isRequired ?? true,
+      appliesToDepartments: req.appliesToDepartments,
+      appliesToEmploymentTypes: req.appliesToEmploymentTypes,
+      reminderDaysBeforeDue: req.reminderDaysBeforeDue,
+      requiresVerification: req.requiresVerification ?? true,
+      isDefault: true,
+      isCustom: false,
+    }),
+  );
 }
 
 // Get job postings
@@ -78,19 +136,20 @@ export const getJobs = query({
   },
   handler: async (ctx, args) => {
     return runOrgQuery(async () => {
-      await checkAuth(ctx, args.organizationId);
+      await checkAuth(ctx, args.organizationId, "hr");
 
-      let jobs = await (ctx.db.query("jobs") as any)
-        .withIndex("by_organization", (q: any) =>
+      let jobs = await ctx.db
+        .query("jobs")
+        .withIndex("by_organization", (q) =>
           q.eq("organizationId", args.organizationId),
         )
         .collect();
 
       if (args.status) {
-        jobs = jobs.filter((j: any) => j.status === args.status);
+        jobs = jobs.filter((job) => job.status === args.status);
       }
 
-      jobs.sort((a: any, b: any) => b.postedDate - a.postedDate);
+      jobs.sort((left, right) => right.postedDate - left.postedDate);
       return jobs;
     }, []);
   },
@@ -106,7 +165,7 @@ export const getJob = query({
       const job = await ctx.db.get(args.jobId);
       if (!job) throw new Error("Job not found");
 
-      await checkAuth(ctx, job.organizationId);
+      await checkAuth(ctx, job.organizationId, "hr");
 
       return job;
     }, null);
@@ -134,19 +193,29 @@ export const createJob = mutation({
     closingDate: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
+    await checkAuth(ctx, args.organizationId, "hr");
 
     const now = Date.now();
+    const title = requireNonEmpty(args.title, "Job title");
+    const department = requireNonEmpty(args.department, "Department");
+    const employmentType = requireNonEmpty(
+      args.employmentType,
+      "Employment type",
+    );
+    const numberOfOpenings = assertPositiveOpenings(args.numberOfOpenings);
+    if (args.closingDate !== undefined && args.closingDate <= now) {
+      throw new Error("Closing date must be in the future");
+    }
     const jobId = await ctx.db.insert("jobs", {
       organizationId: args.organizationId,
-      title: args.title || "",
-      department: args.department || "",
-      position: args.position || "",
-      employmentType: args.employmentType || "",
-      numberOfOpenings: args.numberOfOpenings || 1,
-      description: args.description || "",
-      requirements: args.requirements || [],
-      qualifications: args.qualifications || [],
+      title,
+      department,
+      position: args.position?.trim() || title,
+      employmentType,
+      numberOfOpenings,
+      description: args.description?.trim() || "",
+      requirements: cleanList(args.requirements),
+      qualifications: cleanList(args.qualifications),
       salaryRange: args.salaryRange,
       status: "open",
       postedDate: now,
@@ -186,24 +255,35 @@ export const updateJob = mutation({
     const job = await ctx.db.get(args.jobId);
     if (!job) throw new Error("Job not found");
 
-    const userRecord = await checkAuth(ctx, job.organizationId, "hr");
+    await checkAuth(ctx, job.organizationId, "hr");
 
-    const updates: any = { updatedAt: Date.now() };
-    if (args.title !== undefined) updates.title = args.title;
-    if (args.department !== undefined) updates.department = args.department;
-    if (args.position !== undefined) updates.position = args.position;
+    const updates: Partial<Doc<"jobs">> = { updatedAt: Date.now() };
+    if (args.title !== undefined)
+      updates.title = requireNonEmpty(args.title, "Job title");
+    if (args.department !== undefined)
+      updates.department = requireNonEmpty(args.department, "Department");
+    if (args.position !== undefined) updates.position = args.position.trim();
     if (args.employmentType !== undefined)
-      updates.employmentType = args.employmentType;
+      updates.employmentType = requireNonEmpty(
+        args.employmentType,
+        "Employment type",
+      );
     if (args.numberOfOpenings !== undefined)
-      updates.numberOfOpenings = args.numberOfOpenings;
-    if (args.description !== undefined) updates.description = args.description;
+      updates.numberOfOpenings = assertPositiveOpenings(args.numberOfOpenings);
+    if (args.description !== undefined)
+      updates.description = args.description.trim();
     if (args.requirements !== undefined)
-      updates.requirements = args.requirements;
+      updates.requirements = cleanList(args.requirements);
     if (args.qualifications !== undefined)
-      updates.qualifications = args.qualifications;
+      updates.qualifications = cleanList(args.qualifications);
     if (args.salaryRange !== undefined) updates.salaryRange = args.salaryRange;
     if (args.status !== undefined) updates.status = args.status;
-    if (args.closingDate !== undefined) updates.closingDate = args.closingDate;
+    if (args.closingDate !== undefined) {
+      if (args.closingDate <= Date.now()) {
+        throw new Error("Closing date must be in the future");
+      }
+      updates.closingDate = args.closingDate;
+    }
 
     await ctx.db.patch(args.jobId, updates);
     return { success: true };
@@ -219,7 +299,17 @@ export const deleteJob = mutation({
     const job = await ctx.db.get(args.jobId);
     if (!job) throw new Error("Job not found");
 
-    const userRecord = await checkAuth(ctx, job.organizationId, "hr");
+    await checkAuth(ctx, job.organizationId, "hr");
+
+    const applicants = await ctx.db
+      .query("applicants")
+      .withIndex("by_job", (query) => query.eq("jobId", job._id))
+      .take(1);
+    if (applicants.length > 0) {
+      throw new Error(
+        "Archive positions with applicants instead of deleting them",
+      );
+    }
 
     await ctx.db.delete(args.jobId);
     return { success: true };
@@ -247,21 +337,26 @@ export const getApplicants = query({
     return runOrgQuery(async () => {
       await checkAuth(ctx, args.organizationId, "hr");
 
-      let applicants = await (ctx.db.query("applicants") as any)
-        .withIndex("by_organization", (q: any) =>
+      let applicants = await ctx.db
+        .query("applicants")
+        .withIndex("by_organization", (q) =>
           q.eq("organizationId", args.organizationId),
         )
         .collect();
 
       if (args.jobId) {
-        applicants = applicants.filter((a: any) => a.jobId === args.jobId);
+        applicants = applicants.filter(
+          (applicant) => applicant.jobId === args.jobId,
+        );
       }
 
       if (args.status) {
-        applicants = applicants.filter((a: any) => a.status === args.status);
+        applicants = applicants.filter(
+          (applicant) => applicant.status === args.status,
+        );
       }
 
-      applicants.sort((a: any, b: any) => b.appliedDate - a.appliedDate);
+      applicants.sort((left, right) => right.appliedDate - left.appliedDate);
       return Promise.all(
         applicants.map((applicant: Doc<"applicants">) =>
           loadEffectiveApplicant(ctx, applicant),
@@ -315,15 +410,27 @@ export const createApplicant = mutation({
       throw new Error("Job posting is closed");
     }
 
+    const normalizedEmail = args.email.trim().toLocaleLowerCase();
+    const duplicates = await ctx.db
+      .query("applicants")
+      .withIndex("by_job", (query) => query.eq("jobId", job._id))
+      .filter((query) => query.eq(query.field("email"), normalizedEmail))
+      .take(1);
+    if (duplicates.length > 0) {
+      throw new Error(
+        "An applicant with this email already exists for the position",
+      );
+    }
+
     const now = Date.now();
     const pipelineStageHistory = [{ to: "new", changedAt: now }];
     const applicantId = await ctx.db.insert("applicants", {
       organizationId: args.organizationId,
       jobId: args.jobId,
-      firstName: args.firstName,
-      lastName: args.lastName,
-      email: args.email,
-      phone: args.phone,
+      firstName: requireNonEmpty(args.firstName, "First name"),
+      lastName: requireNonEmpty(args.lastName, "Last name"),
+      email: normalizedEmail,
+      phone: args.phone.trim(),
       resume: args.resume,
       coverLetter: args.coverLetter,
       source: args.source,
@@ -346,7 +453,6 @@ export const createApplicant = mutation({
   },
 });
 
-// Create applicant (HR/Admin only - can add to any job status)
 export const createApplicantByHR = mutation({
   args: {
     organizationId: v.id("organizations"),
@@ -373,7 +479,20 @@ export const createApplicantByHR = mutation({
       throw new Error("Invalid job");
     }
 
-    // HR/Admin can add applicants to any job status
+    const normalizedEmail = args.email?.trim().toLocaleLowerCase() ?? "";
+    if (normalizedEmail) {
+      const duplicates = await ctx.db
+        .query("applicants")
+        .withIndex("by_job", (query) => query.eq("jobId", job._id))
+        .filter((query) => query.eq(query.field("email"), normalizedEmail))
+        .take(1);
+      if (duplicates.length > 0) {
+        throw new Error(
+          "An applicant with this email already exists for the position",
+        );
+      }
+    }
+
     const now = Date.now();
     const pipelineStageHistory = [
       { to: "new", changedAt: now, changedBy: userRecord._id },
@@ -381,10 +500,10 @@ export const createApplicantByHR = mutation({
     const applicantId = await ctx.db.insert("applicants", {
       organizationId: args.organizationId,
       jobId: args.jobId,
-      firstName: args.firstName,
-      lastName: args.lastName,
-      email: args.email || "",
-      phone: args.phone || "",
+      firstName: requireNonEmpty(args.firstName, "First name"),
+      lastName: requireNonEmpty(args.lastName, "Last name"),
+      email: normalizedEmail,
+      phone: args.phone?.trim() || "",
       resume: args.resume,
       coverLetter: args.coverLetter,
       source: args.source,
@@ -425,13 +544,13 @@ export const updateApplicant = mutation({
     googleMeetLink: v.optional(v.string()),
     interviewVideoLink: v.optional(v.string()),
     portfolioLink: v.optional(v.string()),
-    customFields: v.optional(v.any()), // Flexible object for custom fields
+    customFields: v.optional(v.record(v.string(), customFieldValue)),
   },
   handler: async (ctx, args) => {
     const applicant = await ctx.db.get(args.applicantId);
     if (!applicant) throw new Error("Applicant not found");
 
-    const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
+    await checkAuth(ctx, applicant.organizationId, "hr");
     const effectiveApplicant = await loadEffectiveApplicant(ctx, applicant);
 
     const updates: Partial<Doc<"applicants">> = { updatedAt: Date.now() };
@@ -482,6 +601,7 @@ export const updateApplicantStatus = mutation({
       v.literal("hired"),
       v.literal("rejected"),
     ),
+    rejectionReason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const applicant = await ctx.db.get(args.applicantId);
@@ -491,6 +611,10 @@ export const updateApplicantStatus = mutation({
 
     const now = Date.now();
     const effective = await loadEffectiveApplicant(ctx, applicant);
+    assertApplicantTransition(applicant.status as ApplicantStage, args.status, {
+      rejectionReason: args.rejectionReason,
+      convertedEmployeeId: applicant.convertedEmployeeId,
+    });
     const pipelineStageHistory = effective.pipelineStageHistory || [];
     pipelineStageHistory.push({
       from: applicant.status,
@@ -499,10 +623,18 @@ export const updateApplicantStatus = mutation({
       changedBy: userRecord._id,
     });
 
+    const notes = [...effective.notes];
+    if (args.status === "rejected") {
+      notes.push({
+        date: now,
+        author: userRecord._id,
+        content: `Rejection reason: ${args.rejectionReason?.trim()}`,
+      });
+    }
     await synchronizeEffectiveApplicant(
       ctx,
       applicant,
-      { pipelineStageHistory },
+      { pipelineStageHistory, notes },
       now,
     );
     await ctx.db.patch(args.applicantId, {
@@ -532,7 +664,7 @@ export const addApplicantNote = mutation({
     notes.push({
       date: now,
       author: userRecord._id,
-      content: args.content,
+      content: requireNonEmpty(args.content, "Note"),
     });
 
     await synchronizeEffectiveApplicant(ctx, applicant, { notes }, now);
@@ -558,26 +690,42 @@ export const scheduleInterview = mutation({
 
     const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
 
+    if (args.date <= Date.now()) {
+      throw new Error("Interview date must be in the future");
+    }
+    const type = requireNonEmpty(args.type, "Interview type");
+    const interviewers = [args.interviewer, ...(args.interviewers ?? [])];
+    await assertOrganizationUsers(ctx, applicant.organizationId, interviewers);
+    if (
+      applicant.status !== "screening" &&
+      applicant.status !== "assessment" &&
+      applicant.status !== "interview"
+    ) {
+      throw new Error(
+        "Move the applicant to screening before scheduling an interview",
+      );
+    }
+
     const effective = await loadEffectiveApplicant(ctx, applicant);
     const interviews = effective.interviewSchedules || [];
     interviews.push({
       date: args.date,
-      type: args.type,
+      type,
       interviewer: args.interviewer,
       interviewers: args.interviewers,
       remarks: args.remarks,
     });
 
     const now = Date.now();
-    const pipelineStageHistory = [
-      ...(effective.pipelineStageHistory ?? []),
-      {
+    const pipelineStageHistory = [...(effective.pipelineStageHistory ?? [])];
+    if (applicant.status !== "interview") {
+      pipelineStageHistory.push({
         from: effective.status,
         to: "interview",
         changedAt: now,
         changedBy: userRecord._id,
-      },
-    ];
+      });
+    }
     await synchronizeEffectiveApplicant(
       ctx,
       applicant,
@@ -611,20 +759,24 @@ export const addApplicantScorecard = mutation({
     if (!applicant) throw new Error("Applicant not found");
 
     const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
+    if (applicant.convertedEmployeeId) {
+      throw new Error("Converted applicants cannot receive new scorecards");
+    }
+    const validated = validateScorecard(args.criteria);
     const effective = await loadEffectiveApplicant(ctx, applicant);
     const scorecards = effective.scorecards || [];
     const now = Date.now();
     scorecards.push({
       reviewer: userRecord._id,
       criteria: args.criteria,
-      overallScore: args.overallScore,
+      overallScore: validated.overallScore,
       recommendation: args.recommendation,
       submittedAt: now,
     });
 
     await synchronizeEffectiveApplicant(ctx, applicant, { scorecards }, now);
     await ctx.db.patch(args.applicantId, {
-      rating: args.overallScore,
+      rating: validated.overallScore,
       updatedAt: now,
     });
 
@@ -644,6 +796,22 @@ export const requestOfferApproval = mutation({
     const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
     const now = Date.now();
     const effective = await loadEffectiveApplicant(ctx, applicant);
+    if (applicant.status !== "interview" && applicant.status !== "assessment") {
+      throw new Error(
+        "Complete interviews or assessment before requesting an offer",
+      );
+    }
+    if (effective.scorecards.length === 0) {
+      throw new Error(
+        "Submit at least one scorecard before requesting an offer",
+      );
+    }
+    if (
+      effective.offerApproval?.status === "pending" ||
+      effective.offerApproval?.status === "approved"
+    ) {
+      throw new Error("An offer decision is already in progress");
+    }
     const offerApproval = {
       status: "pending" as const,
       requestedBy: userRecord._id,
@@ -684,23 +852,50 @@ export const approveOffer = mutation({
     const applicant = await ctx.db.get(args.applicantId);
     if (!applicant) throw new Error("Applicant not found");
 
-    const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
+    const userRecord = await checkAuth(
+      ctx,
+      applicant.organizationId,
+      "approver",
+    );
     const now = Date.now();
     const effective = await loadEffectiveApplicant(ctx, applicant);
+    if (
+      !effective.offerApproval ||
+      effective.offerApproval.status !== "pending"
+    ) {
+      throw new Error("Only a pending offer request can be decided");
+    }
+    if (effective.offerApproval.requestedBy === userRecord._id) {
+      throw new Error(
+        "Offer requests must be approved by another owner or admin",
+      );
+    }
     const offerApproval = {
-        ...(effective.offerApproval || {}),
-        status: args.approved ? "approved" : "rejected",
-        approvedBy: userRecord._id,
-        approvedAt: now,
-        notes: args.notes ?? effective.offerApproval?.notes,
-      } as const;
+      ...(effective.offerApproval || {}),
+      status: args.approved ? "approved" : "rejected",
+      approvedBy: userRecord._id,
+      approvedAt: now,
+      notes: args.notes ?? effective.offerApproval?.notes,
+    } as const;
+    const pipelineStageHistory = [...effective.pipelineStageHistory];
+    if (!args.approved) {
+      pipelineStageHistory.push({
+        from: "offer",
+        to: "assessment",
+        changedAt: now,
+        changedBy: userRecord._id,
+      });
+    }
     await synchronizeEffectiveApplicant(
       ctx,
       applicant,
-      { offerApproval },
+      { offerApproval, pipelineStageHistory },
       now,
     );
-    await ctx.db.patch(args.applicantId, { updatedAt: now });
+    await ctx.db.patch(args.applicantId, {
+      status: args.approved ? "offer" : "assessment",
+      updatedAt: now,
+    });
 
     return { success: true };
   },
@@ -715,7 +910,11 @@ export const deleteApplicant = mutation({
     const applicant = await ctx.db.get(args.applicantId);
     if (!applicant) throw new Error("Applicant not found");
 
-    const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
+    await checkAuth(ctx, applicant.organizationId, "hr");
+
+    if (applicant.convertedEmployeeId) {
+      throw new Error("Converted applicants cannot be deleted");
+    }
 
     await synchronizeEffectiveApplicant(
       ctx,
@@ -768,6 +967,41 @@ export const convertApplicantToEmployee = mutation({
 
     const userRecord = await checkAuth(ctx, applicant.organizationId, "hr");
 
+    if (applicant.convertedEmployeeId) {
+      throw new Error("This applicant has already been converted");
+    }
+    const effectiveApplicant = await loadEffectiveApplicant(ctx, applicant);
+    if (
+      applicant.status !== "offer" ||
+      effectiveApplicant.offerApproval?.status !== "approved"
+    ) {
+      throw new Error(
+        "An approved offer is required before employee conversion",
+      );
+    }
+    const employeeCode = requireNonEmpty(
+      args.employeeData.employeeId,
+      "Employee ID",
+    );
+    const duplicateEmployees = await ctx.db
+      .query("employees")
+      .withIndex("by_organization", (query) =>
+        query.eq("organizationId", applicant.organizationId),
+      )
+      .filter((query) =>
+        query.eq(query.field("employment.employeeId"), employeeCode),
+      )
+      .take(1);
+    if (duplicateEmployees.length > 0) {
+      throw new Error("Employee ID is already in use");
+    }
+    if (
+      !Number.isFinite(args.employeeData.basicSalary) ||
+      args.employeeData.basicSalary <= 0
+    ) {
+      throw new Error("Basic salary must be greater than zero");
+    }
+
     // Create employee record
     const now = Date.now();
     const requirementDefinitions = await getEffectiveRequirementDefinitions(
@@ -776,6 +1010,7 @@ export const convertApplicantToEmployee = mutation({
     );
     const defaultRequirements = buildDefaultRequirementsForConvertedEmployee(
       requirementDefinitions.requirements,
+      args.employeeData,
     );
 
     const employeeId = await ctx.db.insert("employees", {
@@ -787,9 +1022,9 @@ export const convertApplicantToEmployee = mutation({
         phone: applicant.phone,
       },
       employment: {
-        employeeId: args.employeeData.employeeId,
-        position: args.employeeData.position,
-        department: args.employeeData.department,
+        employeeId: employeeCode,
+        position: requireNonEmpty(args.employeeData.position, "Position"),
+        department: requireNonEmpty(args.employeeData.department, "Department"),
         employmentType: args.employeeData.employmentType,
         hireDate: args.employeeData.hireDate,
         status: "active",
@@ -820,11 +1055,25 @@ export const convertApplicantToEmployee = mutation({
       replaceEmployeeIncentives(ctx, employee, [], now),
     ]);
 
-    // Update applicant status
+    const pipelineStageHistory = [
+      ...effectiveApplicant.pipelineStageHistory,
+      {
+        from: "offer",
+        to: "hired",
+        changedAt: now,
+        changedBy: userRecord._id,
+      },
+    ];
+    await synchronizeEffectiveApplicant(
+      ctx,
+      applicant,
+      { pipelineStageHistory },
+      now,
+    );
     await ctx.db.patch(args.applicantId, {
       status: "hired",
       convertedEmployeeId: employeeId,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
 
     return employeeId;

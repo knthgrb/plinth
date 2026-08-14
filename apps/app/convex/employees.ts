@@ -1,5 +1,10 @@
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import {
@@ -29,6 +34,10 @@ import {
   getEffectiveRequirementDefinitions,
   type RequirementConfigurationInput,
 } from "./organizationConfiguration";
+import {
+  calculateSubmissionExpiry,
+  filterApplicableRequirementPolicies,
+} from "@/lib/requirements/workflow";
 import { createEmployeeLinkedInvitation } from "./invitationCreation";
 import {
   cancelPendingEmployeeInvitations,
@@ -63,7 +72,7 @@ const customFieldValue = v.union(
   v.record(v.string(), customFieldPrimitive),
 );
 
-function buildRequirementFromDefault(req: DefaultRequirement, now = Date.now()) {
+function buildRequirementFromDefault(req: DefaultRequirement) {
   return {
     type: req.type,
     status: "pending" as const,
@@ -72,9 +81,6 @@ function buildRequirementFromDefault(req: DefaultRequirement, now = Date.now()) 
     appliesToEmploymentTypes: req.appliesToEmploymentTypes,
     reminderDaysBeforeDue: req.reminderDaysBeforeDue,
     requiresVerification: req.requiresVerification ?? true,
-    expiryDate: req.expiryDaysAfterSubmission
-      ? now + req.expiryDaysAfterSubmission * 24 * 60 * 60 * 1000
-      : undefined,
     isDefault: true,
     isCustom: false,
   };
@@ -128,9 +134,7 @@ async function getLinkedEmployeeMemberships(
   const memberships = await ctx.db
     .query("userOrganizations")
     .withIndex("by_organization_employee", (query) =>
-      query
-        .eq("organizationId", organizationId)
-        .eq("employeeId", employeeId),
+      query.eq("organizationId", organizationId).eq("employeeId", employeeId),
     )
     .take(2);
 
@@ -628,9 +632,7 @@ export const listEmployeesAvailableForOrgInvite = query({
         if (e.archivedAt !== undefined || e.employment.status !== "active") {
           continue;
         }
-        const em = String(
-          e.personalInfo.email ?? "",
-        ).trim();
+        const em = String(e.personalInfo.email ?? "").trim();
         if (!em) continue;
         const emNorm = normalizeInviteListEmail(em);
         if (linkedEmployeeIds.has(e._id as string)) continue;
@@ -844,7 +846,9 @@ export const createEmployee = mutation({
     assertHireDateIsNotFuture(args.employment.hireDate);
 
     const now = Date.now();
-    const accountAccess = args.accountAccess ?? { kind: "employee_only" as const };
+    const accountAccess = args.accountAccess ?? {
+      kind: "employee_only" as const,
+    };
     let membershipToLink: Doc<"userOrganizations"> | null = null;
     let personalInfo = args.personalInfo;
 
@@ -873,7 +877,10 @@ export const createEmployee = mutation({
       }
       personalInfo = { ...args.personalInfo, email: linkedUser.email };
     } else if (accountAccess.kind === "invite_member") {
-      personalInfo = { ...args.personalInfo, email: accountAccess.email.trim() };
+      personalInfo = {
+        ...args.personalInfo,
+        email: accountAccess.email.trim(),
+      };
     }
 
     // Get organization default requirements
@@ -881,14 +888,13 @@ export const createEmployee = mutation({
       ctx,
       args.organizationId,
     );
-    const defaultRequirements = requirementDefinitions.requirements.map(
-      (requirement) => buildRequirementFromDefault(requirement, now),
-    );
+    const defaultRequirements = filterApplicableRequirementPolicies(
+      requirementDefinitions.requirements,
+      args.employment,
+    ).map(buildRequirementFromDefault);
 
-    const {
-      bankDetails: ignoredBankDetails,
-      ...canonicalCompensation
-    } = args.compensation;
+    const { bankDetails: ignoredBankDetails, ...canonicalCompensation } =
+      args.compensation;
     const { scheduleOverrides: ignoredOverrides, ...canonicalSchedule } =
       args.schedule;
     void ignoredBankDetails;
@@ -897,7 +903,9 @@ export const createEmployee = mutation({
       organizationId: args.organizationId,
       personalInfo,
       employment: args.employment,
-      compensation: encryptCompensationForDb(canonicalCompensation) as Doc<"employees">["compensation"],
+      compensation: encryptCompensationForDb(
+        canonicalCompensation,
+      ) as Doc<"employees">["compensation"],
       schedule: canonicalSchedule,
       shiftId: args.shiftId ?? null,
       createdAt: now,
@@ -1260,6 +1268,36 @@ export const updateEmployee = mutation({
 
     await ctx.db.patch(args.employeeId, updates);
     const compatibilityNow = Date.now();
+    if (args.employment) {
+      const [definitions, currentRequirements] = await Promise.all([
+        getEffectiveRequirementDefinitions(ctx, employee.organizationId),
+        loadEffectiveEmployeeRequirements(ctx, employee),
+      ]);
+      const existingDefaultTypes = new Set(
+        currentRequirements
+          .filter((requirement) => requirement.isDefault)
+          .map((requirement) => requirement.type.trim().toLocaleLowerCase()),
+      );
+      const newlyApplicable = filterApplicableRequirementPolicies(
+        definitions.requirements,
+        args.employment,
+      )
+        .filter(
+          (definition) =>
+            !existingDefaultTypes.has(
+              definition.type.trim().toLocaleLowerCase(),
+            ),
+        )
+        .map(buildRequirementFromDefault);
+      if (newlyApplicable.length > 0) {
+        await replaceEmployeeRequirements(
+          ctx,
+          employee,
+          [...currentRequirements, ...newlyApplicable],
+          compatibilityNow,
+        );
+      }
+    }
     if (args.schedule) {
       await replaceEmployeeScheduleOverrides(
         ctx,
@@ -1293,8 +1331,7 @@ export const updateEmployee = mutation({
     const nextSchedule = args.schedule ?? employee.schedule;
     const scheduleChanged =
       args.schedule !== undefined &&
-      JSON.stringify(args.schedule) !==
-        JSON.stringify(employee.schedule);
+      JSON.stringify(args.schedule) !== JSON.stringify(employee.schedule);
     const shiftChanged =
       args.shiftId !== undefined &&
       normalizedNextShiftId !== normalizedCurrentShiftId;
@@ -1430,8 +1467,7 @@ export const rehireEmployee = mutation({
         employee.updatedAt,
       ...lifecycleEvents
         .filter(
-          (event) =>
-            event.type === "resigned" || event.type === "terminated",
+          (event) => event.type === "resigned" || event.type === "terminated",
         )
         .map((event) => event.effectiveAt),
     );
@@ -1576,8 +1612,19 @@ export const addRequirement = mutation({
     await checkAuth(ctx, employee.organizationId, "hr");
 
     const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
+    const normalizedType = args.requirement.type.trim().toLocaleLowerCase();
+    if (!normalizedType) throw new Error("Requirement type is required");
+    if (
+      requirements.some(
+        (requirement) =>
+          requirement.type.trim().toLocaleLowerCase() === normalizedType,
+      )
+    ) {
+      throw new Error("This employee already has that requirement");
+    }
     requirements.push({
       ...args.requirement,
+      type: args.requirement.type.trim(),
       isCustom: true, // Mark as custom requirement
     });
 
@@ -1603,8 +1650,9 @@ export const removeRequirement = mutation({
 
     const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
 
-    // Only allow removing custom requirements
-    if (requirements[args.requirementIndex]?.isCustom) {
+    const requirement = requirements[args.requirementIndex];
+    if (!requirement) throw new Error("Requirement not found");
+    if (requirement.isCustom) {
       requirements.splice(args.requirementIndex, 1);
       const now = Date.now();
       await replaceEmployeeRequirements(ctx, employee, requirements, now);
@@ -1639,28 +1687,41 @@ export const updateRequirementStatus = mutation({
 
     const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
     const now = Date.now();
-    if (requirements[args.requirementIndex]) {
-      const requirement = requirements[args.requirementIndex];
-      requirement.status = args.status;
-      if (args.status === "submitted" && !requirement.submittedDate) {
-        requirement.submittedDate = now;
-      }
-      if (args.status === "verified") {
-        requirement.verifiedAt = now;
-        requirement.verifiedBy = userRecord._id;
-        requirement.verificationNotes = args.verificationNotes;
-        requirement.rejectedAt = undefined;
-        requirement.rejectedBy = undefined;
-        requirement.rejectionReason = undefined;
-      }
-      if (args.status === "pending" && requirement.file) {
-        requirement.rejectedAt = now;
-        requirement.rejectedBy = userRecord._id;
-        requirement.rejectionReason = args.rejectionReason;
-        requirement.verifiedAt = undefined;
-        requirement.verifiedBy = undefined;
-        requirement.verificationNotes = undefined;
-      }
+    const requirement = requirements[args.requirementIndex];
+    if (!requirement) throw new Error("Requirement not found");
+    if (
+      (args.status === "submitted" || args.status === "verified") &&
+      !requirement.file
+    ) {
+      throw new Error("Upload evidence before submitting this requirement");
+    }
+    if (
+      args.status === "pending" &&
+      requirement.file &&
+      !args.rejectionReason?.trim()
+    ) {
+      throw new Error("A rejection reason is required");
+    }
+    requirement.status = args.status;
+    if (args.status === "submitted" && !requirement.submittedDate) {
+      requirement.submittedDate = now;
+    }
+    if (args.status === "verified") {
+      requirement.verifiedAt = now;
+      requirement.verifiedBy = userRecord._id;
+      requirement.verificationNotes =
+        args.verificationNotes?.trim() || undefined;
+      requirement.rejectedAt = undefined;
+      requirement.rejectedBy = undefined;
+      requirement.rejectionReason = undefined;
+    }
+    if (args.status === "pending" && requirement.file) {
+      requirement.rejectedAt = now;
+      requirement.rejectedBy = userRecord._id;
+      requirement.rejectionReason = args.rejectionReason?.trim();
+      requirement.verifiedAt = undefined;
+      requirement.verifiedBy = undefined;
+      requirement.verificationNotes = undefined;
     }
 
     await replaceEmployeeRequirements(ctx, employee, requirements, now);
@@ -1687,6 +1748,14 @@ export const setEmployeeRequirementsComplete = mutation({
       ? "verified"
       : "pending";
     const now = Date.now();
+    if (
+      args.complete &&
+      requirements.some(
+        (requirement) => requirement.isRequired !== false && !requirement.file,
+      )
+    ) {
+      throw new Error("Every required item needs evidence before completion");
+    }
     const updated = requirements.map((r) => ({
       ...r,
       status: newStatus,
@@ -1727,22 +1796,33 @@ export const updateRequirementFile = mutation({
     }
 
     const requirements = await loadEffectiveEmployeeRequirements(ctx, employee);
-    if (requirements[args.requirementIndex]) {
-      requirements[args.requirementIndex].file = args.file;
-      if (!requirements[args.requirementIndex].submittedDate) {
-        requirements[args.requirementIndex].submittedDate = Date.now();
-      }
-      // Auto-update status to submitted when file is uploaded
-      if (requirements[args.requirementIndex].status === "pending") {
-        requirements[args.requirementIndex].status = "submitted";
-      }
-      requirements[args.requirementIndex].verifiedAt = undefined;
-      requirements[args.requirementIndex].verifiedBy = undefined;
-      requirements[args.requirementIndex].verificationNotes = undefined;
-      requirements[args.requirementIndex].rejectedAt = undefined;
-      requirements[args.requirementIndex].rejectedBy = undefined;
-      requirements[args.requirementIndex].rejectionReason = undefined;
-    }
+    const requirement = requirements[args.requirementIndex];
+    if (!requirement) throw new Error("Requirement not found");
+    const submittedAt = Date.now();
+    const definitions = await getEffectiveRequirementDefinitions(
+      ctx,
+      employee.organizationId,
+    );
+    const definition = definitions.requirements.find(
+      (candidate) =>
+        candidate.type.trim().toLocaleLowerCase() ===
+        requirement.type.trim().toLocaleLowerCase(),
+    );
+    requirement.file = args.file;
+    requirement.submittedDate = submittedAt;
+    requirement.expiryDate = definition
+      ? calculateSubmissionExpiry(definition, submittedAt)
+      : requirement.expiryDate;
+    requirement.status =
+      requirement.requiresVerification === false ? "verified" : "submitted";
+    requirement.verifiedAt =
+      requirement.requiresVerification === false ? submittedAt : undefined;
+    requirement.verifiedBy =
+      requirement.requiresVerification === false ? userRecord._id : undefined;
+    requirement.verificationNotes = undefined;
+    requirement.rejectedAt = undefined;
+    requirement.rejectedBy = undefined;
+    requirement.rejectionReason = undefined;
 
     const now = Date.now();
     await replaceEmployeeRequirements(ctx, employee, requirements, now);

@@ -1,5 +1,10 @@
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { authComponent } from "./auth";
 import { runOrgQuery } from "./queryAuthGrace";
@@ -26,6 +31,7 @@ import {
   loadEffectiveEmployeeRequirements,
   replaceEmployeeRequirements,
 } from "./leaveEmployeeCompatibility";
+import { isRequirementApplicable } from "@/lib/requirements/workflow";
 import { findUserByEmail, normalizeUserEmail } from "./userEmail";
 import {
   cancelPendingEmployeeInvitations,
@@ -54,9 +60,6 @@ function buildEmployeeRequirementFromDefault(
     appliesToEmploymentTypes: req.appliesToEmploymentTypes,
     reminderDaysBeforeDue: req.reminderDaysBeforeDue,
     requiresVerification: req.requiresVerification ?? true,
-    expiryDate: req.expiryDaysAfterSubmission
-      ? Date.now() + req.expiryDaysAfterSubmission * 24 * 60 * 60 * 1000
-      : undefined,
     isDefault: true,
     isCustom: false,
   };
@@ -74,12 +77,7 @@ function mergeDefaultRequirementPolicy(
     reminderDaysBeforeDue: defaultReq.reminderDaysBeforeDue,
     requiresVerification:
       defaultReq.requiresVerification ?? existing.requiresVerification ?? true,
-    expiryDate:
-      existing.expiryDate ??
-      (defaultReq.expiryDaysAfterSubmission
-        ? Date.now() +
-          defaultReq.expiryDaysAfterSubmission * 24 * 60 * 60 * 1000
-        : undefined),
+    expiryDate: existing.expiryDate,
   };
 }
 
@@ -118,9 +116,7 @@ export const ensureUserRecord = mutation({
 });
 
 // Helper for mutations only: get existing user record or create one (e.g. after signup before ensureUserRecord ran)
-async function getOrCreateUserRecord(
-  ctx: MutationCtx,
-): Promise<Doc<"users">> {
+async function getOrCreateUserRecord(ctx: MutationCtx): Promise<Doc<"users">> {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
 
@@ -338,9 +334,7 @@ export const getCurrentUser = query({
       ...userRecord,
       organization: currentOrg,
       role: userOrg.role,
-      accessStatus: normalizeOrgMembershipAccessStatus(
-        userOrg.accessStatus,
-      ),
+      accessStatus: normalizeOrgMembershipAccessStatus(userOrg.accessStatus),
       employeeId: userOrg.employeeId,
     };
   },
@@ -892,6 +886,9 @@ export const updateDefaultRequirements = mutation({
 
       // Create default requirements that don't already exist
       const newDefaultRequirements = args.requirements
+        .filter((defaultRequirement) =>
+          isRequirementApplicable(defaultRequirement, employee.employment),
+        )
         .filter((defaultRequirement) => {
           // Check if this default requirement already exists for this employee
           return !currentRequirements.some(
@@ -913,8 +910,7 @@ export const updateDefaultRequirements = mutation({
         )
         .map((existing) => {
           const defaultReq = args.requirements.find(
-            (defaultRequirement) =>
-              defaultRequirement.type === existing.type,
+            (defaultRequirement) => defaultRequirement.type === existing.type,
           );
           return defaultReq
             ? mergeDefaultRequirementPolicy(existing, defaultReq)

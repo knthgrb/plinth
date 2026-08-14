@@ -1,19 +1,23 @@
 "use client";
 
-import { use } from "react";
+import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
+import { useRouter } from "next/navigation";
+import { format } from "date-fns";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import {
+  addApplicantNote,
+  createApplicant,
+  deleteApplicant,
+  deleteJob,
+  setJobStatus,
+} from "@/actions/recruitment";
+import { getFileUrl } from "@/actions/files";
 import { MainLayout } from "@/components/layout/main-layout";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
@@ -24,42 +28,14 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { Badge } from "@/components/ui/badge";
-import {
-  Plus,
-  ArrowLeft,
-  Download,
-  MoreHorizontal,
-  Trash2,
-  Archive,
-  FileText,
-  Upload,
-  Link as LinkIcon,
-  X,
-} from "lucide-react";
-import { format } from "date-fns";
-import {
-  createApplicant,
-  updateApplicant,
-  updateApplicantStatus,
-  addApplicantNote,
-  deleteApplicant,
-  deleteJob,
-  archiveJob,
-} from "@/actions/recruitment";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -67,29 +43,109 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getFileUrl } from "@/actions/files";
-import { uploadFileToStorage } from "@/lib/storage-upload";
-import { useOrganization } from "@/hooks/organization-context";
-import { useRouter } from "next/navigation";
-import { getOrganizationPath } from "@/utils/organization-routing";
-import { useState, useRef, useCallback, useEffect } from "react";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { DynamicApplicantsTable } from "../_components/dynamic-applicants-table";
+import { useToast } from "@/components/ui/use-toast";
+import { useOrganization } from "@/hooks/organization-context";
+import { uploadFileToStorage } from "@/lib/storage-upload";
+import {
+  APPLICANT_STAGES,
+  formatApplicantStage,
+  summarizeRecruitmentPipeline,
+  type ApplicantStage,
+} from "@/lib/recruitment/workflow";
+import {
+  errorMessage,
+  type RecruitmentColumn,
+} from "@/lib/recruitment/ui-types";
+import { getOrganizationPath } from "@/utils/organization-routing";
+import {
+  ArrowLeft,
+  ExternalLink,
+  FileText,
+  MoreHorizontal,
+  PauseCircle,
+  PlayCircle,
+  Plus,
+  Search,
+  Settings,
+  Trash2,
+  Upload,
+  XCircle,
+} from "lucide-react";
+import { ApplicantWorkflowPanel } from "../_components/applicant-workflow-panel";
 import { ColumnManagementModal } from "../_components/column-management-modal";
-import { Settings } from "lucide-react";
+import { DynamicApplicantsTable } from "../_components/dynamic-applicants-table";
 
-interface Column {
-  id: string;
-  label: string;
-  field: string;
-  type: "text" | "number" | "date" | "badge" | "link";
-  sortable?: boolean;
-  width?: string;
-  customField?: boolean;
-  isDefault?: boolean;
-  hidden?: boolean;
+const defaultColumns: RecruitmentColumn[] = [
+  {
+    id: "name",
+    label: "Name",
+    field: "firstName",
+    type: "text",
+    sortable: true,
+    isDefault: true,
+  },
+  {
+    id: "email",
+    label: "Email",
+    field: "email",
+    type: "text",
+    sortable: true,
+    isDefault: true,
+  },
+  {
+    id: "source",
+    label: "Source",
+    field: "source",
+    type: "text",
+    sortable: true,
+    isDefault: true,
+  },
+  {
+    id: "appliedDate",
+    label: "Applied",
+    field: "appliedDate",
+    type: "date",
+    sortable: true,
+    isDefault: true,
+  },
+  {
+    id: "status",
+    label: "Stage",
+    field: "status",
+    type: "badge",
+    sortable: true,
+    isDefault: true,
+  },
+];
+
+const emptyApplicantForm = {
+  firstName: "",
+  lastName: "",
+  email: "",
+  phone: "",
+  source: "",
+  sourceDetails: "",
+  portfolioLink: "",
+};
+
+function validateResume(file: File): string | null {
+  const allowedTypes = [
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ];
+  if (!allowedTypes.includes(file.type)) return "Use a PDF, DOC, or DOCX file.";
+  if (file.size > 10 * 1024 * 1024)
+    return "Resume files must be 10 MB or smaller.";
+  return null;
 }
 
 export default function JobDetailPage({
@@ -97,1050 +153,535 @@ export default function JobDetailPage({
 }: {
   params: Promise<{ jobId: string }>;
 }) {
-  const resolvedParams = use(params);
-  const jobId = resolvedParams.jobId;
+  const { jobId } = use(params);
   const router = useRouter();
   const { currentOrganizationId } = useOrganization();
-
+  const { toast } = useToast();
   const jobs = useQuery(
-    (api as any).recruitment.getJobs,
+    api.recruitment.getJobs,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
   const applicants = useQuery(
-    (api as any).recruitment.getApplicants,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    api.recruitment.getApplicants,
+    currentOrganizationId
+      ? { organizationId: currentOrganizationId, jobId: jobId as Id<"jobs"> }
+      : "skip",
   );
-
   const settings = useQuery(
-    (api as any).settings.getSettings,
+    api.settings.getSettings,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
-
-  const selectedJob = jobs?.find((job: any) => job._id === jobId);
-  const jobApplicants = applicants?.filter((a: any) => a.jobId === jobId) || [];
-
-  const [isColumnModalOpen, setIsColumnModalOpen] = useState(false);
-  const [tableColumns, setTableColumns] = useState<any[]>([]);
-
-  // Initialize columns from settings or use defaults
-  useEffect(() => {
-    const DEFAULT_COLUMNS: Column[] = [
-      {
-        id: "name",
-        label: "Name",
-        field: "firstName",
-        type: "text",
-        sortable: true,
-        isDefault: true,
-        hidden: false,
-      },
-      {
-        id: "email",
-        label: "Email",
-        field: "email",
-        type: "text",
-        sortable: true,
-        isDefault: true,
-        hidden: false,
-      },
-      {
-        id: "phone",
-        label: "Phone",
-        field: "phone",
-        type: "text",
-        sortable: true,
-        isDefault: true,
-        hidden: false,
-      },
-      {
-        id: "expectedSalary",
-        label: "Expected Salary",
-        field: "custom.expectedSalary",
-        type: "number",
-        sortable: true,
-        width: "150px",
-        customField: true,
-        isDefault: true,
-        hidden: false,
-      },
-      {
-        id: "googleMeetLink",
-        label: "Google Meet link",
-        field: "googleMeetLink",
-        type: "link",
-        sortable: true,
-        width: "120px",
-        isDefault: true,
-        hidden: false,
-      },
-      {
-        id: "resume",
-        label: "Resume",
-        field: "resume",
-        type: "text",
-        sortable: true,
-        width: "100px",
-        isDefault: true,
-        hidden: false,
-      },
-      {
-        id: "notes",
-        label: "Notes",
-        field: "notes",
-        type: "text",
-        sortable: true,
-        width: "100px",
-        isDefault: true,
-        hidden: false,
-      },
-      {
-        id: "appliedDate",
-        label: "Applied Date",
-        field: "appliedDate",
-        type: "date",
-        sortable: true,
-        width: "120px",
-        isDefault: true,
-        hidden: false,
-      },
-      {
-        id: "status",
-        label: "Status",
-        field: "status",
-        type: "badge",
-        sortable: true,
-        width: "120px",
-        isDefault: true,
-        hidden: false,
-      },
-    ];
-
-    if (settings?.recruitmentTableColumns) {
-      // Merge saved columns with defaults - ensure all defaults are present
-      const savedColumns = settings.recruitmentTableColumns.filter(
-        (c: Column) => !c.isDefault,
-      );
-      const savedDefaultColumns = settings.recruitmentTableColumns.filter(
-        (c: Column) => c.isDefault,
-      );
-
-      // Merge defaults with saved defaults (preserve hidden state)
-      const mergedDefaults = DEFAULT_COLUMNS.map((def) => {
-        const saved = savedDefaultColumns.find((c: Column) => c.id === def.id);
-        return saved ? { ...def, ...saved } : def;
-      });
-
-      setTableColumns([...mergedDefaults, ...savedColumns]);
-    } else {
-      setTableColumns(DEFAULT_COLUMNS);
-    }
-  }, [settings]);
-
+  const members = useQuery(
+    api.organizations.getOrganizationMembers,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
+  const currentUser = useQuery(
+    api.organizations.getCurrentUser,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
+  const job = jobs?.find((candidate) => candidate._id === jobId);
   const [selectedApplicantId, setSelectedApplicantId] = useState<string | null>(
     null,
   );
-  const [isApplicantDialogOpen, setIsApplicantDialogOpen] = useState(false);
-  const [applicantFormData, setApplicantFormData] = useState({
-    firstName: "",
-    lastName: "",
-    email: "",
-    phone: "",
-    source: "",
-    sourceDetails: "",
-    googleMeetLink: "",
-    interviewVideoLink: "",
-    portfolioLink: "",
-  });
-
-  const [resumeFile, setResumeFile] = useState<File | null>(null);
-  const [resumeUrl, setResumeUrl] = useState("");
-  const [isDragging, setIsDragging] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [isUploadingFromUrl, setIsUploadingFromUrl] = useState(false);
+  const [search, setSearch] = useState("");
+  const [stageFilter, setStageFilter] = useState<"all" | ApplicantStage>("all");
+  const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isColumnModalOpen, setIsColumnModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [isArchiving, setIsArchiving] = useState(false);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [deleteApplicantConfirmOpen, setDeleteApplicantConfirmOpen] =
-    useState(false);
-  const [isDeletingApplicant, setIsDeletingApplicant] = useState(false);
+  const [applicantForm, setApplicantForm] = useState(emptyApplicantForm);
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [resumeUrl, setResumeUrl] = useState<string | null>(null);
   const [newNote, setNewNote] = useState("");
-  const [isAddingNote, setIsAddingNote] = useState(false);
-  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
-  const [declineReason, setDeclineReason] = useState("");
-  const [editingLinks, setEditingLinks] = useState({
-    googleMeetLink: "",
-    interviewVideoLink: "",
-    portfolioLink: "",
-  });
-  const [isSavingLinks, setIsSavingLinks] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const dropZoneRef = useRef<HTMLDivElement>(null);
-  const urlInputRef = useRef<HTMLInputElement>(null);
-  const sidePanelFileInputRef = useRef<HTMLInputElement>(null);
-  const sidePanelDropZoneRef = useRef<HTMLDivElement>(null);
-  const [sidePanelResumeFile, setSidePanelResumeFile] = useState<File | null>(
+
+  const columns = useMemo<RecruitmentColumn[]>(() => {
+    const saved = settings?.recruitmentTableColumns ?? [];
+    return defaultColumns.map((column) => {
+      const savedColumn = saved.find((candidate) => candidate.id === column.id);
+      return savedColumn ? { ...column, ...savedColumn } : column;
+    });
+  }, [settings?.recruitmentTableColumns]);
+  const [localColumns, setLocalColumns] = useState<RecruitmentColumn[] | null>(
     null,
   );
-  const [sidePanelResumeUrl, setSidePanelResumeUrl] = useState("");
+  const tableColumns = localColumns ?? columns;
 
-  // Get resume URL for selected applicant
-  const [resumeUrlForView, setResumeUrlForView] = useState<string | null>(null);
-
-  // Move all useCallback hooks before early returns
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  }, []);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  }, []);
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-
-    const file = e.dataTransfer.files[0];
-    if (file) {
-      const validTypes = [
-        "application/pdf",
-        "application/msword",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      ];
-
-      if (!validTypes.includes(file.type)) {
-        alert("Please upload a PDF, DOC, or DOCX file.");
-        return;
-      }
-
-      if (file.size > 10 * 1024 * 1024) {
-        alert("File size must be less than 10MB.");
-        return;
-      }
-
-      setResumeFile(file);
-      setResumeUrl("");
-    }
-  }, []);
-
+  const filteredApplicants = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    return (applicants ?? []).filter((applicant) => {
+      const matchesStage =
+        stageFilter === "all" || applicant.status === stageFilter;
+      const matchesQuery =
+        !query ||
+        `${applicant.firstName} ${applicant.lastName} ${applicant.email} ${applicant.source ?? ""}`
+          .toLocaleLowerCase()
+          .includes(query);
+      return matchesStage && matchesQuery;
+    });
+  }, [applicants, search, stageFilter]);
   const selectedApplicant = applicants?.find(
-    (applicant: any) => applicant._id === selectedApplicantId,
+    (applicant) => applicant._id === selectedApplicantId,
+  );
+  const organizationMembers = useMemo(
+    () => (members ?? []).filter((member) => member !== null),
+    [members],
+  );
+  const summary = useMemo(
+    () =>
+      summarizeRecruitmentPipeline(
+        job
+          ? [
+              {
+                id: job._id,
+                status: job.status,
+                numberOfOpenings: job.numberOfOpenings,
+              },
+            ]
+          : [],
+        (applicants ?? []).map((applicant) => ({
+          jobId: applicant.jobId,
+          status: applicant.status,
+          appliedDate: applicant.appliedDate,
+          pipelineStageHistory: applicant.pipelineStageHistory,
+        })),
+      ),
+    [applicants, job],
   );
 
-  // Initialize editing links when selectedApplicant changes
   useEffect(() => {
-    if (selectedApplicant) {
-      setEditingLinks({
-        googleMeetLink: selectedApplicant.googleMeetLink || "",
-        interviewVideoLink: selectedApplicant.interviewVideoLink || "",
-        portfolioLink: selectedApplicant.portfolioLink || "",
+    if (!currentOrganizationId || !selectedApplicant?.resume) {
+      setResumeUrl(null);
+      return;
+    }
+    let active = true;
+    getFileUrl(currentOrganizationId, selectedApplicant.resume)
+      .then((url) => {
+        if (active) setResumeUrl(url);
+      })
+      .catch(() => {
+        if (active) setResumeUrl(null);
       });
-    }
-  }, [selectedApplicant]);
-
-  useEffect(() => {
-    if (currentOrganizationId && selectedApplicant?.resume) {
-      getFileUrl(currentOrganizationId, selectedApplicant.resume)
-        .then((url) => setResumeUrlForView(url))
-        .catch(() => setResumeUrlForView(null));
-    } else {
-      setResumeUrlForView(null);
-    }
+    return () => {
+      active = false;
+    };
   }, [currentOrganizationId, selectedApplicant?.resume]);
 
-  // Redirect to list if job is deleted (not found after jobs have loaded)
   useEffect(() => {
-    if (jobs !== undefined && !selectedJob) {
-      // Jobs have loaded but job not found - it's been deleted
-      router.push(getOrganizationPath(currentOrganizationId, "/recruitment"));
+    if (jobs !== undefined && !job) {
+      router.replace(
+        getOrganizationPath(currentOrganizationId, "/recruitment"),
+      );
     }
-  }, [jobs, selectedJob, router]);
+  }, [currentOrganizationId, job, jobs, router]);
 
-  // Show loading state while jobs are loading
-  if (jobs === undefined) {
-    return (
-      <MainLayout>
-        <div className="p-8">
-          <div className="mb-6">
-            <Button
-              variant="ghost"
-              onClick={() =>
-                router.push(
-                  getOrganizationPath(currentOrganizationId, "/recruitment"),
-                )
-              }
-              className="mb-4"
-            >
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back
-            </Button>
-            <p className="text-[rgb(133,133,133)]">Loading...</p>
-          </div>
-        </div>
-      </MainLayout>
-    );
-  }
-
-  // If job is deleted (not found after jobs loaded), show redirecting message
-  // The useEffect will handle the redirect
-  if (!selectedJob) {
-    return (
-      <MainLayout>
-        <div className="p-8">
-          <div className="mb-6">
-            <Button
-              variant="ghost"
-              onClick={() =>
-                router.push(
-                  getOrganizationPath(currentOrganizationId, "/recruitment"),
-                )
-              }
-              className="mb-4"
-            >
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back
-            </Button>
-            <p className="text-[rgb(133,133,133)]">
-              Position not found. Redirecting...
-            </p>
-          </div>
-        </div>
-      </MainLayout>
-    );
-  }
-
-  const handleFileSelect = (file: File) => {
-    const validTypes = [
-      "application/pdf",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ];
-
-    if (!validTypes.includes(file.type)) {
-      alert("Please upload a PDF, DOC, or DOCX file.");
-      return;
-    }
-
-    if (file.size > 10 * 1024 * 1024) {
-      alert("File size must be less than 10MB.");
-      return;
-    }
-
-    setResumeFile(file);
-    setResumeUrl("");
-  };
-
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      handleFileSelect(file);
-    }
-  };
-
-  const uploadFileFromUrl = async (url: string): Promise<string> => {
+  async function submitApplicant(event: React.FormEvent) {
+    event.preventDefault();
+    if (!currentOrganizationId || !resumeFile) return;
+    setIsSubmitting(true);
     try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error("Failed to fetch file from URL");
-
-      const blob = await response.blob();
-      const contentType = blob.type;
-
-      const validTypes = [
-        "application/pdf",
-        "application/msword",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      ];
-      if (!validTypes.includes(contentType)) {
-        throw new Error("Invalid file type. Please use PDF, DOC, or DOCX.");
-      }
-
-      if (blob.size > 10 * 1024 * 1024) {
-        throw new Error("File size must be less than 10MB.");
-      }
-
-      if (!currentOrganizationId) throw new Error("Organization is required");
-      const extension = contentType === "application/pdf" ? "pdf" : "docx";
-      return await uploadFileToStorage({
+      const storageId = await uploadFileToStorage({
         organizationId: currentOrganizationId,
         purpose: "applicant_resume",
-        file: new File([blob], `resume.${extension}`, { type: contentType }),
+        file: resumeFile,
       });
-    } catch (error: any) {
-      throw new Error(error.message || "Failed to upload file from URL");
-    }
-  };
-
-  const handleUrlPaste = async (url: string) => {
-    if (!url.trim()) return;
-
-    setIsUploadingFromUrl(true);
-    try {
-      const storageId = await uploadFileFromUrl(url);
-      setResumeUrl("");
-      if (selectedApplicantId) {
-        await updateApplicant(selectedApplicantId, { resume: storageId });
-        window.location.reload();
-      } else {
-        setResumeFile(null);
-        alert("File uploaded! Please complete the form and submit.");
-      }
-    } catch (error: any) {
-      alert(error.message || "Failed to upload file from URL");
-    } finally {
-      setIsUploadingFromUrl(false);
-    }
-  };
-
-  const handleApplicantSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentOrganizationId || !jobId) return;
-    if (!resumeFile && !resumeUrl.trim()) {
-      alert("Please upload a resume file or provide a file URL.");
-      return;
-    }
-
-    setIsUploading(true);
-    try {
-      let storageId: string;
-
-      if (resumeFile) {
-        storageId = await uploadFileToStorage({
-          organizationId: currentOrganizationId,
-          purpose: "applicant_resume",
-          file: resumeFile,
-        });
-      } else if (resumeUrl.trim()) {
-        storageId = await uploadFileFromUrl(resumeUrl.trim());
-      } else {
-        throw new Error("No resume provided");
-      }
-
       await createApplicant({
         organizationId: currentOrganizationId,
-        jobId: jobId,
-        firstName: applicantFormData.firstName,
-        lastName: applicantFormData.lastName,
-        email: applicantFormData.email || undefined,
-        phone: applicantFormData.phone || undefined,
-        source: applicantFormData.source || undefined,
-        sourceDetails: applicantFormData.sourceDetails || undefined,
+        jobId,
+        firstName: applicantForm.firstName,
+        lastName: applicantForm.lastName,
+        email: applicantForm.email || undefined,
+        phone: applicantForm.phone || undefined,
+        source: applicantForm.source || undefined,
+        sourceDetails: applicantForm.sourceDetails || undefined,
+        portfolioLink: applicantForm.portfolioLink || undefined,
         resume: storageId,
-        googleMeetLink: applicantFormData.googleMeetLink || undefined,
-        interviewVideoLink: applicantFormData.interviewVideoLink || undefined,
-        portfolioLink: applicantFormData.portfolioLink || undefined,
       });
-
-      setIsApplicantDialogOpen(false);
-      setApplicantFormData({
-        firstName: "",
-        lastName: "",
-        email: "",
-        phone: "",
-        source: "",
-        sourceDetails: "",
-        googleMeetLink: "",
-        interviewVideoLink: "",
-        portfolioLink: "",
-      });
+      setApplicantForm(emptyApplicantForm);
       setResumeFile(null);
-      setResumeUrl("");
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-      window.location.reload();
-    } catch (error: any) {
-      console.error("Error creating applicant:", error);
-      alert(error.message || "Failed to add applicant. Please try again.");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      setIsAddOpen(false);
+      toast({
+        title: "Applicant added",
+        description: "The candidate entered the New stage.",
+      });
+    } catch (error: unknown) {
+      toast({
+        title: "Unable to add applicant",
+        description: errorMessage(
+          error,
+          "Please review the candidate details.",
+        ),
+        variant: "destructive",
+      });
     } finally {
-      setIsUploading(false);
+      setIsSubmitting(false);
     }
-  };
+  }
 
-  const handleDeleteJob = async () => {
-    if (!jobId) return;
+  async function updateStatus(status: "open" | "closed" | "on-hold") {
+    if (!job) return;
+    try {
+      await setJobStatus(job._id, status);
+      toast({ title: "Position updated" });
+    } catch (error: unknown) {
+      toast({
+        title: "Unable to update position",
+        description: errorMessage(error, "Please try again."),
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function removeJob() {
+    if (!job) return;
     setIsDeleting(true);
     try {
-      await deleteJob(jobId);
-      setDeleteConfirmOpen(false);
-      // Immediately redirect to prevent rendering issues
-      router.push(getOrganizationPath(currentOrganizationId, "/recruitment"));
-      router.refresh(); // Force refresh to update the jobs list
-    } catch (error: any) {
-      alert(error.message || "Failed to delete job. Please try again.");
-      setIsDeleting(false);
-      setDeleteConfirmOpen(false);
-    }
-  };
-
-  const handleArchiveJob = async () => {
-    if (!jobId) return;
-    setIsArchiving(true);
-    try {
-      await archiveJob(jobId);
-      window.location.reload();
-    } catch (error: any) {
-      alert(error.message || "Failed to archive job. Please try again.");
-    } finally {
-      setIsArchiving(false);
-    }
-  };
-
-  const handleUpdateStatus = async (status: string) => {
-    if (!selectedApplicantId) return;
-    setIsUpdatingStatus(true);
-    try {
-      await updateApplicantStatus(
-        selectedApplicantId,
-        status as
-          | "new"
-          | "screening"
-          | "interview"
-          | "assessment"
-          | "offer"
-          | "hired"
-          | "rejected",
+      await deleteJob(job._id);
+      router.replace(
+        getOrganizationPath(currentOrganizationId, "/recruitment"),
       );
-      window.location.reload();
-    } catch (error: any) {
-      alert(error.message || "Failed to update status. Please try again.");
-    } finally {
-      setIsUpdatingStatus(false);
-    }
-  };
-
-  const handleSaveRejection = async () => {
-    if (!selectedApplicantId || !declineReason.trim()) return;
-    setIsAddingNote(true);
-    try {
-      await addApplicantNote(
-        selectedApplicantId,
-        `Reason for rejection: ${declineReason.trim()}`,
-      );
-      setDeclineReason("");
-      window.location.reload();
-    } catch (error: any) {
-      alert(error.message || "Failed to save reason. Please try again.");
-    } finally {
-      setIsAddingNote(false);
-    }
-  };
-
-  const handleSaveLinks = async () => {
-    if (!selectedApplicantId) return;
-    setIsSavingLinks(true);
-    try {
-      await updateApplicant(selectedApplicantId, {
-        googleMeetLink: editingLinks.googleMeetLink.trim() || undefined,
-        interviewVideoLink: editingLinks.interviewVideoLink.trim() || undefined,
-        portfolioLink: editingLinks.portfolioLink.trim() || undefined,
+    } catch (error: unknown) {
+      toast({
+        title: "Unable to delete position",
+        description: errorMessage(
+          error,
+          "Archive positions that already have applicants.",
+        ),
+        variant: "destructive",
       });
-      window.location.reload();
-    } catch (error: any) {
-      alert(error.message || "Failed to save links. Please try again.");
     } finally {
-      setIsSavingLinks(false);
+      setIsDeleting(false);
     }
-  };
+  }
 
-  const handleAddNote = async () => {
-    if (!selectedApplicantId || !newNote.trim()) return;
-    setIsAddingNote(true);
+  async function addNote() {
+    if (!selectedApplicant || !newNote.trim()) return;
     try {
-      await addApplicantNote(selectedApplicantId, newNote.trim());
+      await addApplicantNote(selectedApplicant._id, newNote);
       setNewNote("");
-      window.location.reload();
-    } catch (error: any) {
-      alert(error.message || "Failed to add note. Please try again.");
-    } finally {
-      setIsAddingNote(false);
+    } catch (error: unknown) {
+      toast({
+        title: "Unable to add note",
+        description: errorMessage(error, "Please try again."),
+        variant: "destructive",
+      });
     }
-  };
+  }
 
-  const handleDeleteApplicant = async () => {
-    if (!selectedApplicantId) return;
-    setIsDeletingApplicant(true);
+  async function removeApplicant() {
+    if (!selectedApplicant) return;
     try {
-      await deleteApplicant(selectedApplicantId);
-      setDeleteApplicantConfirmOpen(false);
+      await deleteApplicant(selectedApplicant._id);
       setSelectedApplicantId(null);
-      window.location.reload();
-    } catch (error: any) {
-      alert(error.message || "Failed to delete applicant. Please try again.");
-      setIsDeletingApplicant(false);
-      setDeleteApplicantConfirmOpen(false);
+      toast({ title: "Applicant removed" });
+    } catch (error: unknown) {
+      toast({
+        title: "Unable to remove applicant",
+        description: errorMessage(
+          error,
+          "Converted employees cannot be removed.",
+        ),
+        variant: "destructive",
+      });
     }
-  };
+  }
 
-  const handleUpdateApplicantResume = async (file?: File, url?: string) => {
-    if (!selectedApplicantId) return;
-
-    setIsUploading(true);
-    try {
-      let storageId: string;
-
-      if (file) {
-        if (!currentOrganizationId) throw new Error("Organization is required");
-        storageId = await uploadFileToStorage({
-          organizationId: currentOrganizationId,
-          purpose: "applicant_resume",
-          file,
-        });
-      } else if (url) {
-        storageId = await uploadFileFromUrl(url);
-      } else {
-        throw new Error("No resume provided");
-      }
-
-      await updateApplicant(selectedApplicantId, { resume: storageId });
-      setSidePanelResumeFile(null);
-      setSidePanelResumeUrl("");
-      if (sidePanelFileInputRef.current) {
-        sidePanelFileInputRef.current.value = "";
-      }
-      window.location.reload();
-    } catch (error: any) {
-      alert(error.message || "Failed to update resume. Please try again.");
-    } finally {
-      setIsUploading(false);
-    }
-  };
+  if (!job) {
+    return (
+      <MainLayout>
+        <div className="p-8 text-sm text-[#77727F]">Loading position…</div>
+      </MainLayout>
+    );
+  }
 
   return (
     <MainLayout>
-      <div className="p-8">
-        <div className="mb-6">
+      <div className="space-y-6 p-5 sm:p-8">
+        <div>
           <Button
             variant="ghost"
+            className="mb-3 -ml-3"
             onClick={() =>
               router.push(
                 getOrganizationPath(currentOrganizationId, "/recruitment"),
               )
             }
-            className="mb-4 text-[rgb(64,64,64)] hover:bg-[rgb(250,250,250)]"
           >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back
+            <ArrowLeft className="mr-2 h-4 w-4" /> Back to recruitment
           </Button>
-          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-[rgb(64,64,64)]">
-                {selectedJob.title || "Untitled position"}
-              </h1>
-              <p className="text-sm text-[rgb(133,133,133)] mt-1">
-                {typeof selectedJob.department === "string"
-                  ? selectedJob.department
-                  : ((selectedJob.department as { name?: string })?.name ??
-                    "—")}
-                {selectedJob.employmentType &&
-                  ` • ${selectedJob.employmentType}`}
-                {selectedJob.numberOfOpenings != null &&
-                  selectedJob.numberOfOpenings > 0 &&
-                  ` • ${selectedJob.numberOfOpenings} opening${selectedJob.numberOfOpenings !== 1 ? "s" : ""}`}
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-3xl font-bold text-[#28262F]">
+                  {job.title}
+                </h1>
+                <Badge variant="outline" className="capitalize">
+                  {job.status === "on-hold" ? "On hold" : job.status}
+                </Badge>
+              </div>
+              <p className="mt-1 text-sm text-[#77727F]">
+                {job.department} · {job.employmentType} · {job.numberOfOpenings}{" "}
+                opening{job.numberOfOpenings === 1 ? "" : "s"}
               </p>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Badge
-                variant="outline"
-                className={
-                  selectedJob.status === "open"
-                    ? "bg-[#DCF7DC] border-[#A1E6A1] text-[#2E892E] font-normal rounded-md hover:bg-[#DCF7DC] focus:ring-0 focus:ring-offset-0 transition-none capitalize"
-                    : "bg-gray-100 text-gray-800 hover:bg-gray-100 border-gray-200 rounded-md focus:ring-0 focus:ring-offset-0 transition-none capitalize"
-                }
-              >
-                {selectedJob.status === "open" ? "Open" : "Archived"}
-              </Badge>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon">
-                    <MoreHorizontal className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {selectedJob.status === "open" && (
-                    <DropdownMenuItem
-                      onClick={handleArchiveJob}
-                      disabled={isArchiving}
-                    >
-                      <Archive className="h-4 w-4 mr-2" />
-                      Archive
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => setDeleteConfirmOpen(true)}
-                    disabled={isDeleting}
-                    className="text-red-600"
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {job.status !== "open" && (
+                  <DropdownMenuItem onClick={() => updateStatus("open")}>
+                    <PlayCircle className="mr-2 h-4 w-4" /> Reopen
                   </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+                )}
+                {job.status === "open" && (
+                  <DropdownMenuItem onClick={() => updateStatus("on-hold")}>
+                    <PauseCircle className="mr-2 h-4 w-4" /> Put on hold
+                  </DropdownMenuItem>
+                )}
+                {job.status !== "closed" && (
+                  <DropdownMenuItem onClick={() => updateStatus("closed")}>
+                    <XCircle className="mr-2 h-4 w-4" /> Close
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="text-red-600"
+                  disabled={isDeleting}
+                  onClick={removeJob}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" /> Delete empty position
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
-        <Card className="mb-6 border border-[#DDDDDD] rounded-xl">
-          <CardHeader>
-            <CardTitle className="text-base font-semibold text-[rgb(64,64,64)]">
-              Position details
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {selectedJob.description &&
-                selectedJob.description.trim() !== "" && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-700">
-                      Description
-                    </p>
-                    <p className="text-sm text-gray-600 mt-1">
-                      {selectedJob.description}
-                    </p>
-                  </div>
-                )}
-              <div>
-                <p className="text-sm font-medium text-gray-700">
-                  Number of Openings
-                </p>
-                <p className="text-sm text-gray-600 mt-1">
-                  {selectedJob.numberOfOpenings}
-                </p>
-              </div>
-              {selectedJob.requirements &&
-                selectedJob.requirements.length > 0 && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-700">
-                      Requirements
-                    </p>
-                    <ul className="text-sm text-gray-600 mt-1 list-disc list-inside">
-                      {selectedJob.requirements.map(
-                        (req: string, idx: number) => (
-                          <li key={idx}>{req}</li>
-                        ),
-                      )}
-                    </ul>
-                  </div>
-                )}
-              {selectedJob.qualifications &&
-                selectedJob.qualifications.length > 0 && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-700">
-                      Qualifications
-                    </p>
-                    <ul className="text-sm text-gray-600 mt-1 list-disc list-inside">
-                      {selectedJob.qualifications.map(
-                        (qual: string, idx: number) => (
-                          <li key={idx}>{qual}</li>
-                        ),
-                      )}
-                    </ul>
-                  </div>
-                )}
-            </div>
-          </CardContent>
-        </Card>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            { label: "Applicants", value: summary.totalApplicants },
+            { label: "Active", value: summary.activeCandidates },
+            { label: "Awaiting decision", value: summary.awaitingDecision },
+            { label: "Needs attention", value: summary.staleCandidates },
+          ].map((metric) => (
+            <Card key={metric.label} className="border-[#E7E5F4]">
+              <CardContent className="p-4">
+                <p className="text-2xl font-semibold">{metric.value}</p>
+                <p className="text-xs text-[#77727F]">{metric.label}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
 
-        <Card className="border border-[#DDDDDD] rounded-xl">
-          <CardHeader>
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <CardTitle className="text-base font-semibold text-[rgb(64,64,64)]">
-                Applicants ({jobApplicants.length})
-              </CardTitle>
-              <div className="flex items-center gap-2 flex-wrap">
+        {(job.description ||
+          job.requirements.length > 0 ||
+          job.qualifications.length > 0) && (
+          <Card className="border-[#E7E5F4]">
+            <CardHeader>
+              <CardTitle className="text-base">Position brief</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-5 md:grid-cols-3">
+              {job.description && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#77727F]">
+                    Description
+                  </p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm">
+                    {job.description}
+                  </p>
+                </div>
+              )}
+              {job.requirements.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#77727F]">
+                    Requirements
+                  </p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+                    {job.requirements.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {job.qualifications.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#77727F]">
+                    Qualifications
+                  </p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+                    {job.qualifications.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        <Card className="border-[#E7E5F4]">
+          <CardHeader className="space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle className="text-base">Candidate workspace</CardTitle>
+              <div className="flex gap-2">
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => setIsColumnModalOpen(true)}
-                  className="h-8 border-[rgb(230,230,230)]"
                 >
-                  <Settings className="h-4 w-4 mr-2" />
-                  Manage columns
+                  <Settings className="mr-2 h-4 w-4" /> Columns
                 </Button>
-                <Dialog
-                  open={isApplicantDialogOpen}
-                  onOpenChange={setIsApplicantDialogOpen}
-                >
+                <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
                   <DialogTrigger asChild>
-                    <Button
-                      size="sm"
-                      className="h-8 bg-[#695eff] hover:bg-[#5547e8] text-white"
-                    >
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add applicant
+                    <Button size="sm">
+                      <Plus className="mr-2 h-4 w-4" /> Add applicant
                     </Button>
                   </DialogTrigger>
-                  <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                  <DialogContent className="max-w-xl">
                     <DialogHeader>
                       <DialogTitle>Add applicant</DialogTitle>
                       <DialogDescription>
-                        Add an applicant to this position.
+                        Add a sourced candidate with resume evidence.
                       </DialogDescription>
                     </DialogHeader>
-                    <form onSubmit={handleApplicantSubmit}>
-                      <div className="grid gap-4 py-4">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="firstName">
-                              First Name <span className="text-red-500">*</span>
-                            </Label>
-                            <Input
-                              id="firstName"
-                              value={applicantFormData.firstName}
-                              onChange={(e) =>
-                                setApplicantFormData({
-                                  ...applicantFormData,
-                                  firstName: e.target.value,
-                                })
-                              }
-                              required
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="lastName">
-                              Last Name <span className="text-red-500">*</span>
-                            </Label>
-                            <Input
-                              id="lastName"
-                              value={applicantFormData.lastName}
-                              onChange={(e) =>
-                                setApplicantFormData({
-                                  ...applicantFormData,
-                                  lastName: e.target.value,
-                                })
-                              }
-                              required
-                            />
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="email">Email</Label>
-                            <Input
-                              id="email"
-                              type="email"
-                              value={applicantFormData.email}
-                              onChange={(e) =>
-                                setApplicantFormData({
-                                  ...applicantFormData,
-                                  email: e.target.value,
-                                })
-                              }
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="phone">Phone</Label>
-                            <Input
-                              id="phone"
-                              type="tel"
-                              value={applicantFormData.phone}
-                              onChange={(e) =>
-                                setApplicantFormData({
-                                  ...applicantFormData,
-                                  phone: e.target.value,
-                                })
-                              }
-                            />
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="source">Source</Label>
-                            <Input
-                              id="source"
-                              placeholder="Referral, LinkedIn, job board"
-                              value={applicantFormData.source}
-                              onChange={(e) =>
-                                setApplicantFormData({
-                                  ...applicantFormData,
-                                  source: e.target.value,
-                                })
-                              }
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="sourceDetails">
-                              Source details
-                            </Label>
-                            <Input
-                              id="sourceDetails"
-                              placeholder="Referrer or campaign"
-                              value={applicantFormData.sourceDetails}
-                              onChange={(e) =>
-                                setApplicantFormData({
-                                  ...applicantFormData,
-                                  sourceDetails: e.target.value,
-                                })
-                              }
-                            />
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="googleMeetLink">
-                            Google Meet Link
-                          </Label>
+                    <form onSubmit={submitApplicant} className="space-y-4">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label>First name *</Label>
                           <Input
-                            id="googleMeetLink"
-                            type="url"
-                            placeholder="https://meet.google.com/..."
-                            value={applicantFormData.googleMeetLink}
-                            onChange={(e) =>
-                              setApplicantFormData({
-                                ...applicantFormData,
-                                googleMeetLink: e.target.value,
+                            required
+                            value={applicantForm.firstName}
+                            onChange={(event) =>
+                              setApplicantForm({
+                                ...applicantForm,
+                                firstName: event.target.value,
                               })
                             }
                           />
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="interviewVideoLink">
-                            Interview Video Link
-                          </Label>
+                        <div className="space-y-1.5">
+                          <Label>Last name *</Label>
                           <Input
-                            id="interviewVideoLink"
-                            type="url"
-                            placeholder="https://youtube.com/... or https://vimeo.com/..."
-                            value={applicantFormData.interviewVideoLink}
-                            onChange={(e) =>
-                              setApplicantFormData({
-                                ...applicantFormData,
-                                interviewVideoLink: e.target.value,
+                            required
+                            value={applicantForm.lastName}
+                            onChange={(event) =>
+                              setApplicantForm({
+                                ...applicantForm,
+                                lastName: event.target.value,
                               })
                             }
                           />
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="portfolioLink">
-                            Portfolio Link
-                          </Label>
+                        <div className="space-y-1.5">
+                          <Label>Email</Label>
                           <Input
-                            id="portfolioLink"
-                            type="url"
-                            placeholder="https://portfolio.example.com"
-                            value={applicantFormData.portfolioLink}
-                            onChange={(e) =>
-                              setApplicantFormData({
-                                ...applicantFormData,
-                                portfolioLink: e.target.value,
+                            type="email"
+                            value={applicantForm.email}
+                            onChange={(event) =>
+                              setApplicantForm({
+                                ...applicantForm,
+                                email: event.target.value,
                               })
                             }
                           />
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="resume">
-                            Resume * (PDF, DOC, DOCX - Max 10MB)
-                          </Label>
-                          <div
-                            ref={dropZoneRef}
-                            onDragOver={handleDragOver}
-                            onDragLeave={handleDragLeave}
-                            onDrop={handleDrop}
-                            className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
-                              isDragging
-                                ? "border-purple-500 bg-purple-50"
-                                : "border-gray-300 hover:border-gray-400"
-                            }`}
-                            onClick={() => fileInputRef.current?.click()}
-                          >
-                            <input
-                              ref={fileInputRef}
-                              type="file"
-                              accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                              onChange={handleFileInputChange}
-                              className="hidden"
-                            />
-                            {resumeFile ? (
-                              <div className="flex items-center justify-center gap-2">
-                                <FileText className="h-5 w-5 text-purple-600" />
-                                <span className="text-sm font-medium text-gray-700">
-                                  {resumeFile.name}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setResumeFile(null);
-                                    if (fileInputRef.current) {
-                                      fileInputRef.current.value = "";
-                                    }
-                                  }}
-                                  className="ml-2 text-gray-400 hover:text-gray-600"
-                                >
-                                  <X className="h-4 w-4" />
-                                </button>
-                              </div>
-                            ) : (
-                              <div>
-                                <Upload className="h-8 w-8 mx-auto text-gray-400 mb-2" />
-                                <p className="text-sm text-gray-600">
-                                  Drag and drop your resume here, or click to
-                                  browse
-                                </p>
-                                <p className="text-xs text-gray-500 mt-1">
-                                  PDF, DOC, DOCX up to 10MB
-                                </p>
-                              </div>
-                            )}
-                          </div>
+                        <div className="space-y-1.5">
+                          <Label>Phone</Label>
+                          <Input
+                            value={applicantForm.phone}
+                            onChange={(event) =>
+                              setApplicantForm({
+                                ...applicantForm,
+                                phone: event.target.value,
+                              })
+                            }
+                          />
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="resumeUrl">
-                            Or paste a file URL to upload automatically
-                          </Label>
-                          <div className="flex gap-2">
-                            <Input
-                              id="resumeUrl"
-                              ref={urlInputRef}
-                              type="url"
-                              placeholder="https://example.com/resume.pdf"
-                              value={resumeUrl}
-                              onChange={(e) => setResumeUrl(e.target.value)}
-                              onPaste={(e) => {
-                                const pastedUrl =
-                                  e.clipboardData.getData("text");
-                                if (pastedUrl && pastedUrl.startsWith("http")) {
-                                  setTimeout(() => {
-                                    handleUrlPaste(pastedUrl);
-                                  }, 100);
-                                }
-                              }}
-                            />
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => {
-                                if (resumeUrl.trim()) {
-                                  handleUrlPaste(resumeUrl.trim());
-                                }
-                              }}
-                              disabled={isUploadingFromUrl || !resumeUrl.trim()}
-                            >
-                              <LinkIcon className="h-4 w-4" />
-                            </Button>
-                          </div>
+                        <div className="space-y-1.5">
+                          <Label>Source</Label>
+                          <Input
+                            placeholder="Referral, LinkedIn, careers page"
+                            value={applicantForm.source}
+                            onChange={(event) =>
+                              setApplicantForm({
+                                ...applicantForm,
+                                source: event.target.value,
+                              })
+                            }
+                          />
                         </div>
+                        <div className="space-y-1.5">
+                          <Label>Source details</Label>
+                          <Input
+                            placeholder="Referrer or campaign"
+                            value={applicantForm.sourceDetails}
+                            onChange={(event) =>
+                              setApplicantForm({
+                                ...applicantForm,
+                                sourceDetails: event.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Portfolio link</Label>
+                        <Input
+                          type="url"
+                          value={applicantForm.portfolioLink}
+                          onChange={(event) =>
+                            setApplicantForm({
+                              ...applicantForm,
+                              portfolioLink: event.target.value,
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Resume *</Label>
+                        <Input
+                          ref={fileInputRef}
+                          type="file"
+                          required
+                          accept=".pdf,.doc,.docx"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (!file) return;
+                            const validation = validateResume(file);
+                            if (validation) {
+                              toast({
+                                title: validation,
+                                variant: "destructive",
+                              });
+                              event.target.value = "";
+                              return;
+                            }
+                            setResumeFile(file);
+                          }}
+                        />
+                        {resumeFile && (
+                          <p className="text-xs text-[#77727F]">
+                            <Upload className="mr-1 inline h-3 w-3" />
+                            {resumeFile.name}
+                          </p>
+                        )}
                       </div>
                       <DialogFooter>
                         <Button
                           type="button"
                           variant="outline"
-                          onClick={() => {
-                            setIsApplicantDialogOpen(false);
-                            setResumeFile(null);
-                            setResumeUrl("");
-                            if (fileInputRef.current) {
-                              fileInputRef.current.value = "";
-                            }
-                          }}
+                          onClick={() => setIsAddOpen(false)}
                         >
                           Cancel
                         </Button>
-                        <Button type="submit" disabled={isUploading}>
-                          {isUploading ? "Adding..." : "Add Applicant"}
+                        <Button
+                          type="submit"
+                          disabled={isSubmitting || !resumeFile}
+                        >
+                          {isSubmitting ? "Adding…" : "Add applicant"}
                         </Button>
                       </DialogFooter>
                     </form>
@@ -1148,668 +689,159 @@ export default function JobDetailPage({
                 </Dialog>
               </div>
             </div>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#928C99]" />
+                <Input
+                  className="pl-9"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search candidate, email, or source"
+                />
+              </div>
+              <Select
+                value={stageFilter}
+                onValueChange={(value: typeof stageFilter) =>
+                  setStageFilter(value)
+                }
+              >
+                <SelectTrigger className="w-full sm:w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All stages</SelectItem>
+                  {APPLICANT_STAGES.map((stage) => (
+                    <SelectItem key={stage} value={stage}>
+                      {formatApplicantStage(stage)} (
+                      {summary.stageCounts[stage]})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </CardHeader>
           <CardContent>
-            {jobApplicants.length > 0 ? (
-              <DynamicApplicantsTable
-                applicants={jobApplicants}
-                columns={tableColumns}
-                onRowClick={(applicant) =>
-                  setSelectedApplicantId(applicant._id)
-                }
-                pageSize={20}
-              />
-            ) : (
-              <p className="text-sm text-gray-500 italic text-center py-8">
-                No applicants yet for this job posting.
-              </p>
-            )}
+            <DynamicApplicantsTable
+              applicants={filteredApplicants}
+              columns={tableColumns}
+              onRowClick={(applicant) => setSelectedApplicantId(applicant._id)}
+            />
           </CardContent>
         </Card>
-
-        {/* Column Management Modal */}
         <ColumnManagementModal
           isOpen={isColumnModalOpen}
           onOpenChange={setIsColumnModalOpen}
           columns={tableColumns}
-          onColumnsChange={setTableColumns}
+          onColumnsChange={setLocalColumns}
         />
       </div>
 
-      {/* Applicant Detail Side Panel */}
       <Sheet
-        open={!!selectedApplicantId}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSelectedApplicantId(null);
-            setSidePanelResumeFile(null);
-            setSidePanelResumeUrl("");
-            setDeclineReason("");
-            setNewNote("");
-            setEditingLinks({
-              googleMeetLink: "",
-              interviewVideoLink: "",
-              portfolioLink: "",
-            });
-          } else if (selectedApplicant) {
-            // Initialize editing links when panel opens
-            setEditingLinks({
-              googleMeetLink: selectedApplicant.googleMeetLink || "",
-              interviewVideoLink: selectedApplicant.interviewVideoLink || "",
-              portfolioLink: selectedApplicant.portfolioLink || "",
-            });
-          }
-        }}
+        open={Boolean(selectedApplicant)}
+        onOpenChange={(open) => !open && setSelectedApplicantId(null)}
       >
         {selectedApplicant && (
-          <SheetContent
-            className="w-full sm:max-w-2xl overflow-y-auto"
-            onOpenAutoFocus={(e) => e.preventDefault()}
-          >
+          <SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
             <SheetHeader>
               <SheetTitle>
                 {selectedApplicant.firstName} {selectedApplicant.lastName}
               </SheetTitle>
               <SheetDescription>
-                Applicant Details • {selectedJob.title}
+                {selectedApplicant.email || "No email"} · Applied{" "}
+                {format(new Date(selectedApplicant.appliedDate), "MMM d, yyyy")}
               </SheetDescription>
             </SheetHeader>
-
             <div className="mt-6 space-y-6">
-              {/* Applicant Info Panel */}
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">
-                  Applicant Information
-                </h3>
-                <div className="space-y-3">
-                  {tableColumns
-                    .filter(
-                      (col) =>
-                        col.field !== "status" && !col.field.includes("Link"),
-                    )
-                    .map((column) => {
-                      const getFieldValue = (field: string): any => {
-                        if (field.startsWith("custom.")) {
-                          const customFieldKey = field.replace("custom.", "");
-                          return (
-                            selectedApplicant.customFields?.[customFieldKey] ||
-                            null
-                          );
-                        }
-                        if (field === "name" || field === "firstName") {
-                          return `${selectedApplicant.firstName} ${selectedApplicant.lastName}`;
-                        }
-                        const parts = field.split(".");
-                        let value: any = selectedApplicant;
-                        for (const part of parts) {
-                          value = value?.[part];
-                          if (value === undefined || value === null)
-                            return null;
-                        }
-                        return value;
-                      };
-
-                      const formatValue = (value: any, col: Column): string => {
-                        if (value === null || value === undefined) return "—";
-                        if (col.type === "number") {
-                          if (
-                            col.field.includes("Salary") ||
-                            col.field.includes("salary")
-                          ) {
-                            return new Intl.NumberFormat("en-PH", {
-                              style: "currency",
-                              currency: "PHP",
-                            }).format(Number(value));
-                          }
-                          return String(value);
-                        }
-                        if (col.type === "date" && typeof value === "number") {
-                          return format(new Date(value), "MMM dd, yyyy");
-                        }
-                        return String(value);
-                      };
-
-                      const value = getFieldValue(column.field);
-                      return (
-                        <div key={column.id} className="space-y-1">
-                          <div className="text-xs font-medium text-gray-500">
-                            {column.label}
-                          </div>
-                          <div className="text-sm text-gray-900">
-                            {formatValue(value, column)}
-                          </div>
-                        </div>
-                      );
-                    })}
+              <div className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2">
+                <div>
+                  <p className="text-xs text-[#77727F]">Source</p>
+                  <p className="text-sm font-medium">
+                    {selectedApplicant.source || "Not recorded"}
+                  </p>
                 </div>
+                <div>
+                  <p className="text-xs text-[#77727F]">Phone</p>
+                  <p className="text-sm font-medium">
+                    {selectedApplicant.phone || "Not recorded"}
+                  </p>
+                </div>
+                {selectedApplicant.portfolioLink && (
+                  <a
+                    href={selectedApplicant.portfolioLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm text-[#695eff] hover:underline"
+                  >
+                    Portfolio <ExternalLink className="inline h-3 w-3" />
+                  </a>
+                )}
+                {resumeUrl && (
+                  <a
+                    href={resumeUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm text-[#695eff] hover:underline"
+                  >
+                    <FileText className="mr-1 inline h-3 w-3" /> Resume{" "}
+                    <ExternalLink className="inline h-3 w-3" />
+                  </a>
+                )}
               </div>
-
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">
-                  Contact Information
-                </h3>
-                <div className="space-y-2">
-                  {selectedApplicant.email && (
-                    <div>
-                      <p className="text-xs text-gray-500">Email</p>
-                      <p className="text-sm text-gray-900">
-                        {selectedApplicant.email}
+              <ApplicantWorkflowPanel
+                applicant={selectedApplicant}
+                job={job}
+                members={organizationMembers}
+                canApproveOffer={
+                  currentUser?.role === "owner" || currentUser?.role === "admin"
+                }
+              />
+              <section>
+                <h3 className="text-sm font-semibold">Notes</h3>
+                <div className="mt-3 space-y-2">
+                  {selectedApplicant.notes.map((note, index) => (
+                    <div
+                      key={`${note.date}-${index}`}
+                      className="rounded-lg bg-[#F7F6FA] p-3"
+                    >
+                      <p className="text-xs text-[#928C99]">
+                        {format(new Date(note.date), "MMM d, yyyy 'at' h:mm a")}
+                      </p>
+                      <p className="mt-1 whitespace-pre-wrap text-sm">
+                        {note.content}
                       </p>
                     </div>
-                  )}
-                  {selectedApplicant.phone && (
-                    <div>
-                      <p className="text-xs text-gray-500">Phone</p>
-                      <p className="text-sm text-gray-900">
-                        {selectedApplicant.phone}
-                      </p>
-                    </div>
-                  )}
-                  {/* Links Section */}
-                  <div className="mt-4 pt-4 border-t">
-                    <h4 className="text-xs font-semibold text-gray-700 mb-3">
-                      Links
-                    </h4>
-                    <div className="space-y-3">
-                      <div>
-                        <Label htmlFor="editGoogleMeet" className="text-xs">
-                          Google Meet Link
-                        </Label>
-                        <div className="flex gap-2 mt-1">
-                          <Input
-                            id="editGoogleMeet"
-                            type="url"
-                            placeholder="https://meet.google.com/..."
-                            value={editingLinks.googleMeetLink}
-                            onChange={(e) =>
-                              setEditingLinks({
-                                ...editingLinks,
-                                googleMeetLink: e.target.value,
-                              })
-                            }
-                            className="text-sm"
-                            autoFocus={false}
-                          />
-                          {editingLinks.googleMeetLink && (
-                            <a
-                              href={editingLinks.googleMeetLink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-blue-600 hover:underline flex items-center"
-                            >
-                              <LinkIcon className="h-4 w-4" />
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                      <div>
-                        <Label htmlFor="editInterviewVideo" className="text-xs">
-                          Interview Video Link
-                        </Label>
-                        <div className="flex gap-2 mt-1">
-                          <Input
-                            id="editInterviewVideo"
-                            type="url"
-                            placeholder="https://youtube.com/... or https://vimeo.com/..."
-                            value={editingLinks.interviewVideoLink}
-                            onChange={(e) =>
-                              setEditingLinks({
-                                ...editingLinks,
-                                interviewVideoLink: e.target.value,
-                              })
-                            }
-                            className="text-sm"
-                          />
-                          {editingLinks.interviewVideoLink && (
-                            <a
-                              href={editingLinks.interviewVideoLink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-blue-600 hover:underline flex items-center"
-                            >
-                              <LinkIcon className="h-4 w-4" />
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                      <div>
-                        <Label htmlFor="editPortfolio" className="text-xs">
-                          Portfolio Link
-                        </Label>
-                        <div className="flex gap-2 mt-1">
-                          <Input
-                            id="editPortfolio"
-                            type="url"
-                            placeholder="https://portfolio.example.com"
-                            value={editingLinks.portfolioLink}
-                            onChange={(e) =>
-                              setEditingLinks({
-                                ...editingLinks,
-                                portfolioLink: e.target.value,
-                              })
-                            }
-                            className="text-sm"
-                          />
-                          {editingLinks.portfolioLink && (
-                            <a
-                              href={editingLinks.portfolioLink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-blue-600 hover:underline flex items-center"
-                            >
-                              <LinkIcon className="h-4 w-4" />
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                      <Button
-                        size="sm"
-                        onClick={handleSaveLinks}
-                        disabled={isSavingLinks}
-                        className="w-full"
-                      >
-                        {isSavingLinks ? "Saving..." : "Save Links"}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Status Update */}
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">
-                  Status
-                </h3>
-                <Select
-                  value={selectedApplicant.status}
-                  onValueChange={handleUpdateStatus}
-                  disabled={isUpdatingStatus}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="new">New</SelectItem>
-                    <SelectItem value="screening">Screening</SelectItem>
-                    <SelectItem value="interview">Interview</SelectItem>
-                    <SelectItem value="assessment">Assessment</SelectItem>
-                    <SelectItem value="offer">Offer</SelectItem>
-                    <SelectItem value="hired">Hired</SelectItem>
-                    <SelectItem value="rejected">Rejected</SelectItem>
-                  </SelectContent>
-                </Select>
-                {selectedApplicant.status === "rejected" && (
-                  <div className="mt-3 space-y-2">
-                    <Label htmlFor="declineReason" className="text-xs">
-                      Reason for Rejection
-                    </Label>
-                    <Textarea
-                      id="declineReason"
-                      rows={3}
-                      value={declineReason}
-                      onChange={(e) => setDeclineReason(e.target.value)}
-                      placeholder="Enter reason for rejection..."
-                      className="text-sm"
-                    />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleSaveRejection}
-                      disabled={isAddingNote || !declineReason.trim()}
-                    >
-                      {isAddingNote ? "Saving..." : "Save Reason"}
-                    </Button>
-                  </div>
-                )}
-               </div>
-
-               <div>
-                 <h3 className="text-sm font-semibold text-gray-900 mb-3">
-                   Pipeline
-                 </h3>
-                 <div className="space-y-2 rounded-lg border p-3">
-                   <div>
-                     <p className="text-xs text-gray-500">Source</p>
-                     <p className="text-sm text-gray-900">
-                       {selectedApplicant.source || "Not specified"}
-                       {selectedApplicant.sourceDetails
-                         ? ` · ${selectedApplicant.sourceDetails}`
-                         : ""}
-                     </p>
-                   </div>
-                   {selectedApplicant.pipelineStageHistory?.length ? (
-                     selectedApplicant.pipelineStageHistory.map(
-                       (entry: any, idx: number) => (
-                         <p key={idx} className="text-xs text-gray-600">
-                           {entry.from ? `${entry.from} → ` : ""}
-                           {entry.to} on{" "}
-                           {format(new Date(entry.changedAt), "MMM dd, yyyy")}
-                         </p>
-                       ),
-                     )
-                   ) : (
-                     <p className="text-xs text-gray-500">
-                       No pipeline history yet.
-                     </p>
-                   )}
-                 </div>
-               </div>
-
-               <div>
-                 <h3 className="text-sm font-semibold text-gray-900 mb-3">
-                   Scorecards
-                 </h3>
-                 <div className="rounded-lg border p-3">
-                   {selectedApplicant.scorecards?.length ? (
-                     selectedApplicant.scorecards.map(
-                       (scorecard: any, idx: number) => (
-                         <p key={idx} className="text-sm text-gray-900">
-                           Overall score: {scorecard.overallScore}
-                         </p>
-                       ),
-                     )
-                   ) : (
-                     <p className="text-sm text-gray-500">
-                       No scorecards submitted.
-                     </p>
-                   )}
-                 </div>
-               </div>
-
-               <div>
-                 <h3 className="text-sm font-semibold text-gray-900 mb-3">
-                   Offer approval
-                 </h3>
-                 <div className="rounded-lg border p-3">
-                   <p className="text-sm text-gray-900">
-                     {selectedApplicant.offerApproval?.status ??
-                       "Not requested"}
-                   </p>
-                 </div>
-               </div>
-
-               <div>
-                 <h3 className="text-sm font-semibold text-gray-900 mb-3">
-                   Convert to employee
-                 </h3>
-                 <div className="rounded-lg border p-3">
-                   {selectedApplicant.convertedEmployeeId ? (
-                     <p className="text-sm text-green-700">
-                       Converted employee record linked.
-                     </p>
-                   ) : (
-                     <p className="text-sm text-gray-500">
-                       Convert after offer approval and hiring details are
-                       complete.
-                     </p>
-                   )}
-                 </div>
-               </div>
-
-               {/* Notes Section */}
-               <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">
-                  Notes
-                </h3>
-                {selectedApplicant.notes &&
-                selectedApplicant.notes.length > 0 ? (
-                  <div className="space-y-3 mb-4">
-                    {selectedApplicant.notes.map((note: any, idx: number) => (
-                      <div
-                        key={idx}
-                        className="p-3 bg-gray-50 rounded-lg border border-gray-200"
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <p className="text-xs text-gray-500">
-                            {format(
-                              new Date(note.date),
-                              "MMM dd, yyyy 'at' h:mm a",
-                            )}
-                          </p>
-                        </div>
-                        <p className="text-sm text-gray-900 whitespace-pre-wrap">
-                          {note.content}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-500 italic mb-4">
-                    No notes yet
-                  </p>
-                )}
-                <div className="space-y-2">
-                  <Textarea
-                    rows={3}
-                    value={newNote}
-                    onChange={(e) => setNewNote(e.target.value)}
-                    placeholder="Add a note..."
-                    className="text-sm"
-                  />
-                  <Button
-                    size="sm"
-                    onClick={handleAddNote}
-                    disabled={isAddingNote || !newNote.trim()}
-                  >
-                    {isAddingNote ? "Adding..." : "Add Note"}
-                  </Button>
-                </div>
-              </div>
-
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">
-                  Resume
-                </h3>
-                {resumeUrlForView ? (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2 p-3 border rounded-lg">
-                      <FileText className="h-5 w-5 text-purple-600" />
-                      <span className="text-sm text-gray-700 flex-1">
-                        Resume.pdf
-                      </span>
-                      <a
-                        href={resumeUrlForView}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-brand-purple hover:text-brand-purple-hover"
-                      >
-                        <Download className="h-4 w-4" />
-                      </a>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-500 italic">
-                    No resume uploaded
-                  </p>
-                )}
-
-                <div className="mt-4 space-y-3">
-                  <p className="text-xs text-gray-500">
-                    Upload New Resume (drag & drop or paste URL)
-                  </p>
-                  <div
-                    ref={sidePanelDropZoneRef}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setIsDragging(true);
-                    }}
-                    onDragLeave={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setIsDragging(false);
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setIsDragging(false);
-                      const file = e.dataTransfer.files[0];
-                      if (file) {
-                        setSidePanelResumeFile(file);
-                        handleUpdateApplicantResume(file);
-                      }
-                    }}
-                    className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
-                      isDragging
-                        ? "border-purple-500 bg-purple-50"
-                        : "border-gray-300 hover:border-gray-400"
-                    }`}
-                    onClick={() => sidePanelFileInputRef.current?.click()}
-                  >
-                    <input
-                      ref={sidePanelFileInputRef}
-                      type="file"
-                      accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          setSidePanelResumeFile(file);
-                          handleUpdateApplicantResume(file);
-                        }
-                      }}
-                      className="hidden"
-                    />
-                    {sidePanelResumeFile ? (
-                      <div className="flex items-center justify-center gap-2">
-                        <FileText className="h-5 w-5 text-purple-600" />
-                        <span className="text-sm font-medium text-gray-700">
-                          {sidePanelResumeFile.name}
-                        </span>
-                      </div>
-                    ) : (
-                      <div>
-                        <Upload className="h-6 w-6 mx-auto text-gray-400 mb-2" />
-                        <p className="text-xs text-gray-600">
-                          Drag and drop or click to browse
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    <Input
-                      type="url"
-                      placeholder="Or paste file URL here (auto-uploads on paste)..."
-                      value={sidePanelResumeUrl}
-                      onChange={(e) => setSidePanelResumeUrl(e.target.value)}
-                      onPaste={async (e) => {
-                        const pastedUrl = e.clipboardData.getData("text");
-                        if (pastedUrl && pastedUrl.startsWith("http")) {
-                          setSidePanelResumeUrl(pastedUrl);
-                          setTimeout(() => {
-                            handleUpdateApplicantResume(undefined, pastedUrl);
-                          }, 100);
-                        }
-                      }}
-                      disabled={isUploading}
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        if (sidePanelResumeUrl.trim()) {
-                          handleUpdateApplicantResume(
-                            undefined,
-                            sidePanelResumeUrl.trim(),
-                          );
-                        }
-                      }}
-                      disabled={isUploading || !sidePanelResumeUrl.trim()}
-                    >
-                      {isUploading ? (
-                        <span className="text-xs">Uploading...</span>
-                      ) : (
-                        <LinkIcon className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </div>
-                  {isUploading && (
-                    <p className="text-xs text-gray-500">Uploading resume...</p>
+                  ))}
+                  {selectedApplicant.notes.length === 0 && (
+                    <p className="text-sm text-[#928C99]">No notes yet.</p>
                   )}
                 </div>
-              </div>
-
-              {/* Actions */}
-              <div className="pt-4 border-t">
+                <Textarea
+                  className="mt-3"
+                  rows={2}
+                  value={newNote}
+                  onChange={(event) => setNewNote(event.target.value)}
+                  placeholder="Add decision context or follow-up"
+                />
                 <Button
-                  variant="destructive"
+                  className="mt-2"
                   size="sm"
-                  onClick={() => setDeleteApplicantConfirmOpen(true)}
-                  disabled={isDeletingApplicant}
-                  className="w-full"
+                  disabled={!newNote.trim()}
+                  onClick={addNote}
                 >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  {isDeletingApplicant ? "Deleting..." : "Remove Applicant"}
+                  Add note
                 </Button>
-              </div>
+              </section>
+              <Button
+                variant="outline"
+                className="w-full text-red-600"
+                onClick={removeApplicant}
+              >
+                <Trash2 className="mr-2 h-4 w-4" /> Remove applicant
+              </Button>
             </div>
           </SheetContent>
         )}
       </Sheet>
-
-      {/* Delete Job Confirmation Dialog */}
-      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Job</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete this job? This action cannot be
-              undone. All applicants associated with this job will remain in the
-              system.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteConfirmOpen(false)}
-              disabled={isDeleting}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDeleteJob}
-              disabled={isDeleting}
-            >
-              {isDeleting ? "Deleting..." : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Applicant Confirmation Dialog */}
-      <Dialog
-        open={deleteApplicantConfirmOpen}
-        onOpenChange={setDeleteApplicantConfirmOpen}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove Applicant</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to remove this applicant? This action cannot
-              be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteApplicantConfirmOpen(false)}
-              disabled={isDeletingApplicant}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDeleteApplicant}
-              disabled={isDeletingApplicant}
-            >
-              {isDeletingApplicant ? "Removing..." : "Remove"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </MainLayout>
   );
 }

@@ -19,17 +19,26 @@ describe("recruitment workflow hardening", () => {
     expect(recruitmentSource).toContain("addApplicantScorecard");
     expect(recruitmentSource).toContain("requestOfferApproval");
     expect(recruitmentSource).toContain("approveOffer");
-    expect(recruitmentSource).toContain("buildDefaultRequirementsForConvertedEmployee");
+    expect(recruitmentSource).toContain(
+      "buildDefaultRequirementsForConvertedEmployee",
+    );
     expect(recruitmentSource).toContain("convertedEmployeeId: employeeId");
   });
 
   it("surfaces recruitment workflow controls in the applicant UI", () => {
-    const pageSource = readSource("../app/[organizationId]/recruitment/[jobId]/page.tsx");
+    const pageSource = readSource(
+      "../app/[organizationId]/recruitment/[jobId]/page.tsx",
+    );
+    const workflowSource = readSource(
+      "../app/[organizationId]/recruitment/_components/applicant-workflow-panel.tsx",
+    );
 
     expect(pageSource).toContain("Source");
-    expect(pageSource).toContain("Pipeline");
-    expect(pageSource).toContain("Scorecards");
-    expect(pageSource).toContain("Offer approval");
-    expect(pageSource).toContain("Convert to employee");
+    expect(pageSource).toContain("Needs attention");
+    expect(workflowSource).toContain("Pipeline");
+    expect(workflowSource).toContain("scheduleInterview");
+    expect(workflowSource).toContain("Scorecard");
+    expect(workflowSource).toContain("Offer approval");
+    expect(workflowSource).toContain("convertApplicantToEmployee");
   });
 });
