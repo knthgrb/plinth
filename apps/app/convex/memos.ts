@@ -8,6 +8,12 @@ import {
   synchronizeEffectiveMemo,
 } from "./communicationsCompatibility";
 
+function rejectAnnouncementWrite(memo: Doc<"memos">): void {
+  if (memo.type === "announcement") {
+    throw new Error("Use the announcements module for announcement writes");
+  }
+}
+
 // Helper to check authorization with organization context
 async function checkAuth(
   ctx: QueryCtx | MutationCtx,
@@ -39,8 +45,8 @@ async function checkAuth(
 }
 
 async function checkAuthForQuery(
-  ctx: any,
-  organizationId: any,
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
   requiredRole?: "owner" | "admin" | "hr",
 ) {
   try {
@@ -78,23 +84,24 @@ export const getMemos = query({
       );
     }
 
-    let memos = await (ctx.db.query("memos") as any)
-      .withIndex("by_organization", (q: any) =>
+    let memos = await ctx.db
+      .query("memos")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId)
       )
       .collect();
 
     // Filter by published status
     if (args.isPublished !== undefined) {
-      memos = memos.filter((m: any) => m.isPublished === args.isPublished);
+      memos = memos.filter((m) => m.isPublished === args.isPublished);
     }
 
     // Filter by type
     if (args.type) {
-      memos = memos.filter((m: any) => m.type === args.type);
+      memos = memos.filter((m) => m.type === args.type);
     }
 
-    memos.sort((a: any, b: any) => b.publishedDate - a.publishedDate);
+    memos.sort((a, b) => b.publishedDate - a.publishedDate);
     return Promise.all(
       memos.map((memo: Doc<"memos">) => loadEffectiveMemo(ctx, memo)),
     );
@@ -156,6 +163,9 @@ export const createMemo = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
+    if (args.type === "announcement") {
+      throw new Error("Use the announcements module for announcement writes");
+    }
 
     const now = Date.now();
     const memoId = await ctx.db.insert("memos", {
@@ -233,8 +243,12 @@ export const updateMemo = mutation({
   handler: async (ctx, args) => {
     const memo = await ctx.db.get(args.memoId);
     if (!memo) throw new Error("Memo not found");
+    rejectAnnouncementWrite(memo);
+    if (args.type === "announcement") {
+      throw new Error("Use the announcements module for announcement writes");
+    }
 
-    const userRecord = await checkAuth(ctx, memo.organizationId, "hr");
+    await checkAuth(ctx, memo.organizationId, "hr");
 
     const updates: Partial<Doc<"memos">> = { updatedAt: Date.now() };
     if (args.title !== undefined) updates.title = args.title;
@@ -277,8 +291,9 @@ export const publishMemo = mutation({
   handler: async (ctx, args) => {
     const memo = await ctx.db.get(args.memoId);
     if (!memo) throw new Error("Memo not found");
+    rejectAnnouncementWrite(memo);
 
-    const userRecord = await checkAuth(ctx, memo.organizationId, "hr");
+    await checkAuth(ctx, memo.organizationId, "hr");
 
     await ctx.db.patch(args.memoId, {
       isPublished: true,
@@ -299,6 +314,7 @@ export const acknowledgeMemo = mutation({
   handler: async (ctx, args) => {
     const memo = await ctx.db.get(args.memoId);
     if (!memo) throw new Error("Memo not found");
+    rejectAnnouncementWrite(memo);
 
     const userRecord = await checkAuth(ctx, memo.organizationId);
 
@@ -314,7 +330,7 @@ export const acknowledgeMemo = mutation({
     const acknowledgedBy = effective.acknowledgedBy || [];
 
     // Check if already acknowledged
-    if (acknowledgedBy.some((a: any) => a.employeeId === args.employeeId)) {
+    if (acknowledgedBy.some((entry) => entry.employeeId === args.employeeId)) {
       return { success: true, alreadyAcknowledged: true };
     }
 
@@ -339,8 +355,9 @@ export const deleteMemo = mutation({
   handler: async (ctx, args) => {
     const memo = await ctx.db.get(args.memoId);
     if (!memo) throw new Error("Memo not found");
+    rejectAnnouncementWrite(memo);
 
-    const userRecord = await checkAuth(ctx, memo.organizationId, "hr");
+    await checkAuth(ctx, memo.organizationId, "hr");
 
     await synchronizeEffectiveMemo(
       ctx,
@@ -378,17 +395,18 @@ export const getMemoTemplates = query({
     const userRecord = await checkAuthForQuery(ctx, args.organizationId, "hr");
     if (!userRecord) return [];
 
-    let templates = await (ctx.db.query("memoTemplates") as any)
-      .withIndex("by_organization", (q: any) =>
+    let templates = await ctx.db
+      .query("memoTemplates")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId)
       )
       .collect();
 
     if (args.category) {
-      templates = templates.filter((t: any) => t.category === args.category);
+      templates = templates.filter((template) => template.category === args.category);
     }
 
-    templates.sort((a: any, b: any) => b.createdAt - a.createdAt);
+    templates.sort((a, b) => b.createdAt - a.createdAt);
     return templates;
   },
 });
@@ -486,9 +504,11 @@ export const updateMemoTemplate = mutation({
     const template = await ctx.db.get(args.templateId);
     if (!template) throw new Error("Template not found");
 
-    const userRecord = await checkAuth(ctx, template.organizationId, "hr");
+    await checkAuth(ctx, template.organizationId, "hr");
 
-    const updates: any = { updatedAt: Date.now() };
+    const updates: Partial<Doc<"memoTemplates">> = {
+      updatedAt: Date.now(),
+    };
     if (args.name !== undefined) updates.name = args.name;
     if (args.title !== undefined) updates.title = args.title;
     if (args.content !== undefined) updates.content = args.content;
@@ -510,7 +530,7 @@ export const deleteMemoTemplate = mutation({
     const template = await ctx.db.get(args.templateId);
     if (!template) throw new Error("Template not found");
 
-    const userRecord = await checkAuth(ctx, template.organizationId, "hr");
+    await checkAuth(ctx, template.organizationId, "hr");
 
     await ctx.db.delete(args.templateId);
     return { success: true };

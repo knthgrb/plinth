@@ -1,52 +1,23 @@
 "use server";
 
-import { AnnouncementsService } from "@/services/announcements-service";
+import {
+  AnnouncementsService,
+  type CreateAnnouncementInput,
+  type UpdateAnnouncementInput,
+} from "@/services/announcements-service";
 
 export async function getAnnouncements(data: {
   organizationId: string;
-  employeeId?: string;
+  includeScheduled?: boolean;
 }) {
   return AnnouncementsService.getAnnouncements(data);
 }
 
-export async function createAnnouncement(data: {
-  organizationId: string;
-  title: string;
-  content: string;
-  priority?: "normal" | "important" | "urgent";
-  targetAudience: "all" | "department" | "specific-employees";
-  departments?: string[];
-  specificEmployees?: string[];
-  scheduledPublishDate?: number;
-  expiryDate?: number;
-  isPinned?: boolean;
-  reminderCadenceDays?: number;
-  attachments?: string[];
-  attachmentContentTypes?: string[];
-  acknowledgementRequired: boolean;
-  postAs?: "admin" | "user";
-}) {
+export async function createAnnouncement(data: CreateAnnouncementInput) {
   return AnnouncementsService.createAnnouncement(data);
 }
 
-export async function updateAnnouncement(data: {
-  announcementId: string;
-  organizationId: string;
-  title?: string;
-  content?: string;
-  priority?: "normal" | "important" | "urgent";
-  targetAudience?: "all" | "department" | "specific-employees";
-  departments?: string[];
-  specificEmployees?: string[];
-  scheduledPublishDate?: number;
-  expiryDate?: number;
-  isPinned?: boolean;
-  reminderCadenceDays?: number;
-  attachments?: string[];
-  attachmentContentTypes?: string[];
-  acknowledgementRequired?: boolean;
-  postAs?: "admin" | "user";
-}) {
+export async function updateAnnouncement(data: UpdateAnnouncementInput) {
   return AnnouncementsService.updateAnnouncement(data);
 }
 
@@ -55,26 +26,4 @@ export async function deleteAnnouncement(data: {
   organizationId: string;
 }) {
   return AnnouncementsService.deleteAnnouncement(data);
-}
-
-export async function addReaction(data: {
-  announcementId: string;
-  organizationId: string;
-  emoji: string;
-}) {
-  return AnnouncementsService.addReaction(data);
-}
-
-export async function removeReaction(data: {
-  announcementId: string;
-  organizationId: string;
-}) {
-  return AnnouncementsService.removeReaction(data);
-}
-
-export async function sendAnnouncementAcknowledgementReminders(data: {
-  announcementId: string;
-  organizationId: string;
-}) {
-  return AnnouncementsService.sendAnnouncementAcknowledgementReminders(data);
 }

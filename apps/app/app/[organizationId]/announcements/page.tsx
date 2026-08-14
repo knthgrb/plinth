@@ -1,227 +1,225 @@
 "use client";
 
-import { useQuery, useMutation } from "convex/react";
-import { api } from "@/convex/_generated/api";
-import { MainLayout } from "@/components/layout/main-layout";
-import { Button } from "@/components/ui/button";
-import { useOrganization } from "@/hooks/organization-context";
-import { useEmployeeView } from "@/hooks/employee-view-context";
-import { Bell, Plus, ChevronDown } from "lucide-react";
-import { useState, useEffect, useRef, useMemo } from "react";
 import dynamic from "next/dynamic";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery } from "convex/react";
+import { Bell, ChevronDown, Plus } from "lucide-react";
 import { AnnouncementCard } from "./_components/announcement-card";
 import type { AnnouncementEditSnapshot } from "./_components/create-announcement-modal";
+import { MainLayout } from "@/components/layout/main-layout";
+import { Button } from "@/components/ui/button";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import { useEmployeeView } from "@/hooks/employee-view-context";
+import { useOrganization } from "@/hooks/organization-context";
 
 const CreateAnnouncementModal = dynamic(
-  () => import("./_components/create-announcement-modal").then((m) => m.CreateAnnouncementModal),
+  () =>
+    import("./_components/create-announcement-modal").then(
+      (module) => module.CreateAnnouncementModal,
+    ),
   { ssr: false },
 );
 
-const INITIAL_PAGE_SIZE = 10;
 const PAGE_SIZE = 10;
+type StatusFilter = "all" | "published" | "scheduled";
 
 export default function AnnouncementsPage() {
-  const { effectiveOrganizationId, currentOrganization } = useOrganization();
+  const { effectiveOrganizationId } = useOrganization();
   const { isEmployeeExperienceUI } = useEmployeeView();
-  const [createOpen, setCreateOpen] = useState(false);
+  const organizationId = effectiveOrganizationId as
+    | Id<"organizations">
+    | undefined;
+  const user = useQuery(
+    api.organizations.getCurrentUser,
+    organizationId ? { organizationId } : "skip",
+  );
+  const canManage =
+    !isEmployeeExperienceUI &&
+    (user?.role === "owner" || user?.role === "admin" || user?.role === "hr");
+  const includeScheduled = canManage;
+  const announcements = useQuery(
+    api.announcements.getAnnouncements,
+    organizationId ? { organizationId, includeScheduled } : "skip",
+  );
+  const linkedEmployee = useQuery(
+    api.employees.getEmployee,
+    user?.employeeId ? { employeeId: user.employeeId } : "skip",
+  );
+  const linkedEmployeeName = linkedEmployee
+    ? `${linkedEmployee.personalInfo.firstName} ${linkedEmployee.personalInfo.lastName}`.trim()
+    : undefined;
+  const markSeen = useMutation(api.announcements.setAnnouncementsLastSeen);
+  const [modalOpen, setModalOpen] = useState(false);
   const [editingAnnouncement, setEditingAnnouncement] =
     useState<AnnouncementEditSnapshot | null>(null);
-  const [displayCount, setDisplayCount] = useState(INITIAL_PAGE_SIZE);
-  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
 
-  const user = useQuery(
-    (api as any).organizations.getCurrentUser,
-    effectiveOrganizationId
-      ? { organizationId: effectiveOrganizationId }
-      : "skip",
-  );
-
-  // Convex useQuery is reactive: results update automatically when memos (announcements),
-  // reactions, or comments change — no manual cache invalidation needed.
-  const announcements = useQuery(
-    (api as any).announcements.getAnnouncements,
-    effectiveOrganizationId
-      ? {
-          organizationId: effectiveOrganizationId,
-          employeeId:
-            currentOrganization?.employeeId ?? user?.employeeId ?? undefined,
-        }
-      : "skip",
-  );
-
-  const setAnnouncementsLastSeen = useMutation(
-    (api as any).announcements.setAnnouncementsLastSeen,
-  );
-
-  // Mark announcements as seen when user views the page
   useEffect(() => {
-    if (effectiveOrganizationId && setAnnouncementsLastSeen) {
-      setAnnouncementsLastSeen({
-        organizationId: effectiveOrganizationId,
-      }).catch(() => {});
-    }
-  }, [effectiveOrganizationId, setAnnouncementsLastSeen]);
+    if (!organizationId) return;
+    void markSeen({ organizationId }).catch(() => undefined);
+  }, [markSeen, organizationId]);
 
-  const visibleAnnouncements = useMemo(
-    () => announcements?.slice(0, displayCount) ?? [],
-    [announcements, displayCount],
-  );
-  const hasMore = announcements != null && displayCount < announcements.length;
-  const remainingCount =
-    announcements != null
-      ? Math.min(PAGE_SIZE, announcements.length - displayCount)
-      : 0;
+  const effectiveStatusFilter = canManage ? statusFilter : "published";
+  const filteredAnnouncements = useMemo(() => {
+    const items = announcements ?? [];
+    if (effectiveStatusFilter === "all") return items;
+    return items.filter(
+      (announcement) =>
+        announcement.publicationStatus === effectiveStatusFilter,
+    );
+  }, [announcements, effectiveStatusFilter]);
+  const visibleAnnouncements = filteredAnnouncements.slice(0, displayCount);
+  const hasMore = displayCount < filteredAnnouncements.length;
+  const publishedCount =
+    announcements?.filter(
+      (announcement) => announcement.publicationStatus === "published",
+    ).length ?? 0;
+  const scheduledCount =
+    announcements?.filter(
+      (announcement) => announcement.publicationStatus === "scheduled",
+    ).length ?? 0;
 
-  // Intersection Observer: load more when sentinel reaches the viewport
   useEffect(() => {
-    if (!hasMore || !loadMoreSentinelRef.current) return;
-    const el = loadMoreSentinelRef.current;
+    const element = loadMoreRef.current;
+    if (!element || !hasMore) return;
     const observer = new IntersectionObserver(
-      (entries) => {
-        const [entry] = entries;
+      ([entry]) => {
         if (entry?.isIntersecting) {
-          setDisplayCount((prev) =>
-            Math.min(prev + PAGE_SIZE, announcements?.length ?? prev),
+          setDisplayCount((current) =>
+            Math.min(current + PAGE_SIZE, filteredAnnouncements.length),
           );
         }
       },
-      { rootMargin: "200px", threshold: 0 },
+      { rootMargin: "200px" },
     );
-    observer.observe(el);
+    observer.observe(element);
     return () => observer.disconnect();
-  }, [hasMore, announcements?.length]);
+  }, [filteredAnnouncements.length, hasMore]);
 
-  const handleSeeMore = () => {
-    setDisplayCount((prev) =>
-      Math.min(prev + PAGE_SIZE, announcements?.length ?? prev),
-    );
+  if (!organizationId) return null;
+
+  const openCreate = () => {
+    setEditingAnnouncement(null);
+    setModalOpen(true);
   };
-
-  const canCreate =
-    !isEmployeeExperienceUI &&
-    (user?.role === "admin" ||
-      user?.role === "hr" ||
-      user?.role === "owner");
-  if (!effectiveOrganizationId) return null;
 
   return (
     <MainLayout>
-      <div className="p-4 sm:p-6 lg:p-8">
-        {/* Header: same vertical alignment as Employees page */}
-        <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="mx-auto max-w-6xl p-4 sm:p-6 lg:p-8">
+        <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+            <h1 className="text-2xl font-bold tracking-tight text-gray-950 sm:text-3xl">
               Announcements
             </h1>
-            <p className="text-gray-500 mt-1">
-              Company updates and news. Only people in this organization can
-              view and comment.
+            <p className="mt-1 max-w-2xl text-sm text-gray-500 sm:text-base">
+              Important organization updates, shared with the right people at the
+              right time.
             </p>
           </div>
-          {canCreate && (
-            <Button
-              onClick={() => {
-                setEditingAnnouncement(null);
-                setCreateOpen(true);
-              }}
-              className="shrink-0"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Create announcement
+          {canManage && (
+            <Button onClick={openCreate} className="shrink-0">
+              <Plus className="h-4 w-4" /> New announcement
             </Button>
           )}
-        </div>
+        </header>
 
-        {/* Announcements list: constrained width */}
-        <div className="max-w-4xl mx-auto space-y-4">
-          {announcements === undefined &&
-            Array.from({ length: 4 }).map((_, i) => (
-              <div
-                key={i}
-                className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden animate-pulse"
+        {canManage && announcements && (
+          <div className="mb-5 flex flex-wrap items-center gap-2">
+            {(
+              [
+                ["all", "All", announcements.length],
+                ["published", "Published", publishedCount],
+                ["scheduled", "Scheduled", scheduledCount],
+              ] as const
+            ).map(([value, label, count]) => (
+              <Button
+                key={value}
+                type="button"
+                size="sm"
+                variant={statusFilter === value ? "default" : "outline"}
+                onClick={() => {
+                  setStatusFilter(value);
+                  setDisplayCount(PAGE_SIZE);
+                }}
               >
-                <div className="p-6 space-y-3">
-                  <div className="h-5 w-40 rounded bg-gray-200" />
-                  <div className="h-4 w-full rounded bg-gray-100" />
-                  <div className="h-4 w-full max-w-xl rounded bg-gray-100" />
-                </div>
-              </div>
+                {label} <span className="opacity-70">{count}</span>
+              </Button>
             ))}
-          {announcements && announcements.length === 0 && (
-            <div className="text-center py-12 border border-dashed border-gray-200 rounded-xl bg-gray-50/80">
-              <Bell className="h-12 w-12 text-gray-400 mx-auto mb-3" />
-              <p className="text-gray-600 font-medium">No announcements yet</p>
-              <p className="text-sm text-gray-500 mt-1">
-                {canCreate
-                  ? "Create one to share updates with your team."
-                  : "Check back later for updates."}
+          </div>
+        )}
+
+        <div className="mx-auto max-w-4xl space-y-4">
+          {announcements === undefined &&
+            Array.from({ length: 3 }, (_, index) => (
+              <div
+                key={index}
+                className="h-52 animate-pulse rounded-2xl border bg-white shadow-sm"
+              />
+            ))}
+
+          {announcements && filteredAnnouncements.length === 0 && (
+            <div className="rounded-2xl border border-dashed bg-gray-50/70 px-6 py-14 text-center">
+              <Bell className="mx-auto h-10 w-10 text-gray-300" />
+              <h2 className="mt-3 font-semibold text-gray-900">
+                {effectiveStatusFilter === "scheduled"
+                  ? "No scheduled announcements"
+                  : "No announcements yet"}
+              </h2>
+              <p className="mt-1 text-sm text-gray-500">
+                {canManage
+                  ? "Create a focused update for your organization."
+                  : "New organization updates will appear here."}
               </p>
-              {canCreate && (
-                <Button
-                  variant="outline"
-                  className="mt-4"
-                  onClick={() => {
-                    setEditingAnnouncement(null);
-                    setCreateOpen(true);
-                  }}
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Create announcement
+              {canManage && effectiveStatusFilter !== "scheduled" && (
+                <Button variant="outline" className="mt-4" onClick={openCreate}>
+                  <Plus className="h-4 w-4" /> New announcement
                 </Button>
               )}
             </div>
           )}
-          {visibleAnnouncements.map((announcement: any) => (
-            <div
+
+          {visibleAnnouncements.map((announcement) => (
+            <AnnouncementCard
               key={announcement._id}
-              className="rounded-xl bg-white shadow-sm overflow-hidden border border-gray-100"
-            >
-              <AnnouncementCard
-                announcement={announcement}
-                currentUserId={user?._id}
-                currentEmployeeId={currentOrganization?.employeeId}
-                canReact={true}
-                onRequestEdit={(a) => {
-                  setCreateOpen(false);
-                  setEditingAnnouncement({
-                    _id: a._id,
-                    title: a.title,
-                    content: a.content,
-                    priority: a.priority,
-                    targetAudience: a.targetAudience,
-                    departments: a.departments,
-                    specificEmployees: a.specificEmployees?.map(String),
-                    scheduledPublishDate: a.scheduledPublishDate,
-                    expiryDate: a.expiryDate,
-                    isPinned: a.isPinned,
-                    reminderCadenceDays: a.reminderCadenceDays,
-                    acknowledgementRequired: Boolean(a.acknowledgementRequired),
-                    attachments: a.attachments,
-                    attachmentContentTypes: a.attachmentContentTypes,
-                    authorDisplayName: a.authorDisplayName,
-                  });
-                }}
-              />
-            </div>
+              announcement={announcement}
+              organizationId={organizationId}
+              currentUserId={user?._id}
+              canManage={canManage}
+              linkedEmployeeName={linkedEmployeeName}
+              includeScheduled={includeScheduled}
+              onRequestEdit={(selected) => {
+                setEditingAnnouncement({
+                  _id: selected._id,
+                  title: selected.title,
+                  content: selected.content,
+                  priority: selected.priority,
+                  targetAudience: selected.targetAudience,
+                  departments: selected.departments,
+                  specificEmployees: selected.specificEmployees.map(String),
+                  scheduledPublishDate: selected.scheduledPublishDate,
+                  publicationStatus: selected.publicationStatus,
+                  attachments: selected.attachments.map(String),
+                  attachmentContentTypes: selected.attachmentContentTypes,
+                  authorPersona: selected.authorPersona,
+                });
+                setModalOpen(true);
+              }}
+            />
           ))}
 
-          {/* Sentinel for Intersection Observer: load more when this enters viewport */}
           {hasMore && (
-            <div
-              ref={loadMoreSentinelRef}
-              className="flex flex-col items-center justify-center py-6 gap-3"
-            >
+            <div ref={loadMoreRef} className="flex justify-center py-5">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handleSeeMore}
-                className="gap-2"
+                onClick={() =>
+                  setDisplayCount((current) => current + PAGE_SIZE)
+                }
               >
-                <ChevronDown className="h-4 w-4" />
-                See more
-                {remainingCount > 0 && (
-                  <span className="text-gray-500">({remainingCount} more)</span>
-                )}
+                <ChevronDown className="h-4 w-4" /> Load more
               </Button>
             </div>
           )}
@@ -229,17 +227,15 @@ export default function AnnouncementsPage() {
       </div>
 
       <CreateAnnouncementModal
-        isOpen={createOpen || Boolean(editingAnnouncement)}
+        isOpen={modalOpen}
         onOpenChange={(open) => {
-          if (!open) {
-            setCreateOpen(false);
-            setEditingAnnouncement(null);
-          }
+          setModalOpen(open);
+          if (!open) setEditingAnnouncement(null);
         }}
-        organizationId={effectiveOrganizationId}
+        organizationId={organizationId}
         editingAnnouncement={editingAnnouncement}
         onSuccess={() => {
-          setCreateOpen(false);
+          setModalOpen(false);
           setEditingAnnouncement(null);
         }}
       />

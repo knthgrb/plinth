@@ -1,16 +1,29 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import { runOrgQuery } from "./queryAuthGrace";
-import { requireActiveMembership } from "./access";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "./_generated/server";
+import {
+  internalMutation,
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
+import { requireActiveMembership } from "./access";
 import {
   loadEffectiveMemo,
   synchronizeEffectiveMemo,
   type EffectiveMemo,
-  type MemoReaction,
 } from "./communicationsCompatibility";
+import { runOrgQuery } from "./queryAuthGrace";
 
+type DatabaseContext = QueryCtx | MutationCtx;
+type AnnouncementPersona = "admin" | "employee" | "member";
+type AnnouncementViewer = {
+  _id: Id<"users">;
+  role: Doc<"userOrganizations">["role"];
+  employeeId?: Id<"employees">;
+  organizationId: Id<"organizations">;
+};
 type AnnouncementAudience = {
   organizationId: Id<"organizations">;
   targetAudience: Doc<"memos">["targetAudience"];
@@ -18,11 +31,23 @@ type AnnouncementAudience = {
   specificEmployees: Id<"employees">[];
 };
 
-// Helper to check authorization - allows all authenticated users
+const MANAGEMENT_ROLES = new Set<Doc<"userOrganizations">["role"]>([
+  "owner",
+  "admin",
+  "hr",
+]);
+const REACTION_EMOJIS = new Set(["👍", "😮", "❤️", "😊", "👏", "🎉"]);
+
+function canManageAnnouncements(
+  role: Doc<"userOrganizations">["role"],
+): boolean {
+  return MANAGEMENT_ROLES.has(role);
+}
+
 async function checkAuth(
-  ctx: QueryCtx | MutationCtx,
+  ctx: DatabaseContext,
   organizationId: Id<"organizations">,
-) {
+): Promise<AnnouncementViewer> {
   const { user, membership } = await requireActiveMembership(
     ctx,
     organizationId,
@@ -35,222 +60,416 @@ async function checkAuth(
   };
 }
 
+function requireAnnouncementManager(viewer: AnnouncementViewer): void {
+  if (!canManageAnnouncements(viewer.role)) {
+    throw new Error("Not authorized - owner, admin, or HR role required");
+  }
+}
+
+async function getActiveLinkedEmployee(
+  ctx: DatabaseContext,
+  viewer: AnnouncementViewer,
+): Promise<Doc<"employees"> | null> {
+  if (!viewer.employeeId) return null;
+  const employee = await ctx.db.get(viewer.employeeId);
+  if (
+    !employee ||
+    employee.organizationId !== viewer.organizationId ||
+    employee.archivedAt ||
+    employee.employment.status !== "active"
+  ) {
+    return null;
+  }
+  return employee;
+}
+
+function getEmployeeName(employee: Doc<"employees">): string {
+  return `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`.trim();
+}
+
+async function resolveManagerPersona(
+  ctx: DatabaseContext,
+  viewer: AnnouncementViewer,
+  requestedPersona: "admin" | "employee" | undefined,
+): Promise<{
+  authorPersona: "admin" | "employee";
+  authorDisplayName: string;
+  authorEmployeeId?: Id<"employees">;
+}> {
+  if (requestedPersona !== "employee") {
+    return { authorPersona: "admin", authorDisplayName: "Admin" };
+  }
+
+  const employee = await getActiveLinkedEmployee(ctx, viewer);
+  if (!employee) {
+    throw new Error("A linked active employee record is required");
+  }
+  return {
+    authorPersona: "employee",
+    authorDisplayName: getEmployeeName(employee),
+    authorEmployeeId: employee._id,
+  };
+}
+
+async function resolveCommentPersona(
+  ctx: DatabaseContext,
+  viewer: AnnouncementViewer,
+  requestedPersona: "admin" | "employee" | undefined,
+): Promise<{
+  authorPersona: AnnouncementPersona;
+  authorDisplayName: string;
+  authorEmployeeId?: Id<"employees">;
+}> {
+  if (canManageAnnouncements(viewer.role)) {
+    return resolveManagerPersona(ctx, viewer, requestedPersona);
+  }
+
+  const employee = await getActiveLinkedEmployee(ctx, viewer);
+  if (employee) {
+    return {
+      authorPersona: "employee",
+      authorDisplayName: getEmployeeName(employee),
+      authorEmployeeId: employee._id,
+    };
+  }
+
+  const user = await ctx.db.get(viewer._id);
+  return {
+    authorPersona: "member",
+    authorDisplayName: user?.name?.trim() || user?.email || "Former member",
+  };
+}
+
+async function normalizeAudience(
+  ctx: DatabaseContext,
+  audience: AnnouncementAudience,
+): Promise<Pick<AnnouncementAudience, "departments" | "specificEmployees">> {
+  if (audience.targetAudience === "all") {
+    return { departments: [], specificEmployees: [] };
+  }
+
+  if (audience.targetAudience === "department") {
+    const departments = Array.from(
+      new Set(audience.departments.map((department) => department.trim())),
+    ).filter(Boolean);
+    if (departments.length === 0) {
+      throw new Error("Select at least one department");
+    }
+    return { departments, specificEmployees: [] };
+  }
+
+  const specificEmployees = Array.from(new Set(audience.specificEmployees));
+  if (specificEmployees.length === 0) {
+    throw new Error("Select at least one employee");
+  }
+  for (const employeeId of specificEmployees) {
+    const employee = await ctx.db.get(employeeId);
+    if (
+      !employee ||
+      employee.organizationId !== audience.organizationId ||
+      employee.archivedAt ||
+      employee.employment.status !== "active"
+    ) {
+      throw new Error("Target employees must be active in this organization");
+    }
+  }
+  return { departments: [], specificEmployees };
+}
+
+function normalizeAttachmentContentTypes(
+  attachments: Id<"_storage">[],
+  contentTypes: string[] | undefined,
+  existing?: Pick<
+    EffectiveMemo,
+    "attachments" | "attachmentContentTypes"
+  >,
+): string[] {
+  if (contentTypes && contentTypes.length !== attachments.length) {
+    throw new Error("Attachment metadata does not match the selected files");
+  }
+  if (contentTypes) return contentTypes;
+  return attachments.map((storageId) => {
+    const existingIndex = existing?.attachments.indexOf(storageId) ?? -1;
+    return existingIndex >= 0
+      ? (existing?.attachmentContentTypes[existingIndex] ??
+          "application/octet-stream")
+      : "application/octet-stream";
+  });
+}
+
 async function getAnnouncementAudienceEmployeeIds(
-  ctx: QueryCtx | MutationCtx,
+  ctx: DatabaseContext,
   announcement: AnnouncementAudience,
-) {
+): Promise<Id<"employees">[]> {
   const employees = await ctx.db
     .query("employees")
-    .withIndex("by_organization", (q) =>
-      q.eq("organizationId", announcement.organizationId),
+    .withIndex("by_organization", (builder) =>
+      builder.eq("organizationId", announcement.organizationId),
     )
     .collect();
+  const activeEmployees = employees.filter(
+    (employee) =>
+      !employee.archivedAt && employee.employment.status === "active",
+  );
 
   if (announcement.targetAudience === "all") {
-    return employees
-      .filter((employee) => employee.employment.status === "active")
-      .map((employee) => employee._id);
+    return activeEmployees.map((employee) => employee._id);
   }
-
   if (announcement.targetAudience === "department") {
-    const departments = new Set(announcement.departments ?? []);
-    return employees
-      .filter(
-        (employee) =>
-          employee.employment.status === "active" &&
-          departments.has(employee.employment.department),
-      )
+    const departments = new Set(announcement.departments);
+    return activeEmployees
+      .filter((employee) => departments.has(employee.employment.department))
       .map((employee) => employee._id);
   }
-
-  if (announcement.targetAudience === "specific-employees") {
-    return announcement.specificEmployees ?? [];
-  }
-
-  return [];
+  const selectedEmployees = new Set(announcement.specificEmployees);
+  return activeEmployees
+    .filter((employee) => selectedEmployees.has(employee._id))
+    .map((employee) => employee._id);
 }
 
-function sortAnnouncementsForDisplay(a: EffectiveMemo, b: EffectiveMemo) {
-  if (Boolean(a.isPinned) !== Boolean(b.isPinned)) {
-    return a.isPinned ? -1 : 1;
+async function canViewerAccessAnnouncement(
+  ctx: DatabaseContext,
+  announcement: EffectiveMemo,
+  viewer: AnnouncementViewer,
+  includeScheduled: boolean,
+): Promise<boolean> {
+  const hasPublished =
+    announcement.isPublished && announcement.publishedDate <= Date.now();
+  if (!hasPublished) {
+    return includeScheduled && canManageAnnouncements(viewer.role);
   }
-  return b.publishedDate - a.publishedDate;
+  if (canManageAnnouncements(viewer.role)) return true;
+  if (announcement.targetAudience === "all") return true;
+
+  const employee = await getActiveLinkedEmployee(ctx, viewer);
+  if (!employee) return false;
+  if (announcement.targetAudience === "department") {
+    return announcement.departments.includes(employee.employment.department);
+  }
+  return announcement.specificEmployees.includes(employee._id);
 }
 
-// Get a presigned URL for an announcement attachment. Only returns a URL if the user
-// is in the same org and the attachment belongs to that announcement (private to org).
+async function getMemoAuthorPresentation(
+  ctx: DatabaseContext,
+  announcement: EffectiveMemo,
+): Promise<{ authorName: string; authorPersona: AnnouncementPersona }> {
+  if (
+    announcement.authorPersona === "admin" ||
+    announcement.authorDisplayName === "Admin"
+  ) {
+    return { authorName: "Admin", authorPersona: "admin" };
+  }
+  if (announcement.authorEmployeeId) {
+    const employee = await ctx.db.get(announcement.authorEmployeeId);
+    if (employee?.organizationId === announcement.organizationId) {
+      return {
+        authorName: getEmployeeName(employee),
+        authorPersona: "employee",
+      };
+    }
+  }
+
+  const membership = await ctx.db
+    .query("userOrganizations")
+    .withIndex("by_user_organization", (builder) =>
+      builder
+        .eq("userId", announcement.author)
+        .eq("organizationId", announcement.organizationId),
+    )
+    .unique();
+  if (membership?.employeeId) {
+    const employee = await ctx.db.get(membership.employeeId);
+    if (employee?.organizationId === announcement.organizationId) {
+      return {
+        authorName: getEmployeeName(employee),
+        authorPersona: "employee",
+      };
+    }
+  }
+
+  const author = await ctx.db.get(announcement.author);
+  return {
+    authorName:
+      announcement.authorDisplayName?.trim() ||
+      author?.name?.trim() ||
+      author?.email ||
+      "Former member",
+    authorPersona: "member",
+  };
+}
+
+async function decorateAnnouncement(
+  ctx: DatabaseContext,
+  announcement: EffectiveMemo,
+) {
+  const author = await getMemoAuthorPresentation(ctx, announcement);
+  return {
+    ...announcement,
+    ...author,
+    publicationStatus:
+      announcement.isPublished && announcement.publishedDate <= Date.now()
+        ? ("published" as const)
+        : ("scheduled" as const),
+  };
+}
+
+function sortAnnouncementsForDisplay(
+  left: EffectiveMemo,
+  right: EffectiveMemo,
+): number {
+  return right.publishedDate - left.publishedDate;
+}
+
+async function loadVisibleAnnouncements(
+  ctx: DatabaseContext,
+  organizationId: Id<"organizations">,
+  viewer: AnnouncementViewer,
+  includeScheduled: boolean,
+) {
+  const rawMemos = await ctx.db
+    .query("memos")
+    .withIndex("by_organization", (builder) =>
+      builder.eq("organizationId", organizationId),
+    )
+    .collect();
+  const announcements: EffectiveMemo[] = [];
+  for (const memo of rawMemos) {
+    if (memo.type !== "announcement") continue;
+    const announcement = await loadEffectiveMemo(ctx, memo);
+    if (
+      await canViewerAccessAnnouncement(
+        ctx,
+        announcement,
+        viewer,
+        includeScheduled,
+      )
+    ) {
+      announcements.push(announcement);
+    }
+  }
+  announcements.sort(sortAnnouncementsForDisplay);
+  return Promise.all(
+    announcements.map((announcement) =>
+      decorateAnnouncement(ctx, announcement),
+    ),
+  );
+}
+
+async function requireVisibleAnnouncement(
+  ctx: DatabaseContext,
+  organizationId: Id<"organizations">,
+  announcementId: Id<"memos">,
+  viewer: AnnouncementViewer,
+): Promise<EffectiveMemo> {
+  const memo = await ctx.db.get(announcementId);
+  if (
+    !memo ||
+    memo.organizationId !== organizationId ||
+    memo.type !== "announcement"
+  ) {
+    throw new Error("Announcement not found");
+  }
+  const announcement = await loadEffectiveMemo(ctx, memo);
+  if (
+    !(await canViewerAccessAnnouncement(
+      ctx,
+      announcement,
+      viewer,
+      true,
+    ))
+  ) {
+    throw new Error("Announcement not found");
+  }
+  return announcement;
+}
+
 export const getAnnouncementAttachmentUrl = query({
   args: {
     organizationId: v.id("organizations"),
     announcementId: v.id("memos"),
     storageId: v.id("_storage"),
   },
-  handler: async (ctx, args) => {
-    return runOrgQuery(async () => {
-      await checkAuth(ctx, args.organizationId);
-
-      const announcement = await ctx.db.get(args.announcementId);
-      if (
-        !announcement ||
-        announcement.organizationId !== args.organizationId ||
-        announcement.type !== "announcement"
-      ) {
-        throw new Error("Announcement not found");
-      }
-
-      const effectiveAnnouncement = await loadEffectiveMemo(ctx, announcement);
-      const attachments = effectiveAnnouncement.attachments;
-      if (!attachments.includes(args.storageId)) {
+  handler: async (ctx, args) =>
+    runOrgQuery(async () => {
+      const viewer = await checkAuth(ctx, args.organizationId);
+      const announcement = await requireVisibleAnnouncement(
+        ctx,
+        args.organizationId,
+        args.announcementId,
+        viewer,
+      );
+      if (!announcement.attachments.includes(args.storageId)) {
         throw new Error("Attachment not found for this announcement");
       }
-
-      return await ctx.storage.getUrl(args.storageId);
-    }, null);
-  },
+      return ctx.storage.getUrl(args.storageId);
+    }, null),
 });
 
-// Get announcements (only type="announcement", accessible to all authenticated users).
-// Reactive: Convex re-runs this when memos change (new/edit/delete, reactions), so the
-// client always sees fresh data without manual cache invalidation.
 export const getAnnouncements = query({
   args: {
     organizationId: v.id("organizations"),
     employeeId: v.optional(v.id("employees")),
+    includeScheduled: v.optional(v.boolean()),
   },
-  handler: async (ctx, args) => {
-    return runOrgQuery(async () => {
-      const userRecord = await checkAuth(ctx, args.organizationId);
-
-      const rawAnnouncements = await ctx.db
-        .query("memos")
-        .withIndex("by_organization", (q) =>
-          q.eq("organizationId", args.organizationId),
-        )
-        .collect();
-
-      let announcements = await Promise.all(
-        rawAnnouncements.map((memo) => loadEffectiveMemo(ctx, memo)),
+  handler: async (ctx, args) =>
+    runOrgQuery(async () => {
+      const viewer = await checkAuth(ctx, args.organizationId);
+      return loadVisibleAnnouncements(
+        ctx,
+        args.organizationId,
+        viewer,
+        args.includeScheduled === true,
       );
-
-      const now = Date.now();
-      announcements = announcements.filter(
-        (m) =>
-          m.type === "announcement" &&
-          m.publishedDate <= now &&
-          (!m.expiryDate || m.expiryDate >= now),
-      );
-
-      if (userRecord.role === "employee") {
-        const employee = userRecord.employeeId
-          ? await ctx.db.get(userRecord.employeeId)
-          : null;
-        announcements = announcements.filter((m) => {
-          if (m.targetAudience === "all") return true;
-          if (m.targetAudience === "department") {
-            const department = employee?.employment?.department;
-            return department
-              ? (m.departments?.includes(department) ?? false)
-              : false;
-          }
-          if (m.targetAudience === "specific-employees") {
-            return userRecord.employeeId
-              ? (m.specificEmployees?.includes(userRecord.employeeId) ?? false)
-              : false;
-          }
-          return false;
-        });
-      }
-
-      announcements.sort(sortAnnouncementsForDisplay);
-      return announcements;
-    }, []);
-  },
+    }, []),
 });
 
-// Count announcements user hasn't seen yet (published after last visit) — for sidebar badge
 export const getUnreadAnnouncementsCount = query({
   args: {
     organizationId: v.id("organizations"),
     employeeId: v.optional(v.id("employees")),
   },
-  handler: async (ctx, args) => {
-    return runOrgQuery(async () => {
-      const userRecord = await checkAuth(ctx, args.organizationId);
-
+  handler: async (ctx, args) =>
+    runOrgQuery(async () => {
+      const viewer = await checkAuth(ctx, args.organizationId);
       const lastSeen = await ctx.db
         .query("announcementLastSeen")
-        .withIndex("by_user_organization", (q) =>
-          q.eq("userId", userRecord._id).eq("organizationId", args.organizationId),
+        .withIndex("by_user_organization", (builder) =>
+          builder
+            .eq("userId", viewer._id)
+            .eq("organizationId", args.organizationId),
         )
         .first();
-
-      const rawAnnouncements = await ctx.db
-        .query("memos")
-        .withIndex("by_organization", (q) =>
-          q.eq("organizationId", args.organizationId),
-        )
-        .collect();
-
-      let announcements = await Promise.all(
-        rawAnnouncements.map((memo) => loadEffectiveMemo(ctx, memo)),
+      const announcements = await loadVisibleAnnouncements(
+        ctx,
+        args.organizationId,
+        viewer,
+        false,
       );
-
-      const now = Date.now();
-      announcements = announcements.filter(
-        (m) =>
-          m.type === "announcement" &&
-          m.publishedDate <= now &&
-          (!m.expiryDate || m.expiryDate >= now),
-      );
-
-      if (userRecord.role === "employee") {
-        const employee = userRecord.employeeId
-          ? await ctx.db.get(userRecord.employeeId)
-          : null;
-        announcements = announcements.filter((m) => {
-          if (m.targetAudience === "all") return true;
-          if (m.targetAudience === "department") {
-            const department = employee?.employment?.department;
-            return department
-              ? (m.departments?.includes(department) ?? false)
-              : false;
-          }
-          if (m.targetAudience === "specific-employees") {
-            return userRecord.employeeId
-              ? (m.specificEmployees?.includes(userRecord.employeeId) ?? false)
-              : false;
-          }
-          return false;
-        });
-      }
-
-      const after = lastSeen?.lastSeenAt ?? 0;
-      return announcements.filter((m) => m.publishedDate > after).length;
-    }, 0);
-  },
+      const lastSeenAt = lastSeen?.lastSeenAt ?? 0;
+      return announcements.filter(
+        (announcement) => announcement.publishedDate > lastSeenAt,
+      ).length;
+    }, 0),
 });
 
-// Mark announcements as seen (call when user opens announcements page)
 export const setAnnouncementsLastSeen = mutation({
-  args: {
-    organizationId: v.id("organizations"),
-  },
+  args: { organizationId: v.id("organizations") },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const viewer = await checkAuth(ctx, args.organizationId);
     const now = Date.now();
-
     const existing = await ctx.db
       .query("announcementLastSeen")
-      .withIndex("by_user_organization", (q) =>
-        q.eq("userId", userRecord._id).eq("organizationId", args.organizationId)
+      .withIndex("by_user_organization", (builder) =>
+        builder
+          .eq("userId", viewer._id)
+          .eq("organizationId", args.organizationId),
       )
       .first();
-
     if (existing) {
       await ctx.db.patch(existing._id, { lastSeenAt: now, updatedAt: now });
     } else {
       await ctx.db.insert("announcementLastSeen", {
-        userId: userRecord._id,
+        userId: viewer._id,
         organizationId: args.organizationId,
         lastSeenAt: now,
         updatedAt: now,
@@ -260,7 +479,30 @@ export const setAnnouncementsLastSeen = mutation({
   },
 });
 
-// Create announcement (admin/hr/owner only)
+export const publishScheduledAnnouncement = internalMutation({
+  args: {
+    announcementId: v.id("memos"),
+    scheduledPublishDate: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const announcement = await ctx.db.get(args.announcementId);
+    if (
+      !announcement ||
+      announcement.type !== "announcement" ||
+      announcement.isPublished ||
+      announcement.scheduledPublishDate !== args.scheduledPublishDate
+    ) {
+      return { published: false };
+    }
+    await ctx.db.patch(args.announcementId, {
+      isPublished: true,
+      publishedDate: args.scheduledPublishDate,
+      updatedAt: Date.now(),
+    });
+    return { published: true };
+  },
+});
+
 export const createAnnouncement = mutation({
   args: {
     organizationId: v.id("organizations"),
@@ -270,68 +512,70 @@ export const createAnnouncement = mutation({
       v.union(
         v.literal("normal"),
         v.literal("important"),
-        v.literal("urgent")
-      )
+        v.literal("urgent"),
+      ),
     ),
     targetAudience: v.union(
       v.literal("all"),
       v.literal("department"),
-      v.literal("specific-employees")
+      v.literal("specific-employees"),
     ),
     departments: v.optional(v.array(v.string())),
     specificEmployees: v.optional(v.array(v.id("employees"))),
     scheduledPublishDate: v.optional(v.number()),
-    expiryDate: v.optional(v.number()),
-    isPinned: v.optional(v.boolean()),
-    reminderCadenceDays: v.optional(v.number()),
     attachments: v.optional(v.array(v.id("_storage"))),
     attachmentContentTypes: v.optional(v.array(v.string())),
-    acknowledgementRequired: v.boolean(),
-    postAs: v.optional(v.union(v.literal("admin"), v.literal("user"))),
+    postAs: v.optional(
+      v.union(v.literal("admin"), v.literal("employee")),
+    ),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const viewer = await checkAuth(ctx, args.organizationId);
+    requireAnnouncementManager(viewer);
+    const title = args.title.trim();
+    if (!title) throw new Error("Announcement title is required");
+    if (!args.content.trim()) throw new Error("Announcement content is required");
 
-    // Only admin, hr, and owner can create announcements
-    if (
-      userRecord.role !== "admin" &&
-      userRecord.role !== "hr" &&
-      userRecord.role !== "owner"
-    ) {
-      throw new Error("Not authorized - admin, hr, or owner role required");
-    }
-
-    const wantsPersonalName = args.postAs === "user";
-    const authorDisplayName = wantsPersonalName ? undefined : "Admin";
-
-    const now = Date.now();
-    const publishedDate = args.scheduledPublishDate ?? now;
-    const audienceEmployeeIds = await getAnnouncementAudienceEmployeeIds(ctx, {
+    const audience = await normalizeAudience(ctx, {
       organizationId: args.organizationId,
       targetAudience: args.targetAudience,
       departments: args.departments ?? [],
       specificEmployees: args.specificEmployees ?? [],
     });
+    const persona = await resolveManagerPersona(ctx, viewer, args.postAs);
+    const now = Date.now();
+    const isScheduled =
+      args.scheduledPublishDate !== undefined &&
+      args.scheduledPublishDate > now;
+    const publishedDate = isScheduled ? args.scheduledPublishDate! : now;
+    const audienceEmployeeIds = await getAnnouncementAudienceEmployeeIds(ctx, {
+      organizationId: args.organizationId,
+      targetAudience: args.targetAudience,
+      ...audience,
+    });
+    const attachments = args.attachments ?? [];
+    const attachmentContentTypes = normalizeAttachmentContentTypes(
+      attachments,
+      args.attachmentContentTypes,
+    );
     const announcementId = await ctx.db.insert("memos", {
       organizationId: args.organizationId,
-      title: args.title,
+      title,
       content: args.content,
       type: "announcement",
       priority: args.priority ?? "normal",
-      author: userRecord._id,
-      ...(authorDisplayName ? { authorDisplayName } : {}),
+      author: viewer._id,
+      ...persona,
       targetAudience: args.targetAudience,
       publishedDate,
-      scheduledPublishDate: args.scheduledPublishDate,
-      expiryDate: args.expiryDate,
-      isPinned: args.isPinned ?? false,
-      reminderCadenceDays: args.reminderCadenceDays,
+      ...(isScheduled
+        ? { scheduledPublishDate: args.scheduledPublishDate }
+        : {}),
       audienceSnapshot: {
         count: audienceEmployeeIds.length,
         generatedAt: now,
       },
-      isPublished: true,
-      acknowledgementRequired: args.acknowledgementRequired,
+      isPublished: !isScheduled,
       createdAt: now,
       updatedAt: now,
     });
@@ -341,19 +585,24 @@ export const createAnnouncement = mutation({
       ctx,
       announcement,
       {
-        specificEmployees: args.specificEmployees,
-        departments: args.departments,
-        attachments: args.attachments,
-        attachmentContentTypes: args.attachmentContentTypes,
+        departments: audience.departments,
+        specificEmployees: audience.specificEmployees,
+        attachments,
+        attachmentContentTypes,
       },
       now,
     );
-
+    if (isScheduled) {
+      await ctx.scheduler.runAt(
+        publishedDate,
+        internal.announcements.publishScheduledAnnouncement,
+        { announcementId, scheduledPublishDate: publishedDate },
+      );
+    }
     return announcementId;
   },
 });
 
-// Update announcement (admin/hr only)
 export const updateAnnouncement = mutation({
   args: {
     announcementId: v.id("memos"),
@@ -361,141 +610,178 @@ export const updateAnnouncement = mutation({
     title: v.optional(v.string()),
     content: v.optional(v.string()),
     priority: v.optional(
-      v.union(v.literal("normal"), v.literal("important"), v.literal("urgent"))
+      v.union(
+        v.literal("normal"),
+        v.literal("important"),
+        v.literal("urgent"),
+      ),
     ),
     targetAudience: v.optional(
       v.union(
         v.literal("all"),
         v.literal("department"),
-        v.literal("specific-employees")
-      )
+        v.literal("specific-employees"),
+      ),
     ),
     departments: v.optional(v.array(v.string())),
     specificEmployees: v.optional(v.array(v.id("employees"))),
-    scheduledPublishDate: v.optional(v.number()),
-    expiryDate: v.optional(v.number()),
-    isPinned: v.optional(v.boolean()),
-    reminderCadenceDays: v.optional(v.number()),
+    scheduledPublishDate: v.optional(v.union(v.number(), v.null())),
     attachments: v.optional(v.array(v.id("_storage"))),
     attachmentContentTypes: v.optional(v.array(v.string())),
-    acknowledgementRequired: v.optional(v.boolean()),
-    postAs: v.optional(v.union(v.literal("admin"), v.literal("user"))),
+    postAs: v.optional(
+      v.union(v.literal("admin"), v.literal("employee")),
+    ),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
-
-    // Only admin, hr, and owner can update announcements
+    const viewer = await checkAuth(ctx, args.organizationId);
+    requireAnnouncementManager(viewer);
+    const memo = await ctx.db.get(args.announcementId);
     if (
-      userRecord.role !== "admin" &&
-      userRecord.role !== "hr" &&
-      userRecord.role !== "owner"
+      !memo ||
+      memo.organizationId !== args.organizationId ||
+      memo.type !== "announcement"
     ) {
-      throw new Error("Not authorized - admin, hr, or owner role required");
-    }
-
-    const announcement = await ctx.db.get(args.announcementId);
-    if (!announcement || announcement.organizationId !== args.organizationId) {
       throw new Error("Announcement not found");
     }
-
-    if (announcement.author !== userRecord._id) {
+    if (memo.author !== viewer._id) {
       throw new Error("Only the author can update this announcement");
     }
 
-    const updateData: Partial<Doc<"memos">> = {
-      updatedAt: Date.now(),
-    };
-
-    if (args.title !== undefined) updateData.title = args.title;
-    if (args.content !== undefined) updateData.content = args.content;
-    if (args.priority !== undefined) updateData.priority = args.priority;
-    if (args.targetAudience !== undefined)
-      updateData.targetAudience = args.targetAudience;
-    if (args.scheduledPublishDate !== undefined) {
-      updateData.scheduledPublishDate = args.scheduledPublishDate;
-      updateData.publishedDate = args.scheduledPublishDate;
+    const effective = await loadEffectiveMemo(ctx, memo);
+    const nextTargetAudience = args.targetAudience ?? memo.targetAudience;
+    const audience = await normalizeAudience(ctx, {
+      organizationId: args.organizationId,
+      targetAudience: nextTargetAudience,
+      departments:
+        nextTargetAudience === "department"
+          ? (args.departments ?? effective.departments)
+          : [],
+      specificEmployees:
+        nextTargetAudience === "specific-employees"
+          ? (args.specificEmployees ?? effective.specificEmployees)
+          : [],
+    });
+    const now = Date.now();
+    const updateData: Partial<Doc<"memos">> = { updatedAt: now };
+    const updatesAttachments =
+      args.attachments !== undefined ||
+      args.attachmentContentTypes !== undefined;
+    const nextAttachments = args.attachments ?? effective.attachments;
+    const nextAttachmentContentTypes = updatesAttachments
+      ? normalizeAttachmentContentTypes(
+          nextAttachments,
+          args.attachmentContentTypes,
+          effective,
+        )
+      : undefined;
+    if (args.title !== undefined) {
+      const title = args.title.trim();
+      if (!title) throw new Error("Announcement title is required");
+      updateData.title = title;
     }
-    if (args.expiryDate !== undefined) updateData.expiryDate = args.expiryDate;
-    if (args.isPinned !== undefined) updateData.isPinned = args.isPinned;
-    if (args.reminderCadenceDays !== undefined)
-      updateData.reminderCadenceDays = args.reminderCadenceDays;
-    if (args.acknowledgementRequired !== undefined)
-      updateData.acknowledgementRequired = args.acknowledgementRequired;
+    if (args.content !== undefined) {
+      if (!args.content.trim()) {
+        throw new Error("Announcement content is required");
+      }
+      updateData.content = args.content;
+    }
+    if (args.priority !== undefined) updateData.priority = args.priority;
+    if (args.targetAudience !== undefined) {
+      updateData.targetAudience = args.targetAudience;
+    }
+    if (args.postAs !== undefined) {
+      const persona = await resolveManagerPersona(ctx, viewer, args.postAs);
+      updateData.authorPersona = persona.authorPersona;
+      updateData.authorDisplayName = persona.authorDisplayName;
+      updateData.authorEmployeeId = persona.authorEmployeeId;
+    }
+
+    if (args.scheduledPublishDate !== undefined) {
+      const isScheduled =
+        args.scheduledPublishDate !== null &&
+        args.scheduledPublishDate > now;
+      if (isScheduled) {
+        updateData.scheduledPublishDate = args.scheduledPublishDate!;
+        updateData.publishedDate = args.scheduledPublishDate!;
+        updateData.isPublished = false;
+        await ctx.scheduler.runAt(
+          args.scheduledPublishDate!,
+          internal.announcements.publishScheduledAnnouncement,
+          {
+            announcementId: args.announcementId,
+            scheduledPublishDate: args.scheduledPublishDate!,
+          },
+        );
+      } else {
+        updateData.scheduledPublishDate = undefined;
+        updateData.isPublished = true;
+        if (!memo.isPublished || memo.publishedDate > now) {
+          updateData.publishedDate = now;
+        }
+      }
+    }
 
     if (
       args.targetAudience !== undefined ||
       args.departments !== undefined ||
       args.specificEmployees !== undefined
     ) {
-      const effectiveAnnouncement = await loadEffectiveMemo(ctx, announcement);
-      const nextAnnouncement = {
-        ...effectiveAnnouncement,
-        targetAudience: args.targetAudience ?? announcement.targetAudience,
-        departments: args.departments ?? effectiveAnnouncement.departments,
-        specificEmployees:
-          args.specificEmployees ?? effectiveAnnouncement.specificEmployees,
-      };
       const audienceEmployeeIds = await getAnnouncementAudienceEmployeeIds(
         ctx,
-        nextAnnouncement,
+        {
+          organizationId: args.organizationId,
+          targetAudience: nextTargetAudience,
+          ...audience,
+        },
       );
       updateData.audienceSnapshot = {
         count: audienceEmployeeIds.length,
-        generatedAt: Date.now(),
+        generatedAt: now,
       };
-    }
-
-    if (args.postAs !== undefined) {
-      if (args.postAs === "user") {
-        updateData.authorDisplayName = "";
-      } else {
-        updateData.authorDisplayName = "Admin";
-      }
     }
 
     await synchronizeEffectiveMemo(
       ctx,
-      announcement,
+      memo,
       {
-        departments: args.departments,
-        specificEmployees: args.specificEmployees,
-        attachments: args.attachments,
-        attachmentContentTypes: args.attachmentContentTypes,
+        departments: audience.departments,
+        specificEmployees: audience.specificEmployees,
+        attachments: updatesAttachments ? nextAttachments : undefined,
+        attachmentContentTypes: nextAttachmentContentTypes,
       },
-      Date.now(),
+      now,
     );
     await ctx.db.patch(args.announcementId, updateData);
     return args.announcementId;
   },
 });
 
-// Delete announcement (admin/hr only)
 export const deleteAnnouncement = mutation({
   args: {
     announcementId: v.id("memos"),
     organizationId: v.id("organizations"),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
-
-    // Only admin, hr, and owner can delete announcements
-    if (
-      userRecord.role !== "admin" &&
-      userRecord.role !== "hr" &&
-      userRecord.role !== "owner"
-    ) {
-      throw new Error("Not authorized - admin, hr, or owner role required");
-    }
-
+    const viewer = await checkAuth(ctx, args.organizationId);
+    requireAnnouncementManager(viewer);
     const announcement = await ctx.db.get(args.announcementId);
-    if (!announcement || announcement.organizationId !== args.organizationId) {
+    if (
+      !announcement ||
+      announcement.organizationId !== args.organizationId ||
+      announcement.type !== "announcement"
+    ) {
       throw new Error("Announcement not found");
     }
-
-    if (announcement.author !== userRecord._id) {
+    if (announcement.author !== viewer._id) {
       throw new Error("Only the author can delete this announcement");
     }
-
+    const comments = await ctx.db
+      .query("announcementComments")
+      .withIndex("by_announcement", (builder) =>
+        builder.eq("announcementId", args.announcementId),
+      )
+      .collect();
+    for (const comment of comments) await ctx.db.delete(comment._id);
     await synchronizeEffectiveMemo(
       ctx,
       announcement,
@@ -514,227 +800,172 @@ export const deleteAnnouncement = mutation({
   },
 });
 
-export const sendAnnouncementAcknowledgementReminders = mutation({
+async function updateReaction(
+  ctx: MutationCtx,
+  args: {
+    announcementId: Id<"memos">;
+    organizationId: Id<"organizations">;
+    emoji: string | null;
+  },
+): Promise<Id<"memos">> {
+  const viewer = await checkAuth(ctx, args.organizationId);
+  await requireVisibleAnnouncement(
+    ctx,
+    args.organizationId,
+    args.announcementId,
+    viewer,
+  );
+  if (args.emoji !== null && !REACTION_EMOJIS.has(args.emoji)) {
+    throw new Error("Unsupported reaction");
+  }
+  const existing = await ctx.db
+    .query("memoReactions")
+    .withIndex("by_memo", (builder) =>
+      builder.eq("memoId", args.announcementId),
+    )
+    .collect();
+  for (const reaction of existing) {
+    if (reaction.userId === viewer._id) await ctx.db.delete(reaction._id);
+  }
+  if (args.emoji !== null) {
+    const now = Date.now();
+    await ctx.db.insert("memoReactions", {
+      organizationId: args.organizationId,
+      memoId: args.announcementId,
+      userId: viewer._id,
+      emoji: args.emoji,
+      reactedAt: now,
+      sourceIndex: existing.length,
+      migrationVersion: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+  await ctx.db.patch(args.announcementId, { updatedAt: Date.now() });
+  return args.announcementId;
+}
+
+export const setReaction = mutation({
   args: {
     announcementId: v.id("memos"),
     organizationId: v.id("organizations"),
+    emoji: v.union(v.string(), v.null()),
   },
-  handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
-
-    if (
-      userRecord.role !== "admin" &&
-      userRecord.role !== "hr" &&
-      userRecord.role !== "owner"
-    ) {
-      throw new Error("Not authorized - admin, hr, or owner role required");
-    }
-
-    const announcement = await ctx.db.get(args.announcementId);
-    if (!announcement || announcement.organizationId !== args.organizationId) {
-      throw new Error("Announcement not found");
-    }
-    if (!announcement.acknowledgementRequired) {
-      throw new Error("This announcement does not require acknowledgement");
-    }
-
-    const effectiveAnnouncement = await loadEffectiveMemo(ctx, announcement);
-    const audienceEmployeeIds = await getAnnouncementAudienceEmployeeIds(
-      ctx,
-      effectiveAnnouncement,
-    );
-    const acknowledged = new Set(
-      (effectiveAnnouncement.acknowledgedBy ?? []).map((entry) =>
-        String(entry.employeeId),
-      ),
-    );
-    const pendingEmployeeIds = audienceEmployeeIds.filter(
-      (employeeId) => !acknowledged.has(String(employeeId)),
-    );
-    const now = Date.now();
-
-    await ctx.db.patch(args.announcementId, {
-      reminderLastSentAt: now,
-      reminderLastSentBy: userRecord._id,
-      audienceSnapshot: {
-        count: audienceEmployeeIds.length,
-        generatedAt: now,
-      },
-      updatedAt: now,
-    });
-
-    return {
-      success: true,
-      reminderCount: pendingEmployeeIds.length,
-      pendingEmployeeIds,
-    };
-  },
+  handler: updateReaction,
 });
 
-// Add reaction to announcement (all org members: employee, accounting, hr, admin, owner)
 export const addReaction = mutation({
   args: {
     announcementId: v.id("memos"),
     organizationId: v.id("organizations"),
     emoji: v.string(),
   },
-  handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
-    // All org members can react (role already verified by checkAuth)
-
-    const announcement = await ctx.db.get(args.announcementId);
-    if (!announcement || announcement.organizationId !== args.organizationId) {
-      throw new Error("Announcement not found");
-    }
-
-    const effective = await loadEffectiveMemo(ctx, announcement);
-    const reactions = (effective.reactions || []) as MemoReaction[];
-    const now = Date.now();
-
-    // Remove existing reaction from this user if any
-    const filteredReactions = reactions.filter(
-      (reaction) => reaction.userId !== userRecord._id,
-    );
-
-    // Add new reaction
-    filteredReactions.push({
-      userId: userRecord._id,
-      emoji: args.emoji,
-      createdAt: now,
-    });
-
-    await synchronizeEffectiveMemo(
-      ctx,
-      announcement,
-      { reactions: filteredReactions },
-      now,
-    );
-    await ctx.db.patch(args.announcementId, { updatedAt: now });
-
-    return args.announcementId;
-  },
+  handler: (ctx, args) => updateReaction(ctx, args),
 });
 
-// Remove reaction from announcement
 export const removeReaction = mutation({
   args: {
     announcementId: v.id("memos"),
     organizationId: v.id("organizations"),
   },
-  handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
-
-    const announcement = await ctx.db.get(args.announcementId);
-    if (!announcement || announcement.organizationId !== args.organizationId) {
-      throw new Error("Announcement not found");
-    }
-
-    const effective = await loadEffectiveMemo(ctx, announcement);
-    const reactions = (effective.reactions || []) as MemoReaction[];
-    const filteredReactions = reactions.filter(
-      (reaction) => reaction.userId !== userRecord._id,
-    );
-
-    const now = Date.now();
-    await synchronizeEffectiveMemo(
-      ctx,
-      announcement,
-      { reactions: filteredReactions },
-      now,
-    );
-    await ctx.db.patch(args.announcementId, { updatedAt: now });
-
-    return args.announcementId;
-  },
+  handler: (ctx, args) => updateReaction(ctx, { ...args, emoji: null }),
 });
 
-// Get comments for an announcement (only org members can view)
+async function getCommentAuthorPresentation(
+  ctx: DatabaseContext,
+  comment: Doc<"announcementComments">,
+): Promise<{ authorName: string; authorPersona: AnnouncementPersona }> {
+  if (
+    comment.authorPersona === "admin" ||
+    comment.authorDisplayName === "Admin"
+  ) {
+    return { authorName: "Admin", authorPersona: "admin" };
+  }
+  if (comment.authorEmployeeId) {
+    const employee = await ctx.db.get(comment.authorEmployeeId);
+    if (employee?.organizationId === comment.organizationId) {
+      return {
+        authorName: getEmployeeName(employee),
+        authorPersona: "employee",
+      };
+    }
+  }
+  const author = await ctx.db.get(comment.author);
+  return {
+    authorName:
+      comment.authorDisplayName?.trim() ||
+      author?.name?.trim() ||
+      author?.email ||
+      "Former member",
+    authorPersona: comment.authorPersona ?? "member",
+  };
+}
+
 export const getComments = query({
   args: {
     announcementId: v.id("memos"),
     organizationId: v.id("organizations"),
   },
-  handler: async (ctx, args) => {
-    return runOrgQuery(async () => {
-      await checkAuth(ctx, args.organizationId);
-
-      const announcement = await ctx.db.get(args.announcementId);
-      if (!announcement || announcement.organizationId !== args.organizationId) {
-        return [];
-      }
-
+  handler: async (ctx, args) =>
+    runOrgQuery(async () => {
+      const viewer = await checkAuth(ctx, args.organizationId);
+      await requireVisibleAnnouncement(
+        ctx,
+        args.organizationId,
+        args.announcementId,
+        viewer,
+      );
       const comments = await ctx.db
         .query("announcementComments")
-        .withIndex("by_announcement", (q) =>
-          q.eq("announcementId", args.announcementId),
+        .withIndex("by_announcement", (builder) =>
+          builder.eq("announcementId", args.announcementId),
         )
         .collect();
-
-      comments.sort((a, b) => a.createdAt - b.createdAt);
-
-      const withAuthors = await Promise.all(
-        comments.map(async (comment) => {
-          const author = await ctx.db.get(comment.author);
-          const authorName =
-            comment.authorDisplayName ??
-            author?.name ??
-            author?.email ??
-            "Unknown";
-          return {
-            _id: comment._id,
-            announcementId: comment.announcementId,
-            organizationId: comment.organizationId,
-            author: comment.author,
-            authorName,
-            content: comment.content,
-            createdAt: comment.createdAt,
-            updatedAt: comment.updatedAt,
-          };
-        }),
+      comments.sort((left, right) => left.createdAt - right.createdAt);
+      return Promise.all(
+        comments.map(async (comment) => ({
+          _id: comment._id,
+          announcementId: comment.announcementId,
+          organizationId: comment.organizationId,
+          author: comment.author,
+          ...(await getCommentAuthorPresentation(ctx, comment)),
+          content: comment.content,
+          createdAt: comment.createdAt,
+          updatedAt: comment.updatedAt,
+        })),
       );
-
-      return withAuthors;
-    }, []);
-  },
+    }, []),
 });
 
-// Add comment to announcement (only org members can comment)
 export const addComment = mutation({
   args: {
     announcementId: v.id("memos"),
     organizationId: v.id("organizations"),
     content: v.string(),
-    commentAs: v.optional(v.union(v.literal("admin"), v.literal("user"))),
+    commentAs: v.optional(
+      v.union(v.literal("admin"), v.literal("employee")),
+    ),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
-
-    const announcement = await ctx.db.get(args.announcementId);
-    if (!announcement || announcement.organizationId !== args.organizationId) {
-      throw new Error("Announcement not found");
-    }
-
-    const contentTrimmed = args.content.trim();
-    if (!contentTrimmed) throw new Error("Comment content is required");
-
-    const isAdminOrOwnerOrHr =
-      userRecord.role === "admin" ||
-      userRecord.role === "hr" ||
-      userRecord.role === "owner";
-    const authorDisplayName =
-      args.commentAs === "admin" && isAdminOrOwnerOrHr ? "Admin" : undefined;
-
+    const viewer = await checkAuth(ctx, args.organizationId);
+    await requireVisibleAnnouncement(
+      ctx,
+      args.organizationId,
+      args.announcementId,
+      viewer,
+    );
+    const content = args.content.trim();
+    if (!content) throw new Error("Comment content is required");
+    const persona = await resolveCommentPersona(ctx, viewer, args.commentAs);
     const now = Date.now();
-    const commentId = await ctx.db.insert("announcementComments", {
+    return ctx.db.insert("announcementComments", {
       announcementId: args.announcementId,
       organizationId: args.organizationId,
-      author: userRecord._id,
-      ...(authorDisplayName && { authorDisplayName }),
-      content: contentTrimmed,
+      author: viewer._id,
+      ...persona,
+      content,
       createdAt: now,
       updatedAt: now,
     });
-
-    return commentId;
   },
 });

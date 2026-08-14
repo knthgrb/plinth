@@ -1,7 +1,9 @@
 "use client";
 
 import { useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { MainLayout } from "@/components/layout/main-layout";
 import {
   Card,
@@ -56,6 +58,10 @@ import {
   YAxis,
 } from "recharts";
 
+type DashboardAnnouncement = FunctionReturnType<
+  typeof api.announcements.getAnnouncements
+>[number];
+
 /** Dashboard view for accounting role: payroll, expense management, announcements */
 function AccountingDashboard({
   organizationId,
@@ -65,7 +71,7 @@ function AccountingDashboard({
   onDateRangeChange,
 }: {
   organizationId: string;
-  recentAnnouncements: any[];
+  recentAnnouncements: DashboardAnnouncement[];
   recentPayrollRuns: any[];
   dateRange: DateRangeOption;
   onDateRangeChange: (v: DateRangeOption) => void;
@@ -193,7 +199,7 @@ function AccountingDashboard({
           <CardContent className="p-4 sm:p-6 pt-0">
             {recentAnnouncements.length > 0 ? (
               <div className="space-y-3">
-                {recentAnnouncements.slice(0, 3).map((announcement: any) => (
+                {recentAnnouncements.slice(0, 3).map((announcement) => (
                   <Link
                     key={announcement._id}
                     href={getOrganizationPath(organizationId, "/announcements")}
@@ -375,9 +381,12 @@ export default function DashboardPage() {
 
   // Get recent announcements
   const announcements = useQuery(
-    (api as any).announcements.getAnnouncements,
+    api.announcements.getAnnouncements,
     effectiveOrganizationId
-      ? { organizationId: effectiveOrganizationId }
+      ? {
+          organizationId:
+            effectiveOrganizationId as Id<"organizations">,
+        }
       : "skip",
   );
 
@@ -1116,7 +1125,7 @@ export default function DashboardPage() {
                     {recentAnnouncements.length > 0 ? (
                       recentAnnouncements
                         .slice(0, 4)
-                        .map((announcement: any) => (
+                        .map((announcement) => (
                           <Link
                             key={announcement._id}
                             href={getOrganizationPath(

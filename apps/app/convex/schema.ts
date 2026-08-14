@@ -2048,8 +2048,15 @@ export default defineSchema({
       v.literal("urgent"),
     ),
     author: v.id("users"),
-    /** When set (e.g. "Admin"), announcement shows this label instead of the author's name */
     authorDisplayName: v.optional(v.string()),
+    authorPersona: v.optional(
+      v.union(
+        v.literal("admin"),
+        v.literal("employee"),
+        v.literal("member"),
+      ),
+    ),
+    authorEmployeeId: v.optional(v.id("employees")),
     targetAudience: v.union(
       v.literal("all"),
       v.literal("department"),
@@ -2069,7 +2076,7 @@ export default defineSchema({
       }),
     ),
     isPublished: v.boolean(),
-    acknowledgementRequired: v.boolean(),
+    acknowledgementRequired: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -2127,7 +2134,15 @@ export default defineSchema({
     announcementId: v.id("memos"),
     organizationId: v.id("organizations"),
     author: v.id("users"),
-    authorDisplayName: v.optional(v.string()), // e.g. "Admin" when commenting as admin/owner
+    authorDisplayName: v.optional(v.string()),
+    authorPersona: v.optional(
+      v.union(
+        v.literal("admin"),
+        v.literal("employee"),
+        v.literal("member"),
+      ),
+    ),
+    authorEmployeeId: v.optional(v.id("employees")),
     content: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),

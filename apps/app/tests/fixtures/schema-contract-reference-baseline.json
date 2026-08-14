@@ -19,14 +19,14 @@
       ]
     },
     "discovery": {
-      "totalMatches": 7175,
-      "fileCount": 244,
-      "fingerprint": "25102d5c4c3a94b50e5fd546107ca5562b3e0d31f1e62774420bf4862f1e6f63",
+      "totalMatches": 7137,
+      "fileCount": 245,
+      "fingerprint": "2d834f5183f79d57833ce6e95847474f44d10e8bab0f0125d92da0fa694f13e1",
       "symbols": [
         {
           "symbol": "acknowledgedBy",
-          "matches": 15,
-          "files": 4
+          "matches": 10,
+          "files": 3
         },
         {
           "symbol": "anniversaryLeaveMaxDays",
@@ -60,13 +60,13 @@
         },
         {
           "symbol": "attachmentContentTypes",
-          "matches": 22,
-          "files": 8
+          "matches": 24,
+          "files": 7
         },
         {
           "symbol": "attachments",
-          "matches": 129,
-          "files": 26
+          "matches": 133,
+          "files": 25
         },
         {
           "symbol": "attendanceSettings",
@@ -100,8 +100,8 @@
         },
         {
           "symbol": "departments",
-          "matches": 140,
-          "files": 27
+          "matches": 138,
+          "files": 26
         },
         {
           "symbol": "editHistory",
@@ -110,8 +110,8 @@
         },
         {
           "symbol": "employeeId",
-          "matches": 1293,
-          "files": 113
+          "matches": 1285,
+          "files": 110
         },
         {
           "symbol": "enableAnniversaryLeave",
@@ -155,8 +155,8 @@
         },
         {
           "symbol": "isActive",
-          "matches": 51,
-          "files": 15
+          "matches": 49,
+          "files": 14
         },
         {
           "symbol": "leaveAccrualFrequency",
@@ -230,7 +230,7 @@
         },
         {
           "symbol": "organizationId",
-          "matches": 1700,
+          "matches": 1705,
           "files": 159
         },
         {
@@ -270,7 +270,7 @@
         },
         {
           "symbol": "reactions",
-          "matches": 27,
+          "matches": 21,
           "files": 5
         },
         {
@@ -310,8 +310,8 @@
         },
         {
           "symbol": "role",
-          "matches": 440,
-          "files": 77
+          "matches": 419,
+          "files": 76
         },
         {
           "symbol": "salaryPaymentFrequency",
@@ -335,12 +335,12 @@
         },
         {
           "symbol": "specificEmployees",
-          "matches": 59,
-          "files": 10
+          "matches": 53,
+          "files": 9
         },
         {
           "symbol": "status",
-          "matches": 880,
+          "matches": 881,
           "files": 94
         },
         {

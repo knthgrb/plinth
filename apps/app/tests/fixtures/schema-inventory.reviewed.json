@@ -10,8 +10,8 @@
     },
     {
       "name": "announcementComments",
-      "fieldCount": 7,
-      "fieldsSha256": "4e7957b95bb7cae240d6c25c694f948d62c331090529455dd7347195e37c37c6",
+      "fieldCount": 9,
+      "fieldsSha256": "d39849089c76d2cd0413cff35bb0fd64319306ee22779df6175ad46efbdc75a7",
       "indexCount": 2,
       "indexesSha256": "500e17109a688304ad3b3552a485271b3d0c28ea0142ce4875437e0db816f52e"
     },
@@ -304,8 +304,8 @@
     },
     {
       "name": "memos",
-      "fieldCount": 22,
-      "fieldsSha256": "a3527d70940a5736ae3498ac7b3a703bf693a73831989aeea8e91df513dd7fa6",
+      "fieldCount": 24,
+      "fieldsSha256": "da77573027e967af32ca0ffae3f21ba242b576832050bfc8261bdbcd1619d773",
       "indexCount": 3,
       "indexesSha256": "a8e43925fec4ae3ea85a1f823de628b54de7ecebe6fbe3302dcba20058cd81b9"
     },
