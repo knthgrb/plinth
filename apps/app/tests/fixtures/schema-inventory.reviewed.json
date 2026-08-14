@@ -1,5 +1,5 @@
 {
-  "tableCount": 76,
+  "tableCount": 78,
   "tables": [
     {
       "name": "accountingCostItems",
@@ -45,15 +45,15 @@
     },
     {
       "name": "applicantOfferEvents",
-      "fieldCount": 11,
-      "fieldsSha256": "46c820897bae103d3f4f759f39630617a6f8cb9817a6c855603f8811aba1f44c",
-      "indexCount": 2,
-      "indexesSha256": "7c518a01244f076eea2153a11c08e497066fa49b66f6dc9de45425795c86e97d"
+      "fieldCount": 13,
+      "fieldsSha256": "bc5e62a5cc13df1af2c9c549e8274d7e226eb0b7cb93656d24bab220721b61b8",
+      "indexCount": 3,
+      "indexesSha256": "f0c01e5cd31eb7a9b10db50a08b48404c1c517e2c0f97b996b9c633b7599d9c2"
     },
     {
       "name": "applicants",
-      "fieldCount": 19,
-      "fieldsSha256": "48fbeccb2ebec4cb5e0c840ee803c77662e9b0780fe7c8e2cdf40374210ce2b8",
+      "fieldCount": 22,
+      "fieldsSha256": "910e31895d75a6b3ef7ae915f680e30c40abb611d6c5ff05b11acf6ff4e7664f",
       "indexCount": 3,
       "indexesSha256": "d69967249f003c9f4eb0e9bf9841d5430dde49e8f442fa9b560a1922d3a32239"
     },
@@ -70,6 +70,13 @@
       "fieldsSha256": "ccb76b4f2f07bb65945e15a1ea1b6335b71011f031fe28aff94996444c79b5ad",
       "indexCount": 2,
       "indexesSha256": "fa93e537c57fdb3dd2a88148a2f7a4a3dfcc6d8f05569b9373cae8ca37e7d022"
+    },
+    {
+      "name": "applicantUploadIntents",
+      "fieldCount": 7,
+      "fieldsSha256": "ebf258c34f6d29fdb6d726bfb5b0e52bdcae8df5e0be5ef284ad8072f911bd3d",
+      "indexCount": 3,
+      "indexesSha256": "c651caa5af4be8e9bc24260c98d911a2f43e12da0134ef3eee5dbe258dc97624"
     },
     {
       "name": "assetCustodyEvents",
@@ -184,9 +191,16 @@
       "indexesSha256": "db8b6c9f85a3a577e91fab98f3c43a9212989281de1060e869a0f6a6f952e859"
     },
     {
+      "name": "employeeRequirementEvents",
+      "fieldCount": 11,
+      "fieldsSha256": "8b4e5987a4c0a91ac9517bde6528630926b1cafb2a400dc4a63cf1655acb62eb",
+      "indexCount": 3,
+      "indexesSha256": "b941c97449f3099578ac8cfbc128f811caed38d006bc3c4173273e989c4507cc"
+    },
+    {
       "name": "employeeRequirements",
-      "fieldCount": 26,
-      "fieldsSha256": "8966cd67bfa1351bceda9d724b9864cdc34367f3ee8ac0883740c629e094c28a",
+      "fieldCount": 28,
+      "fieldsSha256": "b56a126284cc274f698f9f815edeb85f716a26d62ad6b4d726d5599024055f1f",
       "indexCount": 3,
       "indexesSha256": "a876a504ff787748a36b5975c93f00afcb0dc529cd5083086987b29b6e5747e0"
     },

@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Plus } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { addRequirement } from "@/actions/employees";
+import { errorMessage } from "@/lib/requirements/ui-types";
 
 interface AddRequirementDialogProps {
   employeeId: string;
@@ -27,14 +28,11 @@ export function AddRequirementDialog({
   onSuccess,
 }: AddRequirementDialogProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [formData, setFormData] = useState({
-    type: "",
-    expiryDate: "",
-  });
+  const [type, setType] = useState("");
   const { toast } = useToast();
 
   const handleSubmit = async () => {
-    if (!formData.type.trim()) {
+    if (!type.trim()) {
       toast({
         title: "Error",
         description: "Please enter requirement type",
@@ -47,27 +45,21 @@ export function AddRequirementDialog({
       await addRequirement({
         employeeId,
         requirement: {
-          type: formData.type,
+          type,
           status: "pending",
-          expiryDate: formData.expiryDate
-            ? new Date(formData.expiryDate).getTime()
-            : undefined,
         },
       });
       setIsOpen(false);
-      setFormData({
-        type: "",
-        expiryDate: "",
-      });
+      setType("");
       toast({
         title: "Success",
         description: "Custom requirement added successfully",
       });
       onSuccess();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to add requirement",
+        description: errorMessage(error, "Failed to add requirement"),
         variant: "destructive",
       });
     }
@@ -90,29 +82,15 @@ export function AddRequirementDialog({
         </DialogHeader>
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label htmlFor="type">Requirement Type <span className="text-red-500">*</span></Label>
+            <Label htmlFor="type">
+              Requirement Type <span className="text-red-500">*</span>
+            </Label>
             <Input
               id="type"
-              value={formData.type}
-              onChange={(e) =>
-                setFormData({ ...formData, type: e.target.value })
-              }
+              value={type}
+              onChange={(event) => setType(event.target.value)}
               placeholder="e.g., Special Certification, License"
               required
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="expiryDate">Expiry Date (Optional)</Label>
-            <Input
-              id="expiryDate"
-              type="date"
-              value={formData.expiryDate}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  expiryDate: e.target.value,
-                })
-              }
             />
           </div>
         </div>

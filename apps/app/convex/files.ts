@@ -17,7 +17,7 @@ const storagePurpose = v.union(
   v.literal("payslip_pdf"),
 );
 
-type StoragePurpose =
+export type StoragePurpose =
   | "accounting_receipt"
   | "announcement_attachment"
   | "applicant_resume"
@@ -43,25 +43,32 @@ async function hasStorageReference(
   organizationId: Id<"organizations">,
   storageId: Id<"_storage">,
 ) {
-  const [links, requirements, applicants, payslips] =
-    await Promise.all([
-      ctx.db
-        .query("storageObjectLinks")
-        .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-        .collect(),
-      ctx.db
-        .query("employeeRequirements")
-        .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-        .collect(),
-      ctx.db
-        .query("applicants")
-        .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-        .collect(),
-      ctx.db
-        .query("payslips")
-        .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-        .collect(),
-    ]);
+  const [links, requirements, applicants, payslips] = await Promise.all([
+    ctx.db
+      .query("storageObjectLinks")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", organizationId),
+      )
+      .collect(),
+    ctx.db
+      .query("employeeRequirements")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", organizationId),
+      )
+      .collect(),
+    ctx.db
+      .query("applicants")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", organizationId),
+      )
+      .collect(),
+    ctx.db
+      .query("payslips")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", organizationId),
+      )
+      .collect(),
+  ]);
 
   if (
     links.some((link) => link.storageId === storageId) ||
@@ -131,7 +138,11 @@ export const registerUploadedFile = mutation({
         .withIndex("by_storage", (q) => q.eq("storageId", args.storageId))
         .unique(),
     ]);
-    if (!metadata || existingObject || metadata._creationTime < intent.createdAt) {
+    if (
+      !metadata ||
+      existingObject ||
+      metadata._creationTime < intent.createdAt
+    ) {
       throw new Error("Not authorized");
     }
 
@@ -180,6 +191,31 @@ async function requireStorageObject(
     throw new Error("Not authorized");
   }
 
+  return storageObject;
+}
+
+export async function requireRegisteredStorageObject(
+  ctx: Parameters<typeof requireActiveMembership>[0],
+  args: {
+    organizationId: Id<"organizations">;
+    storageId: Id<"_storage">;
+    ownerUserId: Id<"users">;
+    purpose: StoragePurpose;
+  },
+) {
+  const storageObject = await ctx.db
+    .query("storageObjects")
+    .withIndex("by_storage", (query) => query.eq("storageId", args.storageId))
+    .unique();
+  if (
+    !storageObject ||
+    storageObject.organizationId !== args.organizationId ||
+    storageObject.ownerUserId !== args.ownerUserId ||
+    storageObject.purpose !== args.purpose ||
+    storageObject.state !== "active"
+  ) {
+    throw new Error("Not authorized");
+  }
   return storageObject;
 }
 

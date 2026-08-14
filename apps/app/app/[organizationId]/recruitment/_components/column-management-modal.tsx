@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -24,18 +24,12 @@ import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
 import { useToast } from "@/components/ui/use-toast";
 import { GripVertical, X, Plus, Eye, EyeOff } from "lucide-react";
+import {
+  errorMessage,
+  type RecruitmentColumn,
+} from "@/lib/recruitment/ui-types";
 
-interface Column {
-  id: string;
-  label: string;
-  field: string;
-  type: "text" | "number" | "date" | "badge" | "link";
-  sortable?: boolean;
-  width?: string;
-  customField?: boolean;
-  isDefault?: boolean;
-  hidden?: boolean;
-}
+type Column = RecruitmentColumn;
 
 interface ColumnManagementModalProps {
   isOpen: boolean;
@@ -157,7 +151,9 @@ export function ColumnManagementModal({
 }: ColumnManagementModalProps) {
   const { currentOrganizationId } = useOrganization();
   const { toast } = useToast();
-  const [localColumns, setLocalColumns] = useState<Column[]>(columns);
+  const [localColumns, setLocalColumns] = useState<Column[]>(
+    columns.length > 0 ? columns : DEFAULT_COLUMNS,
+  );
   const [newColumn, setNewColumn] = useState<Partial<Column>>({
     label: "",
     field: "",
@@ -167,31 +163,8 @@ export function ColumnManagementModal({
   });
 
   const updateColumnsMutation = useMutation(
-    (api as any).settings.updateRecruitmentTableColumns
+    api.settings.updateRecruitmentTableColumns,
   );
-
-  useEffect(() => {
-    if (isOpen) {
-      if (columns.length === 0) {
-        setLocalColumns(DEFAULT_COLUMNS);
-      } else {
-        // Merge saved columns with defaults - ensure all defaults are present
-        const defaultIds = new Set(DEFAULT_COLUMNS.map((d) => d.id));
-        const savedColumns = columns.filter((c) => !c.isDefault);
-        const savedDefaultColumns = columns.filter((c) => c.isDefault);
-
-        // Merge defaults with saved defaults (preserve hidden state)
-        const mergedDefaults = DEFAULT_COLUMNS.map((def) => {
-          const saved = savedDefaultColumns.find((c) => c.id === def.id);
-          return saved
-            ? { ...def, ...saved } // Preserve saved state (hidden, label changes, etc.)
-            : def;
-        });
-
-        setLocalColumns([...mergedDefaults, ...savedColumns]);
-      }
-    }
-  }, [isOpen, columns]);
 
   const handleSave = async () => {
     if (!currentOrganizationId) return;
@@ -218,10 +191,10 @@ export function ColumnManagementModal({
         description: "Table columns updated successfully",
       });
       onOpenChange(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to update columns",
+        description: errorMessage(error, "Failed to update columns"),
         variant: "destructive",
       });
     }
@@ -239,7 +212,7 @@ export function ColumnManagementModal({
 
     const columnId = newColumn.field.replace(/\./g, "_");
     const existingField = AVAILABLE_FIELDS.find(
-      (f) => f.value === newColumn.field
+      (f) => f.value === newColumn.field,
     );
 
     const column: Column = {
@@ -281,8 +254,8 @@ export function ColumnManagementModal({
   const handleToggleHidden = (id: string) => {
     setLocalColumns(
       localColumns.map((col) =>
-        col.id === id ? { ...col, hidden: !col.hidden } : col
-      )
+        col.id === id ? { ...col, hidden: !col.hidden } : col,
+      ),
     );
   };
 
@@ -450,7 +423,7 @@ export function ColumnManagementModal({
                   value={newColumn.field || ""}
                   onValueChange={(value) => {
                     const field = AVAILABLE_FIELDS.find(
-                      (f) => f.value === value
+                      (f) => f.value === value,
                     );
                     setNewColumn({
                       ...newColumn,

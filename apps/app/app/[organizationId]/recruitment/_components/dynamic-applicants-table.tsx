@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import {
   Table,
   TableBody,
@@ -20,25 +20,18 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { format } from "date-fns";
+import {
+  getUnknownField,
+  type RecruitmentApplicant,
+  type RecruitmentColumn,
+} from "@/lib/recruitment/ui-types";
 
 const PAGE_SIZE_DEFAULT = 20;
 
-interface Column {
-  id: string;
-  label: string;
-  field: string;
-  type: "text" | "number" | "date" | "badge" | "link";
-  sortable?: boolean;
-  width?: string;
-  customField?: boolean;
-  isDefault?: boolean;
-  hidden?: boolean;
-}
-
 interface DynamicApplicantsTableProps {
-  applicants: any[];
-  columns: Column[];
-  onRowClick: (applicant: any) => void;
+  applicants: RecruitmentApplicant[];
+  columns: RecruitmentColumn[];
+  onRowClick: (applicant: RecruitmentApplicant) => void;
   pageSize?: number;
 }
 
@@ -58,32 +51,23 @@ export function DynamicApplicantsTable({
   const [currentPage, setCurrentPage] = useState(1);
 
   const totalPages = Math.max(1, Math.ceil(applicants.length / pageSize));
-  const from = (currentPage - 1) * pageSize;
+  const safePage = Math.min(currentPage, totalPages);
+  const from = (safePage - 1) * pageSize;
 
-  useEffect(() => {
-    if (currentPage > totalPages) setCurrentPage(1);
-  }, [totalPages, currentPage]);
-
-  const getFieldValue = (applicant: any, field: string): any => {
-    // Handle custom fields
+  const getFieldValue = (
+    applicant: RecruitmentApplicant,
+    field: string,
+  ): unknown => {
     if (field.startsWith("custom.")) {
       const customFieldKey = field.replace("custom.", "");
-      return applicant.customFields?.[customFieldKey] || null;
+      return applicant.customFields?.[customFieldKey] ?? null;
     }
-
-    const parts = field.split(".");
-    let value: any = applicant;
-    for (const part of parts) {
-      value = value?.[part];
-      if (value === undefined || value === null) return null;
-    }
-    return value;
+    return getUnknownField(applicant, field);
   };
 
   const formatCellValue = (
-    value: any,
-    column: Column,
-    applicant: any,
+    value: unknown,
+    column: RecruitmentColumn,
   ): React.ReactNode => {
     // Resume: show "Yes" / "—" (value is storage ID)
     if (column.field === "resume") {
@@ -279,9 +263,9 @@ export function DynamicApplicantsTable({
   }, [applicants, sortState, columns]);
 
   const sortedForPage = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
+    const start = (safePage - 1) * pageSize;
     return sortedApplicants.slice(start, start + pageSize);
-  }, [sortedApplicants, currentPage, pageSize]);
+  }, [sortedApplicants, safePage, pageSize]);
 
   const getSortIcon = (field: string) => {
     if (sortState.field !== field) {
@@ -339,7 +323,7 @@ export function DynamicApplicantsTable({
                   onClick={() => onRowClick(applicant)}
                 >
                   {visibleColumns.map((column) => {
-                    let value: any;
+                    let value: unknown;
 
                     // Handle special "Name" column
                     if (
@@ -359,7 +343,7 @@ export function DynamicApplicantsTable({
                           "",
                         );
                         value =
-                          applicant.customFields?.[customFieldKey] || null;
+                          applicant.customFields?.[customFieldKey] ?? null;
                       }
                     }
 
@@ -368,7 +352,7 @@ export function DynamicApplicantsTable({
                         key={column.id}
                         style={{ width: column.width }}
                       >
-                        {formatCellValue(value, column, applicant)}
+                        {formatCellValue(value, column)}
                       </TableCell>
                     );
                   })}
@@ -390,7 +374,7 @@ export function DynamicApplicantsTable({
               size="sm"
               className="h-8 w-8 p-0 border-[rgb(230,230,230)]"
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              disabled={currentPage <= 1}
+              disabled={safePage <= 1}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -399,7 +383,7 @@ export function DynamicApplicantsTable({
               size="sm"
               className="h-8 w-8 p-0 border-[rgb(230,230,230)]"
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              disabled={currentPage >= totalPages}
+              disabled={safePage >= totalPages}
             >
               <ChevronRight className="h-4 w-4" />
             </Button>

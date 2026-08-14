@@ -100,10 +100,7 @@ export class EmployeesService {
     });
   }
 
-  static async updateEmployee(
-    employeeId: string,
-    data: UpdateEmployeeInput,
-  ) {
+  static async updateEmployee(employeeId: string, data: UpdateEmployeeInput) {
     const convex = await getAuthedConvexClient();
     return convex.mutation(api.employees.updateEmployee, {
       employeeId: employeeId as Id<"employees">,
@@ -166,7 +163,7 @@ export class EmployeesService {
 
   static async updateRequirementStatus(data: {
     employeeId: string;
-    requirementIndex: number;
+    requirementId: string;
     status: "pending" | "submitted" | "verified";
     verificationNotes?: string;
     rejectionReason?: string;
@@ -174,45 +171,34 @@ export class EmployeesService {
     const convex = await getAuthedConvexClient();
     return convex.mutation(api.employees.updateRequirementStatus, {
       employeeId: data.employeeId as Id<"employees">,
-      requirementIndex: data.requirementIndex,
+      requirementId: data.requirementId as Id<"employeeRequirements">,
       status: data.status,
       verificationNotes: data.verificationNotes,
       rejectionReason: data.rejectionReason,
     });
   }
 
-  static async setEmployeeRequirementsComplete(data: {
-    employeeId: string;
-    complete: boolean;
-  }) {
-    const convex = await getAuthedConvexClient();
-    return convex.mutation(api.employees.setEmployeeRequirementsComplete, {
-      employeeId: data.employeeId as Id<"employees">,
-      complete: data.complete,
-    });
-  }
-
   static async updateRequirementFile(data: {
     employeeId: string;
-    requirementIndex: number;
+    requirementId: string;
     file: string;
   }) {
     const convex = await getAuthedConvexClient();
     return convex.mutation(api.employees.updateRequirementFile, {
       employeeId: data.employeeId as Id<"employees">,
-      requirementIndex: data.requirementIndex,
+      requirementId: data.requirementId as Id<"employeeRequirements">,
       file: data.file as Id<"_storage">,
     });
   }
 
   static async removeRequirement(data: {
     employeeId: string;
-    requirementIndex: number;
+    requirementId: string;
   }) {
     const convex = await getAuthedConvexClient();
     return convex.mutation(api.employees.removeRequirement, {
       employeeId: data.employeeId as Id<"employees">,
-      requirementIndex: data.requirementIndex,
+      requirementId: data.requirementId as Id<"employeeRequirements">,
     });
   }
 

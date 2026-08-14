@@ -1,6 +1,16 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState } from "react";
+import { format } from "date-fns";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -9,301 +19,147 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
-  ChevronLeft,
-  ChevronRight,
-} from "lucide-react";
-import { format } from "date-fns";
-
-interface Column {
-  id: string;
-  label: string;
-  field: string;
-  type: "text" | "number" | "date" | "badge" | "link";
-  sortable?: boolean;
-  width?: string;
-  customField?: boolean;
-  isDefault?: boolean;
-  hidden?: boolean;
-}
-
-const PAGE_SIZE_DEFAULT = 20;
+  summarizeEmployeeRequirements,
+  type RequirementPolicy,
+} from "@/lib/requirements/workflow";
+import {
+  getApplicableEmployeeRequirements,
+  type RequirementsColumn,
+  type RequirementsEmployee,
+} from "@/lib/requirements/ui-types";
+import { getUnknownField } from "@/lib/recruitment/ui-types";
 
 interface DynamicRequirementsTableProps {
-  employees: any[];
-  columns: Column[];
-  onRowClick: (employee: any) => void;
+  employees: RequirementsEmployee[];
+  policies: readonly RequirementPolicy[];
+  columns: RequirementsColumn[];
+  onRowClick: (employee: RequirementsEmployee) => void;
   pageSize?: number;
   isLoading?: boolean;
 }
 
 type SortDirection = "asc" | "desc" | null;
-type SortState = { field: string; direction: SortDirection };
 
 export function DynamicRequirementsTable({
   employees,
+  policies,
   columns,
   onRowClick,
-  pageSize = PAGE_SIZE_DEFAULT,
+  pageSize = 20,
   isLoading = false,
 }: DynamicRequirementsTableProps) {
-  const [sortState, setSortState] = useState<SortState>({
-    field: "",
-    direction: null,
-  });
-  const [currentPage, setCurrentPage] = useState(1);
-
+  const [sort, setSort] = useState<{ field: string; direction: SortDirection }>(
+    { field: "", direction: null },
+  );
+  const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(employees.length / pageSize));
-  const from = (currentPage - 1) * pageSize;
+  const visibleColumns = columns.filter((column) => !column.hidden);
 
-  useEffect(() => {
-    if (currentPage > totalPages) setCurrentPage(1);
-  }, [totalPages, currentPage]);
+  const safePage = Math.min(page, totalPages);
 
-  const getFieldValue = (employee: any, field: string): any => {
-    // Handle custom fields
-    if (field.startsWith("custom.")) {
-      const customFieldKey = field.replace("custom.", "");
-      return employee.customFields?.[customFieldKey] || null;
+  function requirementsFor(employee: RequirementsEmployee) {
+    return getApplicableEmployeeRequirements(employee, policies).map(
+      (item) => item.requirement,
+    );
+  }
+
+  function fieldValue(employee: RequirementsEmployee, field: string): unknown {
+    if (field === "name" || field === "personalInfo.firstName") {
+      return `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`.trim();
     }
-
-    // Handle nested paths like "personalInfo.firstName"
-    const parts = field.split(".");
-    let value: any = employee;
-    for (const part of parts) {
-      value = value?.[part];
-      if (value === undefined || value === null) return null;
+    if (field === "status") {
+      return summarizeEmployeeRequirements(requirementsFor(employee))
+        .completionPercent;
     }
-    return value;
-  };
+    return getUnknownField(employee, field);
+  }
 
-  const formatCellValue = (
-    value: any,
-    column: Column,
-    employee: any
-  ): React.ReactNode => {
-    if (value === null || value === undefined) {
-      return <span className="text-gray-400">—</span>;
-    }
+  const sortedEmployees = (() => {
+    if (!sort.field || !sort.direction) return employees;
+    const direction = sort.direction === "asc" ? 1 : -1;
+    return [...employees].sort((left, right) => {
+      const leftValue = fieldValue(left, sort.field);
+      const rightValue = fieldValue(right, sort.field);
+      if (leftValue === undefined || leftValue === null) return 1;
+      if (rightValue === undefined || rightValue === null) return -1;
+      if (typeof leftValue === "number" && typeof rightValue === "number") {
+        return (leftValue - rightValue) * direction;
+      }
+      return (
+        String(leftValue).localeCompare(String(rightValue), undefined, {
+          numeric: true,
+          sensitivity: "base",
+        }) * direction
+      );
+    });
+  })();
 
-    switch (column.type) {
-      case "number":
-        if (typeof value === "number") {
-          return value.toLocaleString();
-        }
-        return String(value);
-      case "date":
-        if (typeof value === "number") {
-          return format(new Date(value), "MMM dd, yyyy");
-        }
-        return String(value);
-      case "link":
-        if (value && typeof value === "string" && value.startsWith("http")) {
-          return (
-            <a
-              href={value}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="text-blue-600 hover:underline"
-            >
-              Link
-            </a>
-          );
-        }
-        return <span className="text-gray-400">—</span>;
-      case "badge":
-        const status = String(value).toLowerCase();
-        // Handle "Complete" status (all requirements verified)
-        if (status === "complete" || status === "verified") {
-          return (
-            <Badge className="bg-[#DCF7DC] border-[#A1E6A1] text-[#2E892E] font-normal rounded-md hover:bg-[#DCF7DC] focus:ring-0 focus:ring-offset-0 transition-none">
-              Complete
-            </Badge>
-          );
-        }
-        // Handle "Incomplete" status
-        if (status === "incomplete" || status === "not passed") {
-          return (
-            <Badge className="bg-red-100 text-red-800 border-red-300 font-normal rounded-md hover:bg-red-100 focus:ring-0 focus:ring-offset-0 transition-none">
-              Incomplete
-            </Badge>
-          );
-        }
-        return (
-          <Badge className="bg-gray-100 text-gray-800 hover:bg-gray-100 border-gray-200 rounded-md focus:ring-0 focus:ring-offset-0 transition-none font-normal">
-            {String(value)}
+  const pageEmployees = sortedEmployees.slice(
+    (safePage - 1) * pageSize,
+    safePage * pageSize,
+  );
+
+  function toggleSort(field: string) {
+    setSort((current) => {
+      if (current.field !== field) return { field, direction: "asc" };
+      if (current.direction === "asc") return { field, direction: "desc" };
+      return { field: "", direction: null };
+    });
+  }
+
+  function renderValue(
+    employee: RequirementsEmployee,
+    column: RequirementsColumn,
+  ) {
+    if (column.field === "status") {
+      const summary = summarizeEmployeeRequirements(requirementsFor(employee));
+      const needsAction =
+        summary.missing +
+        summary.awaitingReview +
+        summary.rejected +
+        summary.expired;
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge
+            variant={needsAction === 0 ? "default" : "secondary"}
+            className={needsAction === 0 ? "bg-emerald-600" : ""}
+          >
+            {summary.completionPercent}% complete
           </Badge>
-        );
-      default:
-        return String(value);
+          {summary.awaitingReview > 0 && (
+            <span className="text-xs font-medium text-amber-700">
+              {summary.awaitingReview} to review
+            </span>
+          )}
+          {summary.expired > 0 && (
+            <span className="text-xs font-medium text-red-700">
+              {summary.expired} expired
+            </span>
+          )}
+        </div>
+      );
     }
-  };
+    const value = fieldValue(employee, column.field);
+    if (value === undefined || value === null || value === "")
+      return <span className="text-[#AAA5B0]">—</span>;
+    if (column.type === "date" && typeof value === "number")
+      return format(new Date(value), "MMM d, yyyy");
+    return String(value);
+  }
 
-  const handleSort = (field: string) => {
-    setSortState((prev) => {
-      if (prev.field === field) {
-        if (prev.direction === "asc") {
-          return { field, direction: "desc" };
-        } else if (prev.direction === "desc") {
-          return { field: "", direction: null };
-        }
-      }
-      return { field, direction: "asc" };
-    });
-  };
-
-  const sortedEmployees = useMemo(() => {
-    if (!sortState.field || !sortState.direction) {
-      return employees;
-    }
-
-    const column = columns.find((c) => c.field === sortState.field);
-    if (!column || column.sortable === false) {
-      return employees;
-    }
-
-    const sorted = [...employees].sort((a, b) => {
-      let aValue = getFieldValue(a, sortState.field);
-      let bValue = getFieldValue(b, sortState.field);
-
-      // Handle special "status" column - calculate from requirements
-      if (sortState.field === "status") {
-        const aRequirements = a.requirements || [];
-        const bRequirements = b.requirements || [];
-        const aAllPassed =
-          aRequirements.length > 0 &&
-          aRequirements.every((r: any) => r.status === "verified");
-        const bAllPassed =
-          bRequirements.length > 0 &&
-          bRequirements.every((r: any) => r.status === "verified");
-        aValue = aAllPassed ? "Complete" : "Incomplete";
-        bValue = bAllPassed ? "Complete" : "Incomplete";
-      }
-
-      // Handle special "name" column
-      if (
-        sortState.field === "name" ||
-        sortState.field === "personalInfo.firstName"
-      ) {
-        aValue =
-          `${a.personalInfo?.firstName || ""} ${a.personalInfo?.lastName || ""}`.trim();
-        bValue =
-          `${b.personalInfo?.firstName || ""} ${b.personalInfo?.lastName || ""}`.trim();
-      }
-
-      // Handle null/undefined values - both nulls are equal
-      const aIsNull = aValue === null || aValue === undefined || aValue === "";
-      const bIsNull = bValue === null || bValue === undefined || bValue === "";
-      if (aIsNull && bIsNull) return 0;
-      if (aIsNull) return 1; // nulls go to end
-      if (bIsNull) return -1;
-
-      // Compare based on column type
-      switch (column.type) {
-        case "number": {
-          // Handle currency strings (e.g., "PHP 50,000.00")
-          const aNum =
-            typeof aValue === "string"
-              ? parseFloat(aValue.replace(/[^0-9.-]/g, "")) || 0
-              : Number(aValue) || 0;
-          const bNum =
-            typeof bValue === "string"
-              ? parseFloat(bValue.replace(/[^0-9.-]/g, "")) || 0
-              : Number(bValue) || 0;
-          return sortState.direction === "asc" ? aNum - bNum : bNum - aNum;
-        }
-        case "date": {
-          // Handle timestamps (numbers), Date objects, and date strings
-          let aDate: number;
-          let bDate: number;
-
-          if (typeof aValue === "number") {
-            aDate = aValue;
-          } else if (aValue instanceof Date) {
-            aDate = aValue.getTime();
-          } else {
-            aDate = new Date(aValue as string).getTime() || 0;
-          }
-
-          if (typeof bValue === "number") {
-            bDate = bValue;
-          } else if (bValue instanceof Date) {
-            bDate = bValue.getTime();
-          } else {
-            bDate = new Date(bValue as string).getTime() || 0;
-          }
-
-          return sortState.direction === "asc" ? aDate - bDate : bDate - aDate;
-        }
-        case "badge": {
-          // Badge values are strings, sort alphabetically
-          // Special handling for status badges: Complete comes before Incomplete
-          const aStr = String(aValue).toLowerCase();
-          const bStr = String(bValue).toLowerCase();
-
-          // Custom order for status badges
-          if (aStr === "complete" && bStr === "incomplete") {
-            return sortState.direction === "asc" ? -1 : 1;
-          }
-          if (aStr === "incomplete" && bStr === "complete") {
-            return sortState.direction === "asc" ? 1 : -1;
-          }
-
-          return sortState.direction === "asc"
-            ? aStr.localeCompare(bStr)
-            : bStr.localeCompare(aStr);
-        }
-        case "link": {
-          // Links are strings (URLs), sort alphabetically
-          const aStr = String(aValue).toLowerCase();
-          const bStr = String(bValue).toLowerCase();
-          return sortState.direction === "asc"
-            ? aStr.localeCompare(bStr)
-            : bStr.localeCompare(aStr);
-        }
-        case "text":
-        default: {
-          // Text comparison with locale-aware sorting
-          const aStr = String(aValue).toLowerCase();
-          const bStr = String(bValue).toLowerCase();
-          return sortState.direction === "asc"
-            ? aStr.localeCompare(bStr, undefined, {
-                numeric: true,
-                sensitivity: "base",
-              })
-            : bStr.localeCompare(aStr, undefined, {
-                numeric: true,
-                sensitivity: "base",
-              });
-        }
-      }
-    });
-
-    return sorted;
-  }, [employees, sortState, columns]);
-
-  const getSortIcon = (field: string) => {
-    if (sortState.field !== field) {
-      return <ArrowUpDown className="h-4 w-4 ml-1 opacity-50" />;
-    }
-    if (sortState.direction === "asc") {
-      return <ArrowUp className="h-4 w-4 ml-1" />;
-    }
-    return <ArrowDown className="h-4 w-4 ml-1" />;
-  };
-
-  // Filter out hidden columns
-  const visibleColumns = columns.filter((col) => !col.hidden);
-  const sortedForPage = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return sortedEmployees.slice(start, start + pageSize);
-  }, [sortedEmployees, currentPage, pageSize]);
+  if (isLoading) {
+    return (
+      <div className="space-y-2">
+        {Array.from({ length: 5 }).map((_, index) => (
+          <div
+            key={index}
+            className="h-12 animate-pulse rounded-lg bg-[#F2F0F5]"
+          />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <>
@@ -314,111 +170,80 @@ export function DynamicRequirementsTable({
               <TableHead
                 key={column.id}
                 style={{ width: column.width }}
+                onClick={() =>
+                  column.sortable !== false && toggleSort(column.field)
+                }
                 className={
                   column.sortable !== false ? "cursor-pointer select-none" : ""
                 }
-                onClick={() =>
-                  column.sortable !== false && handleSort(column.field)
-                }
               >
-                <div className="flex items-center">
+                <span className="inline-flex items-center">
                   {column.label}
-                  {column.sortable !== false && getSortIcon(column.field)}
-                </div>
+                  {column.sortable !== false &&
+                    (sort.field !== column.field ? (
+                      <ArrowUpDown className="ml-1 h-3 w-3 opacity-40" />
+                    ) : sort.direction === "asc" ? (
+                      <ArrowUp className="ml-1 h-3 w-3" />
+                    ) : (
+                      <ArrowDown className="ml-1 h-3 w-3" />
+                    ))}
+                </span>
               </TableHead>
             ))}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isLoading ? (
-            Array.from({ length: 8 }).map((_, rowIdx) => (
-              <TableRow key={`req-sk-${rowIdx}`}>
-                {visibleColumns.map((col) => (
-                  <TableCell key={col.id}>
-                    <div className="h-4 w-full max-w-[10rem] rounded bg-gray-200 animate-pulse" />
+          {pageEmployees.length === 0 ? (
+            <TableRow>
+              <TableCell
+                colSpan={visibleColumns.length}
+                className="py-10 text-center text-[#928C99]"
+              >
+                No employees match this queue.
+              </TableCell>
+            </TableRow>
+          ) : (
+            pageEmployees.map((employee) => (
+              <TableRow
+                key={employee._id}
+                className="cursor-pointer hover:bg-[#FAF9FD]"
+                onClick={() => onRowClick(employee)}
+              >
+                {visibleColumns.map((column) => (
+                  <TableCell key={column.id}>
+                    {renderValue(employee, column)}
                   </TableCell>
                 ))}
               </TableRow>
             ))
-          ) : sortedForPage.length === 0 ? (
-            <TableRow>
-              <TableCell
-                colSpan={visibleColumns.length}
-                className="text-center text-gray-500"
-              >
-                No employees found
-              </TableCell>
-            </TableRow>
-          ) : (
-            sortedForPage.map((employee) => {
-              const requirements = employee.requirements || [];
-              const allPassed = requirements.every(
-                (r: any) => r.status === "verified"
-              );
-              const statusValue = allPassed ? "Complete" : "Incomplete";
-
-              return (
-                <TableRow
-                  key={employee._id}
-                  className="cursor-pointer hover:bg-gray-50"
-                  onClick={() => onRowClick(employee)}
-                >
-                  {visibleColumns.map((column) => {
-                    let value: any;
-
-                    // Handle special "Name" column
-                    if (
-                      column.field === "name" ||
-                      column.field === "personalInfo.firstName"
-                    ) {
-                      value = `${employee.personalInfo?.firstName || ""} ${
-                        employee.personalInfo?.lastName || ""
-                      }`.trim();
-                    } else if (column.field === "status") {
-                      value = statusValue;
-                    } else {
-                      value = getFieldValue(employee, column.field);
-                    }
-
-                    return (
-                      <TableCell
-                        key={column.id}
-                        style={{ width: column.width }}
-                      >
-                        {formatCellValue(value, column, employee)}
-                      </TableCell>
-                    );
-                  })}
-                </TableRow>
-              );
-            })
           )}
         </TableBody>
       </Table>
-      {!isLoading &&
-        employees.length > pageSize &&
-        employees.length > 0 && (
-        <div className="flex items-center justify-between gap-4 px-4 py-3 border-t border-[rgb(230,230,230)] bg-[rgb(250,250,250)]">
-          <p className="text-xs font-medium text-[rgb(133,133,133)]">
-            {from + 1}–{Math.min(from + pageSize, employees.length)} of{" "}
+      {employees.length > pageSize && (
+        <div className="flex items-center justify-between border-t bg-[#FAF9FD] px-4 py-3">
+          <p className="text-xs text-[#77727F]">
+            {(safePage - 1) * pageSize + 1}–
+            {Math.min(safePage * pageSize, employees.length)} of{" "}
             {employees.length}
           </p>
-          <div className="flex items-center gap-1">
+          <div className="flex gap-1">
             <Button
               variant="outline"
-              size="sm"
-              className="h-8 w-8 p-0 border-[rgb(230,230,230)]"
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              disabled={currentPage <= 1}
+              size="icon"
+              className="h-8 w-8"
+              disabled={safePage === 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <Button
               variant="outline"
-              size="sm"
-              className="h-8 w-8 p-0 border-[rgb(230,230,230)]"
-              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              disabled={currentPage >= totalPages}
+              size="icon"
+              className="h-8 w-8"
+              disabled={safePage === totalPages}
+              onClick={() =>
+                setPage((current) => Math.min(totalPages, current + 1))
+              }
             >
               <ChevronRight className="h-4 w-4" />
             </Button>

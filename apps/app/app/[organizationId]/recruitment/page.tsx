@@ -1,22 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
-import { MainLayout } from "@/components/layout/main-layout";
 import { useRouter } from "next/navigation";
+import { api } from "@/convex/_generated/api";
+import { createJob } from "@/actions/recruitment";
+import { updateDepartments } from "@/actions/settings";
+import { MainLayout } from "@/components/layout/main-layout";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -26,8 +19,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -35,358 +28,371 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, ChevronRight, Briefcase } from "lucide-react";
-import { createJob } from "@/actions/recruitment";
-import { updateDepartments } from "@/actions/settings";
-import { useOrganization } from "@/hooks/organization-context";
-import { getOrganizationPath } from "@/utils/organization-routing";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
+import { useOrganization } from "@/hooks/organization-context";
+import { summarizeRecruitmentPipeline } from "@/lib/recruitment/workflow";
+import { errorMessage } from "@/lib/recruitment/ui-types";
+import { getOrganizationPath } from "@/utils/organization-routing";
+import { Briefcase, ChevronRight, Plus, Search } from "lucide-react";
+import { RecruitmentOverview } from "./_components/recruitment-overview";
+
+const emptyJobForm = {
+  title: "",
+  department: "",
+  employmentType: "",
+  numberOfOpenings: "1",
+  description: "",
+  requirements: "",
+  qualifications: "",
+  closingDate: "",
+};
 
 export default function RecruitmentPage() {
   const router = useRouter();
   const { effectiveOrganizationId } = useOrganization();
   const { toast } = useToast();
   const jobs = useQuery(
-    (api as any).recruitment.getJobs,
+    api.recruitment.getJobs,
     effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
-  const applicants = useQuery(
-    (api as any).recruitment.getApplicants,
+  const metrics = useQuery(
+    api.recruitment.getRecruitmentMetrics,
     effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
   const settings = useQuery(
-    (api as any).settings.getSettings,
+    api.settings.getSettings,
     effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
   const [isJobDialogOpen, setIsJobDialogOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [newDepartmentName, setNewDepartmentName] = useState("");
   const [isCreatingDepartment, setIsCreatingDepartment] = useState(false);
-  const [jobFormData, setJobFormData] = useState({
-    title: "",
-    department: "",
-    employmentType: "",
-    numberOfOpenings: "1",
-    description: "",
-    requirements: "",
-    qualifications: "",
-  });
+  const [jobForm, setJobForm] = useState(emptyJobForm);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "open" | "closed" | "on-hold"
+  >("all");
 
-  const [applicantFormData, setApplicantFormData] = useState({
-    firstName: "",
-    lastName: "",
-    email: "",
-    phone: "",
-    coverLetter: "",
-  });
+  const summary = useMemo(
+    () =>
+      metrics ??
+      summarizeRecruitmentPipeline(
+        (jobs ?? []).map((job) => ({
+          id: job._id,
+          status: job.status,
+          numberOfOpenings: job.numberOfOpenings,
+        })),
+        [],
+      ),
+    [jobs, metrics],
+  );
+  const metricsByJob = useMemo(
+    () => new Map(metrics?.byJob.map((item) => [item.jobId, item]) ?? []),
+    [metrics?.byJob],
+  );
 
-  const handleCreateDepartment = async () => {
+  const filteredJobs = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    return (jobs ?? []).filter((job) => {
+      const matchesStatus =
+        statusFilter === "all" || job.status === statusFilter;
+      const matchesQuery =
+        !query ||
+        `${job.title} ${job.department} ${job.employmentType}`
+          .toLocaleLowerCase()
+          .includes(query);
+      return matchesStatus && matchesQuery;
+    });
+  }, [jobs, search, statusFilter]);
+
+  const departments = useMemo(
+    () =>
+      (settings?.departments ?? []).map((department) =>
+        typeof department === "string"
+          ? { name: department, color: "#9CA3AF" }
+          : { name: department.name, color: department.color ?? "#9CA3AF" },
+      ),
+    [settings?.departments],
+  );
+
+  async function createDepartment() {
     if (!effectiveOrganizationId || !newDepartmentName.trim()) return;
-
-    const trimmedName = newDepartmentName.trim();
-    const existingDepartments = settings?.departments || [];
-
-    const existingNames = existingDepartments.map(
-      (d: string | { name: string }) => (typeof d === "string" ? d : d.name),
-    );
-    if (existingNames.includes(trimmedName)) {
-      toast({
-        title: "Error",
-        description: "This department already exists",
-        variant: "destructive",
-      });
+    const name = newDepartmentName.trim();
+    if (
+      departments.some(
+        (department) =>
+          department.name.toLocaleLowerCase() === name.toLocaleLowerCase(),
+      )
+    ) {
+      toast({ title: "Department already exists", variant: "destructive" });
       return;
     }
-
     setIsCreatingDepartment(true);
     try {
-      const departmentsToSave = existingDepartments.map(
-        (d: string | { name: string; color?: string }) =>
-          typeof d === "string"
-            ? { name: d, color: "#9CA3AF" }
-            : { name: d.name, color: d.color ?? "#9CA3AF" },
-      );
       await updateDepartments({
         organizationId: effectiveOrganizationId,
-        departments: [
-          ...departmentsToSave,
-          { name: trimmedName, color: "#9CA3AF" },
-        ],
+        departments: [...departments, { name, color: "#9CA3AF" }],
       });
-
-      // Set the newly created department in the form
-      setJobFormData({
-        ...jobFormData,
-        department: trimmedName,
-      });
-
+      setJobForm((current) => ({ ...current, department: name }));
       setNewDepartmentName("");
+      toast({ title: "Department created" });
+    } catch (error: unknown) {
       toast({
-        title: "Success",
-        description: "Department created successfully",
-      });
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to create department",
+        title: "Unable to create department",
+        description: errorMessage(error, "Please try again."),
         variant: "destructive",
       });
     } finally {
       setIsCreatingDepartment(false);
     }
-  };
+  }
 
-  const handleJobSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  async function submitJob(event: React.FormEvent) {
+    event.preventDefault();
     if (!effectiveOrganizationId) return;
-
+    setIsSubmitting(true);
     try {
       await createJob({
         organizationId: effectiveOrganizationId,
-        title: jobFormData.title || undefined,
-        department: jobFormData.department || undefined,
-        employmentType: jobFormData.employmentType || undefined,
-        numberOfOpenings: jobFormData.numberOfOpenings
-          ? parseInt(jobFormData.numberOfOpenings)
-          : undefined,
-        description: jobFormData.description || undefined,
-        requirements: jobFormData.requirements
-          ? jobFormData.requirements.split("\n").filter((r) => r.trim())
-          : undefined,
-        qualifications: jobFormData.qualifications
-          ? jobFormData.qualifications.split("\n").filter((q) => q.trim())
+        title: jobForm.title,
+        department: jobForm.department,
+        employmentType: jobForm.employmentType,
+        numberOfOpenings: Number(jobForm.numberOfOpenings),
+        description: jobForm.description,
+        requirements: jobForm.requirements.split("\n"),
+        qualifications: jobForm.qualifications.split("\n"),
+        closingDate: jobForm.closingDate
+          ? new Date(`${jobForm.closingDate}T23:59:59`).getTime()
           : undefined,
       });
+      setJobForm(emptyJobForm);
       setIsJobDialogOpen(false);
-      setJobFormData({
-        title: "",
-        department: "",
-        employmentType: "",
-        numberOfOpenings: "1",
-        description: "",
-        requirements: "",
-        qualifications: "",
-      });
       toast({
-        title: "Success",
-        description: "Position added. You can now track applicants.",
+        title: "Position created",
+        description: "The opening is ready for candidate tracking.",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
-        title: "Error",
-        description:
-          error.message || "Failed to create position. Please try again.",
+        title: "Unable to create position",
+        description: errorMessage(error, "Please check the position details."),
         variant: "destructive",
       });
+    } finally {
+      setIsSubmitting(false);
     }
-  };
+  }
 
-  // Main jobs list view
   return (
     <MainLayout>
-      <div className="p-8">
-        <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="space-y-6 p-5 sm:p-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-[rgb(64,64,64)]">
-              Recruitment
-            </h1>
-            <p className="text-sm text-[rgb(133,133,133)] mt-1">
-              Track open positions and applicants
+            <h1 className="text-3xl font-bold text-[#28262F]">Recruitment</h1>
+            <p className="mt-1 text-sm text-[#77727F]">
+              Move every opening from application to approved hire.
             </p>
           </div>
           <Dialog open={isJobDialogOpen} onOpenChange={setIsJobDialogOpen}>
-            {jobs && jobs.length > 0 && (
-              <DialogTrigger asChild>
-                <Button className="bg-[#695eff] hover:bg-[#5547e8] text-white shrink-0">
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add position
-                </Button>
-              </DialogTrigger>
-            )}
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogTrigger asChild>
+              <Button className="bg-[#695eff] text-white hover:bg-[#5547e8]">
+                <Plus className="mr-2 h-4 w-4" /> Add position
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Add position</DialogTitle>
                 <DialogDescription>
-                  Add a position to track applicants. All fields are optional.
+                  Create a complete opening so candidates enter a reliable
+                  pipeline.
                 </DialogDescription>
               </DialogHeader>
-              <form onSubmit={handleJobSubmit}>
-                <div className="grid gap-4 py-4">
+              <form onSubmit={submitJob} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="title">
+                    Job title <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    id="title"
+                    required
+                    value={jobForm.title}
+                    onChange={(event) =>
+                      setJobForm({ ...jobForm, title: event.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>
+                    Department <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={jobForm.department}
+                    onValueChange={(department) =>
+                      setJobForm({ ...jobForm, department })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select department" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {departments.map((department) => (
+                        <SelectItem
+                          key={department.name}
+                          value={department.name}
+                        >
+                          {department.name}
+                        </SelectItem>
+                      ))}
+                      {departments.length === 0 && (
+                        <div className="space-y-2 p-2">
+                          <Input
+                            value={newDepartmentName}
+                            onChange={(event) =>
+                              setNewDepartmentName(event.target.value)
+                            }
+                            placeholder="Department name"
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="w-full"
+                            disabled={
+                              isCreatingDepartment || !newDepartmentName.trim()
+                            }
+                            onClick={createDepartment}
+                          >
+                            {isCreatingDepartment
+                              ? "Creating…"
+                              : "Create department"}
+                          </Button>
+                        </div>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="title">Job Title</Label>
-                    <Input
-                      id="title"
-                      value={jobFormData.title}
-                      onChange={(e) =>
-                        setJobFormData({
-                          ...jobFormData,
-                          title: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="department">Department</Label>
+                    <Label>
+                      Employment type <span className="text-red-500">*</span>
+                    </Label>
                     <Select
-                      value={jobFormData.department}
-                      onValueChange={(value) =>
-                        setJobFormData({
-                          ...jobFormData,
-                          department: value,
-                        })
+                      value={jobForm.employmentType}
+                      onValueChange={(employmentType) =>
+                        setJobForm({ ...jobForm, employmentType })
                       }
                     >
-                      <SelectTrigger id="department">
-                        <SelectValue placeholder="Select department" />
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select type" />
                       </SelectTrigger>
                       <SelectContent>
-                        {settings?.departments &&
-                        settings.departments.length > 0 ? (
-                          settings.departments.map(
-                            (
-                              dept: string | { name: string; color?: string },
-                            ) => {
-                              const name =
-                                typeof dept === "string" ? dept : dept.name;
-                              return (
-                                <SelectItem key={name} value={name}>
-                                  {name}
-                                </SelectItem>
-                              );
-                            },
-                          )
-                        ) : (
-                          <div className="px-2 py-3 space-y-3">
-                            <p className="text-sm text-gray-500">
-                              No departments available
-                            </p>
-                            <div className="flex gap-2">
-                              <Input
-                                placeholder="Department name"
-                                value={newDepartmentName}
-                                onChange={(e) =>
-                                  setNewDepartmentName(e.target.value)
-                                }
-                                onKeyPress={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    handleCreateDepartment();
-                                  }
-                                }}
-                                className="h-8 text-sm"
-                              />
-                              <Button
-                                size="sm"
-                                onClick={handleCreateDepartment}
-                                disabled={
-                                  isCreatingDepartment ||
-                                  !newDepartmentName.trim()
-                                }
-                              >
-                                {isCreatingDepartment ? (
-                                  "Creating..."
-                                ) : (
-                                  <>
-                                    <Plus className="h-3 w-3 mr-1" />
-                                    Create
-                                  </>
-                                )}
-                              </Button>
-                            </div>
-                          </div>
-                        )}
+                        {[
+                          "Full Time",
+                          "Part Time",
+                          "Contract",
+                          "Temporary",
+                          "Internship",
+                          "Freelance",
+                        ].map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {type}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="employmentType">Employment Type</Label>
-                      <Select
-                        value={jobFormData.employmentType}
-                        onValueChange={(value) =>
-                          setJobFormData({
-                            ...jobFormData,
-                            employmentType: value,
-                          })
-                        }
-                      >
-                        <SelectTrigger id="employmentType">
-                          <SelectValue placeholder="Select employment type" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Full Time">Full Time</SelectItem>
-                          <SelectItem value="Part Time">Part Time</SelectItem>
-                          <SelectItem value="Contract">Contract</SelectItem>
-                          <SelectItem value="Temporary">Temporary</SelectItem>
-                          <SelectItem value="Internship">Internship</SelectItem>
-                          <SelectItem value="Freelance">Freelance</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="numberOfOpenings">
-                        Number of Openings
-                      </Label>
-                      <Input
-                        id="numberOfOpenings"
-                        type="number"
-                        value={jobFormData.numberOfOpenings}
-                        onChange={(e) =>
-                          setJobFormData({
-                            ...jobFormData,
-                            numberOfOpenings: e.target.value,
-                          })
-                        }
-                      />
-                    </div>
-                  </div>
                   <div className="space-y-2">
-                    <Label htmlFor="description">Description</Label>
-                    <Textarea
-                      id="description"
-                      rows={4}
-                      value={jobFormData.description}
-                      onChange={(e) =>
-                        setJobFormData({
-                          ...jobFormData,
-                          description: e.target.value,
+                    <Label htmlFor="openings">
+                      Openings <span className="text-red-500">*</span>
+                    </Label>
+                    <Input
+                      id="openings"
+                      type="number"
+                      required
+                      min="1"
+                      value={jobForm.numberOfOpenings}
+                      onChange={(event) =>
+                        setJobForm({
+                          ...jobForm,
+                          numberOfOpenings: event.target.value,
                         })
                       }
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="requirements">Requirements</Label>
-                    <Textarea
-                      id="requirements"
-                      rows={4}
-                      value={jobFormData.requirements}
-                      onChange={(e) =>
-                        setJobFormData({
-                          ...jobFormData,
-                          requirements: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="qualifications">Qualifications</Label>
-                    <Textarea
-                      id="qualifications"
-                      rows={4}
-                      value={jobFormData.qualifications}
-                      onChange={(e) =>
-                        setJobFormData({
-                          ...jobFormData,
-                          qualifications: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="description">Description</Label>
+                  <Textarea
+                    id="description"
+                    rows={4}
+                    value={jobForm.description}
+                    onChange={(event) =>
+                      setJobForm({
+                        ...jobForm,
+                        description: event.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="requirements">
+                    Requirements{" "}
+                    <span className="text-xs font-normal text-[#77727F]">
+                      one per line
+                    </span>
+                  </Label>
+                  <Textarea
+                    id="requirements"
+                    rows={3}
+                    value={jobForm.requirements}
+                    onChange={(event) =>
+                      setJobForm({
+                        ...jobForm,
+                        requirements: event.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="qualifications">
+                    Qualifications{" "}
+                    <span className="text-xs font-normal text-[#77727F]">
+                      one per line
+                    </span>
+                  </Label>
+                  <Textarea
+                    id="qualifications"
+                    rows={3}
+                    value={jobForm.qualifications}
+                    onChange={(event) =>
+                      setJobForm({
+                        ...jobForm,
+                        qualifications: event.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="closingDate">Closing date</Label>
+                  <Input
+                    id="closingDate"
+                    type="date"
+                    min={new Date(Date.now() + 86_400_000)
+                      .toISOString()
+                      .slice(0, 10)}
+                    value={jobForm.closingDate}
+                    onChange={(event) =>
+                      setJobForm({
+                        ...jobForm,
+                        closingDate: event.target.value,
+                      })
+                    }
+                  />
                 </div>
                 <DialogFooter>
                   <Button
@@ -398,9 +404,14 @@ export default function RecruitmentPage() {
                   </Button>
                   <Button
                     type="submit"
-                    className="bg-[#695eff] hover:bg-[#5547e8] text-white"
+                    disabled={
+                      isSubmitting ||
+                      !jobForm.title.trim() ||
+                      !jobForm.department ||
+                      !jobForm.employmentType
+                    }
                   >
-                    Add position
+                    {isSubmitting ? "Creating…" : "Create position"}
                   </Button>
                 </DialogFooter>
               </form>
@@ -408,34 +419,52 @@ export default function RecruitmentPage() {
           </Dialog>
         </div>
 
+        <RecruitmentOverview summary={summary} />
+
+        <div className="flex flex-col gap-3 rounded-xl border border-[#E7E5F4] bg-white p-3 sm:flex-row">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#928C99]" />
+            <Input
+              className="pl-9"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search title, department, or employment type"
+            />
+          </div>
+          <Select
+            value={statusFilter}
+            onValueChange={(value: typeof statusFilter) =>
+              setStatusFilter(value)
+            }
+          >
+            <SelectTrigger className="w-full sm:w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="open">Open</SelectItem>
+              <SelectItem value="on-hold">On hold</SelectItem>
+              <SelectItem value="closed">Closed</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
         <div className="space-y-3">
           {jobs === undefined ? (
-            Array.from({ length: 4 }).map((_, i) => (
-              <Card
-                key={`job-sk-${i}`}
-                className="border border-[#DDDDDD] rounded-xl overflow-hidden"
-              >
-                <CardContent className="p-4 sm:p-5">
-                  <div className="flex items-start gap-3 animate-pulse">
-                    <div className="h-10 w-10 shrink-0 rounded-lg bg-gray-200" />
-                    <div className="flex-1 min-w-0 space-y-2">
-                      <div className="h-5 w-48 max-w-full rounded bg-gray-200" />
-                      <div className="h-4 w-full max-w-md rounded bg-gray-200" />
-                      <div className="h-3 w-24 rounded bg-gray-200" />
-                    </div>
-                    <div className="h-6 w-16 shrink-0 rounded-md bg-gray-200" />
-                  </div>
-                </CardContent>
+            Array.from({ length: 4 }).map((_, index) => (
+              <Card key={index} className="animate-pulse border-[#E7E5F4]">
+                <CardContent className="h-24 p-5" />
               </Card>
             ))
-          ) : jobs.length > 0 ? (
-            jobs.map((job: any) => {
-              const jobApplicants =
-                applicants?.filter((a: any) => a.jobId === job._id) || [];
+          ) : filteredJobs.length > 0 ? (
+            filteredJobs.map((job) => {
+              const jobMetrics = metricsByJob.get(job._id);
+              const applicantCount = jobMetrics?.total ?? 0;
+              const hired = jobMetrics?.hired ?? 0;
               return (
                 <Card
                   key={job._id}
-                  className="cursor-pointer hover:shadow-md transition-shadow border border-[#DDDDDD] rounded-xl overflow-hidden"
+                  className="cursor-pointer border-[#E7E5F4] transition hover:-translate-y-0.5 hover:shadow-md"
                   onClick={() =>
                     router.push(
                       getOrganizationPath(
@@ -445,67 +474,51 @@ export default function RecruitmentPage() {
                     )
                   }
                 >
-                  <CardContent className="p-4 sm:p-5">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[rgb(245,243,255)] text-[#695eff]">
-                          <Briefcase className="h-5 w-5" />
-                        </div>
-                        <div className="min-w-0">
-                          <h2 className="font-semibold text-[rgb(64,64,64)] truncate">
-                            {job.title || "Untitled position"}
-                          </h2>
-                          <p className="text-sm text-[rgb(133,133,133)] mt-0.5">
-                            {typeof job.department === "string"
-                              ? job.department
-                              : ((job.department as { name?: string })?.name ??
-                                "—")}
-                            {job.employmentType && ` • ${job.employmentType}`}
-                            {job.numberOfOpenings != null &&
-                              job.numberOfOpenings > 0 &&
-                              ` • ${job.numberOfOpenings} opening${job.numberOfOpenings !== 1 ? "s" : ""}`}
-                          </p>
-                          <p className="text-xs text-[rgb(133,133,133)] mt-1">
-                            {jobApplicants.length} applicant
-                            {jobApplicants.length !== 1 ? "s" : ""}
-                          </p>
-                        </div>
+                  <CardContent className="flex items-start justify-between gap-4 p-5">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <div className="rounded-xl bg-[#F1EFFF] p-2.5 text-[#695eff]">
+                        <Briefcase className="h-5 w-5" />
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <Badge
-                          variant="outline"
-                          className={
-                            job.status === "open"
-                              ? "bg-[#DCF7DC] border-[#A1E6A1] text-[#2E892E] font-normal rounded-md hover:bg-[#DCF7DC] focus:ring-0 focus:ring-offset-0 transition-none capitalize"
-                              : "bg-gray-100 text-gray-800 hover:bg-gray-100 border-gray-200 rounded-md focus:ring-0 focus:ring-offset-0 transition-none capitalize"
-                          }
-                        >
-                          {job.status === "open" ? "Open" : "Archived"}
-                        </Badge>
-                        <ChevronRight className="h-4 w-4 text-[rgb(133,133,133)]" />
+                      <div className="min-w-0">
+                        <h2 className="truncate font-semibold text-[#28262F]">
+                          {job.title}
+                        </h2>
+                        <p className="mt-0.5 text-sm text-[#77727F]">
+                          {job.department} · {job.employmentType} ·{" "}
+                          {job.numberOfOpenings} opening
+                          {job.numberOfOpenings === 1 ? "" : "s"}
+                        </p>
+                        <p className="mt-1 text-xs text-[#77727F]">
+                          {applicantCount} applicant
+                          {applicantCount === 1 ? "" : "s"} · {hired}/
+                          {job.numberOfOpenings} filled
+                        </p>
                       </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="capitalize">
+                        {job.status === "on-hold" ? "On hold" : job.status}
+                      </Badge>
+                      <ChevronRight className="h-4 w-4 text-[#928C99]" />
                     </div>
                   </CardContent>
                 </Card>
               );
             })
           ) : (
-            <Card className="border border-[#DDDDDD] rounded-xl">
-              <CardContent className="py-12 text-center">
-                <Briefcase className="h-12 w-12 mx-auto text-[rgb(200,200,200)] mb-3" />
-                <p className="text-[rgb(133,133,133)] font-medium">
-                  No positions yet
+            <Card className="border-dashed border-[#D7D3EA]">
+              <CardContent className="py-14 text-center">
+                <Briefcase className="mx-auto mb-3 h-10 w-10 text-[#BBB6C4]" />
+                <p className="font-medium text-[#5F5967]">
+                  {jobs.length === 0
+                    ? "No positions yet"
+                    : "No positions match these filters"}
                 </p>
-                <p className="text-sm text-[rgb(133,133,133)] mt-1">
-                  Add a position to start tracking applicants.
+                <p className="mt-1 text-sm text-[#928C99]">
+                  {jobs.length === 0
+                    ? "Create an opening to start the hiring pipeline."
+                    : "Try a different search or status."}
                 </p>
-                <Button
-                  className="mt-4 bg-[#695eff] hover:bg-[#5547e8] text-white"
-                  onClick={() => setIsJobDialogOpen(true)}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add position
-                </Button>
               </CardContent>
             </Card>
           )}

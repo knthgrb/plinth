@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Plus, Trash2, Settings } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { errorMessage } from "@/lib/requirements/ui-types";
 
 type DefaultRequirementPolicy = {
   type: string;
@@ -39,11 +40,18 @@ export function DefaultRequirementsDialog({
 }: DefaultRequirementsDialogProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [newDefaultReq, setNewDefaultReq] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
   const handleAddDefaultRequirement = () => {
     if (!newDefaultReq.trim()) return;
-    if (defaultReqsList.some((r) => r.type === newDefaultReq.trim())) {
+    if (
+      defaultReqsList.some(
+        (requirement) =>
+          requirement.type.trim().toLocaleLowerCase() ===
+          newDefaultReq.trim().toLocaleLowerCase(),
+      )
+    ) {
       toast({
         title: "Error",
         description: "This requirement type already exists",
@@ -84,15 +92,21 @@ export function DefaultRequirementsDialog({
   };
 
   const handleSave = async () => {
+    setIsSaving(true);
     try {
       await onSave(defaultReqsList);
       setIsOpen(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to update default requirements",
+        description: errorMessage(
+          error,
+          "Failed to update default requirements",
+        ),
         variant: "destructive",
       });
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -256,7 +270,9 @@ export function DefaultRequirementsDialog({
           <Button variant="outline" onClick={() => setIsOpen(false)}>
             Cancel
           </Button>
-          <Button onClick={handleSave}>Save Defaults</Button>
+          <Button onClick={handleSave} disabled={isSaving}>
+            {isSaving ? "Saving…" : "Save Defaults"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

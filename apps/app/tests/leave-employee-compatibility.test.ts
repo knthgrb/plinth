@@ -176,9 +176,8 @@ describe("leave and employee child compatibility", () => {
         .collect(),
     }));
     expect(state.employee).not.toHaveProperty("requirements");
-    expect(state.requirements.map((row) => row.type)).toEqual([
-      "Government ID",
-      "Normalized custom",
-    ]);
+    expect(state.requirements.map((row) => row.type).sort()).toEqual(
+      ["Government ID", "Normalized custom"].sort(),
+    );
   });
 });

@@ -1,5 +1,12 @@
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
+import {
+  internalMutation,
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { authComponent } from "./auth";
 import { runOrgQuery } from "./queryAuthGrace";
@@ -26,6 +33,7 @@ import {
   loadEffectiveEmployeeRequirements,
   replaceEmployeeRequirements,
 } from "./leaveEmployeeCompatibility";
+import { isRequirementApplicable } from "@/lib/requirements/workflow";
 import { findUserByEmail, normalizeUserEmail } from "./userEmail";
 import {
   cancelPendingEmployeeInvitations,
@@ -54,9 +62,6 @@ function buildEmployeeRequirementFromDefault(
     appliesToEmploymentTypes: req.appliesToEmploymentTypes,
     reminderDaysBeforeDue: req.reminderDaysBeforeDue,
     requiresVerification: req.requiresVerification ?? true,
-    expiryDate: req.expiryDaysAfterSubmission
-      ? Date.now() + req.expiryDaysAfterSubmission * 24 * 60 * 60 * 1000
-      : undefined,
     isDefault: true,
     isCustom: false,
   };
@@ -74,12 +79,91 @@ function mergeDefaultRequirementPolicy(
     reminderDaysBeforeDue: defaultReq.reminderDaysBeforeDue,
     requiresVerification:
       defaultReq.requiresVerification ?? existing.requiresVerification ?? true,
-    expiryDate:
-      existing.expiryDate ??
-      (defaultReq.expiryDaysAfterSubmission
-        ? Date.now() +
-          defaultReq.expiryDaysAfterSubmission * 24 * 60 * 60 * 1000
-        : undefined),
+    expiryDate: existing.expiryDate,
+  };
+}
+
+async function reconcileEmployeeDefaultRequirements(
+  ctx: MutationCtx,
+  employee: Doc<"employees">,
+  policies: readonly RequirementConfigurationInput[],
+  now: number,
+): Promise<void> {
+  const currentRequirements = await loadEffectiveEmployeeRequirements(
+    ctx,
+    employee,
+  );
+  const customRequirements = currentRequirements.filter(
+    (requirement) => requirement.isCustom,
+  );
+  const existingDefaults = currentRequirements
+    .filter((requirement) => requirement.isDefault)
+    .map((existing) => {
+      const policy = policies.find(
+        (candidate) =>
+          candidate.type.trim().toLocaleLowerCase() ===
+          existing.type.trim().toLocaleLowerCase(),
+      );
+      return policy
+        ? mergeDefaultRequirementPolicy(existing, policy)
+        : existing;
+    });
+  const newDefaults = policies
+    .filter((policy) => isRequirementApplicable(policy, employee.employment))
+    .filter(
+      (policy) =>
+        !existingDefaults.some(
+          (existing) =>
+            existing.type.trim().toLocaleLowerCase() ===
+            policy.type.trim().toLocaleLowerCase(),
+        ),
+    )
+    .map(buildEmployeeRequirementFromDefault);
+
+  await replaceEmployeeRequirements(
+    ctx,
+    employee,
+    [...existingDefaults, ...newDefaults, ...customRequirements],
+    now,
+  );
+}
+
+async function synchronizeDefaultRequirementsPage(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  cursor: string | null,
+) {
+  const [definitions, employeePage] = await Promise.all([
+    getEffectiveRequirementDefinitions(ctx, organizationId),
+    ctx.db
+      .query("employees")
+      .withIndex("by_organization", (query) =>
+        query.eq("organizationId", organizationId),
+      )
+      .paginate({ cursor, numItems: 50 }),
+  ]);
+  const now = Date.now();
+  for (const employee of employeePage.page) {
+    await reconcileEmployeeDefaultRequirements(
+      ctx,
+      employee,
+      definitions.requirements,
+      now,
+    );
+  }
+  if (!employeePage.isDone) {
+    await ctx.scheduler.runAfter(
+      0,
+      internal.organizations.syncDefaultRequirementsBatch,
+      {
+        organizationId,
+        cursor: employeePage.continueCursor,
+      },
+    );
+  }
+  return {
+    processed: employeePage.page.length,
+    isDone: employeePage.isDone,
   };
 }
 
@@ -118,9 +202,7 @@ export const ensureUserRecord = mutation({
 });
 
 // Helper for mutations only: get existing user record or create one (e.g. after signup before ensureUserRecord ran)
-async function getOrCreateUserRecord(
-  ctx: MutationCtx,
-): Promise<Doc<"users">> {
+async function getOrCreateUserRecord(ctx: MutationCtx): Promise<Doc<"users">> {
   const user = await authComponent.getAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
 
@@ -338,9 +420,7 @@ export const getCurrentUser = query({
       ...userRecord,
       organization: currentOrg,
       role: userOrg.role,
-      accessStatus: normalizeOrgMembershipAccessStatus(
-        userOrg.accessStatus,
-      ),
+      accessStatus: normalizeOrgMembershipAccessStatus(userOrg.accessStatus),
       employeeId: userOrg.employeeId,
     };
   },
@@ -863,81 +943,29 @@ export const updateDefaultRequirements = mutation({
   handler: async (ctx, args) => {
     await checkAuth(ctx, args.organizationId, "hr");
 
-    const now = Date.now();
-
     await replaceRequirementConfiguration(
       ctx,
       args.organizationId,
       args.requirements,
     );
 
-    // Sync default requirements to all employees
-    // Get all employees
-    const employees = await ctx.db
-      .query("employees")
-      .withIndex("by_organization", (query) =>
-        query.eq("organizationId", args.organizationId),
-      )
-      .collect();
+    const syncResult = await synchronizeDefaultRequirementsPage(
+      ctx,
+      args.organizationId,
+      null,
+    );
 
-    // Update each employee's requirements
-    for (const employee of employees) {
-      const currentRequirements = await loadEffectiveEmployeeRequirements(
-        ctx,
-        employee,
-      );
-      const customRequirements = currentRequirements.filter(
-        (requirement) => requirement.isCustom,
-      );
-
-      // Create default requirements that don't already exist
-      const newDefaultRequirements = args.requirements
-        .filter((defaultRequirement) => {
-          // Check if this default requirement already exists for this employee
-          return !currentRequirements.some(
-            (existingRequirement) =>
-              existingRequirement.type === defaultRequirement.type &&
-              existingRequirement.isDefault,
-          );
-        })
-        .map(buildEmployeeRequirementFromDefault);
-
-      // Remove default requirements that are no longer in the defaults list
-      const updatedDefaults = currentRequirements
-        .filter((requirement) => requirement.isDefault)
-        .filter((requirement) =>
-          args.requirements.some(
-            (defaultRequirement) =>
-              defaultRequirement.type === requirement.type,
-          ),
-        )
-        .map((existing) => {
-          const defaultReq = args.requirements.find(
-            (defaultRequirement) =>
-              defaultRequirement.type === existing.type,
-          );
-          return defaultReq
-            ? mergeDefaultRequirementPolicy(existing, defaultReq)
-            : existing;
-        });
-
-      // Combine: keep existing defaults (with their status/files), add new defaults, keep custom
-      const updatedRequirements = [
-        ...updatedDefaults,
-        ...newDefaultRequirements,
-        ...customRequirements,
-      ];
-
-      await replaceEmployeeRequirements(
-        ctx,
-        employee,
-        updatedRequirements,
-        now,
-      );
-    }
-
-    return { success: true };
+    return { success: true, ...syncResult };
   },
+});
+
+export const syncDefaultRequirementsBatch = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    cursor: v.string(),
+  },
+  handler: (ctx, args) =>
+    synchronizeDefaultRequirementsPage(ctx, args.organizationId, args.cursor),
 });
 
 /**

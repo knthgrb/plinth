@@ -19,9 +19,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 7137,
-      "fileCount": 245,
-      "fingerprint": "2d834f5183f79d57833ce6e95847474f44d10e8bab0f0125d92da0fa694f13e1",
+      "totalMatches": 7214,
+      "fileCount": 248,
+      "fingerprint": "5faaa7ea50ec7caaf0e2a024a3836cf5dfdcc7ada61f05e21095c8e1e05bddc4",
       "symbols": [
         {
           "symbol": "acknowledgedBy",
@@ -80,8 +80,8 @@
         },
         {
           "symbol": "customFields",
-          "matches": 29,
-          "files": 11
+          "matches": 25,
+          "files": 8
         },
         {
           "symbol": "cutoffDates",
@@ -95,12 +95,12 @@
         },
         {
           "symbol": "defaultRequirements",
-          "matches": 12,
+          "matches": 10,
           "files": 4
         },
         {
           "symbol": "departments",
-          "matches": 138,
+          "matches": 137,
           "files": 26
         },
         {
@@ -110,8 +110,8 @@
         },
         {
           "symbol": "employeeId",
-          "matches": 1285,
-          "files": 110
+          "matches": 1296,
+          "files": 111
         },
         {
           "symbol": "enableAnniversaryLeave",
@@ -140,8 +140,8 @@
         },
         {
           "symbol": "history",
-          "matches": 62,
-          "files": 19
+          "matches": 61,
+          "files": 18
         },
         {
           "symbol": "incentives",
@@ -150,8 +150,8 @@
         },
         {
           "symbol": "interviewSchedules",
-          "matches": 7,
-          "files": 2
+          "matches": 8,
+          "files": 3
         },
         {
           "symbol": "isActive",
@@ -220,18 +220,18 @@
         },
         {
           "symbol": "notes",
-          "matches": 207,
-          "files": 34
+          "matches": 219,
+          "files": 37
         },
         {
           "symbol": "offerApproval",
-          "matches": 11,
+          "matches": 33,
           "files": 3
         },
         {
           "symbol": "organizationId",
-          "matches": 1705,
-          "files": 159
+          "matches": 1734,
+          "files": 158
         },
         {
           "symbol": "paidLeaveRequiresRegularization",
@@ -260,8 +260,8 @@
         },
         {
           "symbol": "pipelineStageHistory",
-          "matches": 20,
-          "files": 3
+          "matches": 26,
+          "files": 4
         },
         {
           "symbol": "proratedLeave",
@@ -285,17 +285,17 @@
         },
         {
           "symbol": "recruitmentTableColumns",
-          "matches": 7,
+          "matches": 6,
           "files": 4
         },
         {
           "symbol": "requirements",
-          "matches": 143,
-          "files": 22
+          "matches": 112,
+          "files": 23
         },
         {
           "symbol": "requirementsTableColumns",
-          "matches": 7,
+          "matches": 6,
           "files": 4
         },
         {
@@ -310,8 +310,8 @@
         },
         {
           "symbol": "role",
-          "matches": 419,
-          "files": 76
+          "matches": 417,
+          "files": 77
         },
         {
           "symbol": "salaryPaymentFrequency",
@@ -320,8 +320,8 @@
         },
         {
           "symbol": "scorecards",
-          "matches": 15,
-          "files": 3
+          "matches": 16,
+          "files": 4
         },
         {
           "symbol": "secondPayDate",
@@ -340,8 +340,8 @@
         },
         {
           "symbol": "status",
-          "matches": 881,
-          "files": 94
+          "matches": 919,
+          "files": 96
         },
         {
           "symbol": "supportingDocuments",
