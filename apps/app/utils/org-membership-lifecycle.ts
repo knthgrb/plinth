@@ -70,6 +70,13 @@ export function deriveAccessStatusForEmploymentStatus(
 ): OrgMembershipAccessStatus {
   if (status === "active") return "active";
   if (status === "inactive") return "suspended";
-  if (status === "resigned") return "alumni";
-  return "disabled";
+  return "alumni";
+}
+
+export function deriveAccessStatusForEmployeeArchive(
+  status: EmploymentLifecycleStatus,
+): OrgMembershipAccessStatus {
+  return status === "resigned" || status === "terminated"
+    ? "alumni"
+    : "disabled";
 }

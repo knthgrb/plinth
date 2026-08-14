@@ -24,6 +24,10 @@ function normEmail(s: string | null | undefined): string {
   return (s ?? "").trim().toLowerCase();
 }
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 export default function AcceptInvitationPage() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
@@ -38,16 +42,16 @@ export default function AcceptInvitationPage() {
   const [redirectingAfterAccept, setRedirectingAfterAccept] = useState(false);
 
   const invitation = useQuery(
-    (api as any).invitations.getInvitationByToken,
+    api.invitations.getInvitationByToken,
     token ? { token } : "skip"
   );
 
   const acceptInvitationMutation = useMutation(
-    (api as any).invitations.acceptInvitation
+    api.invitations.acceptInvitation,
   );
 
   const updateLastActiveOrganizationMutation = useMutation(
-    (api as any).organizations.updateLastActiveOrganization
+    api.organizations.updateLastActiveOrganization,
   );
 
   // Check for existing session when invitation loads
@@ -55,10 +59,7 @@ export default function AcceptInvitationPage() {
     const checkSession = async () => {
       try {
         const session = await authClient.getSession();
-        // Better Auth session structure: session.data.user or session.data.session.user
-        const userEmail =
-          (session?.data as any)?.user?.email ||
-          (session?.data as any)?.session?.user?.email;
+        const userEmail = session?.data?.user.email;
 
         if (userEmail) {
           setCurrentSessionEmail(userEmail);
@@ -87,8 +88,8 @@ export default function AcceptInvitationPage() {
       setCurrentSessionEmail(null);
       setShowSwitchAccountDialog(false);
       setPassword("");
-    } catch (error: any) {
-      setError(error.message || "Failed to sign out");
+    } catch (error: unknown) {
+      setError(getErrorMessage(error, "Failed to sign out"));
     }
   };
 
@@ -159,7 +160,7 @@ export default function AcceptInvitationPage() {
           email: invitation.email,
           password,
           name:
-            (invitation as any).inviteeName ??
+            invitation.inviteeName ??
             invitation.email.split("@")[0],
         });
 
@@ -202,8 +203,8 @@ export default function AcceptInvitationPage() {
         : path;
 
       window.location.href = redirectUrl;
-    } catch (err: any) {
-      setError(err.message || "Failed to accept invitation");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to accept invitation"));
       setIsProcessing(false);
     } finally {
       setIsProcessing(false);

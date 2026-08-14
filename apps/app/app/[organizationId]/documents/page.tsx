@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import Image from "next/image";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
@@ -32,7 +33,6 @@ import {
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Plus,
   FileText,
@@ -49,20 +49,32 @@ import { format } from "date-fns";
 import { useRouter } from "next/navigation";
 import { useOrganization } from "@/hooks/organization-context";
 import { getOrganizationPath } from "@/utils/organization-routing";
-import { deleteDocument } from "@/actions/documents";
-import { getFileUrl } from "@/actions/files";
+import { getDocumentAttachmentUrl } from "@/actions/files";
 import { uploadFileToStorage } from "@/lib/storage-upload";
 import { createDocument } from "@/actions/documents";
 import { useToast } from "@/components/ui/use-toast";
 import { isFileOnlyDocument, openInNewTab } from "@/lib/document-utils";
 import { canUseFullOrganizationAccess } from "@/utils/org-membership-lifecycle";
 import { TiptapViewer } from "@/components/tiptap-viewer";
+import type { Id } from "@/convex/_generated/dataModel";
 
 type DocumentVisibilityScope =
   | "admins_only"
   | "all_employees"
   | "payroll_visible"
   | "alumni_visible";
+
+type DocumentType =
+  | "personal"
+  | "employment"
+  | "contract"
+  | "certificate"
+  | "leave_form"
+  | "other";
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 export default function DocumentsPage() {
   const router = useRouter();
@@ -73,16 +85,18 @@ export default function DocumentsPage() {
     canUseFullOrganizationAccess(currentOrganization.accessStatus);
 
   const documents = useQuery(
-    (api as any).documents.getDocuments,
+    api.documents.getDocuments,
     effectiveOrganizationId
       ? {
           organizationId: effectiveOrganizationId,
         }
       : "skip",
   );
+  type DocumentRecord = NonNullable<typeof documents>[number];
 
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
-  const [previewDocument, setPreviewDocument] = useState<any | null>(null);
+  const [previewDocument, setPreviewDocument] =
+    useState<DocumentRecord | null>(null);
   const [previewFileUrl, setPreviewFileUrl] = useState<string | null>(null);
   const [previewFileType, setPreviewFileType] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState(false);
@@ -138,13 +152,7 @@ export default function DocumentsPage() {
       file: File;
       title: string;
       category: string;
-      type:
-        | "personal"
-        | "employment"
-        | "contract"
-        | "certificate"
-        | "leave_form"
-        | "other";
+      type: DocumentType;
       storageId?: string;
       uploading: boolean;
       visibilityScope: DocumentVisibilityScope;
@@ -155,13 +163,7 @@ export default function DocumentsPage() {
   // Detect file type from file extension/MIME type
   const detectFileType = (
     file: File
-  ):
-    | "personal"
-    | "employment"
-    | "contract"
-    | "certificate"
-    | "leave_form"
-    | "other" => {
+  ): DocumentType => {
     const fileName = file.name.toLowerCase();
     const mimeType = file.type.toLowerCase();
 
@@ -212,11 +214,11 @@ export default function DocumentsPage() {
   };
 
   const deleteDocumentMutation = useMutation(
-    (api as any).documents.deleteDocument
+    api.documents.deleteDocument,
   );
 
   // Filter documents based on search and type
-  const filteredDocuments = documents?.filter((doc: any) => {
+  const filteredDocuments = documents?.filter((doc) => {
     const matchesSearch =
       !searchQuery ||
       doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -231,7 +233,7 @@ export default function DocumentsPage() {
     return type.replace(/_/g, " ");
   };
 
-  const isFileOnly = (doc: any) => (doc ? isFileOnlyDocument(doc) : false);
+  const isFileOnly = (doc: DocumentRecord) => isFileOnlyDocument(doc);
 
   const validateFile = (file: File): { valid: boolean; error?: string } => {
     // Check file size
@@ -351,11 +353,11 @@ export default function DocumentsPage() {
           title: "Success",
           description: `${file.name} uploaded successfully`,
         });
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error(`Error uploading ${file.name}:`, error);
         toast({
           title: "Error",
-          description: `Failed to upload ${file.name}: ${error.message}`,
+          description: `Failed to upload ${file.name}: ${getErrorMessage(error)}`,
           variant: "destructive",
         });
         // Remove failed file from state
@@ -379,7 +381,7 @@ export default function DocumentsPage() {
     }, 1500);
   };
 
-  const handleEdit = (doc: any) => {
+  const handleEdit = (doc: DocumentRecord) => {
     if (!canWriteDocuments) return;
     if (isFileOnlyDocument(doc)) return;
     router.push(
@@ -387,7 +389,7 @@ export default function DocumentsPage() {
     );
   };
 
-  const handleDelete = async (documentId: string) => {
+  const handleDelete = async (documentId: Id<"documents">) => {
     if (!canWriteDocuments) return;
     if (!confirm("Are you sure you want to delete this document?")) return;
 
@@ -397,11 +399,11 @@ export default function DocumentsPage() {
         title: "Success",
         description: "Document deleted successfully",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error deleting document:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to delete document",
+        description: getErrorMessage(error) || "Failed to delete document",
         variant: "destructive",
       });
     }
@@ -412,12 +414,19 @@ export default function DocumentsPage() {
     router.push(getOrganizationPath(effectiveOrganizationId, "/documents/new"));
   };
 
-  const handleDownloadFile = async (storageId: string) => {
+  const handleDownloadFile = async (
+    documentId: Id<"documents">,
+    storageId: Id<"_storage">,
+  ) => {
     try {
       if (!effectiveOrganizationId) throw new Error("Organization is required");
-      const url = await getFileUrl(effectiveOrganizationId, storageId);
+      const url = await getDocumentAttachmentUrl(
+        effectiveOrganizationId,
+        documentId,
+        storageId,
+      );
       openInNewTab(url);
-    } catch (error: any) {
+    } catch {
       toast({
         title: "Error",
         description: "Failed to download file",
@@ -426,7 +435,7 @@ export default function DocumentsPage() {
     }
   };
 
-  const handlePreview = async (doc: any) => {
+  const handlePreview = async (doc: DocumentRecord) => {
     setPreviewDocument(doc);
     setIsLoadingPreview(true);
     setPreviewFileUrl(null);
@@ -439,8 +448,9 @@ export default function DocumentsPage() {
         if (!effectiveOrganizationId) {
           throw new Error("Organization is required");
         }
-        const url = await getFileUrl(
+        const url = await getDocumentAttachmentUrl(
           effectiveOrganizationId,
+          doc._id,
           doc.attachments[0],
         );
         setPreviewFileUrl(url);
@@ -453,7 +463,7 @@ export default function DocumentsPage() {
           if (contentType) {
             detectedType = contentType;
           }
-        } catch (e) {
+        } catch {
           // HEAD request failed, will try URL-based detection
         }
 
@@ -498,7 +508,7 @@ export default function DocumentsPage() {
         }
 
         setPreviewFileType(detectedType);
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Error loading file preview:", error);
         toast({
           title: "Error",
@@ -602,7 +612,7 @@ export default function DocumentsPage() {
           />
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
             <p>
-              <strong>Note:</strong> If the document doesn't load above, please
+              <strong>Note:</strong> If the document doesn&apos;t load above, please
               download the file to view it.
             </p>
           </div>
@@ -624,9 +634,12 @@ export default function DocumentsPage() {
 
     if (isLikelyImage) {
       return (
-        <img
+        <Image
           src={url}
-          alt={previewDocument?.title}
+          alt={previewDocument?.title ?? "Document preview"}
+          width={1200}
+          height={800}
+          unoptimized
           className="w-full h-auto max-h-[600px] object-contain"
           onError={() => {
             console.error("Image failed to load:", url);
@@ -755,7 +768,7 @@ export default function DocumentsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredDocuments?.map((doc: any) => {
+                  {filteredDocuments?.map((doc) => {
                     const fileOnly = isFileOnly(doc);
                     return (
                       <TableRow
@@ -793,12 +806,14 @@ export default function DocumentsPage() {
                               </Badge>
                               <div className="flex gap-1">
                                 {doc.attachments.map(
-                                  (fileId: string, idx: number) => (
+                                  (fileId, idx) => (
                                     <Button
                                       key={idx}
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => handleDownloadFile(fileId)}
+                                      onClick={() =>
+                                        handleDownloadFile(doc._id, fileId)
+                                      }
                                       className="h-6 px-2"
                                       title="Download file"
                                     >
@@ -875,7 +890,7 @@ export default function DocumentsPage() {
               <DialogTitle>Upload Files</DialogTitle>
               <DialogDescription>
                 Upload files directly to your document storage. Configure each
-                file's details before uploading.
+                file&apos;s details before uploading.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
@@ -937,7 +952,7 @@ export default function DocumentsPage() {
                 <div className="space-y-4">
                   <Label>Configure Files:</Label>
                   <div className="space-y-4 max-h-96 overflow-y-auto">
-                    {directUploadFiles.map((item, index) => (
+                    {directUploadFiles.map((item) => (
                       <Card key={item.id} className="p-4">
                         <div className="space-y-4">
                           <div className="flex items-center gap-2">
@@ -1010,7 +1025,7 @@ export default function DocumentsPage() {
                                   </Label>
                                   <Select
                                     value={item.type}
-                                    onValueChange={(value: any) =>
+                                    onValueChange={(value: DocumentType) =>
                                       setDirectUploadFiles((prev) =>
                                         prev.map((file) =>
                                           file.id === item.id
@@ -1253,12 +1268,17 @@ export default function DocumentsPage() {
                           <div className="flex flex-wrap gap-2">
                             {previewDocument.attachments
                               .slice(1)
-                              .map((fileId: string, idx: number) => (
+                              .map((fileId, idx) => (
                                 <Button
                                   key={idx}
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => handleDownloadFile(fileId)}
+                                  onClick={() =>
+                                    handleDownloadFile(
+                                      previewDocument._id,
+                                      fileId,
+                                    )
+                                  }
                                 >
                                   <Download className="h-4 w-4 mr-2" />
                                   File {idx + 2}

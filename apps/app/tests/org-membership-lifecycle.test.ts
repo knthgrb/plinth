@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canUseFullOrganizationAccess,
+  deriveAccessStatusForEmployeeArchive,
   deriveAccessStatusForEmploymentStatus,
   normalizeOrgMembershipAccessStatus,
   selectPreferredOrganizationForEntry,
@@ -12,7 +13,14 @@ describe("organization membership lifecycle", () => {
     expect(deriveAccessStatusForEmploymentStatus("active")).toBe("active");
     expect(deriveAccessStatusForEmploymentStatus("inactive")).toBe("suspended");
     expect(deriveAccessStatusForEmploymentStatus("resigned")).toBe("alumni");
-    expect(deriveAccessStatusForEmploymentStatus("terminated")).toBe("disabled");
+    expect(deriveAccessStatusForEmploymentStatus("terminated")).toBe("alumni");
+  });
+
+  it("preserves alumni history when separated employee records are archived", () => {
+    expect(deriveAccessStatusForEmployeeArchive("resigned")).toBe("alumni");
+    expect(deriveAccessStatusForEmployeeArchive("terminated")).toBe("alumni");
+    expect(deriveAccessStatusForEmployeeArchive("active")).toBe("disabled");
+    expect(deriveAccessStatusForEmployeeArchive("inactive")).toBe("disabled");
   });
 
   it("treats missing access status as active for migrated memberships", () => {

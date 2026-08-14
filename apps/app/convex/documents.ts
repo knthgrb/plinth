@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { requireActiveMembership } from "./access";
+import { requireActiveMembership, requirePayslipMembership } from "./access";
 import { runOrgQuery } from "./queryAuthGrace";
 import {
   canUseAlumniPayslipAccess,
@@ -32,49 +32,39 @@ type DocumentVisibilityScope =
   | "alumni_visible"
   | "payroll_visible";
 
-// Helper to check authorization with organization context
-async function checkAuth(
-  ctx: QueryCtx | MutationCtx,
-  organizationId: Id<"organizations">,
-  requiredRole?: "owner" | "admin" | "hr" | "accounting"
-) {
-  const { user, membership } = await requireActiveMembership(
-    ctx,
-    organizationId,
-  );
-  const userRole = membership.role;
+type DocumentUserRecord = Doc<"users"> & {
+  role: Doc<"userOrganizations">["role"];
+  organizationId: Id<"organizations">;
+  employeeId: Id<"employees"> | undefined;
+  accessStatus: Doc<"userOrganizations">["accessStatus"];
+};
 
-  // Allow admin to access everything
-  // For read operations, allow accounting role
-  // For write operations (requiredRole specified), only allow specified role or admin
-  if (requiredRole) {
-    if (
-      userRole !== requiredRole &&
-      userRole !== "owner" &&
-      userRole !== "admin"
-    ) {
-      throw new Error("Not authorized");
-    }
-  } else {
-    // No required role means read access - allow accounting
-    if (
-      userRole !== "owner" &&
-      userRole !== "admin" &&
-      userRole !== "hr" &&
-      userRole !== "accounting" &&
-      userRole !== "employee"
-    ) {
-      throw new Error("Not authorized");
-    }
-  }
-
+function toDocumentUserRecord(
+  access: Awaited<ReturnType<typeof requireActiveMembership>>,
+): DocumentUserRecord {
   return {
-    ...user,
-    role: userRole,
-    organizationId,
-    employeeId: membership.employeeId,
-    accessStatus: membership.accessStatus,
+    ...access.user,
+    role: access.membership.role,
+    organizationId: access.organization._id,
+    employeeId: access.membership.employeeId,
+    accessStatus: access.membership.accessStatus,
   };
+}
+
+async function getDocumentReadUser(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+): Promise<DocumentUserRecord> {
+  const access = await requirePayslipMembership(ctx, organizationId);
+  return toDocumentUserRecord(access);
+}
+
+async function getDocumentWriteUser(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+): Promise<DocumentUserRecord> {
+  const access = await requireActiveMembership(ctx, organizationId);
+  return toDocumentUserRecord(access);
 }
 
 function canViewAllDocumentsInOrg(role: string | undefined) {
@@ -93,8 +83,6 @@ function canViewPayrollScopedDocuments(role: string | undefined) {
     role === "accounting"
   );
 }
-
-type DocumentUserRecord = Awaited<ReturnType<typeof checkAuth>>;
 
 function assertDocumentWriteAccess(userRecord: DocumentUserRecord) {
   if (!canUseFullOrganizationAccess(userRecord.accessStatus)) {
@@ -221,7 +209,7 @@ export const getDocuments = query({
   },
   handler: async (ctx, args) => {
     return runOrgQuery(async () => {
-      const userRecord = await checkAuth(ctx, args.organizationId);
+      const userRecord = await getDocumentReadUser(ctx, args.organizationId);
 
       const documentRows = await ctx.db
         .query("documents")
@@ -264,7 +252,10 @@ export const getDocument = query({
       const document = await ctx.db.get(args.documentId);
       if (!document) throw new Error("Document not found");
 
-      const userRecord = await checkAuth(ctx, document.organizationId);
+      const userRecord = await getDocumentReadUser(
+        ctx,
+        document.organizationId,
+      );
 
       const userEmployee = await getUserEmployeeForDocumentAccess(
         ctx,
@@ -277,6 +268,39 @@ export const getDocument = query({
 
       return effectiveDocument;
     }, null);
+  },
+});
+
+export const getDocumentAttachmentUrl = query({
+  args: {
+    organizationId: v.id("organizations"),
+    documentId: v.id("documents"),
+    storageId: v.id("_storage"),
+  },
+  handler: async (ctx, args) => {
+    const document = await ctx.db.get(args.documentId);
+    if (!document || document.organizationId !== args.organizationId) {
+      throw new Error("Document not found");
+    }
+
+    const userRecord = await getDocumentReadUser(ctx, args.organizationId);
+    const userEmployee = await getUserEmployeeForDocumentAccess(
+      ctx,
+      userRecord,
+    );
+    const effectiveDocument = await loadEffectiveDocument(ctx, document);
+    if (!canViewDocument(effectiveDocument, userRecord, userEmployee)) {
+      throw new Error("Not authorized to view this document");
+    }
+    if (
+      !effectiveDocument.attachments.some(
+        (storageId) => storageId === args.storageId,
+      )
+    ) {
+      throw new Error("Not authorized to access this attachment");
+    }
+
+    return await ctx.storage.getUrl(args.storageId);
   },
 });
 
@@ -304,7 +328,7 @@ export const createDocument = mutation({
     visibleEmployeeIds: v.optional(v.array(v.id("employees"))),
   },
   handler: async (ctx, args) => {
-    const userRecord = await checkAuth(ctx, args.organizationId);
+    const userRecord = await getDocumentWriteUser(ctx, args.organizationId);
     assertDocumentWriteAccess(userRecord);
 
     const now = Date.now();
@@ -368,7 +392,7 @@ export const updateDocument = mutation({
     const document = await ctx.db.get(args.documentId);
     if (!document) throw new Error("Document not found");
 
-    const userRecord = await checkAuth(ctx, document.organizationId);
+    const userRecord = await getDocumentWriteUser(ctx, document.organizationId);
     assertDocumentWriteAccess(userRecord);
 
     const canMutate =
@@ -437,7 +461,7 @@ export const deleteDocument = mutation({
     const document = await ctx.db.get(args.documentId);
     if (!document) throw new Error("Document not found");
 
-    const userRecord = await checkAuth(ctx, document.organizationId);
+    const userRecord = await getDocumentWriteUser(ctx, document.organizationId);
     assertDocumentWriteAccess(userRecord);
 
     const canMutate =

@@ -31,6 +31,22 @@ const legacySyncUser = makeFunctionReference<
   Id<"users">
 >("users:syncUser");
 
+const directMembershipAdd = makeFunctionReference<
+  "mutation",
+  {
+    organizationId: Id<"organizations">;
+    email: string;
+    role: "employee";
+  },
+  { success: boolean }
+>("organizations:addUserToOrganization");
+
+const legacyInviteUser = makeFunctionReference<
+  "mutation",
+  { email: string; role: "employee" },
+  { success: boolean }
+>("organizations:inviteUser");
+
 describe("public Convex security boundaries", () => {
   it("does not expose the legacy user-role synchronization mutation", async () => {
     const t = convexTest(schema, modules);
@@ -49,6 +65,47 @@ describe("public Convex security boundaries", () => {
         role: "owner",
       }),
     ).rejects.toThrow();
+  });
+
+  it("does not expose direct membership creation mutations", async () => {
+    const t = convexTest(schema, modules);
+    const ownerEmail = "membership-owner@example.com";
+    const organizationId = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Invitation-only Membership Org",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const userId = await ctx.db.insert("users", {
+        email: ownerEmail,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId,
+        organizationId,
+        role: "owner",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      return organizationId;
+    });
+    const owner = t.withIdentity({ email: ownerEmail });
+
+    await expect(
+      owner.mutation(directMembershipAdd, {
+        organizationId,
+        email: "direct-add@example.com",
+        role: "employee",
+      }),
+    ).rejects.toThrow(/no function|no such export/i);
+    await expect(
+      owner.mutation(legacyInviteUser, {
+        email: "legacy-add@example.com",
+        role: "employee",
+      }),
+    ).rejects.toThrow(/no function|no such export/i);
   });
 
   it("rejects unauthenticated super-admin elevation", async () => {

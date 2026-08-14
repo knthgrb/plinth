@@ -17,6 +17,7 @@ import { cn } from "@/utils/utils";
 import { useOrganization } from "@/hooks/organization-context";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import {
   getOrganizationPath,
   removeOrganizationId,
@@ -30,6 +31,7 @@ import {
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { CreateOrganizationDialog } from "@/components/create-organization-dialog";
+import { getAccountCapabilities } from "@/utils/account-capabilities";
 
 type NavItem = {
   name: string;
@@ -77,13 +79,14 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
     isLoading: orgsLoading,
   } = useOrganization();
   const user = useQuery(
-    (api as any).organizations.getCurrentUser,
+    api.organizations.getCurrentUser,
     effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
-  const canCreateOrganization =
-    user?.role === "owner" || user?.role === "admin" || user?.role === "hr";
+  const { canCreateOrganization } = getAccountCapabilities({
+    isAuthenticated: user !== undefined && user !== null,
+  });
   const [orgPopoverOpen, setOrgPopoverOpen] = useState(false);
   const [isCreateOrgDialogOpen, setIsCreateOrgDialogOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
@@ -196,7 +199,7 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
                             key={org._id}
                             type="button"
                             onClick={() => {
-                              switchOrganization(org._id as any);
+                              switchOrganization(org._id as Id<"organizations">);
                               setOrgPopoverOpen(false);
                             }}
                             className={cn(
@@ -237,7 +240,7 @@ export function EmployeeSidebar({ onNavigate }: EmployeeSidebarProps = {}) {
                             key={org._id}
                             type="button"
                             onClick={() => {
-                              switchOrganization(org._id as any);
+                              switchOrganization(org._id as Id<"organizations">);
                               setOrgPopoverOpen(false);
                             }}
                             className={cn(

@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useQuery } from "convex/react";
 import { useOrganization } from "@/hooks/organization-context";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import {
   Select,
   SelectContent,
@@ -19,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { CreateOrganizationDialog } from "@/components/create-organization-dialog";
 import { cn } from "@/utils/utils";
 import { hasAlumniOrganizationAccess } from "@/utils/org-membership-lifecycle";
+import { getAccountCapabilities } from "@/utils/account-capabilities";
 
 export type OrganizationSwitcherProps = {
   disabled?: boolean;
@@ -34,13 +36,14 @@ export function OrganizationSwitcher({ disabled = false }: OrganizationSwitcherP
     effectiveOrganizationId,
   } = useOrganization();
   const user = useQuery(
-    (api as any).organizations.getCurrentUser,
+    api.organizations.getCurrentUser,
     effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
-  const canCreateOrganization =
-    user?.role === "owner" || user?.role === "admin" || user?.role === "hr";
+  const { canCreateOrganization } = getAccountCapabilities({
+    isAuthenticated: user !== undefined && user !== null,
+  });
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isSelectOpen, setIsSelectOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
@@ -145,7 +148,7 @@ export function OrganizationSwitcher({ disabled = false }: OrganizationSwitcherP
           open={isSelectOpen}
           onValueChange={(value) => {
             if (!disabled) {
-              switchOrganization(value as any);
+              switchOrganization(value as Id<"organizations">);
             }
           }}
           onOpenChange={(open) => {

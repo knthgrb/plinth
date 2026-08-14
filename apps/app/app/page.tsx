@@ -40,7 +40,7 @@ export default function AppHomePage() {
   const [isSigningOut, setIsSigningOut] = useState(false);
 
   const organizations = useQuery(
-    (api as any).organizations.getUserOrganizations,
+    api.organizations.getUserOrganizations,
     authChecked && hasSession ? {} : "skip",
   );
 
@@ -61,12 +61,12 @@ export default function AppHomePage() {
 
     if (organizations && organizations.length > 0) {
       const lastActiveOrg = selectPreferredOrganizationForEntry(
-        organizations as any[],
+        organizations,
       );
       if (!lastActiveOrg) return;
       const path = getDefaultRouteForRole(
-        (lastActiveOrg as any).role,
-        (lastActiveOrg as any).accessStatus,
+        lastActiveOrg.role,
+        lastActiveOrg.accessStatus,
       );
       router.replace(`/${lastActiveOrg._id}${path}`);
       return;

@@ -23,7 +23,7 @@ function OrganizationLayoutInner({
   const params = useParams();
   const router = useRouter();
   const pathname = usePathname();
-  const organizationId = params.organizationId as string;
+  const organizationId = params.organizationId as Id<"organizations">;
   const {
     organizations,
     switchOrganization,
@@ -34,18 +34,22 @@ function OrganizationLayoutInner({
   } = useOrganization();
   const { isEmployeeExperienceUI } = useEmployeeView();
   const updateLastActive = useMutation(
-    (api as any).organizations.updateLastActiveOrganization,
+    api.organizations.updateLastActiveOrganization,
   );
   const user = useQuery(
-    (api as any).organizations.getCurrentUser,
+    api.organizations.getCurrentUser,
     organizationId && !isLoggingOut ? { organizationId } : "skip",
   );
 
   useEffect(() => {
-    if (isLoggingOut || isLoading || !organizations.length) return;
+    if (isLoggingOut || isLoading) return;
     if (!organizationId) return;
+    if (!organizations.length) {
+      router.replace("/");
+      return;
+    }
 
-    const orgId = organizationId as Id<"organizations">;
+    const orgId = organizationId;
     const isValidOrg = organizations.some((org) => org._id === orgId);
 
     if (!isValidOrg) {

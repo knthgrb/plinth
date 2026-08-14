@@ -51,6 +51,8 @@ describe("alumni access workflow", () => {
       "user.accessStatus === \"alumni\"",
     );
     expect(organizationLayoutSource).toContain("/payslips");
+    expect(organizationLayoutSource).toContain("if (!organizations.length)");
+    expect(organizationLayoutSource).toContain('router.replace("/")');
     expect(organizationContextSource).toContain(
       "selectPreferredOrganizationForEntry",
     );

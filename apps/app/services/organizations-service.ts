@@ -16,12 +16,9 @@ type DefaultRequirementPolicy = {
 export class OrganizationsService {
   static async getDefaultRequirements(organizationId: string) {
     const convex = await getAuthedConvexClient();
-    return await (convex.query as any)(
-      (api as any).organizations.getDefaultRequirements,
-      {
+    return await convex.query(api.organizations.getDefaultRequirements, {
         organizationId: organizationId as Id<"organizations">,
-      }
-    );
+      });
   }
 
   static async updateDefaultRequirements(
@@ -29,22 +26,12 @@ export class OrganizationsService {
     requirements: DefaultRequirementPolicy[]
   ) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).organizations.updateDefaultRequirements,
+    return await convex.mutation(
+      api.organizations.updateDefaultRequirements,
       {
         organizationId: organizationId as Id<"organizations">,
         requirements,
-      }
-    );
-  }
-
-  static async syncDefaultRequirementsToEmployees(organizationId: string) {
-    const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).employees.syncDefaultRequirementsToEmployees,
-      {
-        organizationId: organizationId as Id<"organizations">,
-      }
+      },
     );
   }
 
@@ -56,10 +43,7 @@ export class OrganizationsService {
     taxId?: string;
   }) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).organizations.createOrganization,
-      data
-    );
+    return await convex.mutation(api.organizations.createOrganization, data);
   }
 
   static async updateOrganization(
@@ -73,12 +57,12 @@ export class OrganizationsService {
     }
   ) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).organizations.updateOrganization,
+    return await convex.mutation(
+      api.organizations.updateOrganization,
       {
         organizationId: organizationId as Id<"organizations">,
         ...data,
-      }
+      },
     );
   }
 
@@ -87,12 +71,12 @@ export class OrganizationsService {
     userId: string
   ) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).organizations.removeUserFromOrganization,
+    return await convex.mutation(
+      api.organizations.removeUserFromOrganization,
       {
         organizationId: organizationId as Id<"organizations">,
         userId: userId as Id<"users">,
-      }
+      },
     );
   }
 
@@ -102,23 +86,23 @@ export class OrganizationsService {
     role: OrganizationRole;
   }) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).organizations.updateUserRoleInOrganization,
+    return await convex.mutation(
+      api.organizations.updateUserRoleInOrganization,
       {
         ...data,
         organizationId: data.organizationId as Id<"organizations">,
         userId: data.userId as Id<"users">,
-      }
+      },
     );
   }
 
   static async deleteOrganization(organizationId: string) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).organizations.deleteOrganization,
+    return await convex.mutation(
+      api.organizations.deleteOrganization,
       {
         organizationId: organizationId as Id<"organizations">,
-      }
+      },
     );
   }
 }

@@ -521,10 +521,10 @@
     },
     {
       "name": "users",
-      "fieldCount": 6,
-      "fieldsSha256": "6ba2b1b11af4a122eb738a2032d91cdba09ee3dd184a452398e2024de8e4f49b",
-      "indexCount": 1,
-      "indexesSha256": "cd46aa8e6d18f842f8feae9986783efda1114bebfd6e9a9c5d0f7ea568aa993b"
+      "fieldCount": 7,
+      "fieldsSha256": "2aae056500bc8dcf38d0e83da7ac08c99ac203be801b01ebbe64b512a64b8e43",
+      "indexCount": 2,
+      "indexesSha256": "03471c8f352aa46c4b0d5833e00ba0b477240b44875b613d74e897e3af5585f1"
     }
   ]
 }

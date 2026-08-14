@@ -24,12 +24,6 @@ export async function updateDefaultRequirements(
   return OrganizationsService.updateDefaultRequirements(organizationId, requirements);
 }
 
-export async function syncDefaultRequirementsToEmployees(
-  organizationId: string
-) {
-  return OrganizationsService.syncDefaultRequirementsToEmployees(organizationId);
-}
-
 export async function createOrganization(data: {
   name: string;
   address?: string;
@@ -51,17 +45,6 @@ export async function updateOrganization(
   }
 ) {
   return OrganizationsService.updateOrganization(organizationId, data);
-}
-
-export async function addUserToOrganization(data: {
-  organizationId: string;
-  email: string;
-  role: OrganizationRole;
-  employeeId?: string;
-  confirmInviteToExistingPlinthUser?: boolean;
-}) {
-  const { createInvitation } = await import("./invitations");
-  return createInvitation(data);
 }
 
 export async function removeUserFromOrganization(

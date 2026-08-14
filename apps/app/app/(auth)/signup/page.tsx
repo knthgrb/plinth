@@ -18,20 +18,24 @@ const marketingUrl =
 
 type SignupStep = 1 | 2;
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 export default function SignupPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
   const createOrganization = useMutation(
-    (api as any).organizations.createOrganization,
+    api.organizations.createOrganization,
   );
   const ensureUserRecord = useMutation(
-    (api as any).organizations.ensureUserRecord,
+    api.organizations.ensureUserRecord,
   );
 
   // Check if user is already logged in and has no organizations
   const userOrganizations = useQuery(
-    (api as any).organizations.getUserOrganizations,
+    api.organizations.getUserOrganizations,
     {},
   );
 
@@ -54,9 +58,7 @@ export default function SignupPage() {
 
       try {
         const session = await authClient.getSession();
-        const userEmail =
-          (session?.data as any)?.user?.email ||
-          (session?.data as any)?.session?.user?.email;
+        const userEmail = session?.data?.user.email;
 
         if (userEmail) {
           // User is logged in, check if they need to complete setup
@@ -174,7 +176,7 @@ export default function SignupPage() {
           await ensureUserRecord({});
           userRecordCreated = true;
           break;
-        } catch (err: any) {
+        } catch (err: unknown) {
           if (attempt < 2) {
             // Wait before retry
             await new Promise((resolve) =>
@@ -208,10 +210,10 @@ export default function SignupPage() {
           description: "Please provide your organization details",
         });
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast({
         title: "Error",
-        description: err.message || "An error occurred during signup",
+        description: getErrorMessage(err, "An error occurred during signup"),
         variant: "destructive",
       });
     } finally {
@@ -243,11 +245,13 @@ export default function SignupPage() {
       // Use window.location for a full page reload to ensure session is established
       // This ensures all context providers are properly initialized
       window.location.href = "/walkthrough/prompt";
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast({
         title: "Error",
-        description:
-          err.message || "Failed to create organization. Please try again.",
+        description: getErrorMessage(
+          err,
+          "Failed to create organization. Please try again.",
+        ),
         variant: "destructive",
       });
       setIsProcessing(false);

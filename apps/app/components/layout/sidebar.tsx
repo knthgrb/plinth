@@ -28,6 +28,7 @@ import {
 import { cn } from "@/utils/utils";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { useOrganization } from "@/hooks/organization-context";
 import {
   getOrganizationPath,
@@ -43,6 +44,7 @@ import {
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { CreateOrganizationDialog } from "@/components/create-organization-dialog";
+import { getAccountCapabilities } from "@/utils/account-capabilities";
 
 type NavigationItem = {
   name: string;
@@ -185,14 +187,14 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     isLoggingOut,
   } = useOrganization();
   const user = useQuery(
-    (api as any).organizations.getCurrentUser,
+    api.organizations.getCurrentUser,
     !isLoggingOut && effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
 
   const chatUnreadCounts = useQuery(
-    (api as any).chat.getUnreadCounts,
+    api.chat.getUnreadCounts,
     !isLoggingOut && effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
@@ -203,7 +205,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       : 0;
 
   const announcementsUnreadCount = useQuery(
-    (api as any).announcements.getUnreadAnnouncementsCount,
+    api.announcements.getUnreadAnnouncementsCount,
     !isLoggingOut && effectiveOrganizationId
       ? {
           organizationId: effectiveOrganizationId,
@@ -216,8 +218,9 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     typeof announcementsUnreadCount === "number" ? announcementsUnreadCount : 0;
   const isSidebarLoading =
     orgsLoading || user === undefined || !effectiveOrganizationId;
-  const canCreateOrganization =
-    user?.role === "owner" || user?.role === "admin" || user?.role === "hr";
+  const { canCreateOrganization } = getAccountCapabilities({
+    isAuthenticated: user !== undefined && user !== null,
+  });
   const activeOrganizations = organizations.filter(
     (org) => !hasAlumniOrganizationAccess(org.accessStatus),
   );
@@ -612,7 +615,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
                             key={org._id}
                             type="button"
                             onClick={() => {
-                              switchOrganization(org._id as any);
+                              switchOrganization(org._id as Id<"organizations">);
                               setOrgPopoverOpen(false);
                             }}
                             className={cn(
@@ -653,7 +656,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
                             key={org._id}
                             type="button"
                             onClick={() => {
-                              switchOrganization(org._id as any);
+                              switchOrganization(org._id as Id<"organizations">);
                               setOrgPopoverOpen(false);
                             }}
                             className={cn(

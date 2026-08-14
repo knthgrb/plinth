@@ -5,6 +5,7 @@ import {
   canUseAlumniPayslipAccess,
   canUseFullOrganizationAccess,
 } from "@/utils/org-membership-lifecycle";
+import { findUserByEmail } from "./userEmail";
 
 type AuthenticatedContext = Pick<QueryCtx | MutationCtx, "auth">;
 type DatabaseContext = Pick<QueryCtx | MutationCtx, "auth" | "db">;
@@ -29,10 +30,7 @@ export async function requireUserRecord(
   }
   const email = identity.email;
 
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_email", (query) => query.eq("email", email))
-    .unique();
+  const user = await findUserByEmail(ctx, email);
   if (!user) {
     throw new Error("Not authorized");
   }

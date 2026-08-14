@@ -342,13 +342,15 @@ export default defineSchema({
   // Users table (extends Better Auth user)
   users: defineTable({
     email: v.string(),
+    normalizedEmail: v.optional(v.string()),
     name: v.optional(v.string()),
     masterRole: v.optional(v.literal("super_admin")), // Master role: super_admin has access to /admin; null = regular user
     lastActiveOrganizationId: v.optional(v.id("organizations")), // Track user's last active organization
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_email", ["email"]),
+    .index("by_email", ["email"])
+    .index("by_normalized_email", ["normalizedEmail"]),
 
   // User-Organization junction table (many-to-many relationship)
   userOrganizations: defineTable({

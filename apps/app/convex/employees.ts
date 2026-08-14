@@ -19,7 +19,10 @@ import {
   encryptCompensationForDb,
   decryptEmployeeFromDb,
 } from "./employeeCompensationCrypto";
-import { deriveAccessStatusForEmploymentStatus } from "@/utils/org-membership-lifecycle";
+import {
+  deriveAccessStatusForEmployeeArchive,
+  deriveAccessStatusForEmploymentStatus,
+} from "@/utils/org-membership-lifecycle";
 import {
   getEffectiveRequirementDefinitions,
   type RequirementConfigurationInput,
@@ -95,6 +98,52 @@ function toManilaDayStartUtcMs(ts: number): number {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function getLinkedEmployeeMemberships(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+  employeeId: Id<"employees">,
+): Promise<Doc<"userOrganizations">[]> {
+  const memberships = await ctx.db
+    .query("userOrganizations")
+    .withIndex("by_organization_employee", (query) =>
+      query
+        .eq("organizationId", organizationId)
+        .eq("employeeId", employeeId),
+    )
+    .take(2);
+
+  if (memberships.length > 1) {
+    throw new Error("Employee has multiple organization memberships");
+  }
+
+  return memberships;
+}
+
+async function cancelPendingEmployeeInvitations(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  employeeId: Id<"employees">,
+): Promise<void> {
+  const invitations = await ctx.db
+    .query("invitations")
+    .withIndex("by_organization", (query) =>
+      query.eq("organizationId", organizationId),
+    )
+    .filter((query) =>
+      query.and(
+        query.eq(query.field("employeeId"), employeeId),
+        query.eq(query.field("status"), "pending"),
+      ),
+    )
+    .collect();
+
+  await Promise.all(
+    invitations.map((invitation) =>
+      ctx.db.patch(invitation._id, { status: "cancelled" }),
+    ),
+  );
 }
 
 // Helper to check authorization with organization context
@@ -497,6 +546,9 @@ export const listEmployeesAvailableForOrgInvite = query({
 
       for (const raw of employees) {
         const e = decryptEmployeeFromDb(raw);
+        if (e.archivedAt !== undefined || e.employment.status !== "active") {
+          continue;
+        }
         const em = String(
           e.personalInfo.email ?? "",
         ).trim();
@@ -1063,45 +1115,16 @@ export const updateEmployee = mutation({
     // not the user's global Plinth account.
     if (args.employment?.status) {
       const newStatus = args.employment.status;
-      let linkedMemberships = await ctx.db
-        .query("userOrganizations")
-        .withIndex("by_organization", (q) =>
-          q.eq("organizationId", employee.organizationId),
-        )
-        .filter((q) => q.eq(q.field("employeeId"), args.employeeId))
-        .collect();
+      const linkedMemberships = await getLinkedEmployeeMemberships(
+        ctx,
+        employee.organizationId,
+        args.employeeId,
+      );
 
-      if (linkedMemberships.length === 0) {
-        const linkedUser = await ctx.db
-          .query("users")
-          .withIndex("by_email", (query) =>
-            query.eq("email", employee.personalInfo.email),
-          )
-          .unique();
-        if (linkedUser) {
-          const membership = await ctx.db
-            .query("userOrganizations")
-            .withIndex("by_user_organization", (query) =>
-              query
-                .eq("userId", linkedUser._id)
-                .eq("organizationId", employee.organizationId),
-            )
-            .unique();
-
-          if (!membership) {
-            throw new Error(
-              "Employee account is not linked to this organization membership",
-            );
-          }
-          linkedMemberships = [membership];
-        }
-      }
-
-      if (linkedMemberships.length > 1) {
-        throw new Error("Employee has multiple organization memberships");
-      }
-
-      const accessStatus = deriveAccessStatusForEmploymentStatus(newStatus);
+      const accessStatus =
+        employee.archivedAt !== undefined
+          ? deriveAccessStatusForEmployeeArchive(newStatus)
+          : deriveAccessStatusForEmploymentStatus(newStatus);
       const now = Date.now();
       for (const membership of linkedMemberships) {
         if (membership.role === "owner" && accessStatus !== "active") {
@@ -1116,6 +1139,14 @@ export const updateEmployee = mutation({
           accessUpdatedBy: userRecord._id,
           updatedAt: now,
         });
+      }
+
+      if (newStatus === "resigned" || newStatus === "terminated") {
+        await cancelPendingEmployeeInvitations(
+          ctx,
+          employee.organizationId,
+          args.employeeId,
+        );
       }
     }
 
@@ -1458,23 +1489,34 @@ export const deleteEmployee = mutation({
       updatedAt: now,
     });
 
-    const linkedMemberships = await ctx.db
-      .query("userOrganizations")
-      .withIndex("by_organization", (q) =>
-        q.eq("organizationId", employee.organizationId),
-      )
-      .filter((q) => q.eq(q.field("employeeId"), args.employeeId))
-      .collect();
+    const linkedMemberships = await getLinkedEmployeeMemberships(
+      ctx,
+      employee.organizationId,
+      args.employeeId,
+    );
+    const accessStatus = deriveAccessStatusForEmployeeArchive(
+      employment.status,
+    );
 
     for (const membership of linkedMemberships) {
-      if (membership.role === "owner") continue;
+      if (membership.role === "owner") {
+        throw new Error(
+          "Transfer organization ownership before archiving this employee",
+        );
+      }
       await ctx.db.patch(membership._id, {
-        accessStatus: "disabled",
+        accessStatus,
         accessUpdatedAt: now,
         accessUpdatedBy: userRecord._id,
         updatedAt: now,
       });
     }
+
+    await cancelPendingEmployeeInvitations(
+      ctx,
+      employee.organizationId,
+      args.employeeId,
+    );
 
     return { success: true };
   },

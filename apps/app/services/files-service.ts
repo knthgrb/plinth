@@ -27,6 +27,21 @@ export class FilesService {
     return url;
   }
 
+  static async getDocumentAttachmentUrl(
+    organizationId: string,
+    documentId: string,
+    storageId: string,
+  ): Promise<string> {
+    const convex = await getAuthedConvexClient();
+    const url = await convex.query(api.documents.getDocumentAttachmentUrl, {
+      organizationId: organizationId as Id<"organizations">,
+      documentId: documentId as Id<"documents">,
+      storageId: storageId as Id<"_storage">,
+    });
+    if (!url) throw new Error("File is unavailable");
+    return url;
+  }
+
   /**
    * Get a presigned URL for an announcement attachment. Only succeeds if the user
    * is in the org and the attachment belongs to that announcement (private to org).

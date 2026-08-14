@@ -85,7 +85,7 @@ export function OrganizationProvider({
 
   const [refreshKey, setRefreshKey] = useState(0);
   const updateLastActive = useMutation(
-    (api as any).organizations.updateLastActiveOrganization,
+    api.organizations.updateLastActiveOrganization,
   );
 
   const [authChecked, setAuthChecked] = useState(false);

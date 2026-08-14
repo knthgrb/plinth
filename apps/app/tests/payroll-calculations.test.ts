@@ -8,6 +8,8 @@ import {
   type ResolvedPayrollRates,
 } from "@/lib/payroll-calculations";
 
+type PayrollBaseInput = Parameters<typeof calculatePayrollBaseFromRecords>[0];
+
 function localDate(
   year: number,
   monthIndex: number,
@@ -73,11 +75,11 @@ function calculate({
   cutoffEnd = localDate(2026, 1, 20),
   payrollRates = baseRates,
 }: {
-  employee?: any;
-  attendance?: any[];
-  holidays?: any[];
-  leaveRequests?: any[];
-  leaveTypes?: any[];
+  employee?: PayrollBaseInput["employee"];
+  attendance?: PayrollBaseInput["attendance"];
+  holidays?: PayrollBaseInput["holidays"];
+  leaveRequests?: PayrollBaseInput["leaveRequests"];
+  leaveTypes?: PayrollBaseInput["leaveTypes"];
   cutoffStart?: number;
   cutoffEnd?: number;
   payrollRates?: ResolvedPayrollRates;

@@ -7,6 +7,8 @@ import { requireActiveMembership, requireIdentity } from "./access";
 import { bytesToBase64 } from "./binaryBase64";
 import { hashInvitationToken } from "./invitationTokenHash";
 import type { Doc, Id } from "./_generated/dataModel";
+import { normalizeOrgMembershipAccessStatus } from "@/utils/org-membership-lifecycle";
+import { findUserByEmail, normalizeUserEmail } from "./userEmail";
 
 function normalizeInviteEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -17,26 +19,6 @@ function createInvitationToken(): string {
     .replaceAll("+", "-")
     .replaceAll("/", "_")
     .replace(/=+$/, "");
-}
-
-/** Convex `users.email` is indexed exactly; try common variants for case mismatches. */
-async function findUserByEmailLoose(
-  ctx: QueryCtx | MutationCtx,
-  email: string,
-): Promise<Doc<"users"> | null> {
-  const trimmed = email.trim();
-  const norm = normalizeInviteEmail(email);
-  const variants = Array.from(
-    new Set([trimmed, norm, email].filter((s) => s.length > 0)),
-  );
-  for (const variant of variants) {
-    const u = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", variant))
-      .first();
-    if (u) return u;
-  }
-  return null;
 }
 
 function assertCanInviteRole(actorRole: string | null, nextRole: string) {
@@ -157,6 +139,16 @@ async function tryCreateOrgInvitationSoft(
         reason: "Employee not found",
       };
     }
+    if (
+      employee.archivedAt !== undefined ||
+      employee.employment.status !== "active"
+    ) {
+      return {
+        kind: "skipped",
+        email: emailInput,
+        reason: "Only active employees can be invited",
+      };
+    }
     const empEmail = employee.personalInfo.email.trim();
     if (!empEmail) {
       return {
@@ -183,11 +175,20 @@ async function tryCreateOrgInvitationSoft(
       .first();
 
     if (existingUserOrgForEmployee) {
-      return {
-        kind: "skipped",
-        email,
-        reason: "Employee is already a member of this organization",
-      };
+      const linkedUser = await ctx.db.get(existingUserOrgForEmployee.userId);
+      const isMatchingRemovedMembership =
+        normalizeOrgMembershipAccessStatus(
+          existingUserOrgForEmployee.accessStatus,
+        ) === "removed" &&
+        !!linkedUser?.email &&
+        normalizeInviteEmail(linkedUser.email) === normalizeInviteEmail(email);
+      if (!isMatchingRemovedMembership) {
+        return {
+          kind: "skipped",
+          email,
+          reason: "Employee is already a member of this organization",
+        };
+      }
     }
 
     const inviterEmail = userRecord.email;
@@ -232,7 +233,7 @@ async function tryCreateOrgInvitationSoft(
     };
   }
 
-  const existingUser = await findUserByEmailLoose(ctx, email);
+  const existingUser = await findUserByEmail(ctx, email);
 
   if (existingUser) {
     const existingUserOrg = await ctx.db
@@ -243,11 +244,16 @@ async function tryCreateOrgInvitationSoft(
       .first();
 
     if (existingUserOrg) {
-      return {
-        kind: "skipped",
-        email,
-        reason: "User is already a member of this organization",
-      };
+      if (
+        normalizeOrgMembershipAccessStatus(existingUserOrg.accessStatus) !==
+        "removed"
+      ) {
+        return {
+          kind: "skipped",
+          email,
+          reason: "User is already a member of this organization",
+        };
+      }
     }
 
     if (!confirmInviteToExistingPlinthUser) {
@@ -637,7 +643,7 @@ export const checkUserExists = query({
     ) {
       throw new Error("Not authorized");
     }
-    const user = await findUserByEmailLoose(ctx, args.email);
+    const user = await findUserByEmail(ctx, args.email);
     return !!user;
   },
 });
@@ -692,7 +698,7 @@ export const getInviteRecipientPreview = query({
       throw new Error("Email is required");
     }
 
-    const existingConvexUser = await findUserByEmailLoose(ctx, inviteEmail);
+    const existingConvexUser = await findUserByEmail(ctx, inviteEmail);
 
     let alreadyInOrg = false;
     if (existingConvexUser) {
@@ -770,28 +776,13 @@ export const acceptInvitation = mutation({
     if (!organization || organization.status === "archived") {
       throw new Error("Invitation is no longer eligible");
     }
-    if (invitation.employeeId) {
-      const employee = await ctx.db.get(
-        invitation.employeeId as Id<"employees">,
-      );
-      if (
-        !employee ||
-        employee.organizationId !== invitation.organizationId ||
-        employee.archivedAt !== undefined ||
-        employee.employment.status !== "active"
-      ) {
-        throw new Error("Invitation is no longer eligible");
-      }
-    }
-
-    // Try to get authenticated user (may not be authenticated yet for new users)
     const authUser = await authComponent.getAuthUser(ctx).catch(() => null);
-
-    // If authenticated, verify email matches (case-insensitive)
+    if (!authUser?.email) {
+      throw new Error("Not authenticated");
+    }
     if (
-      authUser &&
       normalizeInviteEmail(authUser.email) !==
-        normalizeInviteEmail(invitation.email)
+      normalizeInviteEmail(invitation.email)
     ) {
       throw new Error("Invitation email does not match your account");
     }
@@ -800,22 +791,39 @@ export const acceptInvitation = mutation({
 
     const nameToSet = invitation.inviteeName ?? args.name ?? undefined;
 
-    const existingConvexUser = await findUserByEmailLoose(
-      ctx,
-      invitation.email,
-    );
+    const authenticatedEmail = authUser.email.trim();
+    let existingConvexUser = await findUserByEmail(ctx, authenticatedEmail);
+    if (!existingConvexUser) {
+      existingConvexUser = await findUserByEmail(ctx, invitation.email);
+    }
 
     let userId: Id<"users">;
 
     if (!existingConvexUser) {
       userId = await ctx.db.insert("users", {
-        email: invitation.email,
+        email: authenticatedEmail,
+        normalizedEmail: normalizeUserEmail(authenticatedEmail),
         name: nameToSet,
         createdAt: now,
         updatedAt: now,
       });
     } else {
       userId = existingConvexUser._id;
+      if (existingConvexUser.email !== authenticatedEmail) {
+        await ctx.db.patch(userId, {
+          email: authenticatedEmail,
+          normalizedEmail: normalizeUserEmail(authenticatedEmail),
+          updatedAt: now,
+        });
+      } else if (
+        existingConvexUser.normalizedEmail !==
+        normalizeUserEmail(authenticatedEmail)
+      ) {
+        await ctx.db.patch(userId, {
+          normalizedEmail: normalizeUserEmail(authenticatedEmail),
+          updatedAt: now,
+        });
+      }
       // Keep existing Plinth account name; do not overwrite from employee invitee name.
     }
 
@@ -827,32 +835,70 @@ export const acceptInvitation = mutation({
       )
       .first();
 
-    if (existingUserOrg) {
+    if (
+      existingUserOrg &&
+      normalizeOrgMembershipAccessStatus(existingUserOrg.accessStatus) !==
+        "removed"
+    ) {
       throw new Error("Invitation is no longer eligible");
     }
-    await ctx.db.insert("userOrganizations", {
-      userId: userId,
-      organizationId: invitation.organizationId,
-      role: invitation.role,
-      employeeId: invitation.employeeId,
-      accessStatus: "active",
-      accessUpdatedAt: now,
-      accessUpdatedBy: userId,
-      joinedAt: now,
-      updatedAt: now,
-    });
+    const effectiveEmployeeId =
+      invitation.employeeId ?? existingUserOrg?.employeeId;
+    if (effectiveEmployeeId) {
+      const employee = await ctx.db.get(effectiveEmployeeId);
+      if (
+        !employee ||
+        employee.organizationId !== invitation.organizationId ||
+        employee.archivedAt !== undefined ||
+        employee.employment.status !== "active"
+      ) {
+        throw new Error("Invitation is no longer eligible");
+      }
+      const linkedMembership = await ctx.db
+        .query("userOrganizations")
+        .withIndex("by_organization_employee", (query) =>
+          query
+            .eq("organizationId", invitation.organizationId)
+            .eq("employeeId", effectiveEmployeeId),
+        )
+        .first();
+      if (
+        linkedMembership &&
+        (linkedMembership._id !== existingUserOrg?._id ||
+          normalizeOrgMembershipAccessStatus(linkedMembership.accessStatus) !==
+            "removed")
+      ) {
+        throw new Error("Invitation is no longer eligible");
+      }
+    }
+    if (existingUserOrg) {
+      await ctx.db.patch(existingUserOrg._id, {
+        role: invitation.role,
+        employeeId: effectiveEmployeeId,
+        accessStatus: "active",
+        accessUpdatedAt: now,
+        accessUpdatedBy: userId,
+        joinedAt: now,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.insert("userOrganizations", {
+        userId: userId,
+        organizationId: invitation.organizationId,
+        role: invitation.role,
+        employeeId: effectiveEmployeeId,
+        accessStatus: "active",
+        accessUpdatedAt: now,
+        accessUpdatedBy: userId,
+        joinedAt: now,
+        updatedAt: now,
+      });
+    }
 
-    // Keep users.organizationId and users.role in sync for backward compatibility / display
-    const userPatch: Record<string, unknown> = {
-      organizationId: invitation.organizationId,
-      role: invitation.role,
+    await ctx.db.patch(userId, {
       lastActiveOrganizationId: invitation.organizationId,
       updatedAt: now,
-    };
-    if (invitation.employeeId !== undefined) {
-      userPatch.employeeId = invitation.employeeId;
-    }
-    await ctx.db.patch(userId, userPatch);
+    });
 
     // Mark invitation as accepted
     await ctx.db.patch(invitation._id, {
@@ -957,6 +1003,12 @@ export const createUserForEmployee = mutation({
     if (!employee || employee.organizationId !== args.organizationId) {
       throw new Error("Employee not found");
     }
+    if (
+      employee.archivedAt !== undefined ||
+      employee.employment.status !== "active"
+    ) {
+      throw new Error("Only active employees can be invited");
+    }
 
     const now = Date.now();
 
@@ -986,7 +1038,7 @@ export const createUserForEmployee = mutation({
     }
 
     // Check if user with this email already exists
-    const existingUser = await findUserByEmailLoose(
+    const existingUser = await findUserByEmail(
       ctx,
       employee.personalInfo.email,
     );

@@ -89,7 +89,8 @@ function extractOrganizationId(pathname: string): string | null {
   const m = pathname.match(/^\/([^/]+)/);
   if (!m?.[1]) return null;
   const seg = m[1];
-  if (PUBLIC_ROUTE_SEGMENTS.includes(seg as any)) return null;
+  const publicSegments: readonly string[] = PUBLIC_ROUTE_SEGMENTS;
+  if (publicSegments.includes(seg)) return null;
   return looksLikeConvexId(seg) ? seg : null;
 }
 

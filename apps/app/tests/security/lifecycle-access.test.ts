@@ -32,6 +32,162 @@ const defaultSchedule = {
 };
 
 describe("employee lifecycle access", () => {
+  it("creates an employee record without creating a user account or membership", async () => {
+    const t = convexTest(schema, modules);
+    const hrEmail = "employee-only-hr@example.com";
+    const employeeEmail = "employee-only@example.com";
+    const organizationId = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Employee-only Org",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const hrUserId = await ctx.db.insert("users", {
+        email: hrEmail,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId: hrUserId,
+        organizationId,
+        role: "hr",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      return organizationId;
+    });
+
+    const employeeId = await t
+      .withIdentity({ email: hrEmail })
+      .mutation(api.employees.createEmployee, {
+        organizationId,
+        personalInfo: {
+          firstName: "Employee",
+          lastName: "Only",
+          email: employeeEmail,
+        },
+        employment: {
+          employeeId: "TEMP",
+          position: "Analyst",
+          department: "Operations",
+          employmentType: "regular",
+          hireDate: 1,
+          status: "active",
+        },
+        compensation: { basicSalary: 30_000, salaryType: "monthly" },
+        schedule: { defaultSchedule },
+      });
+
+    const state = await t.run(async (ctx) => ({
+      employee: await ctx.db.get(employeeId),
+      user: await ctx.db
+        .query("users")
+        .withIndex("by_email", (query) => query.eq("email", employeeEmail))
+        .unique(),
+      linkedMemberships: await ctx.db
+        .query("userOrganizations")
+        .withIndex("by_organization_employee", (query) =>
+          query
+            .eq("organizationId", organizationId)
+            .eq("employeeId", employeeId),
+        )
+        .collect(),
+    }));
+    expect(state.employee?.personalInfo.email).toBe(employeeEmail);
+    expect(state.user).toBeNull();
+    expect(state.linkedMemberships).toEqual([]);
+  });
+
+  it("soft-removes membership without deleting its linked employee record", async () => {
+    const t = convexTest(schema, modules);
+    const ownerEmail = "remove-owner@example.com";
+    const fixture = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Soft Membership Removal Org",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const ownerUserId = await ctx.db.insert("users", {
+        email: ownerEmail,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId: ownerUserId,
+        organizationId,
+        role: "owner",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      const employeeId = await ctx.db.insert("employees", {
+        organizationId,
+        personalInfo: {
+          firstName: "Linked",
+          lastName: "Employee",
+          email: "linked-remove@example.com",
+        },
+        employment: {
+          employeeId: "EMP-LINKED",
+          position: "Analyst",
+          department: "Operations",
+          employmentType: "regular",
+          hireDate: 1,
+          status: "active",
+        },
+        compensation: { basicSalary: 30_000, salaryType: "monthly" },
+        schedule: { defaultSchedule },
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const employeeUserId = await ctx.db.insert("users", {
+        email: "linked-remove@example.com",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const membershipId = await ctx.db.insert("userOrganizations", {
+        userId: employeeUserId,
+        organizationId,
+        employeeId,
+        role: "employee",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      return { organizationId, employeeId, employeeUserId, membershipId };
+    });
+
+    await t
+      .withIdentity({ email: ownerEmail })
+      .mutation(api.organizations.removeUserFromOrganization, {
+        organizationId: fixture.organizationId,
+        userId: fixture.employeeUserId,
+      });
+
+    await expect(
+      t
+        .withIdentity({ email: ownerEmail })
+        .mutation(api.organizations.updateUserRoleInOrganization, {
+          organizationId: fixture.organizationId,
+          userId: fixture.employeeUserId,
+          role: "manager",
+        }),
+    ).rejects.toThrow("Removed members must rejoin through an invitation");
+
+    const state = await t.run(async (ctx) => ({
+      employee: await ctx.db.get(fixture.employeeId),
+      membership: await ctx.db.get(fixture.membershipId),
+      user: await ctx.db.get(fixture.employeeUserId),
+    }));
+    expect(state.employee?._id).toBe(fixture.employeeId);
+    expect(state.user?._id).toBe(fixture.employeeUserId);
+    expect(state.membership).toMatchObject({
+      employeeId: fixture.employeeId,
+      accessStatus: "removed",
+    });
+  });
+
   it("does not authorize a user without an organization membership", async () => {
     const t = convexTest(schema, modules);
     const email = "legacy-admin@example.com";
@@ -63,6 +219,60 @@ describe("employee lifecycle access", () => {
         name: "Unauthorized rename",
       }),
     ).rejects.toThrow("Not authorized");
+  });
+
+  it("lets authenticated accounts create organizations regardless of current membership", async () => {
+    const t = convexTest(schema, modules);
+    const identities = {
+      employee: "org-creator-employee@example.com",
+      alumni: "org-creator-alumni@example.com",
+      independent: "org-creator-independent@example.com",
+    };
+    await t.run(async (ctx) => {
+      const existingOrganizationId = await ctx.db.insert("organizations", {
+        name: "Existing Employer",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      for (const [membership, email] of Object.entries(identities)) {
+        const userId = await ctx.db.insert("users", {
+          email,
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        if (membership !== "independent") {
+          await ctx.db.insert("userOrganizations", {
+            userId,
+            organizationId: existingOrganizationId,
+            role: "employee",
+            accessStatus: membership === "alumni" ? "alumni" : "active",
+            joinedAt: 1,
+            updatedAt: 1,
+          });
+        }
+      }
+    });
+
+    const createdOrganizationIds = await Promise.all(
+      Object.entries(identities).map(([label, email]) =>
+        t.withIdentity({ email }).mutation(api.organizations.createOrganization, {
+          name: `${label} Created Org`,
+        }),
+      ),
+    );
+
+    for (let index = 0; index < createdOrganizationIds.length; index += 1) {
+      const memberships = await t
+        .withIdentity({ email: Object.values(identities)[index] })
+        .query(api.organizations.getUserOrganizations, {});
+      expect(memberships).toContainEqual(
+        expect.objectContaining({
+          _id: createdOrganizationIds[index],
+          role: "owner",
+          accessStatus: "active",
+        }),
+      );
+    }
   });
 
   it("uses the organization membership role", async () => {
@@ -200,7 +410,7 @@ describe("employee lifecycle access", () => {
     });
   });
 
-  it("links and moves the organization membership to alumni when an employee resigns", async () => {
+  it("moves an explicitly linked organization membership to alumni when an employee resigns", async () => {
     const t = convexTest(schema, modules);
     const hrEmail = "hr@example.com";
     const employeeEmail = "employee@example.com";
@@ -255,6 +465,7 @@ describe("employee lifecycle access", () => {
       const employeeMembershipId = await ctx.db.insert("userOrganizations", {
         userId: employeeUserId,
         organizationId,
+        employeeId,
         role: "employee",
         accessStatus: "active",
         joinedAt: 1,
@@ -284,6 +495,248 @@ describe("employee lifecycle access", () => {
     );
     expect(membership?.employeeId).toBe(fixture.employeeId);
     expect(membership?.accessStatus).toBe("alumni");
+  });
+
+  it("does not infer an employee membership link from a matching email", async () => {
+    const t = convexTest(schema, modules);
+    const hrEmail = "explicit-link-hr@example.com";
+    const employeeEmail = "unlinked-employee@example.com";
+
+    const fixture = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Explicit Link Org",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const hrUserId = await ctx.db.insert("users", {
+        email: hrEmail,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const employeeUserId = await ctx.db.insert("users", {
+        email: employeeEmail,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId: hrUserId,
+        organizationId,
+        role: "hr",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      const membershipId = await ctx.db.insert("userOrganizations", {
+        userId: employeeUserId,
+        organizationId,
+        role: "employee",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      const employeeId = await ctx.db.insert("employees", {
+        organizationId,
+        personalInfo: {
+          firstName: "Unlinked",
+          lastName: "Employee",
+          email: employeeEmail,
+        },
+        employment: {
+          employeeId: "EMP-UNLINKED",
+          position: "Analyst",
+          department: "Operations",
+          employmentType: "regular",
+          hireDate: 1,
+          status: "active",
+        },
+        compensation: { basicSalary: 30_000, salaryType: "monthly" },
+        schedule: { defaultSchedule },
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return { employeeId, membershipId };
+    });
+
+    await t.withIdentity({ email: hrEmail }).mutation(api.employees.updateEmployee, {
+      employeeId: fixture.employeeId,
+      employment: {
+        employeeId: "EMP-UNLINKED",
+        position: "Analyst",
+        department: "Operations",
+        employmentType: "regular",
+        hireDate: 1,
+        separationDate: 2,
+        status: "resigned",
+      },
+    });
+
+    const membership = await t.run((ctx) => ctx.db.get(fixture.membershipId));
+    expect(membership?.employeeId).toBeUndefined();
+    expect(membership?.accessStatus).toBe("active");
+  });
+
+  it("keeps a separated employee membership in alumni access when the employee is archived", async () => {
+    const t = convexTest(schema, modules);
+    const hrEmail = "archive-hr@example.com";
+
+    const fixture = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Archive Alumni Org",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const hrUserId = await ctx.db.insert("users", {
+        email: hrEmail,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId: hrUserId,
+        organizationId,
+        role: "hr",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      const employeeId = await ctx.db.insert("employees", {
+        organizationId,
+        personalInfo: {
+          firstName: "Past",
+          lastName: "Employee",
+          email: "past-employee@example.com",
+        },
+        employment: {
+          employeeId: "EMP-PAST",
+          position: "Analyst",
+          department: "Operations",
+          employmentType: "regular",
+          hireDate: 1,
+          separationDate: 2,
+          status: "resigned",
+        },
+        compensation: { basicSalary: 30_000, salaryType: "monthly" },
+        schedule: { defaultSchedule },
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const employeeUserId = await ctx.db.insert("users", {
+        email: "past-employee@example.com",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const membershipId = await ctx.db.insert("userOrganizations", {
+        userId: employeeUserId,
+        organizationId,
+        employeeId,
+        role: "employee",
+        accessStatus: "alumni",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      return { employeeId, membershipId };
+    });
+
+    await t.withIdentity({ email: hrEmail }).mutation(api.employees.deleteEmployee, {
+      employeeId: fixture.employeeId,
+    });
+
+    const state = await t.run(async (ctx) => ({
+      employee: await ctx.db.get(fixture.employeeId),
+      membership: await ctx.db.get(fixture.membershipId),
+    }));
+    expect(state.employee?.archivedAt).toBeTypeOf("number");
+    expect(state.membership?.accessStatus).toBe("alumni");
+
+    await t.withIdentity({ email: hrEmail }).mutation(api.employees.updateEmployee, {
+      employeeId: fixture.employeeId,
+      employment: {
+        employeeId: "EMP-PAST",
+        position: "Analyst",
+        department: "Operations",
+        employmentType: "regular",
+        hireDate: 1,
+        status: "active",
+      },
+    });
+
+    await expect(
+      t.run((ctx) => ctx.db.get(fixture.membershipId)),
+    ).resolves.toMatchObject({ accessStatus: "disabled" });
+  });
+
+  it("cancels pending invitations when an employee separates", async () => {
+    const t = convexTest(schema, modules);
+    const hrEmail = "separation-hr@example.com";
+
+    const fixture = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Invitation Separation Org",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const hrUserId = await ctx.db.insert("users", {
+        email: hrEmail,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId: hrUserId,
+        organizationId,
+        role: "hr",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      const employeeId = await ctx.db.insert("employees", {
+        organizationId,
+        personalInfo: {
+          firstName: "Pending",
+          lastName: "Invite",
+          email: "pending-invite@example.com",
+        },
+        employment: {
+          employeeId: "EMP-PENDING",
+          position: "Analyst",
+          department: "Operations",
+          employmentType: "regular",
+          hireDate: 1,
+          status: "active",
+        },
+        compensation: { basicSalary: 30_000, salaryType: "monthly" },
+        schedule: { defaultSchedule },
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const invitationId = await ctx.db.insert("invitations", {
+        organizationId,
+        employeeId,
+        email: "pending-invite@example.com",
+        role: "employee",
+        invitedBy: hrUserId,
+        tokenHash: "pending-token-hash",
+        status: "pending",
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1,
+      });
+      return { employeeId, invitationId };
+    });
+
+    await t.withIdentity({ email: hrEmail }).mutation(api.employees.updateEmployee, {
+      employeeId: fixture.employeeId,
+      employment: {
+        employeeId: "EMP-PENDING",
+        position: "Analyst",
+        department: "Operations",
+        employmentType: "regular",
+        hireDate: 1,
+        separationDate: 2,
+        status: "terminated",
+      },
+    });
+
+    await expect(
+      t.run((ctx) => ctx.db.get(fixture.invitationId)),
+    ).resolves.toMatchObject({ status: "cancelled" });
   });
 
   it("does not return organization chat users to an alumni member", async () => {

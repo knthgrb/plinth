@@ -10,6 +10,18 @@ export async function getFileUrl(
   return FilesService.getFileUrl(organizationId, storageId);
 }
 
+export async function getDocumentAttachmentUrl(
+  organizationId: string,
+  documentId: string,
+  storageId: string,
+): Promise<string> {
+  return FilesService.getDocumentAttachmentUrl(
+    organizationId,
+    documentId,
+    storageId,
+  );
+}
+
 /**
  * Get a presigned URL for an announcement attachment (private to org).
  * Only returns a URL if the user is in the organization and the attachment
