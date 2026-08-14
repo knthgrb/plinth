@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import {
@@ -18,6 +18,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useOrganization } from "@/hooks/organization-context";
 import { Id } from "@/convex/_generated/dataModel";
 import { useToast } from "@/components/ui/use-toast";
+import { errorMessage } from "@/lib/chat/types";
 
 interface NewChatModalProps {
   isOpen: boolean;
@@ -39,17 +40,16 @@ export function NewChatModal({
 }: NewChatModalProps) {
   const { currentOrganizationId } = useOrganization();
   const { toast } = useToast();
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [messageAs, setMessageAs] = useState<"self" | "admin">("self");
 
   const currentUser = useQuery(
-    (api as any).organizations.getCurrentUser,
+    api.organizations.getCurrentUser,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
 
   const organizationUsers = useQuery(
-    (api as any).chat.getOrganizationUsers,
+    api.chat.getOrganizationUsers,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
   );
 
@@ -59,10 +59,18 @@ export function NewChatModal({
     currentUser?.role === "hr";
 
   const getOrCreateConversationMutation = useMutation(
-    (api as any).chat.getOrCreateConversation
+    api.chat.getOrCreateConversation,
   );
 
-  const filteredUsers = organizationUsers?.filter((user: any) => {
+  const handleOpenChange = (open: boolean) => {
+    if (!open) {
+      setSearchQuery("");
+      setMessageAs("self");
+    }
+    onOpenChange(open);
+  };
+
+  const filteredUsers = organizationUsers?.filter((user) => {
     if (!searchQuery) return true;
     const searchLower = searchQuery.toLowerCase();
     return (
@@ -72,9 +80,8 @@ export function NewChatModal({
   });
 
   const handleSelectUser = (userId: string) => {
-    setSelectedUserId(null);
     setSearchQuery("");
-    onOpenChange(false);
+    handleOpenChange(false);
     if (onSelectParticipant) {
       onSelectParticipant(userId, {
         asAdmin: canMessageAsAdmin && messageAs === "admin",
@@ -90,26 +97,18 @@ export function NewChatModal({
             : "standard",
       })
         .then(onSuccess)
-        .catch((err: any) => {
+        .catch((error: unknown) => {
           toast({
             title: "Error",
-            description: err.message || "Failed to start chat",
+            description: errorMessage(error, "Failed to start chat"),
             variant: "destructive",
           });
         });
     }
   };
 
-  useEffect(() => {
-    if (!isOpen) {
-      setSelectedUserId(null);
-      setSearchQuery("");
-      setMessageAs("self");
-    }
-  }, [isOpen]);
-
   return (
-    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>New Chat</DialogTitle>
@@ -157,7 +156,7 @@ export function NewChatModal({
             />
             <div className="max-h-96 overflow-y-auto border rounded-md p-2 space-y-1">
               {filteredUsers && filteredUsers.length > 0 ? (
-                filteredUsers.map((user: any) => (
+                filteredUsers.map((user) => (
                   <button
                     key={user._id}
                     onClick={() => handleSelectUser(user._id)}

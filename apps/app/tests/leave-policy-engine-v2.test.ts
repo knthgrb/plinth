@@ -7,6 +7,12 @@ import {
 } from "@/lib/leave/policy-engine";
 import type { LeavePolicyRules } from "@/lib/leave/types";
 
+const MANILA_OFFSET_MILLISECONDS = 8 * 60 * 60 * 1000;
+
+function manilaMidnight(year: number, monthIndex: number, day: number): number {
+  return Date.UTC(year, monthIndex, day) - MANILA_OFFSET_MILLISECONDS;
+}
+
 const privateSil: LeavePolicyRules = {
   accountBehavior: "shared_pool",
   poolKey: "company_leave",
@@ -56,6 +62,16 @@ describe("leave policy engine v2", () => {
     ).toMatchObject({ granted: 8, reserved: 2, used: 1, available: 5 });
   });
 
+  it("reduces used units when a positive restoration is posted", () => {
+    expect(
+      projectLeaveBalance([
+        { kind: "grant", amount: 5 },
+        { kind: "usage", amount: -3 },
+        { kind: "restoration", amount: 2 },
+      ]),
+    ).toMatchObject({ granted: 5, used: 1, available: 4 });
+  });
+
   it("rejects a pooled policy without a pool key", () => {
     expect(() =>
       validatePolicyRules({ ...privateSil, poolKey: undefined }),
@@ -80,6 +96,24 @@ describe("leave policy engine v2", () => {
     ).toBe(6);
   });
 
+  it("uses Manila-local January 1 and December 31 for calendar-month proration", () => {
+    expect(
+      calculateEntitlement({
+        rules: {
+          ...privateSil,
+          eligibility: { basis: "hire_date", completedServiceMonths: 0 },
+          annualUnits: 12,
+          prorationMethod: "calendar_months",
+          roundingIncrement: 1,
+        },
+        hireDate: manilaMidnight(2026, 0, 1),
+        periodStart: manilaMidnight(2026, 0, 1),
+        periodEnd: manilaMidnight(2026, 11, 31),
+        asOf: manilaMidnight(2026, 0, 1),
+      }),
+    ).toBe(12);
+  });
+
   it("prorates annual units by actual days", () => {
     expect(
       calculateEntitlement({
@@ -96,6 +130,24 @@ describe("leave policy engine v2", () => {
         asOf: Date.UTC(2026, 6, 2),
       }),
     ).toBe(183);
+  });
+
+  it("uses Manila-local January 1 and December 31 for actual-day proration", () => {
+    expect(
+      calculateEntitlement({
+        rules: {
+          ...privateSil,
+          eligibility: { basis: "hire_date", completedServiceMonths: 0 },
+          annualUnits: 366,
+          prorationMethod: "actual_days",
+          roundingIncrement: 1,
+        },
+        hireDate: manilaMidnight(2024, 0, 1),
+        periodStart: manilaMidnight(2024, 0, 1),
+        periodEnd: manilaMidnight(2024, 11, 31),
+        asOf: manilaMidnight(2024, 0, 1),
+      }),
+    ).toBe(366);
   });
 
   it("uses the fifteenth-day rule for legacy proration", () => {
@@ -125,6 +177,78 @@ describe("leave policy engine v2", () => {
         asOf: Date.UTC(2026, 6, 16),
       }),
     ).toBe(5);
+  });
+
+  it("uses the Manila-local day when applying the legacy fifteenth-day rule", () => {
+    expect(
+      calculateEntitlement({
+        rules: {
+          ...privateSil,
+          eligibility: { basis: "hire_date", completedServiceMonths: 0 },
+          annualUnits: 12,
+          prorationMethod: "legacy_15th_day",
+          roundingIncrement: 1,
+        },
+        hireDate: manilaMidnight(2026, 6, 16),
+        periodStart: manilaMidnight(2026, 0, 1),
+        periodEnd: manilaMidnight(2026, 11, 31),
+        asOf: manilaMidnight(2026, 6, 16),
+      }),
+    ).toBe(5);
+  });
+
+  it("starts calendar-month proration after completed service months", () => {
+    expect(
+      calculateEntitlement({
+        rules: {
+          ...privateSil,
+          eligibility: { basis: "hire_date", completedServiceMonths: 3 },
+          annualUnits: 12,
+          prorationMethod: "calendar_months",
+          roundingIncrement: 1,
+        },
+        hireDate: manilaMidnight(2026, 2, 10),
+        periodStart: manilaMidnight(2026, 0, 1),
+        periodEnd: manilaMidnight(2026, 11, 31),
+        asOf: manilaMidnight(2026, 5, 10),
+      }),
+    ).toBe(7);
+  });
+
+  it("starts actual-day proration after completed service months", () => {
+    expect(
+      calculateEntitlement({
+        rules: {
+          ...privateSil,
+          eligibility: { basis: "hire_date", completedServiceMonths: 3 },
+          annualUnits: 365,
+          prorationMethod: "actual_days",
+          roundingIncrement: 1,
+        },
+        hireDate: manilaMidnight(2026, 2, 10),
+        periodStart: manilaMidnight(2026, 0, 1),
+        periodEnd: manilaMidnight(2026, 11, 31),
+        asOf: manilaMidnight(2026, 5, 10),
+      }),
+    ).toBe(205);
+  });
+
+  it("starts legacy proration after completed service months", () => {
+    expect(
+      calculateEntitlement({
+        rules: {
+          ...privateSil,
+          eligibility: { basis: "hire_date", completedServiceMonths: 3 },
+          annualUnits: 12,
+          prorationMethod: "legacy_15th_day",
+          roundingIncrement: 1,
+        },
+        hireDate: manilaMidnight(2026, 2, 10),
+        periodStart: manilaMidnight(2026, 0, 1),
+        periodEnd: manilaMidnight(2026, 11, 31),
+        asOf: manilaMidnight(2026, 5, 10),
+      }),
+    ).toBe(7);
   });
 
   it("rounds entitlement once at the policy increment", () => {

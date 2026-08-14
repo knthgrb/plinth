@@ -12,9 +12,9 @@ import dynamic from "next/dynamic";
 import { ChevronLeft } from "lucide-react";
 import { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
-import { chatCache } from "@/services/chat-cache-service";
 import { ChatSessionKeysProvider } from "./_components/chat-session-keys-context";
 import { directConversationTitle } from "@/lib/chat-thread-display";
+import type { ChatConversation } from "@/lib/chat/types";
 
 const NewChatModal = dynamic(
   () => import("./_components/new-chat-modal").then((m) => m.NewChatModal),
@@ -33,6 +33,13 @@ const CreateChannelModal = dynamic(
 );
 const AddMembersModal = dynamic(
   () => import("./_components/add-members-modal").then((m) => m.AddMembersModal),
+  { ssr: false },
+);
+const BrowseChannelsModal = dynamic(
+  () =>
+    import("./_components/browse-channels-modal").then(
+      (module) => module.BrowseChannelsModal,
+    ),
   { ssr: false },
 );
 
@@ -58,27 +65,27 @@ export default function ChatPage() {
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const [addMembersOpen, setAddMembersOpen] = useState(false);
-  const [listOrChatMode, setListOrChatMode] = useState(true); // true = show list first on small screens
+  const [browseChannelsOpen, setBrowseChannelsOpen] = useState(false);
 
   const user = useQuery(
-    (api as any).organizations.getCurrentUser,
+    api.organizations.getCurrentUser,
     effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
 
   const selectedConversation = useQuery(
-    (api as any).chat.getConversationById,
+    api.chat.getConversationById,
     effectiveOrganizationId && selectedConversationId
       ? {
           organizationId: effectiveOrganizationId,
-          conversationId: selectedConversationId,
+          conversationId: selectedConversationId as Id<"conversations">,
         }
       : "skip",
   );
 
   const pendingParticipantUser = useQuery(
-    (api as any).organizations.getUserById,
+    api.organizations.getUserById,
     effectiveOrganizationId && selectedPendingParticipantId
       ? {
           userId: selectedPendingParticipantId as Id<"users">,
@@ -98,19 +105,6 @@ export default function ChatPage() {
     return () => mq.removeEventListener("change", handle);
   }, []);
 
-  // On small screen, when a conversation or pending DM is in URL, show chat view
-  useEffect(() => {
-    if (isSmallScreen && (selectedConversationId || selectedPendingParticipantId))
-      setListOrChatMode(false);
-  }, [isSmallScreen, selectedConversationId, selectedPendingParticipantId]);
-
-  // Initialize IndexedDB cache with encryption for this org
-  useEffect(() => {
-    if (effectiveOrganizationId) {
-      chatCache.initialize(effectiveOrganizationId).catch(console.error);
-    }
-  }, [effectiveOrganizationId]);
-
   const setUrlParams = (
     conversation: string | null,
     dm: string | null,
@@ -126,54 +120,48 @@ export default function ChatPage() {
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   };
 
-  const handleSelectConversation = (id: string) => {
+  const handleSelectConversation = (id: Id<"conversations">) => {
     setUrlParams(id, null);
-    if (isSmallScreen) setListOrChatMode(false);
   };
 
-  const handleSelectParticipant = (participantId: string) => {
-    setUrlParams(null, participantId);
+  const handleSelectParticipant = (
+    participantId: string,
+    options?: { asAdmin?: boolean },
+  ) => {
+    setUrlParams(null, participantId, options?.asAdmin);
     setNewChatOpen(false);
-    if (isSmallScreen) setListOrChatMode(false);
   };
 
   const handleBackToList = () => {
-    setListOrChatMode(true);
     setUrlParams(null, null);
   };
 
   const handleCloseConversation = () => {
     setUrlParams(null, null);
-    if (isSmallScreen) setListOrChatMode(true);
   };
 
-  const handleFirstMessageSent = (conversationId: string) => {
+  const handleFirstMessageSent = (conversationId: Id<"conversations">) => {
     setUrlParams(conversationId, null);
   };
 
-  const handleSuccessNewChat = (id: string) => {
-    setUrlParams(id, null);
-    setNewChatOpen(false);
-    if (isSmallScreen) setListOrChatMode(false);
-  };
-
-  const handleSuccessGroup = (id: string) => {
+  const handleSuccessGroup = (id: Id<"conversations">) => {
     setUrlParams(id, null);
     setCreateGroupOpen(false);
-    if (isSmallScreen) setListOrChatMode(false);
   };
 
-  const handleSuccessChannel = (id: string) => {
+  const handleSuccessChannel = (id: Id<"conversations">) => {
     setUrlParams(id, null);
     setCreateChannelOpen(false);
-    if (isSmallScreen) setListOrChatMode(false);
   };
 
   if (!effectiveOrganizationId) return null;
 
   // Small screen: show either list (first) or chat (when a conversation or pending DM is selected)
-  const showList = !isSmallScreen || listOrChatMode;
-  const showChat = !isSmallScreen || !listOrChatMode || !!selectedPendingParticipantId;
+  const hasSelection = Boolean(
+    selectedConversationId || selectedPendingParticipantId,
+  );
+  const showList = !isSmallScreen || !hasSelection;
+  const showChat = !isSmallScreen || hasSelection;
 
   return (
     <MainLayout>
@@ -195,7 +183,12 @@ export default function ChatPage() {
             onSelectConversation={handleSelectConversation}
             onNewChat={() => setNewChatOpen(true)}
             onCreateGroupChat={() => setCreateGroupOpen(true)}
-            onCreateChannel={() => setCreateChannelOpen(true)}
+            onCreateChannel={
+              user?.role === "owner" || user?.role === "admin" || user?.role === "hr"
+                ? () => setCreateChannelOpen(true)
+                : undefined
+            }
+            onBrowseChannels={() => setBrowseChannelsOpen(true)}
             currentUserId={user?._id}
           />
         </aside>
@@ -233,7 +226,7 @@ export default function ChatPage() {
                     : selectedConversation.type === "group"
                       ? selectedConversation.name
                       : directConversationTitle(
-                          selectedConversation,
+                            selectedConversation as ChatConversation,
                           user?._id,
                         )
                   : pendingParticipantUser
@@ -255,8 +248,14 @@ export default function ChatPage() {
             </div>
           )}
           <ChatArea
+            key={
+              selectedConversationId ??
+              (selectedPendingParticipantId
+                ? `pending:${selectedPendingParticipantId}:${pendingDmAsAdmin}`
+                : "empty")
+            }
             conversationId={selectedConversationId}
-            conversation={selectedConversation ?? null}
+            conversation={(selectedConversation as ChatConversation | null | undefined) ?? null}
             currentUserId={user?._id}
             pendingParticipant={
               selectedPendingParticipantId && pendingParticipantUser
@@ -269,16 +268,16 @@ export default function ChatPage() {
             onFirstMessageSent={handleFirstMessageSent}
             onAddMembers={
               selectedConversation?.type === "group" ||
-              selectedConversation?.type === "channel"
+              (selectedConversation?.type === "channel" &&
+                (user?.role === "owner" ||
+                  user?.role === "admin" ||
+                  user?.role === "hr"))
                 ? () => setAddMembersOpen(true)
                 : undefined
             }
             onCloseConversation={handleCloseConversation}
-            onDeleteConversation={(id) => {
-              if (selectedConversationId === id) {
-                setUrlParams(null, null);
-                if (isSmallScreen) setListOrChatMode(true);
-              }
+            onConversationUnavailable={() => {
+              setUrlParams(null, null);
             }}
           />
         </main>
@@ -301,13 +300,24 @@ export default function ChatPage() {
         onOpenChange={setCreateChannelOpen}
         onSuccess={handleSuccessChannel}
       />
+      <BrowseChannelsModal
+        organizationId={effectiveOrganizationId}
+        open={browseChannelsOpen}
+        onOpenChange={setBrowseChannelsOpen}
+        onJoined={(id) => {
+          setUrlParams(id, null);
+          setBrowseChannelsOpen(false);
+        }}
+      />
       {selectedConversationId && (
         <AddMembersModal
           isOpen={addMembersOpen}
           onOpenChange={setAddMembersOpen}
           conversationId={selectedConversationId}
           existingParticipantIds={
-            selectedConversation?.participants?.map((p: any) => p._id) ?? []
+            selectedConversation?.participants?.flatMap((participant) =>
+              participant ? [participant._id] : [],
+            ) ?? []
           }
         />
       )}

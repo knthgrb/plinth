@@ -394,6 +394,7 @@ export default defineSchema({
       v.literal("chat_attachment"),
       v.literal("document_attachment"),
       v.literal("employee_requirement"),
+      v.literal("evaluation_attachment"),
       v.literal("leave_attachment"),
       v.literal("memo_attachment"),
       v.literal("payslip_pdf"),
@@ -430,6 +431,7 @@ export default defineSchema({
       v.literal("chat_attachment"),
       v.literal("document_attachment"),
       v.literal("employee_requirement"),
+      v.literal("evaluation_attachment"),
       v.literal("leave_attachment"),
       v.literal("memo_attachment"),
       v.literal("payslip_pdf"),
@@ -456,6 +458,7 @@ export default defineSchema({
       v.literal("memo"),
       v.literal("message"),
       v.literal("document"),
+      v.literal("evaluation"),
       v.literal("leave_request"),
       v.literal("accounting_cost_item"),
     ),
@@ -463,6 +466,7 @@ export default defineSchema({
       v.id("memos"),
       v.id("messages"),
       v.id("documents"),
+      v.id("evaluations"),
       v.id("leaveRequests"),
       v.id("accountingCostItems"),
     ),
@@ -471,6 +475,7 @@ export default defineSchema({
       v.literal("memo_attachment"),
       v.literal("chat_attachment"),
       v.literal("document_attachment"),
+      v.literal("evaluation_attachment"),
       v.literal("leave_attachment"),
       v.literal("accounting_receipt"),
     ),
@@ -674,6 +679,30 @@ export default defineSchema({
 
   organizationLeaveSettings: defineTable({
     organizationId: v.id("organizations"),
+    employmentSector: v.optional(
+      v.union(v.literal("private"), v.literal("government")),
+    ),
+    policyYearBasis: v.optional(v.literal("calendar_year")),
+    requestPrecision: v.optional(
+      v.union(v.literal("day"), v.literal("half_day"), v.literal("hour")),
+    ),
+    approvalSignatureMode: v.optional(
+      v.union(
+        v.literal("none"),
+        v.literal("stored_signature"),
+        v.literal("per_decision"),
+      ),
+    ),
+    migrationState: v.optional(
+      v.union(
+        v.literal("awaiting_sector_confirmation"),
+        v.literal("pending"),
+        v.literal("ready"),
+        v.literal("active"),
+      ),
+    ),
+    activePolicyEngineVersion: v.optional(v.number()),
+    policyEngineCutoverAt: v.optional(v.number()),
     proratedLeave: v.optional(v.boolean()),
     leaveAccrualFrequency: v.optional(
       v.union(
@@ -742,6 +771,24 @@ export default defineSchema({
   employeeLeaveBalances: defineTable({
     organizationId: v.id("organizations"),
     employeeId: v.id("employees"),
+    policyId: v.optional(v.id("leavePolicies")),
+    policyVersionId: v.optional(v.id("leavePolicyVersions")),
+    poolKey: v.optional(v.string()),
+    periodStart: v.optional(v.number()),
+    periodEnd: v.optional(v.number()),
+    granted: v.optional(v.number()),
+    reserved: v.optional(v.number()),
+    converted: v.optional(v.number()),
+    expired: v.optional(v.number()),
+    projectionVersion: v.optional(v.number()),
+    lastLedgerEntryId: v.optional(v.id("leaveLedgerEntries")),
+    engineStatus: v.optional(
+      v.union(
+        v.literal("open"),
+        v.literal("closed"),
+        v.literal("reconciliation_required"),
+      ),
+    ),
     year: v.number(),
     leaveTypeKey: v.string(),
     total: v.number(),
@@ -766,7 +813,22 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_employee_year_type", ["employeeId", "year", "leaveTypeKey"])
-    .index("by_organization_year", ["organizationId", "year"]),
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_year", ["organizationId", "year"])
+    .index("by_organization_employee_policy_period", [
+      "organizationId",
+      "employeeId",
+      "policyId",
+      "periodStart",
+      "periodEnd",
+    ])
+    .index("by_organization_employee_pool_period", [
+      "organizationId",
+      "employeeId",
+      "poolKey",
+      "periodStart",
+      "periodEnd",
+    ]),
 
   employeeRequirements: defineTable({
     organizationId: v.id("organizations"),
@@ -1311,6 +1373,7 @@ export default defineSchema({
       ),
     ),
     remarks: v.optional(v.string()),
+    importKey: v.optional(v.string()),
     status: v.union(
       v.literal("present"),
       v.literal("absent"),
@@ -1326,7 +1389,45 @@ export default defineSchema({
     .index("by_employee", ["employeeId"])
     .index("by_date", ["date"])
     .index("by_organization", ["organizationId"])
-    .index("by_employee_date", ["employeeId", "date"]),
+    .index("by_employee_date", ["employeeId", "date"])
+    .index("by_organization_date", ["organizationId", "date"])
+    .index("by_organization_import_key", ["organizationId", "importKey"]),
+
+  attendanceAuditLogs: defineTable({
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    attendanceId: v.id("attendance"),
+    payrollRunId: v.optional(v.id("payrollRuns")),
+    actorUserId: v.id("users"),
+    actorRole: v.union(
+      v.literal("owner"),
+      v.literal("admin"),
+      v.literal("hr"),
+      v.literal("manager"),
+      v.literal("employee"),
+      v.literal("accounting"),
+    ),
+    action: v.union(
+      v.literal("create"),
+      v.literal("update"),
+      v.literal("delete"),
+      v.literal("self_punch_in"),
+      v.literal("self_punch_out"),
+      v.literal("bulk_create"),
+      v.literal("bulk_update"),
+      v.literal("recalculate"),
+      v.literal("duplicate_cleanup"),
+      v.literal("holiday_sync"),
+      v.literal("payroll_sync"),
+    ),
+    correctionReason: v.optional(v.string()),
+    beforeJson: v.optional(v.string()),
+    afterJson: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_organization_created", ["organizationId", "createdAt"])
+    .index("by_employee_created", ["employeeId", "createdAt"])
+    .index("by_attendance_created", ["attendanceId", "createdAt"]),
 
   // Shifts table (per-org; each shift has schedule + lunch window for late/undertime)
   shifts: defineTable({
@@ -1551,6 +1652,13 @@ export default defineSchema({
   })
     .index("by_organization", ["organizationId"])
     .index("by_period", ["cutoffStart", "cutoffEnd"])
+    .index("by_organization_cutoff_start", ["organizationId", "cutoffStart"])
+    .index("by_organization_status_run_type_cutoff_end", [
+      "organizationId",
+      "status",
+      "runType",
+      "cutoffEnd",
+    ])
     .index("by_organization_runType_year", [
       "organizationId",
       "runType",
@@ -1750,6 +1858,12 @@ export default defineSchema({
     netPay: v.union(v.number(), v.string()),
     daysWorked: v.union(v.number(), v.string()),
     absences: v.union(v.number(), v.string()),
+    statutoryBenefitSupportedLeaveDays: v.optional(
+      v.union(v.number(), v.string()),
+    ),
+    statutoryBenefitSupportedLeavePay: v.optional(
+      v.union(v.number(), v.string()),
+    ),
     lateHours: v.union(v.number(), v.string()),
     undertimeHours: v.union(v.number(), v.string()),
     overtimeHours: v.union(v.number(), v.string()),
@@ -1820,6 +1934,7 @@ export default defineSchema({
     .index("by_employee", ["employeeId"])
     .index("by_employee_periodStart", ["employeeId", "periodStart"])
     .index("by_payroll_run", ["payrollRunId"])
+    .index("by_payroll_run_employee", ["payrollRunId", "employeeId"])
     .index("by_organization", ["organizationId"])
     .index("by_period", ["period"]),
 
@@ -1868,15 +1983,66 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),
 
+  evaluationSchedules: defineTable({
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    templateId: v.optional(v.id("evaluationTemplates")),
+    title: v.string(),
+    cadenceKind: v.union(
+      v.literal("quarterly"),
+      v.literal("semiannual"),
+      v.literal("annual"),
+      v.literal("custom"),
+    ),
+    intervalMonths: v.optional(v.number()),
+    nextDueAt: v.number(),
+    reviewerIds: v.array(v.id("users")),
+    isActive: v.boolean(),
+    createdBy: v.id("users"),
+    updatedBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_employee", ["employeeId"])
+    .index("by_organization_active_due", [
+      "organizationId",
+      "isActive",
+      "nextDueAt",
+    ]),
+
   // Evaluations table (employee performance evaluations)
   evaluations: defineTable({
     organizationId: v.id("organizations"),
     employeeId: v.id("employees"),
     templateId: v.optional(v.id("evaluationTemplates")),
+    scheduleId: v.optional(v.id("evaluationSchedules")),
+    status: v.optional(
+      v.union(
+        v.literal("scheduled"),
+        v.literal("completed"),
+        v.literal("cancelled"),
+      ),
+    ),
+    scheduledFor: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    cancelledAt: v.optional(v.number()),
+    cancelledBy: v.optional(v.id("users")),
+    cancellationReason: v.optional(v.string()),
+    nextEvaluationId: v.optional(v.id("evaluations")),
     evaluationDate: v.number(), // Unix timestamp
     label: v.string(), // e.g. "1st month", "6th month", "Annual"
     reviewCycle: v.optional(v.string()),
     rating: v.optional(v.number()), // 1-5 rating for this evaluation
+    outcome: v.optional(
+      v.union(
+        v.literal("exceeds_expectations"),
+        v.literal("meets_expectations"),
+        v.literal("partially_meets_expectations"),
+        v.literal("does_not_meet_expectations"),
+      ),
+    ),
+    followUpDate: v.optional(v.number()),
     attachmentUrl: v.optional(v.string()), // link to external file (Drive, etc.)
     notes: v.optional(v.string()),
     selfReview: v.optional(
@@ -1901,9 +2067,304 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_organization", ["organizationId"])
-    .index("by_employee", ["employeeId"]),
+    .index("by_organization_status", ["organizationId", "status"])
+    .index("by_employee", ["employeeId"])
+    .index("by_schedule", ["scheduleId"]),
 
   // Leave requests table
+  leavePolicies: defineTable({
+    organizationId: v.id("organizations"),
+    sourceKey: v.string(),
+    name: v.string(),
+    description: v.optional(v.string()),
+    category: v.union(
+      v.literal("company"),
+      v.literal("statutory"),
+      v.literal("unpaid"),
+    ),
+    confidentiality: v.union(v.literal("standard"), v.literal("restricted")),
+    state: v.union(v.literal("active"), v.literal("archived")),
+    complianceRole: v.optional(v.string()),
+    createdBy: v.id("users"),
+    archivedBy: v.optional(v.id("users")),
+    archivedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_source_key", ["organizationId", "sourceKey"])
+    .index("by_organization_state", ["organizationId", "state"]),
+
+  leaveMigrationRuns: defineTable({
+    organizationId: v.id("organizations"),
+    key: v.literal("leave-engine-v2"),
+    version: v.number(),
+    status: v.union(
+      v.literal("migrating"),
+      v.literal("auditing"),
+      v.literal("ready"),
+      v.literal("reconciliation_required"),
+      v.literal("active"),
+    ),
+    cutoverCandidateAt: v.number(),
+    employmentSector: v.optional(
+      v.union(v.literal("private"), v.literal("government")),
+    ),
+    leaveTrackerMode: v.union(v.literal("general"), v.literal("by_type")),
+    proratedLeave: v.optional(v.boolean()),
+    leaveAccrualFrequency: v.optional(
+      v.union(
+        v.literal("monthly"),
+        v.literal("semi_annual"),
+        v.literal("annual"),
+      ),
+    ),
+    enableAnniversaryLeave: v.optional(v.boolean()),
+    anniversaryLeaveMaxDays: v.optional(v.number()),
+    maxConvertibleLeaveDays: v.optional(v.number()),
+    annualSil: v.optional(v.number()),
+    grantLeaveUponRegularization: v.optional(v.boolean()),
+    paidLeaveRequiresRegularization: v.optional(v.boolean()),
+    leaveGuidelines: v.optional(v.string()),
+    leaveRequestFormTemplate: v.optional(v.string()),
+    legacyLeaveTypes: v.array(
+      v.object({
+        sourceKey: v.string(),
+        name: v.string(),
+        maxDays: v.optional(v.number()),
+        isPaid: v.boolean(),
+        accrualRate: v.optional(v.number()),
+        defaultCredits: v.optional(v.number()),
+        maxConsecutiveDays: v.optional(v.number()),
+        carryOver: v.optional(v.boolean()),
+        maxCarryOver: v.optional(v.number()),
+        isAnniversary: v.optional(v.boolean()),
+      }),
+    ),
+    sourceBalanceCount: v.number(),
+    sourceRequestCount: v.number(),
+    sourcePolicyCount: v.number(),
+    reconciliationRequired: v.boolean(),
+    snapshotPhase: v.union(
+      v.literal("balances"),
+      v.literal("requests"),
+      v.literal("complete"),
+    ),
+    snapshotCursor: v.optional(v.string()),
+    migrationPhase: v.union(
+      v.literal("balances"),
+      v.literal("requests"),
+      v.literal("complete"),
+    ),
+    migrationCursor: v.optional(v.string()),
+    auditPhase: v.union(
+      v.literal("balances"),
+      v.literal("requests"),
+      v.literal("complete"),
+    ),
+    auditCursor: v.optional(v.string()),
+    auditedBalanceCount: v.number(),
+    auditedRequestCount: v.number(),
+    sourceDriftMismatches: v.number(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  })
+    .index("by_organization_key", ["organizationId", "key"])
+    .index("by_organization_status", ["organizationId", "status"]),
+
+  leaveMigrationBalanceSnapshots: defineTable({
+    migrationRunId: v.id("leaveMigrationRuns"),
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    year: v.number(),
+    sourceBalanceIds: v.array(v.id("employeeLeaveBalances")),
+    sourceRowDigests: v.array(v.string()),
+    sourceLeaveTypeKeys: v.array(v.string()),
+    policySourceKey: v.string(),
+    accountBehavior: v.union(
+      v.literal("shared_pool"),
+      v.literal("individual_account"),
+    ),
+    poolKey: v.optional(v.string()),
+    total: v.number(),
+    used: v.number(),
+    balance: v.number(),
+    reconciliationAmount: v.number(),
+    reconciliationStatus: v.union(
+      v.literal("matching"),
+      v.literal("reconciliation_required"),
+    ),
+    createdAt: v.number(),
+  })
+    .index("by_run_employee_year_account", [
+      "migrationRunId",
+      "employeeId",
+      "year",
+      "policySourceKey",
+    ])
+    .index("by_organization_run", ["organizationId", "migrationRunId"]),
+
+  leaveMigrationRequestSnapshots: defineTable({
+    migrationRunId: v.id("leaveMigrationRuns"),
+    organizationId: v.id("organizations"),
+    leaveRequestId: v.id("leaveRequests"),
+    employeeId: v.id("employees"),
+    status: v.string(),
+    numberOfDays: v.number(),
+    policyId: v.optional(v.id("leavePolicies")),
+    policyVersionId: v.optional(v.id("leavePolicyVersions")),
+    sourceDigest: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_run_request", ["migrationRunId", "leaveRequestId"])
+    .index("by_organization_run", ["organizationId", "migrationRunId"]),
+
+  leavePolicyVersions: defineTable({
+    organizationId: v.id("organizations"),
+    leavePolicyId: v.id("leavePolicies"),
+    version: v.number(),
+    effectiveStart: v.number(),
+    effectiveEnd: v.optional(v.number()),
+    accountBehavior: v.union(
+      v.literal("shared_pool"),
+      v.literal("individual_account"),
+      v.literal("non_credit"),
+    ),
+    poolKey: v.optional(v.string()),
+    payTreatment: v.union(
+      v.literal("company_paid"),
+      v.literal("statutory_paid"),
+      v.literal("government_paid"),
+      v.literal("statutory_benefit_supported"),
+      v.literal("unpaid"),
+    ),
+    durationBasis: v.union(
+      v.literal("scheduled_work"),
+      v.literal("calendar_days"),
+      v.literal("event_defined"),
+    ),
+    entitlementMethod: v.union(
+      v.literal("annual"),
+      v.literal("monthly"),
+      v.literal("semi_annual"),
+      v.literal("anniversary"),
+      v.literal("event_based"),
+      v.literal("none"),
+    ),
+    annualUnits: v.optional(v.number()),
+    accrualRate: v.optional(v.number()),
+    eligibilityBasis: v.union(
+      v.literal("hire_date"),
+      v.literal("regularization_date"),
+      v.literal("verified_qualification"),
+      v.literal("event"),
+    ),
+    completedServiceMonths: v.number(),
+    prorationMethod: v.union(
+      v.literal("none"),
+      v.literal("calendar_months"),
+      v.literal("actual_days"),
+      v.literal("legacy_15th_day"),
+    ),
+    roundingIncrement: v.number(),
+    carryoverMode: v.union(
+      v.literal("none"),
+      v.literal("capped"),
+      v.literal("unlimited"),
+    ),
+    carryoverCap: v.optional(v.number()),
+    balanceCap: v.optional(v.number()),
+    expirationMode: v.optional(
+      v.union(
+        v.literal("none"),
+        v.literal("period_end"),
+        v.literal("rolling_months"),
+      ),
+    ),
+    expirationMonths: v.optional(v.number()),
+    conversionAllowed: v.boolean(),
+    maxConvertibleUnits: v.optional(v.number()),
+    maximumConsecutiveUnits: v.optional(v.number()),
+    minimumNoticeDays: v.optional(v.number()),
+    requiredDocumentRules: v.optional(
+      v.array(
+        v.object({
+          documentType: v.string(),
+          minimumDuration: v.optional(v.number()),
+          requiredBefore: v.union(
+            v.literal("submission"),
+            v.literal("approval"),
+          ),
+        }),
+      ),
+    ),
+    qualifyingEventRequired: v.optional(v.boolean()),
+    maximumUnitsPerEvent: v.optional(v.number()),
+    maximumUnitsPerYear: v.optional(v.number()),
+    eventUseWindowDays: v.optional(v.number()),
+    sourceCitation: v.optional(v.string()),
+    sourceEffectiveDate: v.optional(v.string()),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    changeReason: v.string(),
+  })
+    .index("by_policy_version", ["leavePolicyId", "version"])
+    .index("by_policy_effective", ["leavePolicyId", "effectiveStart"])
+    .index("by_organization_effective", ["organizationId", "effectiveStart"]),
+
+  leaveLedgerEntries: defineTable({
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    balanceId: v.id("employeeLeaveBalances"),
+    policyVersionId: v.id("leavePolicyVersions"),
+    effectiveDate: v.number(),
+    kind: v.union(
+      v.literal("opening_grant"),
+      v.literal("opening_usage"),
+      v.literal("grant"),
+      v.literal("accrual"),
+      v.literal("reservation"),
+      v.literal("reservation_release"),
+      v.literal("usage"),
+      v.literal("restoration"),
+      v.literal("adjustment"),
+      v.literal("carryover"),
+      v.literal("expiration"),
+      v.literal("conversion"),
+      v.literal("migration_reconciliation"),
+    ),
+    amount: v.number(),
+    unit: v.union(v.literal("day"), v.literal("hour")),
+    referenceType: v.optional(
+      v.union(
+        v.literal("request"),
+        v.literal("conversion"),
+        v.literal("payroll"),
+        v.literal("migration"),
+        v.literal("correction"),
+      ),
+    ),
+    leaveRequestId: v.optional(v.id("leaveRequests")),
+    leaveConversionRequestId: v.optional(v.id("leaveConversionRequests")),
+    payrollRunId: v.optional(v.id("payrollRuns")),
+    migrationRunId: v.optional(v.id("migrationRuns")),
+    leaveMigrationRunId: v.optional(v.id("leaveMigrationRuns")),
+    actorId: v.optional(v.id("users")),
+    reason: v.optional(v.string()),
+    idempotencyKey: v.string(),
+    reversalOfEntryId: v.optional(v.id("leaveLedgerEntries")),
+    createdAt: v.number(),
+  })
+    .index("by_balance_effective", ["balanceId", "effectiveDate"])
+    .index("by_employee_effective", ["employeeId", "effectiveDate"])
+    .index("by_request", ["leaveRequestId"])
+    .index("by_organization_idempotency_key", [
+      "organizationId",
+      "idempotencyKey",
+    ]),
+
   leaveRequests: defineTable({
     organizationId: v.id("organizations"),
     employeeId: v.id("employees"),
@@ -1926,11 +2387,49 @@ export default defineSchema({
     isPaid: v.optional(v.boolean()),
     isManual: v.optional(v.boolean()),
     status: v.union(
+      v.literal("draft"),
       v.literal("pending"),
       v.literal("approved"),
       v.literal("rejected"),
+      v.literal("cancellation_requested"),
       v.literal("cancelled"),
+      v.literal("corrected"),
     ),
+    policyId: v.optional(v.id("leavePolicies")),
+    policyVersionId: v.optional(v.id("leavePolicyVersions")),
+    benefitEventId: v.optional(v.id("leaveBenefitEvents")),
+    requestedStart: v.optional(v.number()),
+    requestedEnd: v.optional(v.number()),
+    requestedDurationMode: v.optional(
+      v.union(v.literal("day"), v.literal("half_day"), v.literal("hour")),
+    ),
+    chargeableDuration: v.optional(v.number()),
+    payTreatment: v.optional(
+      v.union(
+        v.literal("company_paid"),
+        v.literal("statutory_paid"),
+        v.literal("government_paid"),
+        v.literal("statutory_benefit_supported"),
+        v.literal("unpaid"),
+      ),
+    ),
+    submittedBy: v.optional(v.id("users")),
+    reviewerId: v.optional(v.id("users")),
+    reviewedAt: v.optional(v.number()),
+    decisionReason: v.optional(v.string()),
+    reviewerSnapshot: v.optional(
+      v.object({
+        displayName: v.string(),
+        position: v.optional(v.string()),
+      }),
+    ),
+    cancellationRequestedBy: v.optional(v.id("users")),
+    cancellationRequestedAt: v.optional(v.number()),
+    cancellationReason: v.optional(v.string()),
+    cancelledBy: v.optional(v.id("users")),
+    cancelledAt: v.optional(v.number()),
+    engineVersion: v.optional(v.number()),
+    cutoverAt: v.optional(v.number()),
     filedDate: v.number(),
     reviewedBy: v.optional(v.id("users")),
     reviewedDate: v.optional(v.number()),
@@ -1944,9 +2443,258 @@ export default defineSchema({
     .index("by_employee", ["employeeId"])
     .index("by_status", ["status"])
     .index("by_organization", ["organizationId"])
+    .index("by_organization_status_created", [
+      "organizationId",
+      "status",
+      "createdAt",
+    ])
     .index("by_date_range", ["startDate", "endDate"])
     // Payroll: approved leaves that can overlap a pay period (endDate gte period start) without scanning full history
     .index("by_employee_status_endDate", ["employeeId", "status", "endDate"]),
+
+  leaveRequestOccurrences: defineTable({
+    leaveRequestId: v.id("leaveRequests"),
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    localDate: v.string(),
+    scheduleSnapshot: v.object({
+      isWorkday: v.boolean(),
+      scheduledMinutes: v.number(),
+      shiftId: v.optional(v.id("shifts")),
+    }),
+    holidaySnapshot: v.object({
+      isHoliday: v.boolean(),
+      holidayId: v.optional(v.id("holidays")),
+      holidayType: v.optional(v.string()),
+    }),
+    scheduledMinutes: v.number(),
+    leaveMinutes: v.number(),
+    creditAmount: v.number(),
+    payTreatment: v.union(
+      v.literal("company_paid"),
+      v.literal("statutory_paid"),
+      v.literal("government_paid"),
+      v.literal("statutory_benefit_supported"),
+      v.literal("unpaid"),
+    ),
+    lifecycleState: v.union(
+      v.literal("reserved"),
+      v.literal("approved"),
+      v.literal("cancelled"),
+      v.literal("corrected"),
+    ),
+    attendanceConflictState: v.union(
+      v.literal("none"),
+      v.literal("detected"),
+      v.literal("resolved"),
+    ),
+    payrollRunId: v.optional(v.id("payrollRuns")),
+    payrollLockedAt: v.optional(v.number()),
+    payrollReference: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_employee_local_date", ["employeeId", "localDate"])
+    .index("by_organization_local_date", ["organizationId", "localDate"])
+    .index("by_request_local_date", ["leaveRequestId", "localDate"])
+    .index("by_payroll_run", ["payrollRunId"]),
+
+  leaveRequestEvents: defineTable({
+    leaveRequestId: v.id("leaveRequests"),
+    organizationId: v.id("organizations"),
+    type: v.union(
+      v.literal("submitted"),
+      v.literal("reviewed"),
+      v.literal("approved"),
+      v.literal("rejected"),
+      v.literal("cancellation_requested"),
+      v.literal("cancelled"),
+      v.literal("corrected"),
+      v.literal("document_verified"),
+      v.literal("notification_sent"),
+    ),
+    actorId: v.optional(v.id("users")),
+    reason: v.optional(v.string()),
+    detailsJson: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_request_created", ["leaveRequestId", "createdAt"])
+    .index("by_organization_created", ["organizationId", "createdAt"]),
+
+  employeeLeaveQualifications: defineTable({
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    qualificationType: v.string(),
+    validFrom: v.number(),
+    validUntil: v.optional(v.number()),
+    verificationStatus: v.union(
+      v.literal("pending"),
+      v.literal("verified"),
+      v.literal("rejected"),
+      v.literal("expired"),
+    ),
+    submittedBy: v.id("users"),
+    verifiedBy: v.optional(v.id("users")),
+    verifiedAt: v.optional(v.number()),
+    documentReferences: v.optional(v.array(v.id("storageObjects"))),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_employee_type_valid_from", [
+      "employeeId",
+      "qualificationType",
+      "validFrom",
+    ])
+    .index("by_organization_status", ["organizationId", "verificationStatus"]),
+
+  leaveBenefitEvents: defineTable({
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    eventType: v.union(
+      v.literal("maternity"),
+      v.literal("miscarriage"),
+      v.literal("emergency_termination_of_pregnancy"),
+      v.literal("spouse_delivery"),
+      v.literal("maternity_credit_allocation"),
+      v.literal("surgery"),
+      v.literal("adoption"),
+      v.literal("calamity"),
+      v.literal("other_protected"),
+    ),
+    qualifyingDate: v.number(),
+    benefitVariant: v.optional(v.string()),
+    verificationStatus: v.union(
+      v.literal("pending"),
+      v.literal("verified"),
+      v.literal("rejected"),
+    ),
+    verifiedBy: v.optional(v.id("users")),
+    verifiedAt: v.optional(v.number()),
+    documentReferences: v.optional(v.array(v.id("storageObjects"))),
+    allocatedFromEventId: v.optional(v.id("leaveBenefitEvents")),
+    allocatedToEmployeeId: v.optional(v.id("employees")),
+    allocatedDays: v.optional(v.number()),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_employee_type_qualifying_date", [
+      "employeeId",
+      "eventType",
+      "qualifyingDate",
+    ])
+    .index("by_organization_qualifying_date", [
+      "organizationId",
+      "qualifyingDate",
+    ])
+    .index("by_allocation_source", ["allocatedFromEventId"]),
+
+  leaveBenefitPayrollReconciliations: defineTable({
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    leaveRequestId: v.id("leaveRequests"),
+    expectedGrossBenefitAmount: v.number(),
+    employerAdvanceAmount: v.number(),
+    externalBenefitAmount: v.number(),
+    salaryDifferentialAmount: v.number(),
+    reimbursedAmount: v.number(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("advanced"),
+      v.literal("partially_reimbursed"),
+      v.literal("reconciled"),
+      v.literal("waived"),
+      v.literal("voided"),
+    ),
+    referenceNumber: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    updatedBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_request", ["leaveRequestId"])
+    .index("by_organization_status", ["organizationId", "status"])
+    .index("by_employee", ["employeeId"]),
+
+  leaveBenefitPayrollAllocations: defineTable({
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    leaveRequestId: v.id("leaveRequests"),
+    reconciliationId: v.id("leaveBenefitPayrollReconciliations"),
+    payrollRunId: v.id("payrollRuns"),
+    payslipId: v.id("payslips"),
+    attributedPay: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_reconciliation", ["reconciliationId"])
+    .index("by_payroll_run", ["payrollRunId"])
+    .index("by_payslip", ["payslipId"])
+    .index("by_request_payroll_run", ["leaveRequestId", "payrollRunId"]),
+
+  leaveSensitiveAccessGrants: defineTable({
+    organizationId: v.id("organizations"),
+    membershipId: v.id("userOrganizations"),
+    isActive: v.boolean(),
+    grantedBy: v.id("users"),
+    grantedAt: v.number(),
+    revokedBy: v.optional(v.id("users")),
+    revokedAt: v.optional(v.number()),
+  })
+    .index("by_membership_active", ["membershipId", "isActive"])
+    .index("by_organization_active", ["organizationId", "isActive"]),
+
+  leaveAdministrativeEvents: defineTable({
+    organizationId: v.id("organizations"),
+    type: v.union(
+      v.literal("sensitive_access_granted"),
+      v.literal("sensitive_access_revoked"),
+    ),
+    membershipId: v.id("userOrganizations"),
+    actorId: v.id("users"),
+    reason: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_organization_created", ["organizationId", "createdAt"])
+    .index("by_membership_created", ["membershipId", "createdAt"]),
+
+  leaveConversionRequests: defineTable({
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+    balanceId: v.id("employeeLeaveBalances"),
+    policyId: v.id("leavePolicies"),
+    policyVersionId: v.id("leavePolicyVersions"),
+    requestedDays: v.number(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("approved"),
+      v.literal("rejected"),
+      v.literal("cancelled"),
+      v.literal("paid"),
+    ),
+    requestedBy: v.id("users"),
+    decidedBy: v.optional(v.id("users")),
+    decidedAt: v.optional(v.number()),
+    decisionReason: v.optional(v.string()),
+    ledgerEntryId: v.optional(v.id("leaveLedgerEntries")),
+    dailyRateSnapshot: v.optional(v.number()),
+    payableAmount: v.optional(v.number()),
+    payrollRunId: v.optional(v.id("payrollRuns")),
+    finalSettlementId: v.optional(v.id("finalSettlements")),
+    paymentStatus: v.union(
+      v.literal("not_ready"),
+      v.literal("ready"),
+      v.literal("processing"),
+      v.literal("paid"),
+      v.literal("cancelled"),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization_status", ["organizationId", "status"])
+    .index("by_employee_status", ["employeeId", "status"])
+    .index("by_payroll_run", ["payrollRunId"])
+    .index("by_final_settlement", ["finalSettlementId"]),
 
   // Leave types table (custom leave types)
   leaveTypes: defineTable({
@@ -2171,6 +2919,7 @@ export default defineSchema({
   // Announcement comments (only org members can view and post)
   announcementComments: defineTable({
     announcementId: v.id("memos"),
+    parentCommentId: v.optional(v.id("announcementComments")),
     organizationId: v.id("organizations"),
     author: v.id("users"),
     authorDisplayName: v.optional(v.string()),
@@ -2222,6 +2971,8 @@ export default defineSchema({
     ),
     /** For staff_as_admin threads: user whose messages appear as Admin. */
     adminPersonaUserId: v.optional(v.id("users")),
+    archivedAt: v.optional(v.number()),
+    archivedBy: v.optional(v.id("users")),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),
@@ -2239,11 +2990,30 @@ export default defineSchema({
     ),
     payslipId: v.optional(v.id("payslips")), // Link message to payslip for appeals/comments
     replyToMessageId: v.optional(v.id("messages")), // When replying to a specific message
+    editedAt: v.optional(v.number()),
+    deletedAt: v.optional(v.number()),
+    deletedBy: v.optional(v.id("users")),
+    deletionKind: v.optional(
+      v.union(v.literal("author"), v.literal("moderator")),
+    ),
     createdAt: v.number(),
   })
     .index("by_conversation", ["conversationId"])
+    .index("by_conversation_created_at", ["conversationId", "createdAt"])
     .index("by_sender", ["senderId"])
     .index("by_payslip", ["payslipId"]),
+
+  messageReactions: defineTable({
+    organizationId: v.id("organizations"),
+    conversationId: v.id("conversations"),
+    messageId: v.id("messages"),
+    userId: v.id("users"),
+    emoji: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_message", ["messageId"])
+    .index("by_message_user_emoji", ["messageId", "userId", "emoji"]),
 
   // User chat preferences
   userChatPreferences: defineTable({
@@ -2293,6 +3063,18 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_organization", ["organizationId"])
+    .index("by_user_organization", ["userId", "organizationId"])
+    .index("by_user_conversation", ["userId", "conversationId"]),
+
+  userConversationPreferences: defineTable({
+    organizationId: v.id("organizations"),
+    userId: v.id("users"),
+    conversationId: v.id("conversations"),
+    muted: v.boolean(),
+    lastReadAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
     .index("by_user_organization", ["userId", "organizationId"])
     .index("by_user_conversation", ["userId", "conversationId"]),
 

@@ -2,6 +2,8 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { requireActiveMembership } from "./access";
 import type { Id } from "./_generated/dataModel";
+import { loadEffectiveLeaveAttachments } from "./communicationsCompatibility";
+import { requireSensitiveLeaveAccess } from "./leaveAccess";
 
 const UPLOAD_INTENT_TTL_MS = 10 * 60 * 1000;
 
@@ -12,6 +14,7 @@ const storagePurpose = v.union(
   v.literal("chat_attachment"),
   v.literal("document_attachment"),
   v.literal("employee_requirement"),
+  v.literal("evaluation_attachment"),
   v.literal("leave_attachment"),
   v.literal("memo_attachment"),
   v.literal("payslip_pdf"),
@@ -24,6 +27,7 @@ export type StoragePurpose =
   | "chat_attachment"
   | "document_attachment"
   | "employee_requirement"
+  | "evaluation_attachment"
   | "leave_attachment"
   | "memo_attachment"
   | "payslip_pdf";
@@ -34,11 +38,12 @@ const restrictedUploadRoles: Partial<
   accounting_receipt: new Set(["owner", "admin", "accounting"]),
   announcement_attachment: new Set(["owner", "admin", "hr"]),
   applicant_resume: new Set(["owner", "admin", "hr"]),
+  evaluation_attachment: new Set(["owner", "admin", "hr"]),
   memo_attachment: new Set(["owner", "admin", "hr"]),
   payslip_pdf: new Set(["owner", "admin", "hr", "accounting"]),
 };
 
-async function hasStorageReference(
+async function findStorageReferencePurpose(
   ctx: Parameters<typeof requireActiveMembership>[0],
   organizationId: Id<"organizations">,
   storageId: Id<"_storage">,
@@ -70,16 +75,18 @@ async function hasStorageReference(
       .collect(),
   ]);
 
-  if (
-    links.some((link) => link.storageId === storageId) ||
-    requirements.some((requirement) => requirement.file === storageId) ||
-    applicants.some((applicant) => applicant.resume === storageId) ||
-    payslips.some((payslip) => payslip.pdfFile === storageId)
-  ) {
-    return true;
+  const link = links.find((candidate) => candidate.storageId === storageId);
+  if (link) return link.purpose;
+  if (requirements.some((requirement) => requirement.file === storageId)) {
+    return "employee_requirement" as const;
   }
-
-  return false;
+  if (applicants.some((applicant) => applicant.resume === storageId)) {
+    return "applicant_resume" as const;
+  }
+  if (payslips.some((payslip) => payslip.pdfFile === storageId)) {
+    return "payslip_pdf" as const;
+  }
+  return null;
 }
 
 export const createUploadIntent = mutation({
@@ -174,21 +181,46 @@ async function requireStorageObject(
   storageId: Id<"_storage">,
 ) {
   await requireActiveMembership(ctx, organizationId);
+  const leaveLink = await ctx.db
+    .query("storageObjectLinks")
+    .withIndex("by_storage_parent", (q) =>
+      q.eq("storageId", storageId).eq("parentType", "leave_request"),
+    )
+    .first();
+  if (leaveLink) throw new Error("Use the leave attachment access endpoint");
   const storageObject = await ctx.db
     .query("storageObjects")
     .withIndex("by_storage", (q) => q.eq("storageId", storageId))
     .unique();
   if (!storageObject) {
-    if (await hasStorageReference(ctx, organizationId, storageId)) {
+    const referencePurpose = await findStorageReferencePurpose(
+      ctx,
+      organizationId,
+      storageId,
+    );
+    if (referencePurpose === "chat_attachment") {
+      throw new Error("Chat attachments require conversation access");
+    }
+    if (referencePurpose === "evaluation_attachment") {
+      throw new Error("Evaluation attachments require evaluation access");
+    }
+    if (referencePurpose) {
       return null;
     }
     throw new Error("Not authorized");
   }
   if (
     storageObject.organizationId !== organizationId ||
-    storageObject.state !== "active"
+    storageObject.state !== "active" ||
+    storageObject.purpose === "leave_attachment"
   ) {
     throw new Error("Not authorized");
+  }
+  if (storageObject.purpose === "chat_attachment") {
+    throw new Error("Chat attachments require conversation access");
+  }
+  if (storageObject.purpose === "evaluation_attachment") {
+    throw new Error("Evaluation attachments require evaluation access");
   }
 
   return storageObject;
@@ -230,7 +262,6 @@ export const getFileUrl = query({
     return await ctx.storage.getUrl(args.storageId);
   },
 });
-
 // Get file URL and content type for chat (preview vs download)
 export const getFileUrlAndType = query({
   args: {
@@ -254,5 +285,44 @@ export const getFileUrlAndType = query({
         (meta as { contentType?: string } | null)?.contentType ??
         null,
     };
+  },
+});
+
+export const getLeaveAttachmentUrl = query({
+  args: {
+    leaveRequestId: v.id("leaveRequests"),
+    storageId: v.id("_storage"),
+  },
+  handler: async (ctx, args) => {
+    const request = await ctx.db.get(args.leaveRequestId);
+    if (!request) {
+      throw new Error("Not authorized");
+    }
+    await requireSensitiveLeaveAccess(
+      ctx,
+      request.organizationId,
+      request.employeeId,
+    );
+    const attachments = await loadEffectiveLeaveAttachments(ctx, request);
+    if (!attachments.includes(args.storageId)) {
+      throw new Error("Not authorized");
+    }
+
+    const storageObject = await ctx.db
+      .query("storageObjects")
+      .withIndex("by_storage", (query) =>
+        query.eq("storageId", args.storageId),
+      )
+      .unique();
+    if (
+      storageObject &&
+      (storageObject.organizationId !== request.organizationId ||
+        storageObject.purpose !== "leave_attachment" ||
+        storageObject.state !== "active")
+    ) {
+      throw new Error("Not authorized");
+    }
+
+    return await ctx.storage.getUrl(args.storageId);
   },
 });

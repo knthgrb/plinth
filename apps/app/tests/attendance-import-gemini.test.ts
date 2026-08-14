@@ -172,6 +172,7 @@ describe("Gemini attendance extraction", () => {
     expect(body).toMatchObject({
       model: "gemini-3.5-flash-lite",
       store: false,
+      generation_config: { thinking_level: "minimal" },
       response_format: { type: "text", mime_type: "application/json" },
     });
     expect(body.response_format).toMatchObject({
@@ -476,7 +477,7 @@ describe("Gemini attendance extraction", () => {
     await expect(promise).rejects.not.toThrow(/SUPER_SECRET_CELL/);
   });
 
-  it("uses one 30-second signal across fetch and retry delay", async () => {
+  it("uses one 55-second signal across fetch and retry delay", async () => {
     vi.useFakeTimers();
     const timeoutController = new AbortController();
     const timeoutSpy = vi
@@ -506,9 +507,44 @@ describe("Gemini attendance extraction", () => {
     await vi.advanceTimersByTimeAsync(50);
     await timeoutExpectation;
     expect(timeoutSpy).toHaveBeenCalledOnce();
-    expect(timeoutSpy).toHaveBeenCalledWith(30_000);
+    expect(timeoutSpy).toHaveBeenCalledWith(55_000);
     expect(receivedSignals).toEqual([timeoutController.signal]);
     expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("allows a valid extraction that finishes after the former 30-second deadline", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), milliseconds);
+      return controller.signal;
+    });
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) =>
+      new Promise<Response>((resolve, reject) => {
+        const completion = setTimeout(
+          () => resolve(successfulResponse([validCandidate])),
+          40_000,
+        );
+        const signal = init?.signal;
+        signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(completion);
+            reject(new DOMException("Timed out", "AbortError"));
+          },
+          { once: true },
+        );
+      }),
+    );
+
+    const promise = extractAttendanceWithGemini(twoSheetWorkbook, {
+      apiKey: "test-key",
+      fetchImpl,
+    });
+    const resultExpectation = expect(promise).resolves.toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(40_000);
+    await resultExpectation;
   });
 
   it("maps provider safety refusals without exposing the provider body", async () => {

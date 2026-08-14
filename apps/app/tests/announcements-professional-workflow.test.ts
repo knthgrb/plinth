@@ -340,6 +340,104 @@ describe("professional announcement workflow", () => {
     expect(comment?.authorName).toBe("Admin");
   });
 
+  it("persists nested comment replies and returns their thread relationships", async () => {
+    const { ownerActor, targetActor, organizationId } = await setup();
+    const announcementId = await ownerActor.mutation(
+      api.announcements.createAnnouncement,
+      {
+        organizationId,
+        title: "Threaded discussion",
+        content: "Share questions below",
+        targetAudience: "all",
+      },
+    );
+    const parentCommentId = await targetActor.mutation(
+      api.announcements.addComment,
+      {
+        announcementId,
+        organizationId,
+        content: "Can you clarify the deadline?",
+      },
+    );
+    const replyId = await ownerActor.mutation(api.announcements.addComment, {
+      announcementId,
+      organizationId,
+      content: "The deadline is Friday.",
+      parentCommentId,
+    });
+    const nestedReplyId = await targetActor.mutation(
+      api.announcements.addComment,
+      {
+        announcementId,
+        organizationId,
+        content: "Thank you!",
+        parentCommentId: replyId,
+      },
+    );
+
+    const comments = await targetActor.query(api.announcements.getComments, {
+      announcementId,
+      organizationId,
+    });
+
+    expect(comments).toEqual([
+      expect.objectContaining({
+        _id: parentCommentId,
+        content: "Can you clarify the deadline?",
+      }),
+      expect.objectContaining({
+        _id: replyId,
+        content: "The deadline is Friday.",
+        parentCommentId,
+      }),
+      expect.objectContaining({
+        _id: nestedReplyId,
+        content: "Thank you!",
+        parentCommentId: replyId,
+      }),
+    ]);
+    expect(comments[0]).not.toHaveProperty("parentCommentId");
+  });
+
+  it("rejects replies to comments from another announcement", async () => {
+    const { ownerActor, organizationId } = await setup();
+    const firstAnnouncementId = await ownerActor.mutation(
+      api.announcements.createAnnouncement,
+      {
+        organizationId,
+        title: "First update",
+        content: "First discussion",
+        targetAudience: "all",
+      },
+    );
+    const secondAnnouncementId = await ownerActor.mutation(
+      api.announcements.createAnnouncement,
+      {
+        organizationId,
+        title: "Second update",
+        content: "Second discussion",
+        targetAudience: "all",
+      },
+    );
+    const firstCommentId = await ownerActor.mutation(
+      api.announcements.addComment,
+      {
+        announcementId: firstAnnouncementId,
+        organizationId,
+        content: "Only belongs to the first announcement",
+      },
+    );
+
+    await expect(
+      ownerActor.mutation(api.announcements.addComment, {
+        announcementId: secondAnnouncementId,
+        organizationId,
+        content: "Invalid reply",
+        parentCommentId: firstCommentId,
+      }),
+    ).rejects.toThrow("Reply target not found");
+  });
+
   it("keeps announcement writes inside the dedicated announcement module", async () => {
     const { ownerActor, organizationId } = await setup();
 

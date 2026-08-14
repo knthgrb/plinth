@@ -1,3 +1,9 @@
+import {
+  resolveLeavePayrollDay,
+  type LeavePayrollDayResolution,
+  type LeavePayrollOccurrenceInput,
+} from "@/lib/leave/payroll-integration";
+
 export type DailyRateOptions = {
   includeAllowance: boolean;
   workingDaysPerYear: number;
@@ -48,6 +54,13 @@ export type PayrollBaseResult = {
   employmentProrationRatio: number;
   daysWorked: number;
   absences: number;
+  statutoryBenefitSupportedLeaveDays?: number;
+  statutoryBenefitSupportedLeavePay?: number;
+  statutoryBenefitSupportedLeaveBreakdown?: Array<{
+    leaveRequestId: string;
+    days: number;
+    attributedPay: number;
+  }>;
   noWorkNoPayDays?: number;
   lateHours: number;
   undertimeHours: number;
@@ -183,13 +196,16 @@ function getDayName(date: number): string {
  */
 export function isEmployeeRestDay(
   date: number,
-  employeeSchedule: {
-    defaultSchedule?: Record<
-      string,
-      { isWorkday?: boolean; in?: string; out?: string }
-    >;
-    scheduleOverrides?: Array<{ date: number | string }>;
-  } | null | undefined,
+  employeeSchedule:
+    | {
+        defaultSchedule?: Record<
+          string,
+          { isWorkday?: boolean; in?: string; out?: string }
+        >;
+        scheduleOverrides?: Array<{ date: number | string }>;
+      }
+    | null
+    | undefined,
 ): boolean {
   if (!employeeSchedule?.defaultSchedule) return false;
   const dayName = getDayName(date);
@@ -439,7 +455,8 @@ function effectiveNightDiffOutClock(params: {
   scheduleOut?: string;
   overtimeHours?: number;
 }): string {
-  const { actualIn, actualOut, scheduleIn, scheduleOut, overtimeHours } = params;
+  const { actualIn, actualOut, scheduleIn, scheduleOut, overtimeHours } =
+    params;
   const act = pairInOutGlobalMinutes(actualIn, actualOut);
   if (!act) return actualOut;
   if (!scheduleIn?.trim() || !scheduleOut?.trim()) return actualOut;
@@ -871,20 +888,23 @@ function computeNightDiffPayFromTimes(
     rates.nightDiffRestDayOtRate ?? restDayOt * nightDiffRate;
 
   let pay = 0;
-  const breakdownByCategoryAndDay = new Map<string, {
-    label: string;
-    date: number;
-    amount: number;
-    category?:
-      | "regular"
-      | "regular_ot"
-      | "rest_day"
-      | "rest_day_ot"
-      | "regular_holiday"
-      | "regular_holiday_ot"
-      | "special_holiday"
-      | "special_holiday_ot";
-  }>();
+  const breakdownByCategoryAndDay = new Map<
+    string,
+    {
+      label: string;
+      date: number;
+      amount: number;
+      category?:
+        | "regular"
+        | "regular_ot"
+        | "rest_day"
+        | "rest_day_ot"
+        | "regular_holiday"
+        | "regular_holiday_ot"
+        | "special_holiday"
+        | "special_holiday_ot";
+    }
+  >();
   const attDayStart = getManilaDayStart(att.date);
   // Holiday rate only for night hours on the attendance calendar day. Resolve holiday once from attendance date.
   const holidayOnAttDay = getMatchingHolidayForDate(attDayStart, holidays);
@@ -1205,6 +1225,7 @@ export function calculatePayrollBaseFromRecords(args: {
   holidays: any[];
   leaveRequests: any[];
   leaveTypes: any[];
+  leaveOccurrences?: LeavePayrollOccurrenceInput[];
 }): PayrollBaseResult {
   const {
     employee,
@@ -1216,6 +1237,7 @@ export function calculatePayrollBaseFromRecords(args: {
     holidays,
     leaveRequests,
     leaveTypes,
+    leaveOccurrences = [],
   } = args;
 
   const salaryType = (employee.compensation.salaryType || "monthly") as
@@ -1287,6 +1309,56 @@ export function calculatePayrollBaseFromRecords(args: {
       leave.startDate <= cutoffEnd &&
       leave.endDate >= cutoffStart,
   );
+
+  type ResolvedLeavePayrollDay = LeavePayrollDayResolution & {
+    scheduledMinutes: number;
+    isWorkday: boolean;
+    benefitRequestFractions: Record<string, number>;
+  };
+  const occurrenceResolutionByDay = new Map<number, ResolvedLeavePayrollDay>();
+  for (const occurrence of leaveOccurrences) {
+    const timestamp = Date.parse(`${occurrence.localDate}T00:00:00+08:00`);
+    if (!Number.isFinite(timestamp)) {
+      throw new Error(`Invalid leave occurrence date: ${occurrence.localDate}`);
+    }
+    const day = toLocalDayTimestamp(timestamp);
+    const resolution = resolveLeavePayrollDay(occurrence);
+    const current = occurrenceResolutionByDay.get(day);
+    occurrenceResolutionByDay.set(day, {
+      paidFraction: Math.min(
+        1,
+        (current?.paidFraction ?? 0) + resolution.paidFraction,
+      ),
+      unpaidFraction: Math.min(
+        1,
+        (current?.unpaidFraction ?? 0) + resolution.unpaidFraction,
+      ),
+      requiresBenefitBreakdown:
+        current?.requiresBenefitBreakdown === true ||
+        resolution.requiresBenefitBreakdown === true ||
+        undefined,
+      scheduledMinutes: Math.max(
+        current?.scheduledMinutes ?? 0,
+        occurrence.scheduledMinutes,
+      ),
+      isWorkday: (current?.isWorkday ?? true) && (occurrence.isWorkday ?? true),
+      benefitRequestFractions: {
+        ...(current?.benefitRequestFractions ?? {}),
+        ...(resolution.requiresBenefitBreakdown && occurrence.leaveRequestId
+          ? {
+              [occurrence.leaveRequestId]:
+                (current?.benefitRequestFractions[occurrence.leaveRequestId] ??
+                  0) + resolution.paidFraction,
+            }
+          : {}),
+      },
+    });
+  }
+
+  const getCanonicalLeave = (
+    date: number,
+  ): ResolvedLeavePayrollDay | undefined =>
+    occurrenceResolutionByDay.get(toLocalDayTimestamp(date));
 
   const isPaidLeave = (date: number): boolean => {
     const dayTs = toLocalDayTimestamp(date);
@@ -1382,6 +1454,31 @@ export function calculatePayrollBaseFromRecords(args: {
   }
   let daysWorked = 0;
   let absences = 0;
+  let statutoryBenefitSupportedLeaveDays = 0;
+  const statutoryBenefitDaysByRequest = new Map<string, number>();
+  const recordBenefitSupportedPay = (
+    leave: ResolvedLeavePayrollDay,
+    appliedPaidFraction: number,
+  ): void => {
+    const entries = Object.entries(leave.benefitRequestFractions);
+    const requestedBenefitFraction = entries.reduce(
+      (sum, [, fraction]) => sum + fraction,
+      0,
+    );
+    if (requestedBenefitFraction <= 0 || appliedPaidFraction <= 0) return;
+    const appliedBenefitFraction = Math.min(
+      requestedBenefitFraction,
+      appliedPaidFraction,
+    );
+    for (const [leaveRequestId, fraction] of entries) {
+      const applied =
+        (fraction / requestedBenefitFraction) * appliedBenefitFraction;
+      statutoryBenefitDaysByRequest.set(
+        leaveRequestId,
+        (statutoryBenefitDaysByRequest.get(leaveRequestId) ?? 0) + applied,
+      );
+    }
+  };
   let noWorkNoPayDays = 0;
   let lateHours = 0;
   let undertimeHours = 0;
@@ -1422,6 +1519,16 @@ export function calculatePayrollBaseFromRecords(args: {
   for (const att of periodAttendance) {
     if (att.status === "present" || att.status === "half-day") {
       const dayMultiplier = att.status === "half-day" ? 0.5 : 1;
+      const canonicalLeave = getCanonicalLeave(att.date);
+      const paidLeaveFraction = Math.min(
+        canonicalLeave?.paidFraction ?? 0,
+        Math.max(0, 1 - dayMultiplier),
+      );
+      const absenceFraction = canonicalLeave
+        ? Math.max(0, 1 - dayMultiplier - paidLeaveFraction)
+        : 0;
+      let remainingPaidLeaveCoverageHours =
+        (paidLeaveFraction * (canonicalLeave?.scheduledMinutes ?? 0)) / 60;
       const isRestDayForEmployee = isRestDay(att.date, employee.schedule);
       const holidayInfo = getHolidayInfo(att.date, holidays, att, employee);
       const holidayType = holidayInfo.holidayType;
@@ -1432,10 +1539,21 @@ export function calculatePayrollBaseFromRecords(args: {
       const wasAbsentDayBeforeHoliday = isAbsentLikeStatus(
         attendanceStatusByDay.get(prevDay),
       );
-      const holidayAdditionalPayAllowed =
-        !(absentBeforeHolidayRuleEnabled && wasAbsentDayBeforeHoliday);
+      const holidayAdditionalPayAllowed = !(
+        absentBeforeHolidayRuleEnabled && wasAbsentDayBeforeHoliday
+      );
 
-      daysWorked += dayMultiplier;
+      daysWorked += dayMultiplier + paidLeaveFraction;
+      if (canonicalLeave?.requiresBenefitBreakdown === true) {
+        statutoryBenefitSupportedLeaveDays += paidLeaveFraction;
+        recordBenefitSupportedPay(canonicalLeave, paidLeaveFraction);
+      }
+      if (absenceFraction > 0) {
+        absences += absenceFraction;
+        if (salaryType === "monthly" && !dailyizedFirstCutoff) {
+          absentDeduction += dailyRateForAbsence * absenceFraction;
+        }
+      }
 
       if (
         (salaryType !== "monthly" || dailyizedFirstCutoff) &&
@@ -1445,7 +1563,7 @@ export function calculatePayrollBaseFromRecords(args: {
           holidayType !== "special"
         )
       ) {
-        basicPay += dayMultiplier * dailyRate;
+        basicPay += (dayMultiplier + paidLeaveFraction) * dailyRate;
       }
 
       if (
@@ -1521,9 +1639,17 @@ export function calculatePayrollBaseFromRecords(args: {
       // Special Holiday: late_hours × hourly_rate × employee.specialHolidayRate (e.g. 1.3 = 130%)
       // Regular Day: late_hours × hourly_rate × 1.0
       // Rates come from employee.compensation or org defaults via getEmployeePayrollRates
-      const dayLateHours = isRestDayForEmployee
+      const rawDayLateHours = isRestDayForEmployee
         ? 0
         : getLateHoursFromAttendance(att);
+      const dayLateHours = Math.max(
+        0,
+        rawDayLateHours - remainingPaidLeaveCoverageHours,
+      );
+      remainingPaidLeaveCoverageHours = Math.max(
+        0,
+        remainingPaidLeaveCoverageHours - rawDayLateHours,
+      );
       if (dayLateHours > 0) {
         lateHours += dayLateHours;
         if (
@@ -1550,9 +1676,13 @@ export function calculatePayrollBaseFromRecords(args: {
         }
       }
 
-      const dayUndertimeHours = isRestDayForEmployee
+      const rawDayUndertimeHours = isRestDayForEmployee
         ? 0
         : getUndertimeHoursFromAttendance(att);
+      const dayUndertimeHours = Math.max(
+        0,
+        rawDayUndertimeHours - remainingPaidLeaveCoverageHours,
+      );
       if (dayUndertimeHours > 0) {
         undertimeHours += dayUndertimeHours;
         undertimeDeduction += dayUndertimeHours * hourlyRateBasicPlusAllowance;
@@ -1617,13 +1747,53 @@ export function calculatePayrollBaseFromRecords(args: {
       continue;
     } else if (att.status === "leave" || att.status === "leave_with_pay") {
       // leave = legacy, treat as leave_with_pay
-      if (isPaidLeave(att.date)) {
+      const canonicalLeave = getCanonicalLeave(att.date);
+      if (canonicalLeave) {
+        daysWorked += canonicalLeave.paidFraction;
+        if (canonicalLeave.requiresBenefitBreakdown === true) {
+          statutoryBenefitSupportedLeaveDays += canonicalLeave.paidFraction;
+          recordBenefitSupportedPay(canonicalLeave, canonicalLeave.paidFraction);
+        }
+        if (salaryType !== "monthly" || dailyizedFirstCutoff) {
+          basicPay += dailyRate * canonicalLeave.paidFraction;
+        }
+        const absentFraction = Math.max(0, 1 - canonicalLeave.paidFraction);
+        absences += absentFraction;
+        if (
+          absentFraction > 0 &&
+          salaryType === "monthly" &&
+          !dailyizedFirstCutoff
+        ) {
+          absentDeduction += dailyRateForAbsence * absentFraction;
+        }
+      } else if (isPaidLeave(att.date)) {
         daysWorked += 1;
         if (salaryType !== "monthly" || dailyizedFirstCutoff) {
           basicPay += dailyRate;
         }
       }
     } else if (att.status === "leave_without_pay" || att.status === "absent") {
+      const canonicalLeave = getCanonicalLeave(att.date);
+      if (canonicalLeave) {
+        daysWorked += canonicalLeave.paidFraction;
+        if (canonicalLeave.requiresBenefitBreakdown === true) {
+          statutoryBenefitSupportedLeaveDays += canonicalLeave.paidFraction;
+          recordBenefitSupportedPay(canonicalLeave, canonicalLeave.paidFraction);
+        }
+        if (salaryType !== "monthly" || dailyizedFirstCutoff) {
+          basicPay += dailyRate * canonicalLeave.paidFraction;
+        }
+        const absentFraction = Math.max(0, 1 - canonicalLeave.paidFraction);
+        absences += absentFraction;
+        if (
+          absentFraction > 0 &&
+          salaryType === "monthly" &&
+          !dailyizedFirstCutoff
+        ) {
+          absentDeduction += dailyRateForAbsence * absentFraction;
+        }
+        continue;
+      }
       if (isPaidLeave(att.date)) {
         daysWorked += 1;
         if (salaryType !== "monthly" || dailyizedFirstCutoff) {
@@ -1653,6 +1823,29 @@ export function calculatePayrollBaseFromRecords(args: {
     currentDate.setUTCDate(currentDate.getUTCDate() + 1);
 
     if (attendanceDates.has(dateTs)) continue;
+
+    const canonicalLeave = getCanonicalLeave(dateTs);
+    if (canonicalLeave) {
+      if (!canonicalLeave.isWorkday) continue;
+      daysWorked += canonicalLeave.paidFraction;
+      if (canonicalLeave.requiresBenefitBreakdown === true) {
+        statutoryBenefitSupportedLeaveDays += canonicalLeave.paidFraction;
+        recordBenefitSupportedPay(canonicalLeave, canonicalLeave.paidFraction);
+      }
+      if (salaryType !== "monthly" || dailyizedFirstCutoff) {
+        basicPay += dailyRate * canonicalLeave.paidFraction;
+      }
+      const absentFraction = Math.max(0, 1 - canonicalLeave.paidFraction);
+      absences += absentFraction;
+      if (
+        absentFraction > 0 &&
+        salaryType === "monthly" &&
+        !dailyizedFirstCutoff
+      ) {
+        absentDeduction += dailyRateForAbsence * absentFraction;
+      }
+      continue;
+    }
 
     if (isPaidLeave(dateTs)) {
       daysWorked += 1;
@@ -1694,6 +1887,22 @@ export function calculatePayrollBaseFromRecords(args: {
     employmentProrationRatio,
     daysWorked,
     absences,
+    statutoryBenefitSupportedLeaveDays:
+      statutoryBenefitSupportedLeaveDays > 0
+        ? statutoryBenefitSupportedLeaveDays
+        : undefined,
+    statutoryBenefitSupportedLeavePay:
+      statutoryBenefitSupportedLeaveDays > 0
+        ? round2(statutoryBenefitSupportedLeaveDays * dailyRate)
+        : undefined,
+    statutoryBenefitSupportedLeaveBreakdown:
+      statutoryBenefitDaysByRequest.size > 0
+        ? Array.from(statutoryBenefitDaysByRequest, ([leaveRequestId, days]) => ({
+            leaveRequestId,
+            days,
+            attributedPay: round2(days * dailyRate),
+          }))
+        : undefined,
     noWorkNoPayDays: noWorkNoPayDays > 0 ? noWorkNoPayDays : undefined,
     lateHours,
     undertimeHours,

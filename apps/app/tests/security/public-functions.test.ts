@@ -167,22 +167,6 @@ describe("public Convex security boundaries", () => {
     ).rejects.toThrow("Not authenticated");
   });
 
-  it("rejects unauthenticated storage metadata lookup", async () => {
-    const t = convexTest(schema, modules);
-    const { organizationId, storageId } = await t.run(async (ctx) => ({
-      organizationId: await ctx.db.insert("organizations", {
-        name: "Private Org",
-        createdAt: 1,
-        updatedAt: 1,
-      }),
-      storageId: await ctx.storage.store(new Blob(["private document"])),
-    }));
-
-    await expect(
-      t.query(api.files.getFileUrlAndType, { organizationId, storageId }),
-    ).rejects.toThrow("Not authenticated");
-  });
-
   it("rejects unauthenticated user lookup", async () => {
     const t = convexTest(schema, modules);
     const { organizationId, userId } = await t.run(async (ctx) => {

@@ -9,6 +9,7 @@ export type EvaluationHistory = Array<
 >;
 export type EffectiveEvaluation = Doc<"evaluations"> & {
   assignedReviewerIds: Id<"users">[];
+  attachmentIds: Id<"_storage">[];
   history: EvaluationHistory;
 };
 
@@ -107,7 +108,7 @@ export async function loadEffectiveEvaluation(
   ctx: DatabaseContext,
   evaluation: Doc<"evaluations">,
 ): Promise<EffectiveEvaluation> {
-  const [reviewerRows, eventRows] = await Promise.all([
+  const [reviewerRows, eventRows, attachmentRows] = await Promise.all([
     ctx.db
       .query("evaluationReviewers")
       .withIndex("by_organization", (q) =>
@@ -121,6 +122,12 @@ export async function loadEffectiveEvaluation(
         q.eq("organizationId", evaluation.organizationId),
       )
       .filter((q) => q.eq(q.field("evaluationId"), evaluation._id))
+      .collect(),
+    ctx.db
+      .query("storageObjectLinks")
+      .withIndex("by_parent", (q) =>
+        q.eq("parentType", "evaluation").eq("parentId", evaluation._id),
+      )
       .collect(),
   ]);
   const reviewers = reviewerRows
@@ -146,9 +153,24 @@ export async function loadEffectiveEvaluation(
         ...(row.summary !== undefined ? { summary: row.summary } : {}),
       };
     });
+  const attachmentIds = attachmentRows
+    .sort((left, right) => left.sourceIndex - right.sourceIndex)
+    .map((row, index) => {
+      if (
+        row.organizationId !== evaluation.organizationId ||
+        row.parentType !== "evaluation" ||
+        row.parentId !== evaluation._id ||
+        row.purpose !== "evaluation_attachment" ||
+        row.sourceIndex !== index
+      ) {
+        throw new Error("Evaluation attachment projection is invalid");
+      }
+      return row.storageId;
+    });
   return {
     ...evaluation,
     assignedReviewerIds: reviewers,
+    attachmentIds,
     history,
   };
 }

@@ -1,5 +1,11 @@
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { paginationOptsValidator } from "convex/server";
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
@@ -34,6 +40,53 @@ import {
   loadEffectiveLeaveAttachments,
   replaceLeaveAttachments,
 } from "./communicationsCompatibility";
+import { assertLegacyLeaveWriteAllowed } from "./leaveMigration";
+import {
+  canAdministerLeave,
+  canViewSensitiveLeave,
+  requireFinalLeaveReviewer,
+  requireLeaveSelfService,
+  requireSensitiveLeaveAccess,
+} from "./leaveAccess";
+import {
+  ensurePendingBenefitReconciliation,
+  voidBenefitReconciliation,
+} from "./leaveBenefitPayroll";
+import {
+  appendLedgerEntry,
+  consumeReservation,
+  releaseReservation,
+  reserveUnits,
+  restoreUsage,
+} from "./leaveLedger";
+import {
+  insertLeaveRequestOccurrences,
+  prepareLeaveRequestV2,
+  requireActiveLeaveEngineV2,
+} from "./leaveOccurrences";
+
+const MAX_LEAVE_CONFLICT_CANDIDATES = 500;
+
+async function assertLegacyLeaveEndpointAllowed(
+  ctx: Pick<MutationCtx, "db">,
+  organizationId: Id<"organizations">,
+): Promise<void> {
+  await assertLegacyLeaveWriteAllowed(ctx, organizationId);
+  const settings = await ctx.db
+    .query("organizationLeaveSettings")
+    .withIndex("by_organization", (query) =>
+      query.eq("organizationId", organizationId),
+    )
+    .take(2);
+  if (settings.length > 1)
+    throw new Error("Duplicate organization leave settings");
+  if (
+    settings[0]?.migrationState === "active" &&
+    settings[0].activePolicyEngineVersion === 2
+  ) {
+    throw new Error("Use the canonical leave request workflow");
+  }
+}
 
 async function persistLeaveCredits(
   ctx: MutationCtx,
@@ -57,13 +110,7 @@ async function checkAuth(
   const userRole = membership.role;
 
   // Write operations (requiredRole set): admin, owner, or that role only
-  if (
-    requiredRole &&
-    userRole !== requiredRole &&
-    !(requiredRole === "hr" && userRole === "manager") &&
-    userRole !== "admin" &&
-    userRole !== "owner"
-  ) {
+  if (requiredRole && !canAdministerLeave(userRole)) {
     throw new Error("Not authorized");
   }
   // Read operations (no requiredRole): all org members including accounting (for payroll/payslips)
@@ -134,7 +181,10 @@ async function findOverlappingLeaveRequest(
           .eq("status", status)
           .gte("endDate", startDate),
       )
-      .collect();
+      .take(MAX_LEAVE_CONFLICT_CANDIDATES + 1);
+    if (possibleConflicts.length > MAX_LEAVE_CONFLICT_CANDIDATES) {
+      throw new Error("Leave conflict history exceeds the supported limit");
+    }
     const conflict = possibleConflicts.find((request) => {
       if (request.organizationId !== organizationId) return false;
       if (excludeLeaveRequestId && request._id === excludeLeaveRequestId) {
@@ -185,7 +235,9 @@ function getBalanceForType(
   if (!leaveCredits) return 0;
   if (creditType === "vacation") return leaveCredits.vacation?.balance ?? 0;
   if (creditType === "sick") return leaveCredits.sick?.balance ?? 0;
-  const custom = leaveCredits.custom?.find((credit) => credit.type === creditType);
+  const custom = leaveCredits.custom?.find(
+    (credit) => credit.type === creditType,
+  );
   return custom?.balance ?? 0;
 }
 
@@ -278,6 +330,503 @@ function isGeneralPoolLeaveRequest(
 
 type EffectiveSettings = Awaited<ReturnType<typeof getEffectiveSettings>>;
 
+const leaveRequestV2DraftArgs = {
+  organizationId: v.id("organizations"),
+  employeeId: v.id("employees"),
+  policyId: v.id("leavePolicies"),
+  startLocalDate: v.string(),
+  endLocalDate: v.string(),
+  requestedDurationMode: v.union(
+    v.literal("day"),
+    v.literal("half_day"),
+    v.literal("hour"),
+  ),
+  requestedMinutes: v.optional(v.number()),
+  benefitEventId: v.optional(v.id("leaveBenefitEvents")),
+};
+
+const leaveRequestAttachmentValidator = v.object({
+  storageObjectId: v.id("storageObjects"),
+  documentType: v.string(),
+});
+
+type LeaveRequestAttachmentInput = {
+  storageObjectId: Id<"storageObjects">;
+  documentType: string;
+};
+
+async function validateLeaveRequestAttachments(
+  ctx: MutationCtx,
+  args: {
+    organizationId: Id<"organizations">;
+    userId: Id<"users">;
+    attachments: readonly LeaveRequestAttachmentInput[];
+    policyVersion: Doc<"leavePolicyVersions">;
+    chargeableDuration: number;
+  },
+): Promise<Id<"_storage">[]> {
+  const seenObjects = new Set<Id<"storageObjects">>();
+  const documentTypes = new Set<string>();
+  const storageIds: Id<"_storage">[] = [];
+  for (const attachment of args.attachments) {
+    if (seenObjects.has(attachment.storageObjectId)) {
+      throw new Error("Leave attachments must be unique");
+    }
+    seenObjects.add(attachment.storageObjectId);
+    const documentType = attachment.documentType.trim();
+    if (!documentType) throw new Error("Leave attachment type is required");
+    documentTypes.add(documentType);
+    const storageObject = await ctx.db.get(attachment.storageObjectId);
+    if (
+      !storageObject ||
+      storageObject.organizationId !== args.organizationId ||
+      storageObject.ownerUserId !== args.userId ||
+      storageObject.purpose !== "leave_attachment" ||
+      storageObject.state !== "active"
+    ) {
+      throw new Error("Not authorized");
+    }
+    storageIds.push(storageObject.storageId);
+  }
+
+  for (const rule of args.policyVersion.requiredDocumentRules ?? []) {
+    if (
+      rule.requiredBefore === "submission" &&
+      args.chargeableDuration >= (rule.minimumDuration ?? 0) &&
+      !documentTypes.has(rule.documentType)
+    ) {
+      throw new Error(
+        `Required leave evidence is missing: ${rule.documentType}`,
+      );
+    }
+  }
+  return storageIds;
+}
+
+function legacyLeaveTypeForPolicy(policy: Doc<"leavePolicies">): {
+  leaveType: Doc<"leaveRequests">["leaveType"];
+  customLeaveType?: string;
+} {
+  const sourceKey = policy.sourceKey.toLowerCase();
+  if (sourceKey.includes("vacation")) return { leaveType: "vacation" };
+  if (sourceKey.includes("sick")) return { leaveType: "sick" };
+  if (sourceKey.includes("emergency")) return { leaveType: "emergency" };
+  if (sourceKey.includes("maternity")) return { leaveType: "maternity" };
+  if (sourceKey.includes("paternity")) return { leaveType: "paternity" };
+  return { leaveType: "custom", customLeaveType: policy.name };
+}
+
+async function getV2LeaveApprovers(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  requesterId: Id<"users">,
+): Promise<Id<"users">[]> {
+  const memberships = await ctx.db
+    .query("userOrganizations")
+    .withIndex("by_organization", (query) =>
+      query.eq("organizationId", organizationId),
+    )
+    .take(501);
+  if (memberships.length > 500) {
+    throw new Error("Organization membership list exceeds the supported limit");
+  }
+  const result = new Set<Id<"users">>();
+  for (const membership of memberships) {
+    if (
+      membership.userId !== requesterId &&
+      (membership.accessStatus === undefined ||
+        membership.accessStatus === "active") &&
+      (membership.role === "owner" ||
+        membership.role === "admin" ||
+        membership.role === "hr")
+    ) {
+      result.add(membership.userId);
+    }
+  }
+  return [...result];
+}
+
+const MAX_REQUEST_WORKFLOW_ROWS = 500;
+
+type CanonicalRequestState = {
+  occurrences: Doc<"leaveRequestOccurrences">[];
+  ledgerEntries: Doc<"leaveLedgerEntries">[];
+};
+
+function reviewerDisplayName(user: Doc<"users">): string {
+  return user.name?.trim() || user.email;
+}
+
+async function requireRequestSensitiveAccessIfNeeded(
+  ctx: QueryCtx | MutationCtx,
+  request: Doc<"leaveRequests">,
+): Promise<void> {
+  if (!request.policyId) return;
+  const policy = await ctx.db.get(request.policyId);
+  if (
+    policy?.organizationId === request.organizationId &&
+    policy.confidentiality === "restricted"
+  ) {
+    await requireSensitiveLeaveAccess(
+      ctx,
+      request.organizationId,
+      request.employeeId,
+    );
+  }
+}
+
+export const getLeaveEngineStatus = query({
+  args: { organizationId: v.id("organizations") },
+  handler: async (ctx, args) => {
+    await requireActiveMembership(ctx, args.organizationId);
+    const settings = await ctx.db
+      .query("organizationLeaveSettings")
+      .withIndex("by_organization", (query) =>
+        query.eq("organizationId", args.organizationId),
+      )
+      .unique();
+    return {
+      isActive:
+        settings?.migrationState === "active" &&
+        settings.activePolicyEngineVersion === 2,
+      migrationState: settings?.migrationState ?? "not_started",
+      employmentSector: settings?.employmentSector,
+      approvalSignatureMode: settings?.approvalSignatureMode ?? "none",
+    };
+  },
+});
+
+async function requireLeaveAdministrator(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+) {
+  const access = await requireActiveMembership(ctx, organizationId);
+  if (
+    access.membership.role !== "owner" &&
+    access.membership.role !== "admin" &&
+    access.membership.role !== "hr"
+  ) {
+    throw new Error("Owner, Admin, or HR approval is required");
+  }
+  await requireActiveLeaveEngineV2(ctx, organizationId);
+  return access;
+}
+
+async function loadCanonicalRequestState(
+  ctx: QueryCtx | MutationCtx,
+  leaveRequestId: Id<"leaveRequests">,
+): Promise<CanonicalRequestState> {
+  const [occurrences, ledgerEntries] = await Promise.all([
+    ctx.db
+      .query("leaveRequestOccurrences")
+      .withIndex("by_request_local_date", (query) =>
+        query.eq("leaveRequestId", leaveRequestId),
+      )
+      .take(MAX_REQUEST_WORKFLOW_ROWS + 1),
+    ctx.db
+      .query("leaveLedgerEntries")
+      .withIndex("by_request", (query) =>
+        query.eq("leaveRequestId", leaveRequestId),
+      )
+      .take(MAX_REQUEST_WORKFLOW_ROWS + 1),
+  ]);
+  if (
+    occurrences.length > MAX_REQUEST_WORKFLOW_ROWS ||
+    ledgerEntries.length > MAX_REQUEST_WORKFLOW_ROWS
+  ) {
+    throw new Error("Leave request workflow exceeds the supported row limit");
+  }
+  if (occurrences.length === 0) {
+    throw new Error("Canonical leave request occurrences are missing");
+  }
+  return { occurrences, ledgerEntries };
+}
+
+function originalReservation(
+  ledgerEntries: readonly Doc<"leaveLedgerEntries">[],
+): Doc<"leaveLedgerEntries"> | null {
+  return (
+    ledgerEntries.find(
+      (entry) => entry.kind === "reservation" && entry.amount < 0,
+    ) ?? null
+  );
+}
+
+function requestUsageEntries(
+  ledgerEntries: readonly Doc<"leaveLedgerEntries">[],
+): Doc<"leaveLedgerEntries">[] {
+  return ledgerEntries.filter(
+    (entry) => entry.kind === "usage" && entry.amount < 0,
+  );
+}
+
+function assertOccurrencesUnlocked(
+  occurrences: readonly Doc<"leaveRequestOccurrences">[],
+): void {
+  if (
+    occurrences.some(
+      (occurrence) =>
+        occurrence.payrollLockedAt !== undefined ||
+        occurrence.payrollRunId !== undefined,
+    )
+  ) {
+    throw new Error(
+      "A payroll-locked leave requires the audited correction workflow",
+    );
+  }
+}
+
+function assertFutureOccurrences(
+  occurrences: readonly Doc<"leaveRequestOccurrences">[],
+  now: number,
+): void {
+  const today = new Date(now + 8 * 60 * 60 * 1_000);
+  const todayLocalDate = [
+    String(today.getUTCFullYear()).padStart(4, "0"),
+    String(today.getUTCMonth() + 1).padStart(2, "0"),
+    String(today.getUTCDate()).padStart(2, "0"),
+  ].join("-");
+  if (
+    occurrences.some((occurrence) => occurrence.localDate <= todayLocalDate)
+  ) {
+    throw new Error("Past or current leave requires the correction workflow");
+  }
+}
+
+async function setOccurrenceLifecycle(
+  ctx: MutationCtx,
+  occurrences: readonly Doc<"leaveRequestOccurrences">[],
+  lifecycleState: Doc<"leaveRequestOccurrences">["lifecycleState"],
+  now: number,
+): Promise<void> {
+  for (const occurrence of occurrences) {
+    await ctx.db.patch(occurrence._id, { lifecycleState, updatedAt: now });
+  }
+}
+
+function parseSubmissionDetails(event: Doc<"leaveRequestEvents"> | null): {
+  benefitEventId?: Id<"leaveBenefitEvents">;
+  evidenceDocumentTypes: string[];
+} {
+  if (!event?.detailsJson) return { evidenceDocumentTypes: [] };
+  let value: unknown;
+  try {
+    value = JSON.parse(event.detailsJson) as unknown;
+  } catch {
+    throw new Error("Leave request submission audit details are invalid");
+  }
+  if (typeof value !== "object" || value === null) {
+    throw new Error("Leave request submission audit details are invalid");
+  }
+  const record = value as Record<string, unknown>;
+  const evidenceDocumentTypes = Array.isArray(record.evidenceDocumentTypes)
+    ? record.evidenceDocumentTypes.filter(
+        (item): item is string => typeof item === "string",
+      )
+    : [];
+  return {
+    benefitEventId:
+      typeof record.benefitEventId === "string"
+        ? (record.benefitEventId as Id<"leaveBenefitEvents">)
+        : undefined,
+    evidenceDocumentTypes,
+  };
+}
+
+async function revalidatePendingRequest(
+  ctx: QueryCtx | MutationCtx,
+  request: Doc<"leaveRequests">,
+  state: CanonicalRequestState,
+  now: number,
+): Promise<Awaited<ReturnType<typeof prepareLeaveRequestV2>>> {
+  if (
+    !request.policyId ||
+    !request.policyVersionId ||
+    request.engineVersion !== 2
+  ) {
+    throw new Error("Canonical leave policy identity is missing");
+  }
+  const reservation = originalReservation(state.ledgerEntries);
+  const submittedEvent = await ctx.db
+    .query("leaveRequestEvents")
+    .withIndex("by_request_created", (query) =>
+      query.eq("leaveRequestId", request._id),
+    )
+    .filter((query) => query.eq(query.field("type"), "submitted"))
+    .first();
+  const details = parseSubmissionDetails(submittedEvent);
+  const firstOccurrence = state.occurrences[0];
+  const lastOccurrence = state.occurrences.at(-1);
+  if (!firstOccurrence || !lastOccurrence || !request.requestedDurationMode) {
+    throw new Error("Canonical leave request duration is missing");
+  }
+  const prepared = await prepareLeaveRequestV2(
+    ctx,
+    {
+      organizationId: request.organizationId,
+      employeeId: request.employeeId,
+      policyId: request.policyId,
+      startLocalDate: firstOccurrence.localDate,
+      endLocalDate: lastOccurrence.localDate,
+      requestedDurationMode: request.requestedDurationMode,
+      requestedMinutes:
+        request.requestedDurationMode === "hour"
+          ? firstOccurrence.leaveMinutes
+          : undefined,
+      benefitEventId: request.benefitEventId ?? details.benefitEventId,
+    },
+    now,
+    {
+      existingReservationUnits: reservation ? -reservation.amount : 0,
+      excludeLeaveRequestId: request._id,
+    },
+  );
+  if (prepared.policyVersion._id !== request.policyVersionId) {
+    throw new Error("Leave request policy version is no longer applicable");
+  }
+  if (
+    prepared.occurrences.length !== state.occurrences.length ||
+    prepared.occurrences.some((draft, index) => {
+      const stored = state.occurrences[index];
+      return (
+        !stored ||
+        stored.localDate !== draft.localDate ||
+        stored.scheduledMinutes !== draft.scheduledMinutes ||
+        stored.leaveMinutes !== draft.leaveMinutes ||
+        stored.creditAmount !== draft.creditUnits ||
+        stored.payTreatment !== prepared.policyVersion.payTreatment
+      );
+    })
+  ) {
+    throw new Error(
+      "Leave schedule or holiday details changed after submission",
+    );
+  }
+  const evidenceTypes = new Set(details.evidenceDocumentTypes);
+  const attachments = await loadEffectiveLeaveAttachments(ctx, request);
+  if (attachments.length < evidenceTypes.size) {
+    throw new Error("Required leave evidence is no longer available");
+  }
+  for (const storageId of attachments) {
+    const storageObject = await ctx.db
+      .query("storageObjects")
+      .withIndex("by_storage", (query) => query.eq("storageId", storageId))
+      .unique();
+    if (
+      !storageObject ||
+      storageObject.organizationId !== request.organizationId ||
+      storageObject.purpose !== "leave_attachment" ||
+      storageObject.state !== "active"
+    ) {
+      throw new Error("Required leave evidence is no longer available");
+    }
+  }
+  for (const rule of prepared.policyVersion.requiredDocumentRules ?? []) {
+    if (
+      rule.requiredBefore === "approval" &&
+      prepared.chargeableDuration >= (rule.minimumDuration ?? 0) &&
+      !evidenceTypes.has(rule.documentType)
+    ) {
+      throw new Error(
+        `Required leave evidence is missing: ${rule.documentType}`,
+      );
+    }
+  }
+  return prepared;
+}
+
+async function releasePendingReservation(
+  ctx: MutationCtx,
+  request: Doc<"leaveRequests">,
+  state: CanonicalRequestState,
+  actorId: Id<"users">,
+  reason: string,
+  now: number,
+  actionKey: string,
+): Promise<void> {
+  const reservation = originalReservation(state.ledgerEntries);
+  if (!reservation) return;
+  await releaseReservation(ctx, {
+    organizationId: request.organizationId,
+    employeeId: request.employeeId,
+    balanceId: reservation.balanceId,
+    policyVersionId: reservation.policyVersionId,
+    effectiveDate: now,
+    unit: reservation.unit,
+    referenceType: "request",
+    leaveRequestId: request._id,
+    actorId,
+    reason,
+    idempotencyKey: `leave-request:${request._id}:${actionKey}:release`,
+    reversalOfEntryId: reservation._id,
+    createdAt: now,
+    units: -reservation.amount,
+  });
+}
+
+async function notifyLeaveDecision(
+  ctx: MutationCtx,
+  request: Doc<"leaveRequests">,
+  decision: "approved" | "rejected",
+  reason?: string,
+): Promise<void> {
+  const requesterId = await getUserIdForEmployeeInOrg(
+    ctx,
+    request.organizationId,
+    request.employeeId,
+  );
+  if (!requesterId) return;
+  await insertInAppNotification(ctx, {
+    userId: requesterId,
+    organizationId: request.organizationId,
+    type: decision === "approved" ? "leave_approved" : "leave_rejected",
+    title:
+      decision === "approved"
+        ? "Leave request approved"
+        : "Leave request not approved",
+    body: reason?.trim() || undefined,
+    pathAfterOrg: "leave?tab=history",
+    leaveRequestId: request._id,
+  });
+}
+
+async function restoreRequestUsageEntries(
+  ctx: MutationCtx,
+  request: Doc<"leaveRequests">,
+  ledgerEntries: readonly Doc<"leaveLedgerEntries">[],
+  actorId: Id<"users">,
+  reason: string,
+  now: number,
+  actionKey: string,
+): Promise<void> {
+  const usageEntries = requestUsageEntries(ledgerEntries);
+  if (usageEntries.length === 0) {
+    const policyVersion = request.policyVersionId
+      ? await ctx.db.get(request.policyVersionId)
+      : null;
+    if (policyVersion?.accountBehavior === "non_credit") return;
+    throw new Error("Approved leave usage entry is missing");
+  }
+  for (const usage of usageEntries) {
+    await restoreUsage(ctx, {
+      organizationId: request.organizationId,
+      employeeId: request.employeeId,
+      balanceId: usage.balanceId,
+      policyVersionId: usage.policyVersionId,
+      effectiveDate: now,
+      unit: usage.unit,
+      referenceType: actionKey === "correction" ? "correction" : "request",
+      leaveRequestId: request._id,
+      actorId,
+      reason,
+      idempotencyKey: `leave-request:${request._id}:${actionKey}:${usage._id}`,
+      reversalOfEntryId: usage._id,
+      createdAt: now,
+      units: -usage.amount,
+    });
+  }
+}
+
 function getDefaultLeaveRequestIsPaid(
   request: Pick<
     Doc<"leaveRequests">,
@@ -331,7 +880,8 @@ function computeGeneralLeaveSummary(
   referenceDate: number,
 ) {
   const hireDate = employee.employment?.hireDate;
-  const regularizationDate = employee.employment?.regularizationDate ?? undefined;
+  const regularizationDate =
+    employee.employment?.regularizationDate ?? undefined;
   const grantLeaveUponRegularization =
     settings?.grantLeaveUponRegularization !== false;
   const proratedLeaveSetting = settings?.proratedLeave !== false;
@@ -394,6 +944,1145 @@ function computeGeneralLeaveSummary(
   };
 }
 
+export const previewLeaveRequestV2 = query({
+  args: leaveRequestV2DraftArgs,
+  handler: async (ctx, args) => {
+    await requireLeaveSelfService(ctx, args.organizationId, args.employeeId);
+    const prepared = await prepareLeaveRequestV2(ctx, args, Date.now());
+    const overlap = await findOverlappingLeaveRequest(ctx, {
+      organizationId: args.organizationId,
+      employeeId: args.employeeId,
+      startDate: prepared.requestedStart,
+      endDate: prepared.requestedEnd,
+      statuses: ACTIVE_LEAVE_REQUEST_STATUSES,
+    });
+    if (overlap) throw new Error(formatLeaveConflictMessage(overlap));
+    return {
+      policy: {
+        policyId: prepared.policy._id,
+        policyVersionId: prepared.policyVersion._id,
+        name: prepared.policy.name,
+        payTreatment: prepared.policyVersion.payTreatment,
+      },
+      requestedStart: prepared.requestedStart,
+      requestedEnd: prepared.requestedEnd,
+      chargeableDuration: prepared.chargeableDuration,
+      availableBalance: prepared.availableBalance,
+      remainingBalance: prepared.remainingBalance,
+      requiredDocuments: (prepared.policyVersion.requiredDocumentRules ?? [])
+        .filter(
+          (rule) =>
+            rule.requiredBefore === "submission" &&
+            prepared.chargeableDuration >= (rule.minimumDuration ?? 0),
+        )
+        .map((rule) => rule.documentType),
+      occurrences: prepared.occurrences.map((occurrence) => ({
+        localDate: occurrence.localDate,
+        scheduledMinutes: occurrence.scheduledMinutes,
+        leaveMinutes: occurrence.leaveMinutes,
+        creditAmount: occurrence.creditUnits,
+        isHoliday: occurrence.isHoliday,
+        isRestDay: occurrence.isRestDay,
+      })),
+    };
+  },
+});
+
+export const createLeaveRequestV2 = mutation({
+  args: {
+    ...leaveRequestV2DraftArgs,
+    reason: v.string(),
+    attachments: v.optional(v.array(leaveRequestAttachmentValidator)),
+  },
+  handler: async (ctx, args) => {
+    const reason = args.reason.trim();
+    if (!reason) throw new Error("Leave reason is required");
+    const access = await requireLeaveSelfService(
+      ctx,
+      args.organizationId,
+      args.employeeId,
+    );
+    const now = Date.now();
+    const prepared = await prepareLeaveRequestV2(ctx, args, now);
+    const overlap = await findOverlappingLeaveRequest(ctx, {
+      organizationId: args.organizationId,
+      employeeId: args.employeeId,
+      startDate: prepared.requestedStart,
+      endDate: prepared.requestedEnd,
+      statuses: ACTIVE_LEAVE_REQUEST_STATUSES,
+    });
+    if (overlap) throw new Error(formatLeaveConflictMessage(overlap));
+
+    const storageIds = await validateLeaveRequestAttachments(ctx, {
+      organizationId: args.organizationId,
+      userId: access.user._id,
+      attachments: args.attachments ?? [],
+      policyVersion: prepared.policyVersion,
+      chargeableDuration: prepared.chargeableDuration,
+    });
+    const legacyType = legacyLeaveTypeForPolicy(prepared.policy);
+    const leaveRequestId = await ctx.db.insert("leaveRequests", {
+      organizationId: args.organizationId,
+      employeeId: args.employeeId,
+      ...legacyType,
+      startDate: prepared.requestedStart,
+      endDate: prepared.requestedEnd,
+      numberOfDays: prepared.chargeableDuration,
+      reason,
+      isPaid: prepared.policyVersion.payTreatment !== "unpaid",
+      status: "pending",
+      policyId: prepared.policy._id,
+      policyVersionId: prepared.policyVersion._id,
+      benefitEventId: prepared.benefitEvent?._id,
+      requestedStart: prepared.requestedStart,
+      requestedEnd: prepared.requestedEnd,
+      requestedDurationMode: args.requestedDurationMode,
+      chargeableDuration: prepared.chargeableDuration,
+      payTreatment: prepared.policyVersion.payTreatment,
+      submittedBy: access.user._id,
+      engineVersion: 2,
+      cutoverAt: prepared.settings.policyEngineCutoverAt,
+      filedDate: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const leaveRequest = await ctx.db.get(leaveRequestId);
+    if (!leaveRequest) throw new Error("Leave request was not created");
+
+    await insertLeaveRequestOccurrences(ctx, {
+      leaveRequestId,
+      organizationId: args.organizationId,
+      employeeId: args.employeeId,
+      payTreatment: prepared.policyVersion.payTreatment,
+      occurrences: prepared.occurrences,
+      now,
+    });
+    if (prepared.balance) {
+      await reserveUnits(ctx, {
+        organizationId: args.organizationId,
+        employeeId: args.employeeId,
+        balanceId: prepared.balance._id,
+        policyVersionId: prepared.policyVersion._id,
+        effectiveDate: prepared.requestedStart,
+        unit: "day",
+        referenceType: "request",
+        leaveRequestId,
+        actorId: access.user._id,
+        reason: `Reservation for ${prepared.policy.name}`,
+        idempotencyKey: `leave-request:${leaveRequestId}:reservation`,
+        createdAt: now,
+        units: prepared.chargeableDuration,
+      });
+    }
+    await replaceLeaveAttachments(ctx, leaveRequest, storageIds, now);
+    await ctx.db.insert("leaveRequestEvents", {
+      leaveRequestId,
+      organizationId: args.organizationId,
+      type: "submitted",
+      actorId: access.user._id,
+      detailsJson: JSON.stringify({
+        startLocalDate: args.startLocalDate,
+        endLocalDate: args.endLocalDate,
+        requestedDurationMode: args.requestedDurationMode,
+        benefitEventId: prepared.benefitEvent?._id,
+        evidenceDocumentTypes: (args.attachments ?? []).map((attachment) =>
+          attachment.documentType.trim(),
+        ),
+      }),
+      createdAt: now,
+    });
+
+    const approverIds = await getV2LeaveApprovers(
+      ctx,
+      args.organizationId,
+      access.user._id,
+    );
+    const employeeName =
+      `${prepared.employee.personalInfo.firstName} ${prepared.employee.personalInfo.lastName}`.trim() ||
+      "An employee";
+    for (const approverId of approverIds) {
+      await insertInAppNotification(ctx, {
+        userId: approverId,
+        organizationId: args.organizationId,
+        type: "leave_submitted",
+        title: `New leave request: ${employeeName}`,
+        body: `${prepared.policy.name} · ${args.startLocalDate} – ${args.endLocalDate} · ${prepared.chargeableDuration} day(s)`,
+        pathAfterOrg: "leave?tab=requests",
+        leaveRequestId,
+      });
+    }
+    await ctx.db.insert("leaveRequestEvents", {
+      leaveRequestId,
+      organizationId: args.organizationId,
+      type: "notification_sent",
+      actorId: access.user._id,
+      detailsJson: JSON.stringify({ approverCount: approverIds.length }),
+      createdAt: now,
+    });
+    return { leaveRequestId, chargeableDuration: prepared.chargeableDuration };
+  },
+});
+
+export const getMyLeaveDashboard = query({
+  args: { organizationId: v.id("organizations") },
+  handler: async (ctx, args) => {
+    const access = await requireActiveMembership(ctx, args.organizationId);
+    await requireActiveLeaveEngineV2(ctx, args.organizationId);
+    const employeeId = access.membership.employeeId;
+    if (!employeeId) throw new Error("Employee record is not linked");
+    const employee = await ctx.db.get(employeeId);
+    if (!employee || employee.organizationId !== args.organizationId) {
+      throw new Error("Employee not found in organization");
+    }
+    const year = new Date(Date.now() + 8 * 60 * 60 * 1_000).getUTCFullYear();
+    const [balances, policies, pendingRequests] = await Promise.all([
+      ctx.db
+        .query("employeeLeaveBalances")
+        .withIndex("by_employee_year_type", (builder) =>
+          builder.eq("employeeId", employeeId).eq("year", year),
+        )
+        .take(101),
+      ctx.db
+        .query("leavePolicies")
+        .withIndex("by_organization_state", (builder) =>
+          builder
+            .eq("organizationId", args.organizationId)
+            .eq("state", "active"),
+        )
+        .take(101),
+      ctx.db
+        .query("leaveRequests")
+        .withIndex("by_employee", (builder) =>
+          builder.eq("employeeId", employeeId),
+        )
+        .filter((builder) => builder.eq(builder.field("status"), "pending"))
+        .take(101),
+    ]);
+    if (
+      balances.length > 100 ||
+      policies.length > 100 ||
+      pendingRequests.length > 100
+    ) {
+      throw new Error("Leave dashboard exceeds the supported row limit");
+    }
+    return {
+      employee: {
+        employeeId,
+        displayName:
+          `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`.trim(),
+        employmentStatus: employee.employment.status,
+      },
+      year,
+      balances: balances.map((balance) => ({
+        balanceId: balance._id,
+        policyId: balance.policyId,
+        poolKey: balance.poolKey,
+        leaveTypeKey: balance.leaveTypeKey,
+        granted: balance.granted ?? balance.total,
+        used: balance.used,
+        reserved: balance.reserved ?? 0,
+        available: balance.balance,
+      })),
+      policies: policies.map((policy) => ({
+        policyId: policy._id,
+        name: policy.name,
+        category: policy.category,
+        confidentiality: policy.confidentiality,
+      })),
+      pendingRequestCount: pendingRequests.length,
+    };
+  },
+});
+
+export const getMyLeaveRequests = query({
+  args: {
+    organizationId: v.id("organizations"),
+    status: v.optional(
+      v.union(
+        v.literal("draft"),
+        v.literal("pending"),
+        v.literal("approved"),
+        v.literal("rejected"),
+        v.literal("cancellation_requested"),
+        v.literal("cancelled"),
+        v.literal("corrected"),
+      ),
+    ),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const access = await requireActiveMembership(ctx, args.organizationId);
+    await requireActiveLeaveEngineV2(ctx, args.organizationId);
+    const employeeId = access.membership.employeeId;
+    if (!employeeId) throw new Error("Employee record is not linked");
+    const page = await ctx.db
+      .query("leaveRequests")
+      .withIndex("by_employee", (builder) =>
+        builder.eq("employeeId", employeeId),
+      )
+      .filter((builder) =>
+        builder.and(
+          builder.eq(builder.field("organizationId"), args.organizationId),
+          args.status === undefined
+            ? builder.eq(builder.field("employeeId"), employeeId)
+            : builder.eq(builder.field("status"), args.status),
+        ),
+      )
+      .order("desc")
+      .paginate(args.paginationOpts);
+    return {
+      ...page,
+      page: await Promise.all(
+        page.page.map(async (request) => ({
+          ...request,
+          supportingDocuments: await loadEffectiveLeaveAttachments(
+            ctx,
+            request,
+          ),
+        })),
+      ),
+    };
+  },
+});
+
+export const getLeaveApprovalInbox = query({
+  args: {
+    organizationId: v.id("organizations"),
+    status: v.optional(
+      v.union(v.literal("pending"), v.literal("cancellation_requested")),
+    ),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const access = await requireLeaveAdministrator(ctx, args.organizationId);
+    const activeSensitiveGrant = await ctx.db
+      .query("leaveSensitiveAccessGrants")
+      .withIndex("by_membership_active", (query) =>
+        query.eq("membershipId", access.membership._id).eq("isActive", true),
+      )
+      .filter((query) =>
+        query.eq(query.field("organizationId"), args.organizationId),
+      )
+      .first();
+    const page = await ctx.db
+      .query("leaveRequests")
+      .withIndex("by_organization_status_created", (query) =>
+        query
+          .eq("organizationId", args.organizationId)
+          .eq("status", args.status ?? "pending"),
+      )
+      .order("desc")
+      .paginate(args.paginationOpts);
+    return {
+      ...page,
+      page: await Promise.all(
+        page.page.map(async (request) => {
+          const [employee, policy, policyVersion, attachments, occurrences] =
+            await Promise.all([
+              ctx.db.get(request.employeeId),
+              request.policyId
+                ? ctx.db.get(request.policyId)
+                : Promise.resolve(null),
+              request.policyVersionId
+                ? ctx.db.get(request.policyVersionId)
+                : Promise.resolve(null),
+              loadEffectiveLeaveAttachments(ctx, request),
+              ctx.db
+                .query("leaveRequestOccurrences")
+                .withIndex("by_request_local_date", (query) =>
+                  query.eq("leaveRequestId", request._id),
+                )
+                .take(MAX_REQUEST_WORKFLOW_ROWS + 1),
+            ]);
+          if (occurrences.length > MAX_REQUEST_WORKFLOW_ROWS) {
+            throw new Error("Leave request occurrence count exceeds the limit");
+          }
+          const requiredDocumentCount =
+            policyVersion?.requiredDocumentRules?.filter(
+              (rule) =>
+                rule.requiredBefore === "approval" &&
+                (rule.minimumDuration === undefined ||
+                  (request.chargeableDuration ?? request.numberOfDays) >=
+                    rule.minimumDuration),
+            ).length ?? 0;
+          const hasSensitiveAccess =
+            policy?.confidentiality !== "restricted" ||
+            canViewSensitiveLeave({
+              isRequestEmployee:
+                access.membership.employeeId === request.employeeId,
+              hasActiveGrant: activeSensitiveGrant !== null,
+            });
+          const safeRequest = hasSensitiveAccess
+            ? request
+            : {
+                ...request,
+                leaveType: "custom" as const,
+                customLeaveType: undefined,
+                policyId: undefined,
+                policyVersionId: undefined,
+                benefitEventId: undefined,
+                payTreatment: undefined,
+                reason: "Restricted leave details",
+                formTemplateContent: undefined,
+                filledFormContent: undefined,
+                signatureDataUrl: undefined,
+                decisionReason: undefined,
+                cancellationReason: undefined,
+                remarks: undefined,
+              };
+          return {
+            ...safeRequest,
+            employeeName: employee
+              ? `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`.trim() ||
+                "Employee"
+              : "Former employee",
+            policyName:
+              policy?.confidentiality === "restricted" && !hasSensitiveAccess
+                ? "Protected leave"
+                : (policy?.name ??
+                  request.customLeaveType ??
+                  request.leaveType),
+            confidentiality: policy?.confidentiality ?? "standard",
+            hasSensitiveAccess,
+            requiredDocumentCount,
+            submittedDocumentCount: attachments.length,
+            hasConflict: occurrences.some(
+              (occurrence) => occurrence.attendanceConflictState === "detected",
+            ),
+          };
+        }),
+      ),
+    };
+  },
+});
+
+export const getApprovedLeaveCalendar = query({
+  args: {
+    organizationId: v.id("organizations"),
+    startLocalDate: v.string(),
+    endLocalDate: v.string(),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    await requireLeaveAdministrator(ctx, args.organizationId);
+    const localDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+    if (
+      !localDatePattern.test(args.startLocalDate) ||
+      !localDatePattern.test(args.endLocalDate) ||
+      args.startLocalDate > args.endLocalDate
+    ) {
+      throw new Error("A valid leave calendar date range is required");
+    }
+    const page = await ctx.db
+      .query("leaveRequestOccurrences")
+      .withIndex("by_organization_local_date", (query) =>
+        query
+          .eq("organizationId", args.organizationId)
+          .gte("localDate", args.startLocalDate)
+          .lte("localDate", args.endLocalDate),
+      )
+      .filter((query) => query.eq(query.field("lifecycleState"), "approved"))
+      .paginate(args.paginationOpts);
+    return {
+      ...page,
+      page: await Promise.all(
+        page.page.map(async (occurrence) => {
+          const request = await ctx.db.get(occurrence.leaveRequestId);
+          if (!request || request.organizationId !== args.organizationId) {
+            throw new Error("Leave calendar request is missing");
+          }
+          const [employee, policy] = await Promise.all([
+            ctx.db.get(occurrence.employeeId),
+            request.policyId
+              ? ctx.db.get(request.policyId)
+              : Promise.resolve(null),
+          ]);
+          const confidentiality = policy?.confidentiality ?? "standard";
+          const date = Date.parse(`${occurrence.localDate}T00:00:00+08:00`);
+          return {
+            id: occurrence._id,
+            leaveRequestId: request._id,
+            employeeName: employee
+              ? `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`.trim() ||
+                "Employee"
+              : "Former employee",
+            policyName:
+              confidentiality === "restricted"
+                ? "Protected leave"
+                : (policy?.name ??
+                  request.customLeaveType ??
+                  request.leaveType),
+            confidentiality,
+            reason:
+              confidentiality === "restricted" ? undefined : request.reason,
+            startDate: date,
+            endDate: date,
+            status: "approved" as const,
+          };
+        }),
+      ),
+    };
+  },
+});
+
+export const getLeaveBalanceAdministration = query({
+  args: {
+    organizationId: v.id("organizations"),
+    year: v.number(),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    await requireLeaveAdministrator(ctx, args.organizationId);
+    if (!Number.isInteger(args.year) || args.year < 1970 || args.year > 9999) {
+      throw new Error("A valid leave balance year is required");
+    }
+    const page = await ctx.db
+      .query("employeeLeaveBalances")
+      .withIndex("by_organization_year", (query) =>
+        query.eq("organizationId", args.organizationId).eq("year", args.year),
+      )
+      .order("desc")
+      .paginate(args.paginationOpts);
+    return {
+      ...page,
+      page: await Promise.all(
+        page.page.map(async (balance) => {
+          const [employee, policy] = await Promise.all([
+            ctx.db.get(balance.employeeId),
+            balance.policyId
+              ? ctx.db.get(balance.policyId)
+              : Promise.resolve(null),
+          ]);
+          const employeeName = employee
+            ? `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`.trim()
+            : "Former employee";
+          return {
+            balanceId: balance._id,
+            employeeId: balance.employeeId,
+            policyId: balance.policyId,
+            employeeName: employeeName || "Employee",
+            policyName: policy?.name ?? balance.leaveTypeKey,
+            available: balance.balance,
+            periodStart: balance.periodStart,
+            periodEnd: balance.periodEnd,
+            engineStatus: balance.engineStatus ?? "reconciliation_required",
+          };
+        }),
+      ),
+    };
+  },
+});
+
+export const getLeaveBalanceLedgerEntries = query({
+  args: {
+    balanceId: v.id("employeeLeaveBalances"),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const balance = await ctx.db.get(args.balanceId);
+    if (!balance) throw new Error("Leave balance not found");
+    await requireLeaveAdministrator(ctx, balance.organizationId);
+    const page = await ctx.db
+      .query("leaveLedgerEntries")
+      .withIndex("by_balance_effective", (query) =>
+        query.eq("balanceId", balance._id),
+      )
+      .order("desc")
+      .paginate(args.paginationOpts);
+    return {
+      ...page,
+      page: await Promise.all(
+        page.page.map(async (entry) => {
+          const actor = entry.actorId ? await ctx.db.get(entry.actorId) : null;
+          return {
+            id: entry._id,
+            kind: entry.kind,
+            amount: entry.amount,
+            effectiveDate: entry.effectiveDate,
+            actorName: actor ? reviewerDisplayName(actor) : undefined,
+            reason: entry.reason,
+          };
+        }),
+      ),
+    };
+  },
+});
+
+export const getLeaveReviewContext = query({
+  args: { leaveRequestId: v.id("leaveRequests") },
+  handler: async (ctx, args) => {
+    const { request } = await requireFinalLeaveReviewer(
+      ctx,
+      args.leaveRequestId,
+    );
+    await requireActiveLeaveEngineV2(ctx, request.organizationId);
+    await requireRequestSensitiveAccessIfNeeded(ctx, request);
+    const state = await loadCanonicalRequestState(ctx, request._id);
+    const ledgerEntry =
+      originalReservation(state.ledgerEntries) ??
+      requestUsageEntries(state.ledgerEntries)[0];
+    const balance = ledgerEntry
+      ? await ctx.db.get(ledgerEntry.balanceId)
+      : null;
+    return {
+      request,
+      occurrences: state.occurrences,
+      balance: balance
+        ? {
+            balanceId: balance._id,
+            available: balance.balance,
+            reserved: balance.reserved ?? 0,
+            used: balance.used,
+          }
+        : null,
+      supportingDocuments: await loadEffectiveLeaveAttachments(ctx, request),
+    };
+  },
+});
+
+export const approveLeaveRequestV2 = mutation({
+  args: {
+    leaveRequestId: v.id("leaveRequests"),
+    decisionReason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const access = await requireFinalLeaveReviewer(ctx, args.leaveRequestId);
+    const request = access.request;
+    await requireActiveLeaveEngineV2(ctx, request.organizationId);
+    await requireRequestSensitiveAccessIfNeeded(ctx, request);
+    if (request.status !== "pending") {
+      throw new Error("Leave request is no longer pending");
+    }
+    const now = Date.now();
+    const state = await loadCanonicalRequestState(ctx, request._id);
+    if (
+      state.occurrences.some(
+        (occurrence) => occurrence.lifecycleState !== "reserved",
+      )
+    ) {
+      throw new Error("Leave request occurrence state is invalid");
+    }
+    assertOccurrencesUnlocked(state.occurrences);
+    const overlap = await findOverlappingLeaveRequest(ctx, {
+      organizationId: request.organizationId,
+      employeeId: request.employeeId,
+      startDate: request.requestedStart ?? request.startDate,
+      endDate: request.requestedEnd ?? request.endDate,
+      statuses: ["approved"],
+      excludeLeaveRequestId: request._id,
+    });
+    if (overlap) throw new Error(formatLeaveConflictMessage(overlap));
+    const prepared = await revalidatePendingRequest(ctx, request, state, now);
+    const reservation = originalReservation(state.ledgerEntries);
+    if (prepared.balance && !reservation) {
+      throw new Error("Leave request reservation is missing");
+    }
+    if (reservation) {
+      await consumeReservation(ctx, {
+        organizationId: request.organizationId,
+        employeeId: request.employeeId,
+        balanceId: reservation.balanceId,
+        policyVersionId: reservation.policyVersionId,
+        effectiveDate: now,
+        unit: reservation.unit,
+        referenceType: "request",
+        leaveRequestId: request._id,
+        actorId: access.user._id,
+        reason: args.decisionReason?.trim() || "Leave request approved",
+        idempotencyKey: `leave-request:${request._id}:approval`,
+        createdAt: now,
+        units: -reservation.amount,
+      });
+    }
+    await setOccurrenceLifecycle(ctx, state.occurrences, "approved", now);
+    const displayName = reviewerDisplayName(access.user);
+    const decisionReason = args.decisionReason?.trim() || undefined;
+    await ctx.db.patch(request._id, {
+      status: "approved",
+      reviewerId: access.user._id,
+      reviewedAt: now,
+      decisionReason,
+      reviewerSnapshot: {
+        displayName,
+        position: access.membership.role,
+      },
+      reviewedBy: access.user._id,
+      reviewedDate: now,
+      approvedByName: displayName,
+      remarks: decisionReason,
+      updatedAt: now,
+    });
+    await ctx.db.insert("leaveRequestEvents", {
+      leaveRequestId: request._id,
+      organizationId: request.organizationId,
+      type: "approved",
+      actorId: access.user._id,
+      reason: decisionReason,
+      createdAt: now,
+    });
+    await ensurePendingBenefitReconciliation(
+      ctx,
+      request,
+      access.user._id,
+      now,
+    );
+    await notifyLeaveDecision(ctx, request, "approved", decisionReason);
+    return { status: "approved" as const };
+  },
+});
+
+export const rejectLeaveRequestV2 = mutation({
+  args: {
+    leaveRequestId: v.id("leaveRequests"),
+    decisionReason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const decisionReason = args.decisionReason.trim();
+    if (!decisionReason) throw new Error("Decision reason is required");
+    const access = await requireFinalLeaveReviewer(ctx, args.leaveRequestId);
+    const request = access.request;
+    await requireActiveLeaveEngineV2(ctx, request.organizationId);
+    await requireRequestSensitiveAccessIfNeeded(ctx, request);
+    if (request.status !== "pending") {
+      throw new Error("Leave request is no longer pending");
+    }
+    const now = Date.now();
+    const state = await loadCanonicalRequestState(ctx, request._id);
+    await releasePendingReservation(
+      ctx,
+      request,
+      state,
+      access.user._id,
+      decisionReason,
+      now,
+      "rejection",
+    );
+    await setOccurrenceLifecycle(ctx, state.occurrences, "cancelled", now);
+    const displayName = reviewerDisplayName(access.user);
+    await ctx.db.patch(request._id, {
+      status: "rejected",
+      reviewerId: access.user._id,
+      reviewedAt: now,
+      decisionReason,
+      reviewerSnapshot: {
+        displayName,
+        position: access.membership.role,
+      },
+      reviewedBy: access.user._id,
+      reviewedDate: now,
+      remarks: decisionReason,
+      updatedAt: now,
+    });
+    await ctx.db.insert("leaveRequestEvents", {
+      leaveRequestId: request._id,
+      organizationId: request.organizationId,
+      type: "rejected",
+      actorId: access.user._id,
+      reason: decisionReason,
+      createdAt: now,
+    });
+    await notifyLeaveDecision(ctx, request, "rejected", decisionReason);
+    return { status: "rejected" as const };
+  },
+});
+
+export const withdrawPendingLeaveRequest = mutation({
+  args: {
+    leaveRequestId: v.id("leaveRequests"),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const request = await ctx.db.get(args.leaveRequestId);
+    if (!request) throw new Error("Leave request not found");
+    const access = await requireLeaveSelfService(
+      ctx,
+      request.organizationId,
+      request.employeeId,
+    );
+    await requireActiveLeaveEngineV2(ctx, request.organizationId);
+    if (request.status !== "pending") {
+      throw new Error("Only a pending leave request can be withdrawn");
+    }
+    const now = Date.now();
+    const reason = args.reason?.trim() || "Withdrawn by employee";
+    const state = await loadCanonicalRequestState(ctx, request._id);
+    await releasePendingReservation(
+      ctx,
+      request,
+      state,
+      access.user._id,
+      reason,
+      now,
+      "withdrawal",
+    );
+    await setOccurrenceLifecycle(ctx, state.occurrences, "cancelled", now);
+    await ctx.db.patch(request._id, {
+      status: "cancelled",
+      cancelledBy: access.user._id,
+      cancelledAt: now,
+      cancellationReason: reason,
+      updatedAt: now,
+    });
+    await ctx.db.insert("leaveRequestEvents", {
+      leaveRequestId: request._id,
+      organizationId: request.organizationId,
+      type: "cancelled",
+      actorId: access.user._id,
+      reason,
+      createdAt: now,
+    });
+    await voidBenefitReconciliation(ctx, request._id, access.user._id, now);
+    return { status: "cancelled" as const };
+  },
+});
+
+export const requestApprovedLeaveCancellation = mutation({
+  args: {
+    leaveRequestId: v.id("leaveRequests"),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const reason = args.reason.trim();
+    if (!reason) throw new Error("Cancellation reason is required");
+    const request = await ctx.db.get(args.leaveRequestId);
+    if (!request) throw new Error("Leave request not found");
+    const access = await requireLeaveSelfService(
+      ctx,
+      request.organizationId,
+      request.employeeId,
+    );
+    await requireActiveLeaveEngineV2(ctx, request.organizationId);
+    if (request.status !== "approved") {
+      throw new Error("Only an approved leave request can be cancelled");
+    }
+    const now = Date.now();
+    const state = await loadCanonicalRequestState(ctx, request._id);
+    assertOccurrencesUnlocked(state.occurrences);
+    assertFutureOccurrences(state.occurrences, now);
+    await ctx.db.patch(request._id, {
+      status: "cancellation_requested",
+      cancellationRequestedBy: access.user._id,
+      cancellationRequestedAt: now,
+      cancellationReason: reason,
+      updatedAt: now,
+    });
+    await ctx.db.insert("leaveRequestEvents", {
+      leaveRequestId: request._id,
+      organizationId: request.organizationId,
+      type: "cancellation_requested",
+      actorId: access.user._id,
+      reason,
+      createdAt: now,
+    });
+    return { status: "cancellation_requested" as const };
+  },
+});
+
+export const approveLeaveCancellation = mutation({
+  args: {
+    leaveRequestId: v.id("leaveRequests"),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const reason = args.reason.trim();
+    if (!reason) throw new Error("Cancellation reason is required");
+    const access = await requireFinalLeaveReviewer(ctx, args.leaveRequestId);
+    const request = access.request;
+    await requireActiveLeaveEngineV2(ctx, request.organizationId);
+    await requireRequestSensitiveAccessIfNeeded(ctx, request);
+    if (
+      request.status !== "approved" &&
+      request.status !== "cancellation_requested"
+    ) {
+      throw new Error("Leave request is not eligible for cancellation");
+    }
+    if (request.cancellationRequestedBy === access.user._id) {
+      throw new Error("A second actor must approve the leave cancellation");
+    }
+    const now = Date.now();
+    const state = await loadCanonicalRequestState(ctx, request._id);
+    assertOccurrencesUnlocked(state.occurrences);
+    assertFutureOccurrences(state.occurrences, now);
+    await restoreRequestUsageEntries(
+      ctx,
+      request,
+      state.ledgerEntries,
+      access.user._id,
+      reason,
+      now,
+      "cancellation",
+    );
+    await setOccurrenceLifecycle(ctx, state.occurrences, "cancelled", now);
+    await ctx.db.patch(request._id, {
+      status: "cancelled",
+      cancelledBy: access.user._id,
+      cancelledAt: now,
+      cancellationReason: reason,
+      updatedAt: now,
+    });
+    await ctx.db.insert("leaveRequestEvents", {
+      leaveRequestId: request._id,
+      organizationId: request.organizationId,
+      type: "cancelled",
+      actorId: access.user._id,
+      reason,
+      createdAt: now,
+    });
+    await voidBenefitReconciliation(ctx, request._id, access.user._id, now);
+    return { status: "cancelled" as const };
+  },
+});
+
+export const correctProcessedLeave = mutation({
+  args: {
+    leaveRequestId: v.id("leaveRequests"),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const reason = args.reason.trim();
+    if (!reason) throw new Error("Correction reason is required");
+    const access = await requireFinalLeaveReviewer(ctx, args.leaveRequestId);
+    const request = access.request;
+    await requireActiveLeaveEngineV2(ctx, request.organizationId);
+    await requireRequestSensitiveAccessIfNeeded(ctx, request);
+    if (request.status !== "approved") {
+      throw new Error("Only approved processed leave can be corrected");
+    }
+    const now = Date.now();
+    const state = await loadCanonicalRequestState(ctx, request._id);
+    if (
+      !state.occurrences.some(
+        (occurrence) =>
+          occurrence.payrollLockedAt !== undefined ||
+          occurrence.payrollRunId !== undefined,
+      )
+    ) {
+      throw new Error(
+        "Use the ordinary cancellation workflow for unlocked leave",
+      );
+    }
+    await restoreRequestUsageEntries(
+      ctx,
+      request,
+      state.ledgerEntries,
+      access.user._id,
+      reason,
+      now,
+      "correction",
+    );
+    await setOccurrenceLifecycle(ctx, state.occurrences, "corrected", now);
+    await ctx.db.patch(request._id, {
+      status: "corrected",
+      decisionReason: reason,
+      updatedAt: now,
+    });
+    await ctx.db.insert("leaveRequestEvents", {
+      leaveRequestId: request._id,
+      organizationId: request.organizationId,
+      type: "corrected",
+      actorId: access.user._id,
+      reason,
+      createdAt: now,
+    });
+    await voidBenefitReconciliation(ctx, request._id, access.user._id, now);
+    return { status: "corrected" as const };
+  },
+});
+
+export const adjustLeaveBalance = mutation({
+  args: {
+    balanceId: v.id("employeeLeaveBalances"),
+    amount: v.number(),
+    effectiveDate: v.number(),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const reason = args.reason.trim();
+    if (!reason) throw new Error("Adjustment reason is required");
+    if (!Number.isFinite(args.amount) || args.amount === 0) {
+      throw new Error("Adjustment amount must be a non-zero finite number");
+    }
+    if (!Number.isFinite(args.effectiveDate) || args.effectiveDate < 0) {
+      throw new Error("Adjustment effective date is required");
+    }
+    const balance = await ctx.db.get(args.balanceId);
+    if (!balance) throw new Error("Leave balance not found");
+    const access = await requireLeaveAdministrator(ctx, balance.organizationId);
+    if (
+      balance.periodStart === undefined ||
+      balance.periodEnd === undefined ||
+      args.effectiveDate < balance.periodStart ||
+      args.effectiveDate > balance.periodEnd
+    ) {
+      throw new Error("Adjustment date must be within the balance period");
+    }
+    if (balance.engineStatus !== "open") {
+      throw new Error("Only an open leave balance can be adjusted");
+    }
+    let policyVersionId = balance.policyVersionId;
+    if (!policyVersionId && balance.lastLedgerEntryId) {
+      policyVersionId = (await ctx.db.get(balance.lastLedgerEntryId))
+        ?.policyVersionId;
+    }
+    if (!policyVersionId) {
+      throw new Error("Leave balance policy version is missing");
+    }
+    const now = Date.now();
+    await appendLedgerEntry(ctx, {
+      organizationId: balance.organizationId,
+      employeeId: balance.employeeId,
+      balanceId: balance._id,
+      policyVersionId,
+      effectiveDate: args.effectiveDate,
+      kind: "adjustment",
+      amount: args.amount,
+      unit: "day",
+      referenceType: "correction",
+      actorId: access.user._id,
+      reason,
+      idempotencyKey: `leave-adjustment:${balance._id}:${now}:${access.user._id}`,
+      createdAt: now,
+    });
+    const updated = await ctx.db.get(balance._id);
+    if (!updated) throw new Error("Leave balance disappeared after adjustment");
+    return { balanceId: updated._id, available: updated.balance };
+  },
+});
+
+export const recordManualLeaveV2 = mutation({
+  args: {
+    ...leaveRequestV2DraftArgs,
+    reason: v.string(),
+    decisionReason: v.string(),
+    attachments: v.optional(v.array(leaveRequestAttachmentValidator)),
+  },
+  handler: async (ctx, args) => {
+    const reason = args.reason.trim();
+    const decisionReason = args.decisionReason.trim();
+    if (!reason) throw new Error("Leave reason is required");
+    if (!decisionReason) throw new Error("Decision reason is required");
+    const access = await requireLeaveAdministrator(ctx, args.organizationId);
+    if (access.membership.employeeId === args.employeeId) {
+      throw new Error("You cannot approve your own leave request");
+    }
+    const now = Date.now();
+    const prepared = await prepareLeaveRequestV2(ctx, args, now);
+    const overlap = await findOverlappingLeaveRequest(ctx, {
+      organizationId: args.organizationId,
+      employeeId: args.employeeId,
+      startDate: prepared.requestedStart,
+      endDate: prepared.requestedEnd,
+      statuses: ACTIVE_LEAVE_REQUEST_STATUSES,
+    });
+    if (overlap) throw new Error(formatLeaveConflictMessage(overlap));
+    const storageIds = await validateLeaveRequestAttachments(ctx, {
+      organizationId: args.organizationId,
+      userId: access.user._id,
+      attachments: args.attachments ?? [],
+      policyVersion: prepared.policyVersion,
+      chargeableDuration: prepared.chargeableDuration,
+    });
+    const displayName = reviewerDisplayName(access.user);
+    const legacyType = legacyLeaveTypeForPolicy(prepared.policy);
+    const leaveRequestId = await ctx.db.insert("leaveRequests", {
+      organizationId: args.organizationId,
+      employeeId: args.employeeId,
+      ...legacyType,
+      startDate: prepared.requestedStart,
+      endDate: prepared.requestedEnd,
+      numberOfDays: prepared.chargeableDuration,
+      reason,
+      isPaid: prepared.policyVersion.payTreatment !== "unpaid",
+      isManual: true,
+      status: "approved",
+      policyId: prepared.policy._id,
+      policyVersionId: prepared.policyVersion._id,
+      benefitEventId: prepared.benefitEvent?._id,
+      requestedStart: prepared.requestedStart,
+      requestedEnd: prepared.requestedEnd,
+      requestedDurationMode: args.requestedDurationMode,
+      chargeableDuration: prepared.chargeableDuration,
+      payTreatment: prepared.policyVersion.payTreatment,
+      submittedBy: access.user._id,
+      reviewerId: access.user._id,
+      reviewedAt: now,
+      decisionReason,
+      reviewerSnapshot: {
+        displayName,
+        position: access.membership.role,
+      },
+      engineVersion: 2,
+      cutoverAt: prepared.settings.policyEngineCutoverAt,
+      filedDate: now,
+      reviewedBy: access.user._id,
+      reviewedDate: now,
+      approvedByName: displayName,
+      remarks: decisionReason,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const request = await ctx.db.get(leaveRequestId);
+    if (!request) throw new Error("Manual leave request was not created");
+    await insertLeaveRequestOccurrences(ctx, {
+      leaveRequestId,
+      organizationId: args.organizationId,
+      employeeId: args.employeeId,
+      payTreatment: prepared.policyVersion.payTreatment,
+      occurrences: prepared.occurrences,
+      now,
+    });
+    const occurrences = await ctx.db
+      .query("leaveRequestOccurrences")
+      .withIndex("by_request_local_date", (query) =>
+        query.eq("leaveRequestId", leaveRequestId),
+      )
+      .take(MAX_REQUEST_WORKFLOW_ROWS + 1);
+    await setOccurrenceLifecycle(ctx, occurrences, "approved", now);
+    if (prepared.balance) {
+      await appendLedgerEntry(ctx, {
+        organizationId: args.organizationId,
+        employeeId: args.employeeId,
+        balanceId: prepared.balance._id,
+        policyVersionId: prepared.policyVersion._id,
+        effectiveDate: prepared.requestedStart,
+        kind: "usage",
+        amount: -prepared.chargeableDuration,
+        unit: "day",
+        referenceType: "request",
+        leaveRequestId,
+        actorId: access.user._id,
+        reason: decisionReason,
+        idempotencyKey: `leave-request:${leaveRequestId}:manual-usage`,
+        createdAt: now,
+      });
+    }
+    await replaceLeaveAttachments(ctx, request, storageIds, now);
+    await ctx.db.insert("leaveRequestEvents", {
+      leaveRequestId,
+      organizationId: args.organizationId,
+      type: "approved",
+      actorId: access.user._id,
+      reason: decisionReason,
+      detailsJson: JSON.stringify({
+        manual: true,
+        benefitEventId: prepared.benefitEvent?._id,
+        evidenceDocumentTypes: (args.attachments ?? []).map((attachment) =>
+          attachment.documentType.trim(),
+        ),
+      }),
+      createdAt: now,
+    });
+    await ensurePendingBenefitReconciliation(
+      ctx,
+      request,
+      access.user._id,
+      now,
+    );
+    await notifyLeaveDecision(ctx, request, "approved", decisionReason);
+    return { leaveRequestId, status: "approved" as const };
+  },
+});
+
 // Get leave requests
 export const getLeaveRequests = query({
   args: {
@@ -412,10 +2101,12 @@ export const getLeaveRequests = query({
     const userRecord = await checkAuthForQuery(ctx, args.organizationId);
     if (!userRecord) return [];
 
-    // Employees can only see their own requests
-    // If employee role and employeeId is provided, it must match their own
+    const canReviewOrganizationLeave = canAdministerLeave(userRecord.role);
+
+    // Only final reviewers can read organization-wide leave records. Every
+    // other active member is restricted to the employee linked to membership.
     if (
-      userRecord.role === "employee" &&
+      !canReviewOrganizationLeave &&
       args.employeeId &&
       args.employeeId !== userRecord.employeeId
     ) {
@@ -429,8 +2120,7 @@ export const getLeaveRequests = query({
       )
       .collect();
 
-    // If employee role and no employeeId specified, filter to their own requests
-    if (userRecord.role === "employee" && !args.employeeId) {
+    if (!canReviewOrganizationLeave && !args.employeeId) {
       const eid = userRecord.employeeId;
       if (!eid) {
         return [];
@@ -470,7 +2160,7 @@ export const getLeaveRequest = query({
 
     // Check authorization
     if (
-      userRecord.role === "employee" &&
+      !canAdministerLeave(userRecord.role) &&
       userRecord.employeeId !== request.employeeId
     ) {
       throw new Error("Not authorized");
@@ -494,14 +2184,15 @@ export const getLeaveRequestApprovalInfo = query({
   },
   handler: async (ctx, args) => {
     const request = await ctx.db.get(args.leaveRequestId);
-    if (!request) return { canApprove: false, blockReason: "Leave request not found" };
+    if (!request)
+      return { canApprove: false, blockReason: "Leave request not found" };
 
     const userRecord = await checkAuthForQuery(ctx, request.organizationId);
     if (!userRecord) {
       return { canApprove: false, blockReason: "Not authenticated" };
     }
     if (
-      userRecord.role === "employee" &&
+      !canAdministerLeave(userRecord.role) &&
       userRecord.employeeId !== request.employeeId
     ) {
       return { canApprove: false, blockReason: "Not authorized" };
@@ -515,7 +2206,8 @@ export const getLeaveRequestApprovalInfo = query({
     }
 
     const employeeRow = await ctx.db.get(request.employeeId);
-    if (!employeeRow) return { canApprove: false, blockReason: "Employee not found" };
+    if (!employeeRow)
+      return { canApprove: false, blockReason: "Employee not found" };
     const employee = await loadEffectiveEmployee(ctx, employeeRow);
 
     const overlappingApprovedRequest = await findOverlappingLeaveRequest(ctx, {
@@ -553,7 +2245,9 @@ export const getLeaveRequestApprovalInfo = query({
       return { canApprove: true };
     }
 
-    const leaveCredits = JSON.parse(JSON.stringify(employee.leaveCredits || {}));
+    const leaveCredits = JSON.parse(
+      JSON.stringify(employee.leaveCredits || {}),
+    );
     const creditType = getCreditType(
       request.leaveType,
       request.customLeaveType,
@@ -604,6 +2298,7 @@ export const createLeaveRequest = mutation({
     isPaid: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
+    await assertLegacyLeaveEndpointAllowed(ctx, args.organizationId);
     const userRecord = await checkAuth(ctx, args.organizationId);
 
     // Employees can only create requests for themselves
@@ -772,6 +2467,7 @@ export const createManualLeaveRequest = mutation({
     isPaid: v.boolean(),
   },
   handler: async (ctx, args) => {
+    await assertLegacyLeaveEndpointAllowed(ctx, args.organizationId);
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
     const employeeRow = await ctx.db.get(args.employeeId);
     if (!employeeRow) throw new Error("Employee not found");
@@ -889,6 +2585,7 @@ export const approveLeaveRequest = mutation({
   handler: async (ctx, args) => {
     const request = await ctx.db.get(args.leaveRequestId);
     if (!request) throw new Error("Leave request not found");
+    await assertLegacyLeaveEndpointAllowed(ctx, request.organizationId);
 
     const userRecord = await checkAuth(ctx, request.organizationId, "hr");
 
@@ -1020,6 +2717,7 @@ export const rejectLeaveRequest = mutation({
   handler: async (ctx, args) => {
     const request = await ctx.db.get(args.leaveRequestId);
     if (!request) throw new Error("Leave request not found");
+    await assertLegacyLeaveEndpointAllowed(ctx, request.organizationId);
 
     const userRecord = await checkAuth(ctx, request.organizationId, "hr");
 
@@ -1071,6 +2769,7 @@ export const cancelLeaveRequest = mutation({
   handler: async (ctx, args) => {
     const request = await ctx.db.get(args.leaveRequestId);
     if (!request) throw new Error("Leave request not found");
+    await assertLegacyLeaveEndpointAllowed(ctx, request.organizationId);
 
     const userRecord = await checkAuth(ctx, request.organizationId);
 
@@ -1123,6 +2822,7 @@ export const createLeaveType = mutation({
     accrualRate: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await assertLegacyLeaveEndpointAllowed(ctx, args.organizationId);
     await checkAuth(ctx, args.organizationId, "hr");
 
     const now = Date.now();
@@ -1175,7 +2875,8 @@ export const getEmployeeLeaveCredits = query({
     const vacationMax = 15;
     const sickMax = 15;
     const hireDate = employee.employment?.hireDate;
-    const regularizationDate = employee.employment?.regularizationDate ?? undefined;
+    const regularizationDate =
+      employee.employment?.regularizationDate ?? undefined;
 
     const leaveCredits = cloneLeaveCredits(employee.leaveCredits);
 
@@ -1355,6 +3056,7 @@ export const updateEmployeeLeaveCredits = mutation({
     reason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await assertLegacyLeaveEndpointAllowed(ctx, args.organizationId);
     await checkAuth(ctx, args.organizationId, "hr");
 
     const employeeRow = await ctx.db.get(args.employeeId);
@@ -1368,7 +3070,8 @@ export const updateEmployeeLeaveCredits = mutation({
     };
     if (!leaveCredits.vacation)
       leaveCredits.vacation = { total: 0, used: 0, balance: 0 };
-    if (!leaveCredits.sick) leaveCredits.sick = { total: 0, used: 0, balance: 0 };
+    if (!leaveCredits.sick)
+      leaveCredits.sick = { total: 0, used: 0, balance: 0 };
 
     if (args.leaveType === "vacation") {
       if (args.total !== undefined) {
@@ -1453,6 +3156,7 @@ export const convertLeaveToCash = mutation({
     reason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await assertLegacyLeaveEndpointAllowed(ctx, args.organizationId);
     await checkAuth(ctx, args.organizationId, "hr");
 
     const employeeRow = await ctx.db.get(args.employeeId);

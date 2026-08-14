@@ -33,25 +33,26 @@ export async function getAuthedConvexClient() {
     const client = new ConvexHttpClient(convexUrl);
     client.setAuth(token);
     return client;
-  } catch (error: any) {
-    // Provide more helpful error message for common issues
+  } catch (error: unknown) {
+    const errorDetails = error instanceof Error ? error : new Error(String(error));
+    const errorCode: unknown =
+      typeof error === "object" && error !== null
+        ? Reflect.get(error, "code")
+        : undefined;
     if (
-      error.message?.includes("fetch failed") ||
-      error.message?.includes("ECONNREFUSED") ||
-      error.message?.includes("invalid transfer-encoding") ||
-      error.name === "TypeError" ||
-      error.code === "UND_ERR_INVALID_ARG"
+      errorDetails.message.includes("fetch failed") ||
+      errorDetails.message.includes("ECONNREFUSED") ||
+      errorDetails.message.includes("invalid transfer-encoding") ||
+      errorDetails.name === "TypeError" ||
+      errorCode === "UND_ERR_INVALID_ARG"
     ) {
-      const siteUrl =
-        process.env.NEXT_PUBLIC_CONVEX_SITE_URL ||
-        process.env.NEXT_PUBLIC_CONVEX_URL?.replace(".cloud", ".site");
       throw new Error(
         `Failed to authenticate with Convex. Please check:\n` +
           `1. NEXT_PUBLIC_CONVEX_URL is set: ${!!process.env.NEXT_PUBLIC_CONVEX_URL}\n` +
           `2. NEXT_PUBLIC_CONVEX_SITE_URL is set: ${!!process.env.NEXT_PUBLIC_CONVEX_SITE_URL || "using default"}\n` +
           `3. Better Auth API route is accessible at /api/auth/[...all]\n` +
           `4. Server is running and accessible\n` +
-          `Original error: ${error.message || error}`
+          `Original error: ${errorDetails.message}`
       );
     }
     throw error;

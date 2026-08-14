@@ -1,8 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
+import { Hash, Loader2, MessageSquare, Users } from "lucide-react";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Dialog,
   DialogContent,
@@ -10,48 +13,42 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { useOrganization } from "@/hooks/organization-context";
-import { Id } from "@/convex/_generated/dataModel";
 import { useToast } from "@/components/ui/use-toast";
-import { Hash, Users, MessageSquare, Loader2 } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { encryptWithSessionKeyB64 } from "@/lib/chat-message-crypto";
-import { useChatSessionKeys } from "./chat-session-keys-context";
+import { useOrganization } from "@/hooks/organization-context";
+import type { ChatConversation } from "@/lib/chat/types";
+import { errorMessage } from "@/lib/chat/types";
+import {
+  directConversationAvatarInitials,
+  directConversationTitle,
+} from "@/lib/chat-thread-display";
 
-export interface MessageToForward {
-  content: string;
-  attachments?: string[];
-  messageType?: "text" | "image" | "file" | "system";
-}
+export type MessageToForward = {
+  messageId: Id<"messages">;
+};
 
-interface ForwardMessageModalProps {
+type ForwardMessageModalProps = {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   message: MessageToForward | null;
-  /** Exclude this conversation from the list (e.g. current chat) */
   currentConversationId: string | null;
-  onSuccess?: (targetConversationId: string) => void;
-}
+  currentUserId?: string;
+  onSuccess?: (targetConversationId: Id<"conversations">) => void;
+};
 
-function getConversationDisplayName(conv: any) {
-  if (conv.type === "channel") return `# ${conv.name || "Channel"}`;
-  if (conv.type === "group") return conv.name || "Group Chat";
-  const other = conv.participants?.[0];
-  return other?.name || other?.email || "Direct message";
-}
-
-function getConversationIcon(conv: any) {
-  if (conv.type === "channel") return <Hash className="h-4 w-4" />;
-  if (conv.type === "group") return <Users className="h-4 w-4" />;
-  const other = conv.participants?.[0];
-  const initials = other?.name
-    ?.split(" ")
-    .map((n: string) => n[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2) || "?";
-  return <AvatarFallback className="h-8 w-8 text-xs">{initials}</AvatarFallback>;
+function ConversationIcon({
+  conversation,
+  currentUserId,
+}: {
+  conversation: ChatConversation;
+  currentUserId?: string;
+}) {
+  if (conversation.type === "channel") return <Hash className="h-4 w-4" />;
+  if (conversation.type === "group") return <Users className="h-4 w-4" />;
+  return (
+    <span className="text-xs font-semibold">
+      {directConversationAvatarInitials(conversation, currentUserId)}
+    </span>
+  );
 }
 
 export function ForwardMessageModal({
@@ -59,52 +56,38 @@ export function ForwardMessageModal({
   onOpenChange,
   message,
   currentConversationId,
+  currentUserId,
   onSuccess,
 }: ForwardMessageModalProps) {
   const { currentOrganizationId } = useOrganization();
   const { toast } = useToast();
-  const sessionKeys = useChatSessionKeys();
-
+  const [forwardingToId, setForwardingToId] =
+    useState<Id<"conversations"> | null>(null);
   const conversationsData = useQuery(
-    (api as any).chat.getConversations,
+    api.chat.getConversations,
     currentOrganizationId && isOpen
       ? { organizationId: currentOrganizationId, limit: 50 }
-      : "skip"
+      : "skip",
   );
+  const forwardMessage = useMutation(api.chat.forwardMessage);
+  const conversations = (conversationsData?.conversations ?? []) as ChatConversation[];
 
-  const forwardMutation = useMutation((api as any).chat.forwardMessage);
-
-  const conversations = conversationsData?.conversations ?? [];
-  const isConversationsLoading =
-    Boolean(currentOrganizationId) && isOpen && conversationsData === undefined;
-  const [forwardingToId, setForwardingToId] = useState<string | null>(null);
-
-  const handleForward = async (targetConversationId: string) => {
+  const handleForward = async (targetConversationId: Id<"conversations">) => {
     if (!message || !currentOrganizationId) return;
     setForwardingToId(targetConversationId);
     try {
-      const targetKey = sessionKeys[targetConversationId];
-      let forwardContent = message.content;
-      if (targetKey && forwardContent) {
-        forwardContent = encryptWithSessionKeyB64(forwardContent, targetKey);
-      }
-      await forwardMutation({
-        organizationId: currentOrganizationId as Id<"organizations">,
-        targetConversationId: targetConversationId as Id<"conversations">,
-        content: forwardContent,
-        messageType: message.messageType || "text",
-        attachments:
-          (message.attachments?.length ?? 0) > 0
-            ? (message.attachments as Id<"_storage">[])
-            : undefined,
+      await forwardMessage({
+        organizationId: currentOrganizationId,
+        targetConversationId,
+        sourceMessageId: message.messageId,
       });
       toast({ title: "Message forwarded" });
       onOpenChange(false);
       onSuccess?.(targetConversationId);
-    } catch (err: any) {
+    } catch (error: unknown) {
       toast({
-        title: "Failed to forward",
-        description: err.message || "Please try again.",
+        title: "Could not forward message",
+        description: errorMessage(error, "Please try again."),
         variant: "destructive",
       });
     } finally {
@@ -114,80 +97,59 @@ export function ForwardMessageModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md max-h-[85vh] flex flex-col">
+      <DialogContent className="flex max-h-[85vh] max-w-md flex-col">
         <DialogHeader>
-          <DialogTitle>Forward to</DialogTitle>
+          <DialogTitle>Forward message</DialogTitle>
           <DialogDescription>
-            Choose a conversation in your organization (group, channel, or direct message).
+            Choose another conversation in this organization.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex-1 overflow-y-auto min-h-0 space-y-1 py-2">
-          {isConversationsLoading && (
-            <div className="space-y-1">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div
-                  key={`forward-skeleton-${i}`}
-                  className="w-full flex items-center gap-3 p-3 rounded-lg animate-pulse"
-                >
-                  <div className="h-8 w-8 rounded-full bg-gray-200 shrink-0" />
-                  <div className="flex-1 min-w-0 space-y-2">
-                    <div className="h-3 w-1/3 rounded bg-gray-200" />
-                    <div className="h-3 w-1/2 rounded bg-gray-100" />
-                  </div>
-                </div>
-              ))}
+        <div className="min-h-40 flex-1 space-y-1 overflow-y-auto py-2">
+          {conversationsData === undefined ? (
+            <div className="flex h-32 items-center justify-center">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
-          )}
-          {!isConversationsLoading && conversations.length === 0 && (
-            <p className="text-sm text-gray-500 py-4 text-center">
-              No other conversations to forward to.
-            </p>
-          )}
-          {!isConversationsLoading && conversations.map((conv: any) => {
-            const isCurrent = conv._id === currentConversationId;
-            const isForwarding = forwardingToId === conv._id;
-            return (
-              <button
-                key={conv._id}
-                type="button"
-                disabled={isCurrent || !!forwardingToId}
-                onClick={() => handleForward(conv._id)}
-                className={`w-full flex items-center gap-3 p-3 rounded-lg text-left transition-colors ${
-                  isCurrent
-                    ? "opacity-50 cursor-not-allowed bg-gray-50"
-                    : "hover:bg-gray-100"
-                }`}
-              >
-                <div className="shrink-0 text-gray-600">
-                  {conv.type === "direct" ? (
-                    <Avatar className="h-8 w-8">
-                      {getConversationIcon(conv)}
-                    </Avatar>
-                  ) : (
-                    <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center">
-                      {getConversationIcon(conv)}
-                    </div>
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-gray-900 truncate">
-                    {getConversationDisplayName(conv)}
+          ) : conversations.length === 0 ? (
+            <div className="flex h-32 flex-col items-center justify-center text-center">
+              <MessageSquare className="mb-2 h-8 w-8 text-muted-foreground/60" />
+              <p className="text-sm text-muted-foreground">
+                No other conversations available.
+              </p>
+            </div>
+          ) : (
+            conversations.map((conversation) => {
+              const isCurrent = conversation._id === currentConversationId;
+              const isForwarding = forwardingToId === conversation._id;
+              return (
+                <button
+                  key={conversation._id}
+                  type="button"
+                  disabled={isCurrent || forwardingToId !== null}
+                  onClick={() => void handleForward(conversation._id)}
+                  className="flex w-full items-center gap-3 rounded-xl p-3 text-left transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Avatar className="h-9 w-9">
+                    <AvatarFallback>
+                      <ConversationIcon
+                        conversation={conversation}
+                        currentUserId={currentUserId}
+                      />
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">
+                      {conversation.type === "channel" ? "# " : ""}
+                      {directConversationTitle(conversation, currentUserId)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {isCurrent ? "Current conversation" : "Forward here"}
+                    </p>
                   </div>
-                  {conv.type !== "direct" && (
-                    <div className="text-xs text-gray-500">
-                      {conv.participants?.length ?? 0} members
-                    </div>
-                  )}
-                </div>
-                {isCurrent && (
-                  <span className="text-xs text-gray-400 shrink-0">(current)</span>
-                )}
-                {isForwarding && (
-                  <Loader2 className="h-4 w-4 animate-spin text-gray-500 shrink-0" />
-                )}
-              </button>
-            );
-          })}
+                  {isForwarding && <Loader2 className="h-4 w-4 animate-spin" />}
+                </button>
+              );
+            })
+          )}
         </div>
       </DialogContent>
     </Dialog>

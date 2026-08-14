@@ -7,6 +7,17 @@ type ReadContext = Pick<QueryCtx, "db">;
 type ConfigurationSource = "normalized" | "default";
 const RELEASE_2_MIGRATION_VERSION = 2;
 
+export type LeaveEngineConfiguration = {
+  active: boolean;
+  migrationState:
+    | "awaiting_sector_confirmation"
+    | "pending"
+    | "ready"
+    | "active"
+    | undefined;
+  activePolicyEngineVersion: number | undefined;
+};
+
 function normalizeDepartmentName(name: string): string {
   return name.trim().toLocaleLowerCase("en-US");
 }
@@ -275,6 +286,11 @@ export async function getEffectiveSettings(
     leaveGuidelines: leave?.leaveGuidelines,
     leaveRequestFormTemplate: leave?.leaveRequestFormTemplate,
     leaveRequestPdfLayout: leave?.leaveRequestPdfLayout,
+    leaveEngine: {
+      active: leave?.migrationState === "active",
+      migrationState: leave?.migrationState,
+      activePolicyEngineVersion: leave?.activePolicyEngineVersion,
+    } satisfies LeaveEngineConfiguration,
     evaluationColumns: ui?.evaluationColumns,
     recruitmentTableColumns: ui?.recruitmentTableColumns,
     requirementsTableColumns: ui?.requirementsTableColumns,
@@ -309,6 +325,18 @@ export async function getEffectiveSettings(
       leave: (leave ? "normalized" : "default") as ConfigurationSource,
       ui: (ui ? "normalized" : "default") as ConfigurationSource,
     },
+  };
+}
+
+export async function getLeaveEngineConfiguration(
+  ctx: ReadContext,
+  organizationId: Id<"organizations">,
+): Promise<LeaveEngineConfiguration> {
+  const leave = await getEffectiveOrganizationLeaveSettings(ctx, organizationId);
+  return {
+    active: leave?.migrationState === "active",
+    migrationState: leave?.migrationState,
+    activePolicyEngineVersion: leave?.activePolicyEngineVersion,
   };
 }
 

@@ -11,6 +11,7 @@ import type { WorkbookData } from "@/lib/attendance-import/workbook";
 const GEMINI_INTERACTIONS_URL =
   "https://generativelanguage.googleapis.com/v1beta/interactions";
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
+const GEMINI_ATTENDANCE_TIMEOUT_MS = 55_000;
 const TRANSIENT_RETRY_DELAY_MS = 100;
 const MAX_RETRY_AFTER_SECONDS = 2;
 const DECIMAL_DELAY_SECONDS = /^\d+$/;
@@ -182,10 +183,14 @@ export async function extractAttendanceWithGemini(
   const model =
     options.model?.trim() || process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
   const fetchImpl = options.fetchImpl ?? fetch;
-  const signal = options.signal ?? AbortSignal.timeout(30_000);
+  const signal =
+    options.signal ?? AbortSignal.timeout(GEMINI_ATTENDANCE_TIMEOUT_MS);
   const requestBody = JSON.stringify({
     model,
     store: false,
+    generation_config: {
+      thinking_level: "minimal",
+    },
     system_instruction: GEMINI_ATTENDANCE_SYSTEM_INSTRUCTION,
     input: [
       "BEGIN_UNTRUSTED_WORKBOOK_DATA",

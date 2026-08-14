@@ -1,3 +1,5 @@
+import { LEAVE_FIELD_MANIFEST } from "./schemaFieldManifest";
+
 export type FullSchemaCleanupDomain =
   | "organization_configuration"
   | "migration_control"
@@ -91,6 +93,7 @@ export const CURRENT_SCHEMA_TABLES = [
   "payslipPinAttempts",
   "employeeScheduleHistory",
   "attendance",
+  "attendanceAuditLogs",
   "shifts",
   "holidays",
   "payrollRuns",
@@ -99,10 +102,26 @@ export const CURRENT_SCHEMA_TABLES = [
   "payslips",
   "payslipCorrections",
   "evaluationTemplates",
+  "evaluationSchedules",
   "evaluations",
   "evaluationReviewers",
   "evaluationEvents",
+  "leavePolicies",
+  "leavePolicyVersions",
+  "leaveLedgerEntries",
+  "leaveMigrationRuns",
+  "leaveMigrationBalanceSnapshots",
+  "leaveMigrationRequestSnapshots",
   "leaveRequests",
+  "leaveRequestOccurrences",
+  "leaveRequestEvents",
+  "employeeLeaveQualifications",
+  "leaveBenefitEvents",
+  "leaveBenefitPayrollReconciliations",
+  "leaveBenefitPayrollAllocations",
+  "leaveSensitiveAccessGrants",
+  "leaveAdministrativeEvents",
+  "leaveConversionRequests",
   "leaveTypes",
   "jobs",
   "applicants",
@@ -125,9 +144,11 @@ export const CURRENT_SCHEMA_TABLES = [
   "conversations",
   "conversationMembers",
   "messages",
+  "messageReactions",
   "messageReceipts",
   "userChatPreferences",
   "userPinnedConversations",
+  "userConversationPreferences",
   "invitations",
   "documents",
   "documentAccessGrants",
@@ -286,6 +307,11 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "canonical_embedded",
   ),
   attendance: tablePolicy("time_holidays", "contract_legacy", "canonical_row"),
+  attendanceAuditLogs: tablePolicy(
+    "time_holidays",
+    "retain",
+    "historical_snapshot",
+  ),
   shifts: tablePolicy("time_holidays", "retain", "canonical_embedded"),
   holidays: tablePolicy("time_holidays", "retain", "canonical_embedded"),
   payrollRuns: tablePolicy(
@@ -318,6 +344,11 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "retain",
     "canonical_embedded",
   ),
+  evaluationSchedules: tablePolicy(
+    "performance",
+    "retain",
+    "canonical_row",
+  ),
   evaluations: tablePolicy(
     "performance",
     "normalize_children",
@@ -329,7 +360,46 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "normalized_target",
   ),
   evaluationEvents: tablePolicy("performance", "retain", "normalized_target"),
+  leavePolicies: tablePolicy("leave", "retain", "canonical_row"),
+  leavePolicyVersions: tablePolicy("leave", "retain", "canonical_row"),
+  leaveLedgerEntries: tablePolicy("leave", "retain", "canonical_row"),
+  leaveMigrationRuns: tablePolicy("leave", "retain", "migration_only"),
+  leaveMigrationBalanceSnapshots: tablePolicy(
+    "leave",
+    "retain",
+    "migration_only",
+  ),
+  leaveMigrationRequestSnapshots: tablePolicy(
+    "leave",
+    "retain",
+    "historical_snapshot",
+  ),
   leaveRequests: tablePolicy("leave", "normalize_children", "canonical_row"),
+  leaveRequestOccurrences: tablePolicy("leave", "retain", "canonical_row"),
+  leaveRequestEvents: tablePolicy("leave", "retain", "canonical_row"),
+  employeeLeaveQualifications: tablePolicy(
+    "leave",
+    "retain",
+    "canonical_row",
+  ),
+  leaveBenefitEvents: tablePolicy("leave", "retain", "canonical_row"),
+  leaveBenefitPayrollReconciliations: tablePolicy(
+    "leave",
+    "retain",
+    "canonical_row",
+  ),
+  leaveBenefitPayrollAllocations: tablePolicy(
+    "leave",
+    "retain",
+    "canonical_row",
+  ),
+  leaveSensitiveAccessGrants: tablePolicy(
+    "leave",
+    "retain",
+    "canonical_row",
+  ),
+  leaveAdministrativeEvents: tablePolicy("leave", "retain", "canonical_row"),
+  leaveConversionRequests: tablePolicy("leave", "retain", "canonical_row"),
   leaveTypes: tablePolicy("leave", "retain", "canonical_embedded"),
   jobs: tablePolicy("recruitment", "retain", "canonical_embedded"),
   applicants: tablePolicy(
@@ -420,13 +490,23 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
   ),
   conversationMembers: tablePolicy("chat", "retain", "normalized_target"),
   messages: tablePolicy("chat", "normalize_children", "canonical_embedded"),
+  messageReactions: tablePolicy("chat", "retain", "normalized_target"),
   messageReceipts: tablePolicy("chat", "retain", "normalized_target"),
   userChatPreferences: tablePolicy(
     "chat",
     "normalize_children",
     "canonical_embedded",
   ),
-  userPinnedConversations: tablePolicy("chat", "retain", "normalized_target"),
+  userPinnedConversations: tablePolicy(
+    "chat",
+    "retain",
+    "normalized_target",
+  ),
+  userConversationPreferences: tablePolicy(
+    "chat",
+    "retain",
+    "normalized_target",
+  ),
   invitations: tablePolicy(
     "identity_membership",
     "contract_legacy",
@@ -464,6 +544,15 @@ const override = (
 });
 
 export const FULL_SCHEMA_FIELD_OVERRIDES = [
+  ...LEAVE_FIELD_MANIFEST.map((entry) =>
+    override(
+      entry.table as CurrentSchemaTable,
+      entry.field,
+      entry.classification,
+      entry.target,
+      entry.releaseGate,
+    ),
+  ),
   override(
     "organizations",
     "firstPayDate",
@@ -547,13 +636,6 @@ export const FULL_SCHEMA_FIELD_OVERRIDES = [
     "compatibility_write",
     "employeeScheduleOverrides",
     "release_3b_employee_contract",
-  ),
-  override(
-    "employees",
-    "leaveCredits",
-    "compatibility_read",
-    "employeeLeaveBalances",
-    "release_3b_leave_contract",
   ),
   override(
     "employees",
@@ -978,13 +1060,6 @@ export const FULL_SCHEMA_FIELD_OVERRIDES = [
   ),
   override(
     "settings",
-    "leaveTypes",
-    "compatibility_write",
-    "leaveTypes",
-    "release_3b_leave_contract",
-  ),
-  override(
-    "settings",
     "proratedLeave",
     "compatibility_write",
     "organizationLeaveSettings",
@@ -1065,20 +1140,6 @@ export const FULL_SCHEMA_FIELD_OVERRIDES = [
     "leaveRequestPdfLayout",
     "compatibility_write",
     "organizationLeaveSettings",
-    "release_3b_leave_contract",
-  ),
-  override(
-    "settings",
-    "leaveTrackerRows",
-    "compatibility_write",
-    "employeeLeaveBalances",
-    "release_3b_leave_contract",
-  ),
-  override(
-    "settings",
-    "leaveTrackerByYear",
-    "compatibility_write",
-    "employeeLeaveBalances",
     "release_3b_leave_contract",
   ),
   override(

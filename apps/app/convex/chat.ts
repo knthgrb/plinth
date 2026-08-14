@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { randomBytes } from "@noble/ciphers/utils.js";
 import {
+  decryptUtf8,
   encryptUtf8,
   isEncryptedPayload,
 } from "./chatMessageBodyCrypto";
@@ -26,6 +27,10 @@ import {
   replaceMessageReceipts,
   replacePinnedConversations,
 } from "./communicationsCompatibility";
+
+const MESSAGE_EDIT_WINDOW_MS = 15 * 60 * 1000;
+const MAX_MESSAGE_LENGTH = 5_000;
+const ALLOWED_REACTION_EMOJIS = new Set(["👍", "❤️", "🎉", "😂", "😮", "😢"]);
 
 // Helper to check authorization with organization context
 async function checkAuth(
@@ -98,6 +103,71 @@ function buildReplyToPreview(
     content: snippet,
     senderName: replySenderName,
   };
+}
+
+async function loadMessageReactions(
+  ctx: QueryCtx,
+  messageId: Id<"messages">,
+) {
+  return ctx.db
+    .query("messageReactions")
+    .withIndex("by_message", (q) => q.eq("messageId", messageId))
+    .collect();
+}
+
+async function requireAuthorizedMessage(
+  ctx: MutationCtx,
+  messageId: Id<"messages">,
+) {
+  const message = await ctx.db.get(messageId);
+  if (!message) throw new Error("Message not found");
+  const conversationRow = await ctx.db.get(message.conversationId);
+  if (!conversationRow) throw new Error("Conversation not found");
+  const conversation = await loadEffectiveConversation(ctx, conversationRow);
+  const user = await checkAuth(ctx, conversation.organizationId);
+  if (!conversation.participants.includes(user._id)) {
+    throw new Error("Not authorized to use this conversation");
+  }
+  return { message, conversation, conversationRow, user };
+}
+
+async function upsertConversationPreference(
+  ctx: MutationCtx,
+  input: {
+    organizationId: Id<"organizations">;
+    userId: Id<"users">;
+    conversationId: Id<"conversations">;
+    muted?: boolean;
+    lastReadAt?: number;
+  },
+) {
+  const existing = await ctx.db
+    .query("userConversationPreferences")
+    .withIndex("by_user_conversation", (q) =>
+      q.eq("userId", input.userId).eq("conversationId", input.conversationId),
+    )
+    .unique();
+  const now = Date.now();
+  if (existing) {
+    await ctx.db.patch(existing._id, {
+      ...(input.muted !== undefined ? { muted: input.muted } : {}),
+      ...(input.lastReadAt !== undefined
+        ? { lastReadAt: Math.max(existing.lastReadAt ?? 0, input.lastReadAt) }
+        : {}),
+      updatedAt: now,
+    });
+    return;
+  }
+
+  await ctx.db.insert("userConversationPreferences", {
+    organizationId: input.organizationId,
+    userId: input.userId,
+    conversationId: input.conversationId,
+    muted: input.muted ?? false,
+    lastReadAt: input.lastReadAt,
+    createdAt: now,
+    updatedAt: now,
+  });
 }
 
 // Get user ID from employee ID
@@ -181,6 +251,23 @@ function normalizedDirectKind(
     : "standard";
 }
 
+function canUseAdminPersona(role: string) {
+  return role === "owner" || role === "admin" || role === "hr";
+}
+
+function assertAdminPersonaAccess(
+  conversation: Doc<"conversations">,
+  user: { _id: Id<"users">; role: string },
+) {
+  if (
+    conversation.directThreadKind === "staff_as_admin" &&
+    conversation.adminPersonaUserId === user._id &&
+    !canUseAdminPersona(user.role)
+  ) {
+    throw new Error("Only Owner, Admin, or HR can message as Admin");
+  }
+}
+
 async function assertActiveChatParticipants(
   ctx: MutationCtx,
   organizationId: Id<"organizations">,
@@ -226,11 +313,7 @@ export const getOrCreateConversation = mutation({
     const requestedKind = args.directThreadKind ?? "standard";
 
     if (requestedKind === "staff_as_admin") {
-      const elevated =
-        userRecord.role === "owner" ||
-        userRecord.role === "admin" ||
-        userRecord.role === "hr";
-      if (!elevated) {
+      if (!canUseAdminPersona(userRecord.role)) {
         throw new Error(
           "Only owner, admin, or HR can start an Admin direct message",
         );
@@ -327,8 +410,10 @@ export const getConversations = query({
     );
 
     // Filter conversations where user is a participant
-    const userConversations = conversations.filter((conv) =>
-      conv.participants.includes(userRecord._id)
+    const userConversations = conversations.filter(
+      (conv) =>
+        conv.archivedAt === undefined &&
+        conv.participants.includes(userRecord._id),
     );
 
     // Enrich with participant details and last message
@@ -355,7 +440,10 @@ export const getConversations = query({
 
         return {
           ...conv,
-          participants: participantUsers.filter(Boolean),
+          participants: participantUsers.filter(
+            (participant): participant is NonNullable<typeof participant> =>
+              participant !== null,
+          ),
           lastMessage,
         };
       })
@@ -417,118 +505,66 @@ export const getMessages = query({
       throw new Error("Not authorized to view this conversation");
     }
 
-    const limit = args.limit || 50;
-    const messageQuery = ctx.db
-      .query("messages")
-      .withIndex("by_conversation", (q) =>
-        q.eq("conversationId", args.conversationId)
-      )
-      .order("desc");
-
-    // If beforeTimestamp is provided, filter messages before that time
-    if (args.beforeTimestamp !== undefined) {
-      // We need to get all and filter, as Convex doesn't support range queries directly
-      const allMessages = await messageQuery.collect();
-      const filtered = allMessages.filter(
-        (msg) => msg.createdAt < args.beforeTimestamp!,
-      );
-      const messages = filtered.slice(0, limit);
-
-      // Enrich with sender details and replyTo
-      const enriched = await Promise.all(
-        messages.map(async (msg) => {
-          const sender = await ctx.db.get(msg.senderId);
-          const [readBy, attachments] = await Promise.all([
-            loadEffectiveMessageReadBy(ctx, conversation, msg),
-            loadEffectiveMessageAttachments(ctx, conversation, msg),
-          ]);
-          let replyTo = null;
-          if (msg.replyToMessageId) {
-            const replyMsg = await ctx.db.get(msg.replyToMessageId);
-            if (replyMsg) {
-              const replySender = await ctx.db.get(replyMsg.senderId);
-              replyTo = buildReplyToPreview(replyMsg, replySender);
-            }
+    const limit = Math.min(Math.max(args.limit ?? 50, 1), 100);
+    const beforeTimestamp = args.beforeTimestamp;
+    const fetched =
+      beforeTimestamp === undefined
+        ? await ctx.db
+            .query("messages")
+            .withIndex("by_conversation_created_at", (q) =>
+              q.eq("conversationId", args.conversationId),
+            )
+            .order("desc")
+            .take(limit + 1)
+        : await ctx.db
+            .query("messages")
+            .withIndex("by_conversation_created_at", (q) =>
+              q
+                .eq("conversationId", args.conversationId)
+                .lt("createdAt", beforeTimestamp),
+            )
+            .order("desc")
+            .take(limit + 1);
+    const hasMore = fetched.length > limit;
+    const messages = fetched.slice(0, limit);
+    const enriched = await Promise.all(
+      messages.map(async (message) => {
+        const sender = await ctx.db.get(message.senderId);
+        const [readBy, attachments, reactions] = await Promise.all([
+          loadEffectiveMessageReadBy(ctx, conversation, message),
+          loadEffectiveMessageAttachments(ctx, conversation, message),
+          loadMessageReactions(ctx, message._id),
+        ]);
+        let replyTo = null;
+        if (message.replyToMessageId) {
+          const replyMessage = await ctx.db.get(message.replyToMessageId);
+          if (replyMessage) {
+            const replySender = await ctx.db.get(replyMessage.senderId);
+            replyTo = buildReplyToPreview(replyMessage, replySender);
           }
-          if (sender && "email" in sender) {
-            return {
-              ...msg,
-              readBy,
-              attachments,
-              sender: {
+        }
+        return {
+          ...message,
+          readBy,
+          attachments,
+          reactions,
+          sender: sender
+            ? {
                 _id: sender._id,
                 name: sender.name || sender.email,
                 email: sender.email,
-              },
-              replyTo,
-            };
-          }
-          return {
-            ...msg,
-            readBy,
-            attachments,
-            sender: null,
-            replyTo,
-          };
-        })
-      );
+              }
+            : null,
+          replyTo,
+        };
+      }),
+    );
 
-      return {
-        messages: enriched.reverse(), // Return in chronological order
-        hasMore: filtered.length > limit,
-        oldestTimestamp: enriched.length > 0 ? enriched[0].createdAt : null,
-      };
-    } else {
-      // Initial load - take limit+1 in one go so we can detect hasMore without chaining the query again
-      const fetched = await messageQuery.take(limit + 1);
-      const hasMore = fetched.length > limit;
-      const messages = fetched.slice(0, limit);
-
-      // Enrich with sender details and replyTo
-      const enriched = await Promise.all(
-        messages.map(async (msg) => {
-          const sender = await ctx.db.get(msg.senderId);
-          const [readBy, attachments] = await Promise.all([
-            loadEffectiveMessageReadBy(ctx, conversation, msg),
-            loadEffectiveMessageAttachments(ctx, conversation, msg),
-          ]);
-          let replyTo = null;
-          if (msg.replyToMessageId) {
-            const replyMsg = await ctx.db.get(msg.replyToMessageId);
-            if (replyMsg) {
-              const replySender = await ctx.db.get(replyMsg.senderId);
-              replyTo = buildReplyToPreview(replyMsg, replySender);
-            }
-          }
-          if (sender && "email" in sender) {
-            return {
-              ...msg,
-              readBy,
-              attachments,
-              sender: {
-                _id: sender._id,
-                name: sender.name || sender.email,
-                email: sender.email,
-              },
-              replyTo,
-            };
-          }
-          return {
-            ...msg,
-            readBy,
-            attachments,
-            sender: null,
-            replyTo,
-          };
-        })
-      );
-
-      return {
-        messages: enriched.reverse(), // Return in chronological order
-        hasMore,
-        oldestTimestamp: enriched.length > 0 ? enriched[0].createdAt : null,
-      };
-    }
+    return {
+      messages: enriched.reverse(),
+      hasMore,
+      oldestTimestamp: enriched.length > 0 ? enriched[0].createdAt : null,
+    };
   },
 });
 
@@ -556,10 +592,15 @@ export const sendMessage = mutation({
 
     const userRecord = await checkAuth(ctx, conversation.organizationId);
 
+    if (conversation.archivedAt !== undefined) {
+      throw new Error("This conversation is archived");
+    }
+
     // Check if user is a participant
     if (!conversation.participants.includes(userRecord._id)) {
       throw new Error("Not authorized to send messages in this conversation");
     }
+    assertAdminPersonaAccess(conversation, userRecord);
 
     // If replying, ensure the reply-to message is in the same conversation
     if (args.replyToMessageId) {
@@ -574,11 +615,56 @@ export const sendMessage = mutation({
 
     const now = Date.now();
     const messageType = args.messageType || "text";
+    if (messageType === "system") {
+      throw new Error("System messages cannot be sent by users");
+    }
+    if (!args.content.trim() && (args.attachments?.length ?? 0) === 0) {
+      throw new Error("Message content is required");
+    }
+    if (args.content.length > MAX_MESSAGE_LENGTH * 4) {
+      throw new Error("Message is too long");
+    }
+
+    if (args.payslipId) {
+      const payslip = await ctx.db.get(args.payslipId);
+      if (!payslip || payslip.organizationId !== conversation.organizationId) {
+        throw new Error("Payslip does not belong to this organization");
+      }
+      if (
+        userRecord.role === "employee" &&
+        (!userRecord.employeeId || payslip.employeeId !== userRecord.employeeId)
+      ) {
+        throw new Error("Not authorized to link this payslip");
+      }
+    }
+
+    for (const storageId of args.attachments ?? []) {
+      const storageObject = await ctx.db
+        .query("storageObjects")
+        .withIndex("by_storage", (q) => q.eq("storageId", storageId))
+        .unique();
+      if (
+        !storageObject ||
+        storageObject.organizationId !== conversation.organizationId ||
+        storageObject.state !== "active"
+      ) {
+        throw new Error("Attachment does not belong to this organization");
+      }
+      const canAttachOwnUpload =
+        storageObject.purpose === "chat_attachment" &&
+        storageObject.ownerUserId === userRecord._id;
+      const canAttachPayslip =
+        storageObject.purpose === "payslip_pdf" &&
+        args.payslipId !== undefined &&
+        ["owner", "admin", "hr", "accounting"].includes(userRecord.role);
+      if (!canAttachOwnUpload && !canAttachPayslip) {
+        throw new Error("Not authorized to attach this file");
+      }
+    }
 
     let conv = conversation;
     if (
       getChatMasterSecret() &&
-      messageType !== "system" &&
       !conv.chatSessionKeyEnc
     ) {
       const sk = randomBytes(32);
@@ -589,7 +675,6 @@ export const sendMessage = mutation({
 
     let contentToStore = args.content;
     if (
-      messageType !== "system" &&
       conv.chatSessionKeyEnc &&
       getChatMasterSecret() &&
       !isEncryptedPayload(contentToStore)
@@ -660,21 +745,137 @@ export const sendMessage = mutation({
   },
 });
 
+export const toggleMessageReaction = mutation({
+  args: {
+    messageId: v.id("messages"),
+    emoji: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { message, conversation, user } = await requireAuthorizedMessage(
+      ctx,
+      args.messageId,
+    );
+    if (message.deletedAt !== undefined) {
+      throw new Error("Deleted messages cannot receive reactions");
+    }
+    if (!ALLOWED_REACTION_EMOJIS.has(args.emoji)) {
+      throw new Error("Unsupported reaction");
+    }
+
+    const existing = await ctx.db
+      .query("messageReactions")
+      .withIndex("by_message_user_emoji", (q) =>
+        q
+          .eq("messageId", args.messageId)
+          .eq("userId", user._id)
+          .eq("emoji", args.emoji),
+      )
+      .unique();
+    if (existing) {
+      await ctx.db.delete(existing._id);
+      return { active: false };
+    }
+
+    const now = Date.now();
+    await ctx.db.insert("messageReactions", {
+      organizationId: conversation.organizationId,
+      conversationId: conversation._id,
+      messageId: args.messageId,
+      userId: user._id,
+      emoji: args.emoji,
+      createdAt: now,
+      updatedAt: now,
+    });
+    return { active: true };
+  },
+});
+
+export const editMessage = mutation({
+  args: {
+    messageId: v.id("messages"),
+    content: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { message, conversation, user } = await requireAuthorizedMessage(
+      ctx,
+      args.messageId,
+    );
+    if (message.senderId !== user._id) {
+      throw new Error("Only the author can edit this message");
+    }
+    if (message.deletedAt !== undefined || message.messageType === "system") {
+      throw new Error("This message cannot be edited");
+    }
+    if (Date.now() - message.createdAt > MESSAGE_EDIT_WINDOW_MS) {
+      throw new Error("Messages can only be edited for 15 minutes");
+    }
+
+    const content = args.content.trim();
+    if (!content) throw new Error("Message content is required");
+    if (content.length > MAX_MESSAGE_LENGTH) {
+      throw new Error("Message is too long");
+    }
+
+    let contentToStore = content;
+    if (
+      conversation.chatSessionKeyEnc &&
+      getChatMasterSecret() &&
+      !isEncryptedPayload(contentToStore)
+    ) {
+      const sessionKey = unwrapSessionKey(
+        conversation.chatSessionKeyEnc,
+        conversation.organizationId,
+        conversation._id,
+      );
+      contentToStore = encryptUtf8(contentToStore, sessionKey);
+    }
+
+    await ctx.db.patch(args.messageId, {
+      content: contentToStore,
+      editedAt: Date.now(),
+    });
+    return { success: true };
+  },
+});
+
+export const deleteMessage = mutation({
+  args: { messageId: v.id("messages") },
+  handler: async (ctx, args) => {
+    const { message, conversation, user } = await requireAuthorizedMessage(
+      ctx,
+      args.messageId,
+    );
+    if (message.deletedAt !== undefined) return { success: true };
+    const isAuthor = message.senderId === user._id;
+    const canModerate =
+      user.role === "owner" || user.role === "admin" || user.role === "hr";
+    if (!isAuthor && !canModerate) {
+      throw new Error("Not authorized to delete this message");
+    }
+
+    const deletedAt = Date.now();
+    await ctx.db.patch(args.messageId, {
+      content: "",
+      deletedAt,
+      deletedBy: user._id,
+      deletionKind: isAuthor ? "author" : "moderator",
+    });
+    await replaceMessageAttachments(ctx, conversation, message, [], deletedAt);
+    const reactions = await ctx.db
+      .query("messageReactions")
+      .withIndex("by_message", (q) => q.eq("messageId", args.messageId))
+      .collect();
+    await Promise.all(reactions.map((reaction) => ctx.db.delete(reaction._id)));
+    return { success: true };
+  },
+});
+
 // Forward a message to another conversation (within org: DM, group, or channel user belongs to)
 export const forwardMessage = mutation({
   args: {
     organizationId: v.id("organizations"),
     targetConversationId: v.id("conversations"),
-    content: v.string(),
-    messageType: v.optional(
-      v.union(
-        v.literal("text"),
-        v.literal("image"),
-        v.literal("file"),
-        v.literal("system")
-      )
-    ),
-    attachments: v.optional(v.array(v.id("_storage"))),
+    sourceMessageId: v.id("messages"),
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
@@ -687,18 +888,49 @@ export const forwardMessage = mutation({
     if (!target.participants.includes(userRecord._id)) {
       throw new Error("You are not a member of that conversation");
     }
+    assertAdminPersonaAccess(target, userRecord);
+
+    const sourceMessage = await ctx.db.get(args.sourceMessageId);
+    if (!sourceMessage || sourceMessage.deletedAt !== undefined) {
+      throw new Error("Message not found");
+    }
+    const sourceRow = await ctx.db.get(sourceMessage.conversationId);
+    if (!sourceRow || sourceRow.organizationId !== args.organizationId) {
+      throw new Error("Message not found");
+    }
+    const source = await loadEffectiveConversation(ctx, sourceRow);
+    if (!source.participants.includes(userRecord._id)) {
+      throw new Error("Not authorized to forward this message");
+    }
+    if (sourceMessage.payslipId) {
+      throw new Error("Payslip messages cannot be forwarded");
+    }
 
     const now = Date.now();
-    const messageType = args.messageType || "text";
-    const forwardedContent =
-      args.content.trim().toLowerCase().startsWith("forwarded:")
-        ? args.content
-        : `Forwarded: ${args.content}`;
+    const messageType =
+      sourceMessage.messageType === "system"
+        ? ("text" as const)
+        : sourceMessage.messageType;
+    let sourceContent = sourceMessage.content;
+    if (
+      source.chatSessionKeyEnc &&
+      getChatMasterSecret() &&
+      isEncryptedPayload(sourceContent)
+    ) {
+      sourceContent = decryptUtf8(
+        sourceContent,
+        unwrapSessionKey(
+          source.chatSessionKeyEnc,
+          source.organizationId,
+          source._id,
+        ),
+      );
+    }
+    const forwardedContent = `Forwarded:\n${sourceContent}`;
 
     let targetConv = target;
     if (
       getChatMasterSecret() &&
-      messageType !== "system" &&
       !targetConv.chatSessionKeyEnc
     ) {
       const sk = randomBytes(32);
@@ -715,7 +947,6 @@ export const forwardMessage = mutation({
 
     let forwardBody = forwardedContent;
     if (
-      messageType !== "system" &&
       targetConv.chatSessionKeyEnc &&
       getChatMasterSecret() &&
       !isEncryptedPayload(forwardBody)
@@ -742,7 +973,7 @@ export const forwardMessage = mutation({
       ctx,
       target,
       message,
-      args.attachments ?? [],
+      await loadEffectiveMessageAttachments(ctx, source, sourceMessage),
       now,
     );
 
@@ -773,10 +1004,11 @@ export const markMessagesAsRead = mutation({
       throw new Error("Not authorized");
     }
 
-    // Update each message to include user in readBy
+    let lastReadAt = 0;
     for (const messageId of args.messageIds) {
       const message = await ctx.db.get(messageId);
       if (message && message.conversationId === args.conversationId) {
+        lastReadAt = Math.max(lastReadAt, message.createdAt);
         const readBy = await loadEffectiveMessageReadBy(ctx, conversation, message);
         if (!readBy.includes(userRecord._id)) {
           const nextReadBy = [...readBy, userRecord._id];
@@ -789,6 +1021,15 @@ export const markMessagesAsRead = mutation({
           );
         }
       }
+    }
+
+    if (lastReadAt > 0) {
+      await upsertConversationPreference(ctx, {
+        organizationId: conversation.organizationId,
+        userId: userRecord._id,
+        conversationId: conversation._id,
+        lastReadAt,
+      });
     }
 
     return { success: true };
@@ -808,6 +1049,7 @@ export const getConversationById = query({
       return null;
     }
     const conv = await loadEffectiveConversation(ctx, conversationRow);
+    if (conv.archivedAt !== undefined) return null;
     if (!Array.isArray(conv.participants) || conv.participants.length === 0)
       return null;
 
@@ -829,7 +1071,10 @@ export const getConversationById = query({
 
     return {
       ...conv,
-      participants: participantUsers.filter(Boolean),
+      participants: participantUsers.filter(
+        (participant): participant is NonNullable<typeof participant> =>
+          participant !== null,
+      ),
       lastMessage,
     };
   },
@@ -968,8 +1213,21 @@ export const createChannel = mutation({
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
 
+    if (
+      userRecord.role !== "owner" &&
+      userRecord.role !== "admin" &&
+      userRecord.role !== "hr"
+    ) {
+      throw new Error(
+        "Only Owner, Admin, or HR can create official channels",
+      );
+    }
+
     const trimmedName = args.name.trim();
     if (!trimmedName) throw new Error("Channel name is required");
+    if (args.scope !== "organization") {
+      throw new Error("Only official organization channels are supported");
+    }
 
     const now = Date.now();
     const conversationId = await ctx.db.insert("conversations", {
@@ -977,7 +1235,7 @@ export const createChannel = mutation({
       type: "channel",
       name: trimmedName,
       createdBy: userRecord._id,
-      channelScope: args.scope,
+      channelScope: "organization",
       createdAt: now,
       updatedAt: now,
     });
@@ -1048,8 +1306,10 @@ export const listChannels = query({
       ),
     );
 
-    const channels = allChannels.filter((conversation) =>
-      conversation.type === "channel",
+    const channels = allChannels.filter(
+      (conversation) =>
+        conversation.type === "channel" &&
+        conversation.archivedAt === undefined,
     );
 
     return channels.map((conversation) => ({
@@ -1086,6 +1346,12 @@ export const addMembersToGroup = mutation({
     // Check if user is a participant (and optionally creator/admin)
     if (!conversation.participants.includes(userRecord._id)) {
       throw new Error("Not authorized to add members to this conversation");
+    }
+    if (
+      conversation.type === "channel" &&
+      !canUseAdminPersona(userRecord.role)
+    ) {
+      throw new Error("Only Owner, Admin, or HR can manage channel members");
     }
 
     // Add new participants (avoid duplicates)
@@ -1235,7 +1501,8 @@ export const togglePinConversation = mutation({
   },
 });
 
-// Delete a conversation (and all its messages). Caller must be a participant.
+// Legacy endpoint retained for callers that previously treated delete as leave.
+// Shared chat history is preserved for the remaining participants.
 export const deleteConversation = mutation({
   args: {
     conversationId: v.id("conversations"),
@@ -1250,42 +1517,195 @@ export const deleteConversation = mutation({
       throw new Error("Not authorized to delete this conversation");
     }
 
-    // Delete all messages in this conversation
-    const messages = await ctx.db
-      .query("messages")
-      .withIndex("by_conversation", (q) =>
-        q.eq("conversationId", args.conversationId)
-      )
-      .collect();
-    for (const msg of messages) {
-      const receipts = await ctx.db
-        .query("messageReceipts")
-        .withIndex("by_message", (q) => q.eq("messageId", msg._id))
-        .collect();
-      for (const receipt of receipts) await ctx.db.delete(receipt._id);
-      await ctx.db.delete(msg._id);
+    if (conversation.type === "direct") {
+      throw new Error("Direct messages cannot be deleted");
     }
 
-    const members = await ctx.db
-      .query("conversationMembers")
-      .withIndex("by_conversation", (q) =>
-        q.eq("conversationId", args.conversationId),
+    const now = Date.now();
+    await replaceConversationMembers(
+      ctx,
+      conversationRow,
+      conversation.participants.filter((id) => id !== userRecord._id),
+      now,
+    );
+
+    const pin = await ctx.db
+      .query("userPinnedConversations")
+      .withIndex("by_user_conversation", (q) =>
+        q
+          .eq("userId", userRecord._id)
+          .eq("conversationId", args.conversationId),
+      )
+      .unique();
+    if (pin) await ctx.db.delete(pin._id);
+
+    await ctx.db.patch(args.conversationId, { updatedAt: now });
+    return { success: true };
+  },
+});
+
+export const leaveConversation = mutation({
+  args: { conversationId: v.id("conversations") },
+  handler: async (ctx, args) => {
+    const conversationRow = await ctx.db.get(args.conversationId);
+    if (!conversationRow) throw new Error("Conversation not found");
+    const conversation = await loadEffectiveConversation(ctx, conversationRow);
+    const user = await checkAuth(ctx, conversation.organizationId);
+    if (!conversation.participants.includes(user._id)) {
+      throw new Error("Not authorized to leave this conversation");
+    }
+    if (conversation.type === "direct") {
+      throw new Error("Direct messages cannot be left");
+    }
+
+    const remaining = conversation.participants.filter((id) => id !== user._id);
+    const now = Date.now();
+    await replaceConversationMembers(ctx, conversationRow, remaining, now);
+    const nextCreator =
+      conversation.type === "group" && conversation.createdBy === user._id
+        ? remaining[0]
+        : conversation.createdBy;
+    await ctx.db.patch(args.conversationId, {
+      createdBy: nextCreator,
+      updatedAt: now,
+    });
+
+    const pin = await ctx.db
+      .query("userPinnedConversations")
+      .withIndex("by_user_conversation", (q) =>
+        q.eq("userId", user._id).eq("conversationId", args.conversationId),
+      )
+      .unique();
+    if (pin) await ctx.db.delete(pin._id);
+    const preference = await ctx.db
+      .query("userConversationPreferences")
+      .withIndex("by_user_conversation", (q) =>
+        q.eq("userId", user._id).eq("conversationId", args.conversationId),
+      )
+      .unique();
+    if (preference) await ctx.db.delete(preference._id);
+
+    return { success: true };
+  },
+});
+
+export const archiveConversation = mutation({
+  args: { conversationId: v.id("conversations") },
+  handler: async (ctx, args) => {
+    const conversationRow = await ctx.db.get(args.conversationId);
+    if (!conversationRow) throw new Error("Conversation not found");
+    const conversation = await loadEffectiveConversation(ctx, conversationRow);
+    const user = await checkAuth(ctx, conversation.organizationId);
+    const elevated =
+      user.role === "owner" || user.role === "admin" || user.role === "hr";
+    const groupCreator =
+      conversation.type === "group" && conversation.createdBy === user._id;
+    if (conversation.type === "direct" || (!elevated && !groupCreator)) {
+      throw new Error("Not authorized to archive this conversation");
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(args.conversationId, {
+      archivedAt: now,
+      archivedBy: user._id,
+      updatedAt: now,
+    });
+    return { success: true };
+  },
+});
+
+export const setConversationMuted = mutation({
+  args: {
+    conversationId: v.id("conversations"),
+    muted: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const conversationRow = await ctx.db.get(args.conversationId);
+    if (!conversationRow) throw new Error("Conversation not found");
+    const conversation = await loadEffectiveConversation(ctx, conversationRow);
+    const user = await checkAuth(ctx, conversation.organizationId);
+    if (!conversation.participants.includes(user._id)) {
+      throw new Error("Not authorized to update this conversation");
+    }
+
+    await upsertConversationPreference(ctx, {
+      organizationId: conversation.organizationId,
+      userId: user._id,
+      conversationId: args.conversationId,
+      muted: args.muted,
+    });
+    return { muted: args.muted };
+  },
+});
+
+export const getMutedConversationIds = query({
+  args: { organizationId: v.id("organizations") },
+  handler: async (ctx, args) => {
+    const user = await checkAuthForQuery(ctx, args.organizationId);
+    if (!user) return [];
+    const preferences = await ctx.db
+      .query("userConversationPreferences")
+      .withIndex("by_user_organization", (q) =>
+        q.eq("userId", user._id).eq("organizationId", args.organizationId),
       )
       .collect();
-    for (const member of members) await ctx.db.delete(member._id);
+    return preferences
+      .filter((preference) => preference.muted)
+      .map((preference) => preference.conversationId);
+  },
+});
 
-    const pins = (
-      await ctx.db
-        .query("userPinnedConversations")
-        .withIndex("by_organization", (q) =>
-          q.eq("organizationId", conversation.organizationId),
-        )
-        .collect()
-    ).filter((pin) => pin.conversationId === args.conversationId);
-    for (const pin of pins) await ctx.db.delete(pin._id);
+export const getChatAttachmentUrl = query({
+  args: {
+    conversationId: v.id("conversations"),
+    messageId: v.id("messages"),
+    storageId: v.id("_storage"),
+  },
+  handler: async (ctx, args) => {
+    const conversationRow = await ctx.db.get(args.conversationId);
+    if (!conversationRow) throw new Error("Conversation not found");
+    const conversation = await loadEffectiveConversation(ctx, conversationRow);
+    const userRecord = await checkAuth(ctx, conversation.organizationId);
+    if (!conversation.participants.includes(userRecord._id)) {
+      throw new Error("Not authorized to view this conversation");
+    }
 
-    await ctx.db.delete(args.conversationId);
-    return { success: true };
+    const message = await ctx.db.get(args.messageId);
+    if (!message || message.conversationId !== args.conversationId) {
+      throw new Error("Attachment not found");
+    }
+
+    const link = await ctx.db
+      .query("storageObjectLinks")
+      .withIndex("by_storage_parent", (q) =>
+        q
+          .eq("storageId", args.storageId)
+          .eq("parentType", "message")
+          .eq("parentId", args.messageId),
+      )
+      .unique();
+    if (
+      !link ||
+      link.organizationId !== conversation.organizationId ||
+      link.purpose !== "chat_attachment"
+    ) {
+      throw new Error("Attachment not found");
+    }
+
+    const [url, storageObject, metadata] = await Promise.all([
+      ctx.storage.getUrl(args.storageId),
+      ctx.db
+        .query("storageObjects")
+        .withIndex("by_storage", (q) => q.eq("storageId", args.storageId))
+        .unique(),
+      ctx.db.system.get("_storage", args.storageId),
+    ]);
+
+    return {
+      url,
+      contentType:
+        storageObject?.contentType ?? metadata?.contentType ?? null,
+    };
   },
 });
 
@@ -1306,7 +1726,58 @@ export const getPinnedConversations = query({
   },
 });
 
-// Get unread counts per conversation for current user
+async function loadUnreadCounts(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+  userId: Id<"users">,
+) {
+  const conversationRows = await ctx.db
+    .query("conversations")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .collect();
+  const conversations = await Promise.all(
+    conversationRows.map((conversation) =>
+      loadEffectiveConversation(ctx, conversation),
+    ),
+  );
+  const preferences = await ctx.db
+    .query("userConversationPreferences")
+    .withIndex("by_user_organization", (q) =>
+      q.eq("userId", userId).eq("organizationId", organizationId),
+    )
+    .collect();
+  const lastReadByConversation = new Map(
+    preferences.map((preference) => [
+      preference.conversationId,
+      preference.lastReadAt ?? 0,
+    ]),
+  );
+  const counts: Record<string, number> = {};
+
+  for (const conversation of conversations) {
+    if (
+      conversation.archivedAt !== undefined ||
+      !conversation.participants.includes(userId)
+    ) {
+      continue;
+    }
+    const lastReadAt = lastReadByConversation.get(conversation._id) ?? 0;
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_created_at", (q) =>
+        q
+          .eq("conversationId", conversation._id)
+          .gt("createdAt", lastReadAt),
+      )
+      .take(100);
+    counts[conversation._id] = messages.filter(
+      (message) => message.senderId !== userId,
+    ).length;
+  }
+
+  return counts;
+}
+
 export const getUnreadCounts = query({
   args: {
     organizationId: v.id("organizations"),
@@ -1315,47 +1786,34 @@ export const getUnreadCounts = query({
     const userRecord = await checkAuthForQuery(ctx, args.organizationId);
     if (!userRecord) return {};
 
-    const conversationRows = await ctx.db
-      .query("conversations")
-      .withIndex("by_organization", (q) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .collect();
-    const conversations = await Promise.all(
-      conversationRows.map((conversation) =>
-        loadEffectiveConversation(ctx, conversation),
-      ),
-    );
+    return loadUnreadCounts(ctx, args.organizationId, userRecord._id);
+  },
+});
 
-    const userConvs = conversations.filter((conversation) =>
-      conversation.participants.includes(userRecord._id),
-    );
-
-    const counts: Record<string, number> = {};
-
-    for (const conv of userConvs) {
-      const messages = await ctx.db
-        .query("messages")
-        .withIndex("by_conversation", (q) =>
-          q.eq("conversationId", conv._id),
+export const getUnreadNotificationCount = query({
+  args: { organizationId: v.id("organizations") },
+  handler: async (ctx, args) => {
+    const user = await checkAuthForQuery(ctx, args.organizationId);
+    if (!user) return 0;
+    const [counts, preferences] = await Promise.all([
+      loadUnreadCounts(ctx, args.organizationId, user._id),
+      ctx.db
+        .query("userConversationPreferences")
+        .withIndex("by_user_organization", (q) =>
+          q.eq("userId", user._id).eq("organizationId", args.organizationId),
         )
-        .collect();
-
-      let unread = 0;
-      for (const message of messages) {
-        const readBy = await loadEffectiveMessageReadBy(ctx, conv, message);
-        if (
-          message.senderId !== userRecord._id &&
-          !readBy.includes(userRecord._id)
-        ) {
-          unread += 1;
-        }
-      }
-
-      counts[conv._id] = unread;
-    }
-
-    return counts;
+        .collect(),
+    ]);
+    const muted = new Set(
+      preferences
+        .filter((preference) => preference.muted)
+        .map((preference) => preference.conversationId),
+    );
+    return Object.entries(counts).reduce(
+      (total, [conversationId, count]) =>
+        muted.has(conversationId as Id<"conversations">) ? total : total + count,
+      0,
+    );
   },
 });
 
@@ -1379,32 +1837,22 @@ export const markAllConversationsAsRead = mutation({
       ),
     );
 
-    const userConvs = conversations.filter((conversation) =>
-      conversation.participants.includes(userRecord._id),
+    const userConvs = conversations.filter(
+      (conversation) =>
+        conversation.archivedAt === undefined &&
+        conversation.participants.includes(userRecord._id),
     );
-
-    for (const conv of userConvs) {
-      const messages = await ctx.db
-        .query("messages")
-        .withIndex("by_conversation", (q) =>
-          q.eq("conversationId", conv._id)
-        )
-        .collect();
-
-      for (const msg of messages) {
-        const readBy = await loadEffectiveMessageReadBy(ctx, conv, msg);
-        if (!readBy.includes(userRecord._id)) {
-          const nextReadBy = [...readBy, userRecord._id];
-          await replaceMessageReceipts(
-            ctx,
-            conv,
-            msg,
-            nextReadBy,
-            Date.now(),
-          );
-        }
-      }
-    }
+    const lastReadAt = Date.now();
+    await Promise.all(
+      userConvs.map((conversation) =>
+        upsertConversationPreference(ctx, {
+          organizationId: args.organizationId,
+          userId: userRecord._id,
+          conversationId: conversation._id,
+          lastReadAt,
+        }),
+      ),
+    );
 
     return { success: true };
   },

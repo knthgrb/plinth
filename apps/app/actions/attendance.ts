@@ -25,6 +25,7 @@ export async function createAttendance(data: {
     | "leave_without_pay"
     | "no_work";
   overwriteAttendanceId?: string;
+  correctionReason?: string;
 }) {
   return AttendanceService.createAttendance(data);
 }
@@ -50,13 +51,17 @@ export async function updateAttendance(
       | "leave_with_pay"
       | "leave_without_pay"
       | "no_work";
+    correctionReason?: string;
   }
 ) {
   return AttendanceService.updateAttendance(attendanceId, data);
 }
 
-export async function deleteAttendance(attendanceId: string) {
-  return AttendanceService.deleteAttendance(attendanceId);
+export async function deleteAttendance(
+  attendanceId: string,
+  correctionReason?: string,
+) {
+  return AttendanceService.deleteAttendance(attendanceId, correctionReason);
 }
 
 export async function bulkCreateAttendance(
@@ -74,6 +79,7 @@ export async function bulkCreateAttendance(
     isHoliday?: boolean;
     holidayType?: "regular" | "special" | "special_working";
     remarks?: string;
+    importKey?: string;
     status:
       | "present"
       | "absent"
@@ -83,9 +89,10 @@ export async function bulkCreateAttendance(
       | "leave_without_pay"
       | "no_work";
     overwriteAttendanceId?: string;
-  }>
+  }>,
+  correctionReason?: string,
 ) {
-  return AttendanceService.bulkCreateAttendance(entries);
+  return AttendanceService.bulkCreateAttendance(entries, correctionReason);
 }
 
 export async function recalculateEmployeeAttendance(data: {
@@ -93,6 +100,7 @@ export async function recalculateEmployeeAttendance(data: {
   employeeId: string;
   startDate?: number;
   endDate?: number;
+  correctionReason?: string;
 }) {
   return AttendanceService.recalculateEmployeeAttendance(data);
 }

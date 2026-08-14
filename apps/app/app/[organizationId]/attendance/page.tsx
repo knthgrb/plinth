@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, Suspense, lazy } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,6 +16,8 @@ import {
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -176,12 +179,20 @@ export default function AttendancePage() {
   const { isEmployeeExperienceUI, effectiveSelfEmployeeId } =
     useEmployeeView();
   const user = useQuery(
-    (api as any).organizations.getCurrentUser,
+    api.organizations.getCurrentUser,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
   const employees = useQuery(
-    (api as any).employees.getEmployees,
+    api.employees.getEmployees,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
+  const attendanceEmployees = useMemo(
+    () =>
+      employees?.filter(
+        (employee): employee is typeof employee & Doc<"employees"> =>
+          "schedule" in employee,
+      ),
+    [employees],
   );
   const isReadOnly =
     user?.role === "employee" ||
@@ -192,6 +203,15 @@ export default function AttendancePage() {
 
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20; // min 20 per page
+  const paginatedEmployees = useMemo(() => {
+    if (!attendanceEmployees) return [];
+    const start = (currentPage - 1) * pageSize;
+    return attendanceEmployees.slice(start, start + pageSize);
+  }, [attendanceEmployees, currentPage]);
+  const summaryEmployeeIds = useMemo(
+    () => paginatedEmployees.map((employee) => employee._id),
+    [paginatedEmployees],
+  );
 
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
   const [isEmployeeSummaryOpen, setIsEmployeeSummaryOpen] = useState(false);
@@ -207,11 +227,14 @@ export default function AttendancePage() {
 
   // Edit attendance states
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [editingRecord, setEditingRecord] = useState<any>(null);
+  const [editingRecord, setEditingRecord] =
+    useState<Doc<"attendance"> | null>(null);
   // Delete confirm dialog
-  const [recordToDelete, setRecordToDelete] = useState<any>(null);
+  const [recordToDelete, setRecordToDelete] =
+    useState<Doc<"attendance"> | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteCorrectionReason, setDeleteCorrectionReason] = useState("");
 
   // Create employee modal (when no employees)
   const [isCreateEmployeeOpen, setIsCreateEmployeeOpen] = useState(false);
@@ -248,16 +271,18 @@ export default function AttendancePage() {
   }, [isSummaryModalOpen, selectedMonth]);
 
   // Calculate date range for selected month
-  const selectedMonthDate = selectedMonth
-    ? new Date(selectedMonth + "-01")
-    : new Date();
+  const selectedMonthDate = useMemo(
+    () => (selectedMonth ? new Date(`${selectedMonth}-01`) : new Date()),
+    [selectedMonth],
+  );
   const monthStart = startOfMonth(selectedMonthDate).getTime();
   const monthEnd = endOfMonth(selectedMonthDate).getTime();
 
   // Summary modal month range
-  const summaryMonthDate = summaryMonth
-    ? new Date(summaryMonth + "-01")
-    : new Date();
+  const summaryMonthDate = useMemo(
+    () => (summaryMonth ? new Date(`${summaryMonth}-01`) : new Date()),
+    [summaryMonth],
+  );
   const summaryMonthStart = startOfMonth(summaryMonthDate).getTime();
   const summaryMonthEnd = endOfMonth(summaryMonthDate).getTime();
   const summaryMonthDates = eachDayOfInterval({
@@ -270,19 +295,21 @@ export default function AttendancePage() {
 
   // All employees attendance (for summary modal) — uses summary month when modal open
   const allAttendance = useQuery(
-    (api as any).attendance.getAttendance,
+    api.attendance.getAttendanceForEmployees,
     currentOrganizationId && isSummaryModalOpen
       ? {
           organizationId: currentOrganizationId,
+          employeeIds: summaryEmployeeIds,
           startDate: summaryMonthStart,
           endDate: summaryMonthEnd,
         }
       : "skip",
   );
+  const isAllAttendanceLoading = allAttendance === undefined;
 
   // Holidays for individual view (selected month/year)
   const holidaysForMonth = useQuery(
-    (api as any).holidays.getHolidays,
+    api.holidays.getHolidays,
     currentOrganizationId
       ? {
           organizationId: currentOrganizationId,
@@ -293,7 +320,7 @@ export default function AttendancePage() {
 
   // Holidays for summary view (summary month/year)
   const holidaysForSummary = useQuery(
-    (api as any).holidays.getHolidays,
+    api.holidays.getHolidays,
     currentOrganizationId && isSummaryModalOpen
       ? {
           organizationId: currentOrganizationId,
@@ -304,20 +331,20 @@ export default function AttendancePage() {
 
   // Individual attendance: employees use getEmployeeAttendance (no HR role); admin/HR use getAttendance
   const individualAttendanceAsEmployee = useQuery(
-    (api as any).attendance.getEmployeeAttendance,
+    api.attendance.getEmployeeAttendance,
     currentOrganizationId &&
       isReadOnly &&
       idForTable &&
       idForTable !== "__create__"
       ? {
-          employeeId: idForTable,
+          employeeId: idForTable as Id<"employees">,
           startDate: monthStart,
           endDate: monthEnd,
         }
       : "skip",
   );
   const individualAttendanceAsAdmin = useQuery(
-    (api as any).attendance.getAttendance,
+    api.attendance.getAttendance,
     currentOrganizationId &&
       !isReadOnly &&
       idForTable &&
@@ -326,7 +353,7 @@ export default function AttendancePage() {
           organizationId: currentOrganizationId,
           startDate: monthStart,
           endDate: monthEnd,
-          employeeId: idForTable,
+          employeeId: idForTable as Id<"employees">,
         }
       : "skip",
   );
@@ -349,10 +376,10 @@ export default function AttendancePage() {
   })();
 
   const todaysSelfAttendance = useQuery(
-    (api as any).attendance.getEmployeeAttendance,
+    api.attendance.getEmployeeAttendance,
     currentOrganizationId && isReadOnly && effectiveSelfEmployeeId
       ? {
-          employeeId: effectiveSelfEmployeeId,
+          employeeId: effectiveSelfEmployeeId as Id<"employees">,
           startDate: manilaDayTs,
           endDate: manilaDayTs,
         }
@@ -363,7 +390,7 @@ export default function AttendancePage() {
     : undefined;
 
   const employeePayslipSelf = useQuery(
-    (api as any).organizations.getEmployeeIdForPayslips,
+    api.organizations.getEmployeeIdForPayslips,
     currentOrganizationId && isReadOnly && user?.role === "employee"
       ? { organizationId: currentOrganizationId }
       : "skip",
@@ -461,19 +488,6 @@ export default function AttendancePage() {
     return map;
   }, [holidaysForSummary, summaryMonthDate, summaryYear]);
 
-  // Helper functions for time calculations
-  const timeToMinutes = (time: string): number => {
-    if (!time) return 0;
-    const [hours, minutes] = time.split(":").map(Number);
-    return hours * 60 + minutes;
-  };
-
-  const minutesToTime = (minutes: number): string => {
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}`;
-  };
-
   const calculateLate = (
     scheduleIn: string,
     actualIn?: string,
@@ -520,19 +534,20 @@ export default function AttendancePage() {
   };
 
   const deleteAttendanceMutation = useMutation(
-    (api as any).attendance.deleteAttendance,
+    api.attendance.deleteAttendance,
   );
   const punchSelfAttendance = useMutation(
-    (api as any).attendance.punchSelfAttendance,
+    api.attendance.punchSelfAttendance,
   );
 
-  const handleEdit = (record: any) => {
+  const handleEdit = (record: Doc<"attendance">) => {
     setEditingRecord(record);
     setIsEditDialogOpen(true);
   };
 
-  const handleDeleteClick = (record: any) => {
+  const handleDeleteClick = (record: Doc<"attendance">) => {
     setDeleteError(null);
+    setDeleteCorrectionReason("");
     setRecordToDelete(record);
   };
 
@@ -541,10 +556,18 @@ export default function AttendancePage() {
     setIsDeleting(true);
     setDeleteError(null);
     try {
-      await deleteAttendanceMutation({ attendanceId: recordToDelete._id });
+      await deleteAttendanceMutation({
+        attendanceId: recordToDelete._id,
+        correctionReason: deleteCorrectionReason.trim() || undefined,
+      });
       setRecordToDelete(null);
-    } catch (err: any) {
-      setDeleteError(err?.message || "Failed to delete attendance record.");
+      setDeleteCorrectionReason("");
+    } catch (error: unknown) {
+      setDeleteError(
+        error instanceof Error
+          ? error.message
+          : "Failed to delete attendance record.",
+      );
     } finally {
       setIsDeleting(false);
     }
@@ -554,6 +577,7 @@ export default function AttendancePage() {
     if (!isDeleting) {
       setRecordToDelete(null);
       setDeleteError(null);
+      setDeleteCorrectionReason("");
     }
   };
 
@@ -572,10 +596,10 @@ export default function AttendancePage() {
             ? "Your time in was recorded."
             : "Your time out was recorded.",
       });
-    } catch (e: any) {
+    } catch (error: unknown) {
       toast({
         title: "Could not update attendance",
-        description: e?.message || "Please try again.",
+        description: error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -593,12 +617,15 @@ export default function AttendancePage() {
   // Generate all dates in the selected month
   // Transform attendance data by employee and date (for summary modal — uses summary month)
   const attendanceByEmployeeAndDate = (() => {
-    if (!allAttendance || !employees) return {};
+    if (!allAttendance) return {};
 
-    const result: Record<string, Record<number, any>> = {};
+    const result: Record<
+      string,
+      Record<number, Doc<"attendance"> | null>
+    > = {};
 
-    // Initialize all employees
-    employees.forEach((emp: any) => {
+    // Initialize only the employee page visible in the summary.
+    paginatedEmployees.forEach((emp) => {
       result[emp._id] = {};
       summaryMonthDates.forEach((date) => {
         const dateTimestamp = date.getTime();
@@ -607,7 +634,7 @@ export default function AttendancePage() {
     });
 
     // Fill in attendance records — key by local start-of-day so stored UTC-midnight dates match (local midnight)
-    allAttendance.forEach((record: any) => {
+    allAttendance.forEach((record) => {
       if (!result[record.employeeId]) {
         result[record.employeeId] = {};
       }
@@ -618,35 +645,26 @@ export default function AttendancePage() {
     return result;
   })();
 
-  // Paginate employees
-  const paginatedEmployees = (() => {
-    if (!employees) return [];
-    const start = (currentPage - 1) * pageSize;
-    const end = start + pageSize;
-    return employees.slice(start, end);
-  })();
-
-  const totalPages = employees ? Math.ceil(employees.length / pageSize) : 1;
+  const totalPages = attendanceEmployees
+    ? Math.ceil(attendanceEmployees.length / pageSize)
+    : 1;
 
   // Individual view: sort by date descending (most recent first), paginate 20
   const sortedIndividualAttendance = (() => {
     if (!individualAttendance) return [];
-    return [...individualAttendance].sort(
-      (a: any, b: any) =>
-        new Date(b.date).getTime() - new Date(a.date).getTime(),
-    );
+    return [...individualAttendance].sort((a, b) => b.date - a.date);
   })();
   const paginatedIndividualAttendance = sortedIndividualAttendance.slice(
     (individualPage - 1) * individualPageSize,
     individualPage * individualPageSize,
   );
-  const totalIndividualPages = Math.ceil(
-    sortedIndividualAttendance.length / individualPageSize,
+  const totalIndividualPages = Math.max(
+    1,
+    Math.ceil(sortedIndividualAttendance.length / individualPageSize),
   );
-
   const selectedEmployee =
     employees && idForTable && idForTable !== "__create__"
-      ? employees.find((emp: any) => emp._id === idForTable) ?? null
+      ? employees.find((emp) => emp._id === idForTable) ?? null
       : null;
 
   const employeeSummary = useMemo(() => {
@@ -665,14 +683,15 @@ export default function AttendancePage() {
     const overtimes: { date: number; start: string; end: string }[] = [];
 
     const selectedEmployee = idForTable
-      ? (employees as any[])?.find((e: any) => e._id === idForTable)
+      ? employees?.find((employee) => employee._id === idForTable)
       : null;
 
-    individualAttendance.forEach((record: any) => {
+    individualAttendance.forEach((record) => {
       const dayKey = startOfDay(new Date(record.date)).getTime();
       const dayHolidays = (holidaysByDateForMonth[dayKey] || []).filter(
-        (h: any) =>
-          !selectedEmployee || holidayAppliesToEmployee(h, selectedEmployee),
+        (holiday) =>
+          !selectedEmployee ||
+          holidayAppliesToEmployee(holiday, selectedEmployee),
       );
 
       const effectiveStatus = getEffectiveAttendanceStatusForDisplay(
@@ -774,7 +793,7 @@ export default function AttendancePage() {
                   }
                 >
                   <BulkAddAttendanceDialog
-                    employees={employees}
+                    employees={attendanceEmployees}
                     currentOrganizationId={currentOrganizationId}
                   />
                 </Suspense>
@@ -786,7 +805,7 @@ export default function AttendancePage() {
                   }
                 >
                   <AddAttendanceDialog
-                    employees={employees}
+                    employees={attendanceEmployees}
                     currentOrganizationId={currentOrganizationId}
                   />
                 </Suspense>
@@ -801,14 +820,17 @@ export default function AttendancePage() {
                 editingRecord
                   ? (Array.isArray(individualAttendance)
                       ? individualAttendance.find(
-                          (r: any) => r._id === editingRecord._id,
+                          (record) => record._id === editingRecord._id,
                         ) ?? editingRecord
                       : editingRecord)
                   : null
               }
               employee={
                 editingRecord?.employeeId
-                  ? employees?.find((e: any) => e._id === editingRecord.employeeId)
+                  ? attendanceEmployees?.find(
+                      (employee) =>
+                        employee._id === editingRecord.employeeId,
+                    )
                   : undefined
               }
               onSuccess={() => {
@@ -841,6 +863,22 @@ export default function AttendancePage() {
               {deleteError && (
                 <p className="text-sm text-red-600">{deleteError}</p>
               )}
+              <div className="space-y-2">
+                <Label htmlFor="deleteAttendanceCorrectionReason">
+                  Payroll correction reason
+                </Label>
+                <Textarea
+                  id="deleteAttendanceCorrectionReason"
+                  value={deleteCorrectionReason}
+                  onChange={(event) =>
+                    setDeleteCorrectionReason(event.target.value)
+                  }
+                  placeholder="Required for owner/admin deletion after payroll is finalized"
+                  disabled={isDeleting}
+                  rows={2}
+                  className="resize-none"
+                />
+              </div>
               <DialogFooter className="gap-2 sm:gap-0">
                 <Button
                   variant="outline"
@@ -950,7 +988,7 @@ export default function AttendancePage() {
                               </span>
                             </SelectItem>
                           ) : (
-                            employees?.map((emp: any) => (
+                            employees?.map((emp) => (
                               <SelectItem key={emp._id} value={emp._id}>
                                 {emp.personalInfo.firstName}{" "}
                                 {emp.personalInfo.lastName}
@@ -1362,21 +1400,24 @@ export default function AttendancePage() {
                             </TableCell>
                           </TableRow>
                         ) : (
-                          paginatedIndividualAttendance.map((record: any) => {
+                          paginatedIndividualAttendance.map((record) => {
                             const dayKey = startOfDay(
                               new Date(record.date),
                             ).getTime();
                             const selectedEmployee = idForTable
-                              ? (employees as any[])?.find(
-                                  (e: any) => e._id === idForTable,
+                              ? attendanceEmployees?.find(
+                                  (employee) => employee._id === idForTable,
                                 )
                               : null;
                             const dayHolidays = (
                               holidaysByDateForMonth[dayKey] || []
                             ).filter(
-                              (h: any) =>
+                              (holiday) =>
                                 !selectedEmployee ||
-                                holidayAppliesToEmployee(h, selectedEmployee),
+                                holidayAppliesToEmployee(
+                                  holiday,
+                                  selectedEmployee,
+                                ),
                             );
                             const effectiveStatus =
                               getEffectiveAttendanceStatusForDisplay(
@@ -1420,7 +1461,6 @@ export default function AttendancePage() {
                                       record.actualIn,
                                       record.actualOut,
                                     );
-                            const hasLate = late !== null && late > 0;
                             const hasUndertime =
                               undertime !== null && undertime > 0;
                             const highlightTimeIn =
@@ -1629,7 +1669,50 @@ export default function AttendancePage() {
                     </Table>
                   </div>
                 </div>
-                {/* No footer count or pagination controls for attendance list */}
+                {sortedIndividualAttendance.length > 0 ? (
+                  <div className="flex flex-col gap-2 border-t px-3 py-3 text-sm text-gray-600 sm:flex-row sm:items-center sm:justify-between">
+                    <span>
+                      Showing {(individualPage - 1) * individualPageSize + 1}–
+                      {Math.min(
+                        individualPage * individualPageSize,
+                        sortedIndividualAttendance.length,
+                      )} of {sortedIndividualAttendance.length}
+                    </span>
+                    {totalIndividualPages > 1 ? (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setIndividualPage((page) => Math.max(1, page - 1))
+                          }
+                          disabled={individualPage === 1}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          Previous
+                        </Button>
+                        <span>
+                          Page {individualPage} of {totalIndividualPages}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setIndividualPage((page) =>
+                              Math.min(totalIndividualPages, page + 1),
+                            )
+                          }
+                          disabled={individualPage === totalIndividualPages}
+                        >
+                          Next
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </>
             )}
           </CardContent>
@@ -1824,7 +1907,7 @@ export default function AttendancePage() {
               </div>
             </DialogHeader>
             <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-              {allAttendance === undefined || employees === undefined ? (
+              {isAllAttendanceLoading || employees === undefined ? (
                 <div className="flex items-center justify-center flex-1 py-12">
                   <div className="text-center">
                     <Loader2 className="h-8 w-8 animate-spin text-[#695eff] mx-auto mb-2" />
@@ -1921,7 +2004,7 @@ export default function AttendancePage() {
                               </TableCell>
                             </TableRow>
                           ) : (
-                            paginatedEmployees.map((employee: any) => {
+                            paginatedEmployees.map((employee) => {
                               const empAttendance =
                                 attendanceByEmployeeAndDate[employee._id] || {};
                               let totalLate = 0;
@@ -1993,8 +2076,11 @@ export default function AttendancePage() {
                                     ).getTime();
                                     const dayHolidays = (
                                       holidaysByDateForSummary[holidayKey] || []
-                                    ).filter((h: any) =>
-                                      holidayAppliesToEmployee(h, employee),
+                                    ).filter((holiday) =>
+                                      holidayAppliesToEmployee(
+                                        holiday,
+                                        employee,
+                                      ),
                                     );
                                     const record = empAttendance[dateTimestamp];
                                     const isLast =
@@ -2039,10 +2125,6 @@ export default function AttendancePage() {
                                                 record.actualOut,
                                               )
                                         : null;
-                                    const hasDayLate =
-                                      dayLate != null && dayLate > 0;
-                                    const hasDayUndertime =
-                                      dayUndertime != null && dayUndertime > 0;
                                     const highlightDayTimeIn =
                                       record &&
                                       shouldHighlightActualIn(

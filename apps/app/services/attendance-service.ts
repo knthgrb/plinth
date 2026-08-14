@@ -1,7 +1,6 @@
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
 import { getAuthedConvexClient } from "@/lib/convex-client";
-import { getToken } from "@/lib/auth-server";
 
 export class AttendanceService {
   static async createAttendance(data: {
@@ -27,6 +26,7 @@ export class AttendanceService {
       | "leave_without_pay"
       | "no_work";
     overwriteAttendanceId?: string;
+    correctionReason?: string;
   }) {
     const convex = await getAuthedConvexClient();
     return await convex.mutation(
@@ -63,6 +63,7 @@ export class AttendanceService {
         | "leave_with_pay"
         | "leave_without_pay"
         | "no_work";
+      correctionReason?: string;
     },
   ) {
     const convex = await getAuthedConvexClient();
@@ -75,10 +76,15 @@ export class AttendanceService {
     );
   }
 
-  static async deleteAttendance(attendanceId: string) {
-    // Note: Add deleteAttendance mutation to convex/attendance.ts if needed
-    // For now, we'll return an error indicating it needs to be implemented
-    throw new Error("Delete attendance not yet implemented");
+  static async deleteAttendance(
+    attendanceId: string,
+    correctionReason?: string,
+  ) {
+    const convex = await getAuthedConvexClient();
+    return convex.mutation(api.attendance.deleteAttendance, {
+      attendanceId: attendanceId as Id<"attendance">,
+      correctionReason,
+    });
   }
 
   static async bulkCreateAttendance(
@@ -96,6 +102,7 @@ export class AttendanceService {
       isHoliday?: boolean;
       holidayType?: "regular" | "special" | "special_working";
       remarks?: string;
+      importKey?: string;
       status:
         | "present"
         | "absent"
@@ -106,11 +113,13 @@ export class AttendanceService {
         | "no_work";
       overwriteAttendanceId?: string;
     }>,
+    correctionReason?: string,
   ) {
     const convex = await getAuthedConvexClient();
     return await convex.mutation(
       api.attendance.bulkCreateAttendance,
       {
+        correctionReason,
         entries: entries.map((e) => ({
           ...e,
           organizationId: e.organizationId as Id<"organizations">,
@@ -128,17 +137,28 @@ export class AttendanceService {
     employeeId: string;
     startDate?: number;
     endDate?: number;
+    correctionReason?: string;
   }) {
     const convex = await getAuthedConvexClient();
-    return await convex.mutation(
-      api.attendance.recalculateEmployeeAttendance,
-      {
-        organizationId: data.organizationId as Id<"organizations">,
-        employeeId: data.employeeId as Id<"employees">,
-        startDate: data.startDate,
-        endDate: data.endDate,
-      },
-    );
+    let cursor: string | undefined;
+    let updated = 0;
+    do {
+      const result = await convex.mutation(
+        api.attendance.recalculateEmployeeAttendance,
+        {
+          organizationId: data.organizationId as Id<"organizations">,
+          employeeId: data.employeeId as Id<"employees">,
+          startDate: data.startDate,
+          endDate: data.endDate,
+          correctionReason: data.correctionReason,
+          cursor,
+        },
+      );
+      updated += result.updated;
+      cursor = result.isDone ? undefined : result.continueCursor;
+      if (result.isDone) return { updated };
+    } while (cursor);
+    return { updated };
   }
 
   static async punchSelfAttendance(data: {

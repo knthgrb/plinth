@@ -1,88 +1,89 @@
 "use server";
 
-import { LeaveService } from "@/services/leave-service";
+import type { Id } from "@/convex/_generated/dataModel";
+import {
+  LeaveService,
+  type LeaveRequestDraftInput,
+  type LeaveRequestSubmissionInput,
+  type LegacyLeaveRequestInput,
+} from "@/services/leave-service";
 
-export async function createLeaveRequest(data: {
-  organizationId: string;
-  employeeId: string;
-  leaveType:
-    | "vacation"
-    | "sick"
-    | "emergency"
-    | "maternity"
-    | "paternity"
-    | "custom";
-  customLeaveType?: string;
-  startDate: number;
-  endDate: number;
+export const previewLeaveRequest = async (input: LeaveRequestDraftInput) =>
+  LeaveService.previewLeaveRequest(input);
+
+export const submitLeaveRequest = async (input: LeaveRequestSubmissionInput) =>
+  LeaveService.submitLeaveRequest(input);
+
+export const approveLeaveRequestV2 = async (input: {
+  leaveRequestId: Id<"leaveRequests">;
+  decisionReason?: string;
+}) => LeaveService.approveLeaveRequest(input);
+
+export const rejectLeaveRequestV2 = async (input: {
+  leaveRequestId: Id<"leaveRequests">;
+  decisionReason: string;
+}) => LeaveService.rejectLeaveRequest(input);
+
+export const requestLeaveCancellation = async (input: {
+  leaveRequestId: Id<"leaveRequests">;
   reason: string;
-  formTemplateContent?: string;
-  filledFormContent?: string;
-  signatureDataUrl?: string;
-  supportingDocuments?: string[];
-  isPaid?: boolean;
-}) {
-  return LeaveService.createLeaveRequest(data);
-}
+}) => LeaveService.requestLeaveCancellation(input);
 
-export async function approveLeaveRequest(
+export const approveLeaveCancellation = async (input: {
+  leaveRequestId: Id<"leaveRequests">;
+  reason: string;
+}) => LeaveService.approveLeaveCancellation(input);
+
+export const adjustLeaveBalance = async (input: {
+  balanceId: Id<"employeeLeaveBalances">;
+  amount: number;
+  effectiveDate: number;
+  reason: string;
+}) => LeaveService.adjustLeaveBalance(input);
+
+export const requestLeaveConversion = async (input: {
+  organizationId: Id<"organizations">;
+  balanceId: Id<"employeeLeaveBalances">;
+  policyId?: Id<"leavePolicies">;
+  requestedDays: number;
+}) => LeaveService.requestLeaveConversion(input);
+
+export const createLeaveRequest = async (data: LegacyLeaveRequestInput) =>
+  LeaveService.createLegacyLeaveRequest(data);
+
+export const approveLeaveRequest = async (
   leaveRequestId: string,
   remarks: string | undefined,
   approvedByName: string,
   reviewerSignatureDataUrl: string,
   reviewerPosition?: string,
-) {
-  return LeaveService.approveLeaveRequest(
+) =>
+  LeaveService.approveLegacyLeaveRequest(
     leaveRequestId,
     remarks,
     approvedByName,
     reviewerSignatureDataUrl,
     reviewerPosition,
   );
-}
 
-export async function rejectLeaveRequest(
-  leaveRequestId: string,
-  remarks: string,
-) {
-  return LeaveService.rejectLeaveRequest(leaveRequestId, remarks);
-}
+export const rejectLeaveRequest = async (leaveRequestId: string, remarks: string) =>
+  LeaveService.rejectLegacyLeaveRequest(leaveRequestId, remarks);
 
-export async function cancelLeaveRequest(leaveRequestId: string) {
-  return LeaveService.cancelLeaveRequest(leaveRequestId);
-}
+export const cancelLeaveRequest = async (leaveRequestId: string) =>
+  LeaveService.cancelLegacyLeaveRequest(leaveRequestId);
 
-export async function getLeaveRequest(leaveRequestId: string) {
-  return LeaveService.getLeaveRequest(leaveRequestId);
-}
+export const getLeaveRequest = async (leaveRequestId: string) =>
+  LeaveService.getLeaveRequest(leaveRequestId);
 
-export async function getEmployeeLeaveCredits(
+export const getEmployeeLeaveCredits = async (
   organizationId: string,
   employeeId: string,
-) {
-  return LeaveService.getEmployeeLeaveCredits(organizationId, employeeId);
-}
+) => LeaveService.getEmployeeLeaveCredits(organizationId, employeeId);
 
-export async function updateEmployeeLeaveCredits(data: {
-  organizationId: string;
-  employeeId: string;
-  leaveType: "vacation" | "sick" | "custom";
-  customType?: string;
-  total?: number;
-  used?: number;
-  balance?: number;
-  adjustment?: number;
-  reason?: string;
-}) {
-  return LeaveService.updateEmployeeLeaveCredits(data);
-}
+export const updateEmployeeLeaveCredits = async (
+  data: Parameters<typeof LeaveService.updateEmployeeLeaveCredits>[0],
+) => LeaveService.updateEmployeeLeaveCredits(data);
 
-export async function convertLeaveToCash(data: {
-  organizationId: string;
-  employeeId: string;
-  leaveType: "vacation" | "sick";
-  daysToConvert: number;
-  reason?: string;
-}) {
-  return LeaveService.convertLeaveToCash(data);
-}
+export const convertLeaveToCash = async (
+  data: Parameters<typeof LeaveService.convertLeaveToCash>[0],
+) => LeaveService.convertLeaveToCash(data);

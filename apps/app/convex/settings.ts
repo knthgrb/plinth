@@ -14,6 +14,7 @@ import {
   appendOrganizationSettingsEvent,
   upsertOrganizationUiSettings,
 } from "./workflowCompatibility";
+import { assertLegacyLeaveWriteAllowed } from "./leaveMigration";
 
 async function getOrCreateSettingsAnchor(
   ctx: MutationCtx,
@@ -425,8 +426,20 @@ export const updateLeaveTypes = mutation({
     ),
   },
   handler: async (ctx, args) => {
+    await assertLegacyLeaveWriteAllowed(ctx, args.organizationId);
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
     const now = Date.now();
+    const currentLeaveSettings = await ctx.db
+      .query("organizationLeaveSettings")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .unique();
+    if (currentLeaveSettings?.activePolicyEngineVersion === 2) {
+      throw new Error(
+        "Use leave policy administration for organizations on leave engine V2",
+      );
+    }
     const settings = await recordSettingsChange(
       ctx,
       args.organizationId,
@@ -475,6 +488,19 @@ export const updateLeaveTypes = mutation({
       leaveSettingsPatch,
       now,
     );
+    const normalizedLeaveSettings = await ctx.db
+      .query("organizationLeaveSettings")
+      .withIndex("by_organization", (q) =>
+        q.eq("organizationId", args.organizationId),
+      )
+      .unique();
+    if (!normalizedLeaveSettings) {
+      throw new Error("Normalized leave settings were not created");
+    }
+    await ctx.db.patch(normalizedLeaveSettings._id, {
+      migrationState: "pending",
+      updatedAt: now,
+    });
     if (args.leaveTypes !== undefined) {
       const existing = await ctx.db
         .query("leaveTypes")
@@ -527,6 +553,7 @@ export const updateLeaveTracker = mutation({
     overrideReason: v.string(),
   },
   handler: async (ctx, args) => {
+    await assertLegacyLeaveWriteAllowed(ctx, args.organizationId);
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
     const overrideReason = args.overrideReason.trim();
     if (!overrideReason) {

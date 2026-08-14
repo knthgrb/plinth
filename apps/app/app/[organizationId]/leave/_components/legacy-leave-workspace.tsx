@@ -1,0 +1,884 @@
+"use client";
+
+import {
+  useState,
+  useEffect,
+  Suspense,
+  useCallback,
+  useMemo,
+  useTransition,
+} from "react";
+import dynamic from "next/dynamic";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
+import { MainLayout } from "@/components/layout/main-layout";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Loader2, Plus } from "lucide-react";
+import { getEmployeeLeaveCredits } from "@/actions/leave";
+import { useOrganization } from "@/hooks/organization-context";
+import { useEmployeeView } from "@/hooks/employee-view-context";
+import { LeaveColumnManagementModal } from "./leave-column-management-modal";
+import { EmployeeSelfCreditsContent } from "./employee-self-credits-content";
+
+// Lazy load modals and tabs
+const RequestLeaveDialog = dynamic(
+  () => import("./request-leave-dialog").then((mod) => mod.RequestLeaveDialog),
+  { ssr: false },
+);
+
+const ReviewLeaveDialog = dynamic(
+  () => import("./review-leave-dialog").then((mod) => mod.ReviewLeaveDialog),
+  { ssr: false },
+);
+
+const EmployeeLeaveHistoryTab = dynamic(
+  () =>
+    import("./employee-leave-history-tab").then(
+      (mod) => mod.EmployeeLeaveHistoryTab,
+    ),
+  { ssr: false },
+);
+
+const AdminLeaveRequestsTab = dynamic(
+  () =>
+    import("./admin-leave-requests-tab").then(
+      (mod) => mod.AdminLeaveRequestsTab,
+    ),
+  { ssr: false },
+);
+
+const AdminLeaveHistoryTab = dynamic(
+  () =>
+    import("./admin-leave-history-tab").then((mod) => mod.AdminLeaveHistoryTab),
+  { ssr: false },
+);
+
+const LeaveTrackerTab = dynamic(
+  () => import("./leave-tracker-tab").then((mod) => mod.LeaveTrackerTab),
+  { ssr: false },
+);
+
+const ResignedLeaveConversionTab = dynamic(
+  () =>
+    import("./resigned-leave-conversion-tab").then(
+      (mod) => mod.ResignedLeaveConversionTab,
+    ),
+  { ssr: false },
+);
+
+interface Column {
+  id: string;
+  label: string;
+  field: string;
+  type: "text" | "number" | "date" | "badge" | "link";
+  sortable?: boolean;
+  width?: string;
+  customField?: boolean;
+  isDefault?: boolean;
+  hidden?: boolean;
+}
+
+type LegacyEmployeeLeaveCredits = Awaited<
+  ReturnType<typeof getEmployeeLeaveCredits>
+>;
+type LegacyLeaveRequestRecord = Doc<"leaveRequests"> & {
+  supportingDocuments?: Id<"_storage">[];
+};
+type LegacyReviewRequestRecord = Omit<LegacyLeaveRequestRecord, "status"> & {
+  status: "pending" | "approved" | "rejected" | "cancelled";
+};
+
+function isLegacyReviewRequest(
+  request: LegacyLeaveRequestRecord,
+): request is LegacyReviewRequestRecord {
+  return (
+    request.status === "pending" ||
+    request.status === "approved" ||
+    request.status === "rejected" ||
+    request.status === "cancelled"
+  );
+}
+
+const EMPLOYEE_TABS = ["credits", "history"] as const;
+const ADMIN_TABS = ["tracker", "requests", "history", "resigned"] as const;
+const EMPLOYEE_TAB_LABELS: Record<(typeof EMPLOYEE_TABS)[number], string> = {
+  credits: "leave credits",
+  history: "leave history",
+};
+const ADMIN_TAB_LABELS: Record<(typeof ADMIN_TABS)[number], string> = {
+  tracker: "tracker",
+  requests: "leave requests",
+  history: "leave history",
+  resigned: "resigned conversion",
+};
+
+function LeaveTabLoadingIndicator({ label }: { label: string }) {
+  return (
+    <div
+      className="mb-4 flex items-center gap-2 rounded-lg border border-[rgb(230,230,230)] bg-[rgb(250,250,250)] px-4 py-3 text-sm text-[rgb(89,89,89)]"
+      aria-live="polite"
+    >
+      <Loader2 className="h-4 w-4 animate-spin text-brand-purple" />
+      <span>Loading {label}...</span>
+    </div>
+  );
+}
+
+export function LegacyLeaveWorkspace() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { currentOrganizationId, currentOrganization } = useOrganization();
+  const [isRoutingTab, startTabTransition] = useTransition();
+  const [isTabChanging, setIsTabChanging] = useState(false);
+
+  const setTabParam = useCallback(
+    (tab: string) => {
+      const params = new URLSearchParams(searchParams?.toString() ?? "");
+      params.set("tab", tab);
+      if (searchParams?.get("tab") !== tab) {
+        setIsTabChanging(true);
+      }
+      startTabTransition(() => {
+        router.replace(`${pathname}?${params.toString()}`);
+      });
+    },
+    [pathname, router, searchParams, startTabTransition],
+  );
+  const user = useQuery(
+    api.organizations.getCurrentUser,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
+  const { effectiveSelfEmployeeId } = useEmployeeView();
+  const employees = useQuery(
+    api.employees.getEmployees,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
+  const leaveRequests = useQuery(
+    api.leave.getLeaveRequests,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
+  const settings = useQuery(
+    api.settings.getSettings,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
+
+  const isAdminOrHr =
+    (user?.role === "owner" || user?.role === "admin" || user?.role === "hr");
+  const isEmployee = !isAdminOrHr;
+  const userEmployeeId =
+    effectiveSelfEmployeeId ??
+    user?.employeeId ??
+    currentOrganization?.employeeId ??
+    "";
+  const canRequestLeave = isEmployee || (isAdminOrHr && userEmployeeId);
+  const tabParam = searchParams?.get("tab");
+  const activeEmployeeTab = EMPLOYEE_TABS.includes(
+    tabParam as (typeof EMPLOYEE_TABS)[number],
+  )
+    ? (tabParam as (typeof EMPLOYEE_TABS)[number])
+    : "credits";
+  const activeAdminTab = ADMIN_TABS.includes(
+    tabParam as (typeof ADMIN_TABS)[number],
+  )
+    ? (tabParam as (typeof ADMIN_TABS)[number])
+    : "tracker";
+  const isTabLoading = isRoutingTab || isTabChanging;
+
+  useEffect(() => {
+    if (!isTabChanging) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setIsTabChanging(false);
+    }, 350);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isTabChanging, tabParam]);
+
+  // Only show records for active employees (requests, history, credits table)
+  const activeEmployees = useMemo(() => {
+    const list = employees ?? [];
+    return list.filter((e) => e.employment?.status === "active");
+  }, [employees]);
+  const activeEmployeeIds = useMemo(
+    () => new Set(activeEmployees.map((e) => e._id)),
+    [activeEmployees],
+  );
+  const leaveRequestsActiveOnly = useMemo(() => {
+    const list = leaveRequests ?? [];
+    return list.filter((r) => activeEmployeeIds.has(r.employeeId));
+  }, [leaveRequests, activeEmployeeIds]);
+
+  // Column management states
+  const [isRequestsColumnModalOpen, setIsRequestsColumnModalOpen] =
+    useState(false);
+  const [isHistoryColumnModalOpen, setIsHistoryColumnModalOpen] =
+    useState(false);
+  const [requestsTableColumns, setRequestsTableColumns] = useState<Column[]>(
+    [],
+  );
+  const [historyTableColumns, setHistoryTableColumns] = useState<Column[]>([]);
+
+  const selfViewHistoryColumns = useMemo(
+    () =>
+      historyTableColumns.filter(
+        (c) => c.id !== "employee" && c.field !== "employee",
+      ),
+    [historyTableColumns],
+  );
+
+  // Employee view states
+  const [employeeLeaveCredits, setEmployeeLeaveCredits] =
+    useState<LegacyEmployeeLeaveCredits>(null);
+  const [employeeLeaveHistory, setEmployeeLeaveHistory] = useState<
+    LegacyLeaveRequestRecord[]
+  >([]);
+
+  // Leave request dialog states
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  // Review dialog states
+  const [isReviewDialogOpen, setIsReviewDialogOpen] = useState(false);
+  const [reviewingRequest, setReviewingRequest] =
+    useState<LegacyReviewRequestRecord | null>(null);
+  const requestingEmployee = useMemo(() => {
+    return (
+      (employees ?? []).find((employee) => employee._id === userEmployeeId) ??
+      null
+    );
+  }, [employees, userEmployeeId]);
+
+  const leaveTrackerMode = (settings?.leaveTrackerMode ?? "general") as
+    | "general"
+    | "by_type";
+  const legacyTrackerSettings = settings as
+    | {
+        leaveTrackerRows?: Array<{
+          employeeId: string;
+          annualSilOverride?: number;
+          availed?: number;
+        }>;
+        leaveTrackerByYear?: Array<{
+          year: number;
+          rows: Array<{
+            employeeId: string;
+            annualSilOverride?: number;
+            availed?: number;
+          }>;
+        }>;
+      }
+    | null
+    | undefined;
+  const configuredLeaveTypesForRequests = useMemo(() => {
+    return (settings?.leaveTypes ?? [])
+      .filter((t) => !t.isAnniversary)
+      .map((t) => ({ type: t.type, name: t.name, isPaid: t.isPaid }));
+  }, [settings?.leaveTypes]);
+
+  // Initialize columns from settings
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      const DEFAULT_REQUESTS: Column[] = [
+        {
+          id: "employee",
+          label: "Employee",
+          field: "employee",
+          type: "text",
+          sortable: true,
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "leaveType",
+          label: "Leave Type",
+          field: "leaveType",
+          type: "text",
+          sortable: true,
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "startDate",
+          label: "Start Date",
+          field: "startDate",
+          type: "date",
+          sortable: true,
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "endDate",
+          label: "End Date",
+          field: "endDate",
+          type: "date",
+          sortable: true,
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "days",
+          label: "Days",
+          field: "numberOfDays",
+          type: "number",
+          sortable: true,
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "status",
+          label: "Status",
+          field: "status",
+          type: "badge",
+          sortable: true,
+          width: "120px",
+          isDefault: true,
+          hidden: false,
+        },
+      ];
+
+      const DEFAULT_HISTORY: Column[] = [
+        {
+          id: "employee",
+          label: "Employee",
+          field: "employee",
+          type: "text",
+          sortable: true,
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "leaveType",
+          label: "Leave Type",
+          field: "leaveType",
+          type: "text",
+          sortable: true,
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "startDate",
+          label: "Start Date",
+          field: "startDate",
+          type: "date",
+          sortable: true,
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "endDate",
+          label: "End Date",
+          field: "endDate",
+          type: "date",
+          sortable: true,
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "days",
+          label: "Days",
+          field: "numberOfDays",
+          type: "number",
+          sortable: true,
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "status",
+          label: "Status",
+          field: "status",
+          type: "badge",
+          sortable: true,
+          width: "120px",
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "payStatus",
+          label: "W or W/O Pay",
+          field: "payStatus",
+          type: "text",
+          sortable: true,
+          width: "130px",
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "reason",
+          label: "Reason",
+          field: "reason",
+          type: "text",
+          sortable: false,
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "cutoffPeriod",
+          label: "Cut-off Period",
+          field: "cutoffPeriod",
+          type: "text",
+          sortable: true,
+          width: "160px",
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "remarks",
+          label: "Review notes",
+          field: "remarks",
+          type: "text",
+          sortable: false,
+          isDefault: true,
+          hidden: false,
+        },
+        {
+          id: "filedDate",
+          label: "Filed Date",
+          field: "filedDate",
+          type: "date",
+          sortable: true,
+          isDefault: true,
+          hidden: false,
+        },
+      ];
+
+      if (settings?.leaveTableColumns) {
+        // Merge saved columns with defaults - ensure all defaults are present
+        const savedColumns = settings.leaveTableColumns.filter(
+          (c: Column) => !c.isDefault,
+        );
+        const savedDefaultColumns = settings.leaveTableColumns.filter(
+          (c: Column) => c.isDefault,
+        );
+
+        // Merge defaults with saved defaults (preserve hidden state)
+        const mergedRequestsDefaults = DEFAULT_REQUESTS.map((def) => {
+          const saved = savedDefaultColumns.find(
+            (c: Column) => c.id === def.id,
+          );
+          return saved ? { ...def, ...saved } : def;
+        });
+
+        const mergedHistoryDefaults = DEFAULT_HISTORY.map((def) => {
+          const saved = savedDefaultColumns.find(
+            (c: Column) => c.id === def.id,
+          );
+          return saved ? { ...def, ...saved } : def;
+        });
+
+        setRequestsTableColumns([...mergedRequestsDefaults, ...savedColumns]);
+        setHistoryTableColumns([...mergedHistoryDefaults, ...savedColumns]);
+      } else {
+        setRequestsTableColumns(DEFAULT_REQUESTS);
+        setHistoryTableColumns(DEFAULT_HISTORY);
+      }
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [settings]);
+
+  const loadEmployeeData = useCallback(async () => {
+    if (!currentOrganizationId || !userEmployeeId) return;
+    try {
+      const credits = await getEmployeeLeaveCredits(
+        currentOrganizationId,
+        userEmployeeId,
+      );
+      setEmployeeLeaveCredits(credits);
+
+      // Filter leave history for this employee (newest first)
+      const history = (
+        leaveRequests?.filter((req) => req.employeeId === userEmployeeId) || []
+      ).sort((a, b) => (b.filedDate ?? 0) - (a.filedDate ?? 0));
+      setEmployeeLeaveHistory(history);
+    } catch (error) {
+      console.error("Error loading employee data:", error);
+    }
+  }, [currentOrganizationId, leaveRequests, userEmployeeId]);
+
+  // Load employee leave credits and history (for employees and HR/Admin who are employees)
+  useEffect(() => {
+    if (canRequestLeave && userEmployeeId && currentOrganizationId) {
+      const timeoutId = window.setTimeout(() => {
+        void loadEmployeeData();
+      }, 0);
+      return () => window.clearTimeout(timeoutId);
+    }
+  }, [
+    canRequestLeave,
+    currentOrganizationId,
+    loadEmployeeData,
+    userEmployeeId,
+  ]);
+
+  // Employee View (or HR/Admin who are employees)
+  if (canRequestLeave && !isAdminOrHr) {
+    return (
+      <MainLayout>
+        <div className="p-8">
+          {/* Header: title + action (Transactions-style) */}
+          <div className="mb-6 flex items-center justify-between">
+            <h1 className="text-2xl font-bold text-[rgb(64,64,64)] tracking-tight">
+              My Leaves
+            </h1>
+            <Suspense
+              fallback={
+                <div className="h-10 w-10 rounded-lg bg-[rgb(245,245,245)] animate-pulse" />
+              }
+            >
+              <RequestLeaveDialog
+                isOpen={isDialogOpen}
+                onOpenChange={setIsDialogOpen}
+                organizationId={currentOrganizationId || ""}
+                employeeId={userEmployeeId || ""}
+                leaveCredits={employeeLeaveCredits}
+                employee={requestingEmployee}
+                leaveRequestFormTemplate={settings?.leaveRequestFormTemplate}
+                leaveTrackerMode={leaveTrackerMode}
+                configuredLeaveTypes={configuredLeaveTypesForRequests}
+                onSuccess={() => {
+                  if (canRequestLeave && userEmployeeId) {
+                    loadEmployeeData();
+                  }
+                }}
+              />
+              <Button
+                size="icon"
+                className="h-10 w-10 rounded-lg bg-brand-purple hover:bg-brand-purple-hover text-white shrink-0"
+                onClick={() => setIsDialogOpen(true)}
+              >
+                <Plus className="h-5 w-5" />
+              </Button>
+            </Suspense>
+          </div>
+
+          {/* Underline tabs + separator */}
+          <Tabs
+            value={activeEmployeeTab}
+            onValueChange={setTabParam}
+            className="space-y-0"
+          >
+            <div className="flex items-end gap-6 border-b border-[rgb(230,230,230)]">
+              <TabsList className="h-auto w-auto rounded-none bg-transparent p-0 gap-6 border-0 shadow-none">
+                <TabsTrigger
+                  value="credits"
+                  className="rounded-none border-b-2 border-transparent bg-transparent px-0 pb-3 pt-0 text-sm font-semibold text-[rgb(133,133,133)] data-[state=active]:border-brand-purple data-[state=active]:text-brand-purple data-[state=active]:shadow-none data-[state=active]:bg-transparent -mb-px"
+                >
+                  Leave credits
+                </TabsTrigger>
+                <TabsTrigger
+                  value="history"
+                  className="rounded-none border-b-2 border-transparent bg-transparent px-0 pb-3 pt-0 text-sm font-semibold text-[rgb(133,133,133)] data-[state=active]:border-brand-purple data-[state=active]:text-brand-purple data-[state=active]:shadow-none data-[state=active]:bg-transparent -mb-px"
+                >
+                  Leave history
+                </TabsTrigger>
+              </TabsList>
+            </div>
+            <div className="mt-6" />
+            {isTabLoading ? (
+              <LeaveTabLoadingIndicator
+                label={EMPLOYEE_TAB_LABELS[activeEmployeeTab]}
+              />
+            ) : null}
+
+            <TabsContent value="credits" className="mt-0">
+              <EmployeeSelfCreditsContent
+                leaveTrackerMode={leaveTrackerMode}
+                leaveGuidelines={settings?.leaveGuidelines}
+                employeeLeaveCredits={employeeLeaveCredits}
+              />
+            </TabsContent>
+
+            <TabsContent value="history" className="mt-0">
+              <Suspense
+                fallback={
+                  <Card className="border-[rgb(230,230,230)]">
+                    <CardContent className="py-12">
+                      <div className="text-center text-sm text-[rgb(133,133,133)]">
+                        Loading leave history…
+                      </div>
+                    </CardContent>
+                  </Card>
+                }
+              >
+                <EmployeeLeaveHistoryTab
+                  leaveHistory={employeeLeaveHistory}
+                  columns={selfViewHistoryColumns}
+                  configuredLeaveTypes={configuredLeaveTypesForRequests}
+                  cutoffDates={settings?.cutoffDates}
+                />
+              </Suspense>
+            </TabsContent>
+          </Tabs>
+        </div>
+      </MainLayout>
+    );
+  }
+
+  // Admin/HR View
+  return (
+    <MainLayout>
+      <div className="p-8">
+        {/* Header: title + action (Transactions-style) */}
+        <div className="mb-6 flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-[rgb(64,64,64)] tracking-tight">
+            Leave
+          </h1>
+          {isAdminOrHr && canRequestLeave && (
+            <Suspense
+              fallback={
+                <div className="h-10 w-10 rounded-lg bg-[rgb(245,245,245)] animate-pulse" />
+              }
+            >
+              <RequestLeaveDialog
+                isOpen={isDialogOpen}
+                onOpenChange={setIsDialogOpen}
+                organizationId={currentOrganizationId || ""}
+                employeeId={userEmployeeId || ""}
+                leaveCredits={employeeLeaveCredits}
+                employee={requestingEmployee}
+                leaveRequestFormTemplate={settings?.leaveRequestFormTemplate}
+                leaveTrackerMode={leaveTrackerMode}
+                configuredLeaveTypes={configuredLeaveTypesForRequests}
+                onSuccess={() => {
+                  if (canRequestLeave && userEmployeeId) {
+                    loadEmployeeData();
+                  }
+                }}
+              />
+              <Button
+                size="icon"
+                className="h-10 w-10 rounded-lg bg-brand-purple hover:bg-brand-purple-hover text-white shrink-0"
+                onClick={() => setIsDialogOpen(true)}
+              >
+                <Plus className="h-5 w-5" />
+              </Button>
+            </Suspense>
+          )}
+        </div>
+
+        {/* Underline tabs + separator */}
+        <Tabs
+          value={activeAdminTab}
+          onValueChange={setTabParam}
+          className="space-y-0"
+        >
+          <div className="flex items-end gap-6 border-b border-[rgb(230,230,230)]">
+            <TabsList className="h-auto w-auto rounded-none bg-transparent p-0 gap-6 border-0 shadow-none">
+              <TabsTrigger
+                value="tracker"
+                className="rounded-none border-b-2 border-transparent bg-transparent px-0 pb-3 pt-0 text-sm font-semibold text-[rgb(133,133,133)] data-[state=active]:border-brand-purple data-[state=active]:text-brand-purple data-[state=active]:shadow-none data-[state=active]:bg-transparent -mb-px"
+              >
+                Tracker
+              </TabsTrigger>
+              <TabsTrigger
+                value="requests"
+                className="rounded-none border-b-2 border-transparent bg-transparent px-0 pb-3 pt-0 text-sm font-semibold text-[rgb(133,133,133)] data-[state=active]:border-brand-purple data-[state=active]:text-brand-purple data-[state=active]:shadow-none data-[state=active]:bg-transparent -mb-px"
+              >
+                Leave requests
+              </TabsTrigger>
+              <TabsTrigger
+                value="history"
+                className="rounded-none border-b-2 border-transparent bg-transparent px-0 pb-3 pt-0 text-sm font-semibold text-[rgb(133,133,133)] data-[state=active]:border-brand-purple data-[state=active]:text-brand-purple data-[state=active]:shadow-none data-[state=active]:bg-transparent -mb-px"
+              >
+                Leave history
+              </TabsTrigger>
+              <TabsTrigger
+                value="resigned"
+                className="rounded-none border-b-2 border-transparent bg-transparent px-0 pb-3 pt-0 text-sm font-semibold text-[rgb(133,133,133)] data-[state=active]:border-brand-purple data-[state=active]:text-brand-purple data-[state=active]:shadow-none data-[state=active]:bg-transparent -mb-px"
+              >
+                Resigned conversion
+              </TabsTrigger>
+            </TabsList>
+          </div>
+          <div className="mt-6" />
+          {isTabLoading ? (
+            <LeaveTabLoadingIndicator
+              label={ADMIN_TAB_LABELS[activeAdminTab]}
+            />
+          ) : null}
+
+          <TabsContent value="requests" className="mt-0">
+            <Suspense
+              fallback={
+                <Card className="border-[rgb(230,230,230)]">
+                  <CardContent className="py-12">
+                    <div className="text-center text-sm text-[rgb(133,133,133)]">
+                      Loading leave requests…
+                    </div>
+                  </CardContent>
+                </Card>
+              }
+            >
+              <AdminLeaveRequestsTab
+                leaveRequests={leaveRequestsActiveOnly}
+                columns={requestsTableColumns}
+                employees={activeEmployees}
+                configuredLeaveTypes={configuredLeaveTypesForRequests}
+                onManageColumns={() => setIsRequestsColumnModalOpen(true)}
+                onReviewRequest={(request: LegacyLeaveRequestRecord) => {
+                  if (!isLegacyReviewRequest(request)) return;
+                  setReviewingRequest(request);
+                  setIsReviewDialogOpen(true);
+                }}
+              />
+            </Suspense>
+          </TabsContent>
+
+          <TabsContent value="history" className="mt-0">
+            <Suspense
+              fallback={
+                <Card className="border-[rgb(230,230,230)]">
+                  <CardContent className="py-12">
+                    <div className="text-center text-sm text-[rgb(133,133,133)]">
+                      Loading leave history…
+                    </div>
+                  </CardContent>
+                </Card>
+              }
+            >
+              <AdminLeaveHistoryTab
+                organizationId={currentOrganizationId || ""}
+                leaveRequests={[...leaveRequestsActiveOnly].sort(
+                  (a, b) => b.filedDate - a.filedDate,
+                )}
+                columns={historyTableColumns}
+                employees={activeEmployees}
+                configuredLeaveTypes={configuredLeaveTypesForRequests}
+                cutoffDates={settings?.cutoffDates}
+                leaveTrackerMode={leaveTrackerMode}
+                onManageColumns={() => setIsHistoryColumnModalOpen(true)}
+              />
+            </Suspense>
+          </TabsContent>
+
+          <TabsContent value="tracker" className="mt-0">
+            <Card className="border-[rgb(230,230,230)] shadow-sm">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-base font-semibold text-[rgb(64,64,64)]">
+                  Leave tracker
+                </CardTitle>
+                <p className="text-sm text-[rgb(133,133,133)] mt-1">
+                  Spreadsheet-style tracker for SIL accrual, anniversary leave,
+                  availed credits, and balance.
+                </p>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <LeaveTrackerTab
+                  organizationId={currentOrganizationId || ""}
+                  employees={activeEmployees}
+                  employeesLoading={
+                    Boolean(currentOrganizationId) && employees === undefined
+                  }
+                  proratedLeave={settings?.proratedLeave ?? true}
+                  annualSil={settings?.annualSil ?? 8}
+                  leaveAccrualFrequency={
+                    settings?.leaveAccrualFrequency ?? "monthly"
+                  }
+                  leaveTrackerMode={settings?.leaveTrackerMode ?? "general"}
+                  enableAnniversaryLeave={
+                    settings?.enableAnniversaryLeave ?? true
+                  }
+                  anniversaryLeaveMaxDays={
+                    settings?.anniversaryLeaveMaxDays ?? 15
+                  }
+                  leaveTypes={settings?.leaveTypes ?? []}
+                  grantLeaveUponRegularization={
+                    settings?.grantLeaveUponRegularization ?? true
+                  }
+                  paidLeaveRequiresRegularization={
+                    settings?.paidLeaveRequiresRegularization ?? true
+                  }
+                  savedRows={legacyTrackerSettings?.leaveTrackerRows ?? []}
+                  savedRowsByYear={
+                    legacyTrackerSettings?.leaveTrackerByYear?.length
+                      ? Object.fromEntries(
+                          legacyTrackerSettings.leaveTrackerByYear.map((e) => [
+                            e.year,
+                            e.rows,
+                          ]),
+                        )
+                      : undefined
+                  }
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="resigned" className="mt-0">
+            <Suspense
+              fallback={
+                <Card className="border-[rgb(230,230,230)]">
+                  <CardContent className="py-12">
+                    <div className="text-center text-sm text-[rgb(133,133,133)]">
+                      Loading resigned employees…
+                    </div>
+                  </CardContent>
+                </Card>
+              }
+            >
+              <ResignedLeaveConversionTab
+                employees={employees ?? []}
+                annualSil={settings?.annualSil ?? 8}
+                proratedLeave={settings?.proratedLeave ?? true}
+                leaveTrackerMode={settings?.leaveTrackerMode ?? "general"}
+                leaveTypes={settings?.leaveTypes ?? []}
+                enableAnniversaryLeave={
+                  settings?.enableAnniversaryLeave ?? true
+                }
+                anniversaryLeaveMaxDays={
+                  settings?.anniversaryLeaveMaxDays ?? 15
+                }
+                grantLeaveUponRegularization={
+                  settings?.grantLeaveUponRegularization ?? true
+                }
+                paidLeaveRequiresRegularization={
+                  settings?.paidLeaveRequiresRegularization ?? true
+                }
+                leaveAccrualFrequency={
+                  settings?.leaveAccrualFrequency ?? "monthly"
+                }
+                maxConvertibleLeaveDays={settings?.maxConvertibleLeaveDays ?? 5}
+              />
+            </Suspense>
+          </TabsContent>
+        </Tabs>
+
+        {/* Review Dialog */}
+        <Suspense fallback={null}>
+          <ReviewLeaveDialog
+            isOpen={isReviewDialogOpen}
+            onOpenChange={setIsReviewDialogOpen}
+            organizationId={currentOrganizationId || ""}
+            request={reviewingRequest}
+            employees={employees}
+            onSuccess={() => {
+              setReviewingRequest(null);
+              if (canRequestLeave && userEmployeeId) {
+                loadEmployeeData();
+              }
+            }}
+          />
+        </Suspense>
+
+        {/* Column Management Modals */}
+        <LeaveColumnManagementModal
+          isOpen={isRequestsColumnModalOpen}
+          onOpenChange={setIsRequestsColumnModalOpen}
+          columns={requestsTableColumns}
+          onColumnsChange={setRequestsTableColumns}
+          tableType="requests"
+        />
+        <LeaveColumnManagementModal
+          isOpen={isHistoryColumnModalOpen}
+          onOpenChange={setIsHistoryColumnModalOpen}
+          columns={historyTableColumns}
+          onColumnsChange={setHistoryTableColumns}
+          tableType="history"
+        />
+      </div>
+    </MainLayout>
+  );
+}

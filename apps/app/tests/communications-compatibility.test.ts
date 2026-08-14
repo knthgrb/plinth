@@ -158,7 +158,7 @@ describe("communications compatibility", () => {
     expect(unread[conversationId]).toBe(0);
   });
 
-  it("removes normalized chat children when deleting a conversation", async () => {
+  it("removes only personal membership state when leaving a conversation", async () => {
     const { t, actor, organizationId, userId } = await setup();
     const fixture = await t.run(async (ctx) => {
       const conversationId = await ctx.db.insert("conversations", {
@@ -224,12 +224,10 @@ describe("communications compatibility", () => {
       receipt: await ctx.db.get(fixture.receiptId),
       pin: await ctx.db.get(fixture.pinId),
     }));
-    expect(remaining).toEqual({
-      conversation: null,
-      member: null,
-      receipt: null,
-      pin: null,
-    });
+    expect(remaining.conversation).not.toBeNull();
+    expect(remaining.member).toBeNull();
+    expect(remaining.receipt).not.toBeNull();
+    expect(remaining.pin).toBeNull();
   });
 
   it("rejects pinning a conversation from another organization", async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import {
@@ -18,11 +18,12 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useOrganization } from "@/hooks/organization-context";
 import { Id } from "@/convex/_generated/dataModel";
 import { useToast } from "@/components/ui/use-toast";
+import { errorMessage } from "@/lib/chat/types";
 
 interface CreateGroupChatModalProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  onSuccess?: (conversationId: string) => void;
+  onSuccess?: (conversationId: Id<"conversations">) => void;
 }
 
 export function CreateGroupChatModal({
@@ -37,15 +38,24 @@ export function CreateGroupChatModal({
   const [searchQuery, setSearchQuery] = useState("");
 
   const organizationUsers = useQuery(
-    (api as any).chat.getOrganizationUsers,
+    api.chat.getOrganizationUsers,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
   );
 
   const createGroupChatMutation = useMutation(
-    (api as any).chat.createGroupChat
+    api.chat.createGroupChat,
   );
 
-  const filteredUsers = organizationUsers?.filter((user: any) => {
+  const handleOpenChange = (open: boolean) => {
+    if (!open) {
+      setGroupName("");
+      setSelectedUsers([]);
+      setSearchQuery("");
+    }
+    onOpenChange(open);
+  };
+
+  const filteredUsers = organizationUsers?.filter((user) => {
     if (!searchQuery) return true;
     const searchLower = searchQuery.toLowerCase();
     return (
@@ -93,28 +103,19 @@ export function CreateGroupChatModal({
       setGroupName("");
       setSelectedUsers([]);
       setSearchQuery("");
-      onOpenChange(false);
+      handleOpenChange(false);
       onSuccess?.(conversationId);
-    } catch (error: any) {
-      console.error("Error creating group chat:", error);
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to create group chat",
+        description: errorMessage(error, "Failed to create group chat"),
         variant: "destructive",
       });
     }
   };
 
-  useEffect(() => {
-    if (!isOpen) {
-      setGroupName("");
-      setSelectedUsers([]);
-      setSearchQuery("");
-    }
-  }, [isOpen]);
-
   return (
-    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create Group Chat</DialogTitle>
@@ -155,7 +156,7 @@ export function CreateGroupChatModal({
                             setSelectedUsers([]);
                           } else {
                             setSelectedUsers(
-                              filteredUsers.map((u: any) => u._id)
+                              filteredUsers.map((user) => user._id)
                             );
                           }
                         }}
@@ -165,7 +166,7 @@ export function CreateGroupChatModal({
                           : "Select All"}
                       </Button>
                     </div>
-                    {filteredUsers.map((user: any) => (
+                    {filteredUsers.map((user) => (
                       <label
                         key={user._id}
                         className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer"

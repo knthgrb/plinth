@@ -15,7 +15,7 @@ export function ChatSessionKeysProvider({
   children: ReactNode;
 }) {
   const data = useQuery(
-    (api as any).chat.listChatSessionKeysForOrganization,
+    api.chat.listChatSessionKeysForOrganization,
     organizationId ? { organizationId } : "skip",
   );
   const keys = data ?? {};

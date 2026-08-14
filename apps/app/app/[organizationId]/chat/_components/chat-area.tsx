@@ -1,58 +1,39 @@
 "use client";
 
 import {
-  useState,
   useEffect,
   useLayoutEffect,
-  useRef,
   useMemo,
+  useRef,
+  useState,
 } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "@/convex/_generated/api";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { useMutation, useQuery } from "convex/react";
+import { format } from "date-fns";
 import {
-  Send,
-  Receipt,
-  Users,
+  Archive,
+  Bell,
+  BellOff,
+  CheckCheck,
+  ChevronUp,
+  FileText,
+  Hash,
+  Loader2,
+  LogOut,
   MoreVertical,
   Paperclip,
-  X,
-  FileText,
-  ChevronUp,
-  Forward,
+  Receipt,
   Reply,
-  Smile,
-  Trash2,
+  Search,
+  Send,
+  Users,
+  X,
 } from "lucide-react";
-import { format } from "date-fns";
-import { Id } from "@/convex/_generated/dataModel";
 import { useRouter } from "next/navigation";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { chatCache, mergeChatMessagesById } from "@/services/chat-cache-service";
-import { CachedFileAttachment } from "./chat-file-attachment";
-import { uploadFileToStorage } from "@/lib/storage-upload";
-import { validateChatFile } from "@/lib/chat-file-validation";
-import { DocumentSelectorModal } from "./document-selector-modal";
-import {
-  ForwardMessageModal,
-  type MessageToForward,
-} from "./forward-message-modal";
-import { MessageSkeleton, MessageListSkeleton } from "./skeletons";
-import { useToast } from "@/components/ui/use-toast";
-import { useOrganization } from "@/hooks/organization-context";
-import { getOrganizationPath } from "@/utils/organization-routing";
+import Image from "next/image";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -62,54 +43,88 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/components/ui/use-toast";
+import { useOrganization } from "@/hooks/organization-context";
+import {
   decryptWithSessionKeyB64,
   encryptWithSessionKeyB64,
   isEncryptedPayload,
 } from "@/lib/chat-message-crypto";
-import { useChatSessionKeys } from "./chat-session-keys-context";
 import {
   directConversationAvatarInitials,
   directConversationSubtitle,
   directConversationTitle,
   messageSenderLabelInDirect,
 } from "@/lib/chat-thread-display";
+import type {
+  ChatConversation,
+  ChatMessage,
+  ChatReaction,
+  PendingChatParticipant,
+} from "@/lib/chat/types";
+import { errorMessage } from "@/lib/chat/types";
+import { uploadFileToStorage } from "@/lib/storage-upload";
+import { getOrganizationPath } from "@/utils/organization-routing";
+import { validateChatFile } from "@/lib/chat-file-validation";
+import { ChatFileAttachment } from "./chat-file-attachment";
+import { useChatSessionKeys } from "./chat-session-keys-context";
+import {
+  ForwardMessageModal,
+  type MessageToForward,
+} from "./forward-message-modal";
+import { CHAT_REACTIONS, MessageActions } from "./message-actions";
+import { MessageListSkeleton } from "./skeletons";
 
-function scopeMessagesToConversation(
-  msgs: any[],
-  conversationId: string | null,
-): any[] {
-  if (!conversationId) return [];
-  const cid = String(conversationId);
-  return msgs.filter(
-    (m) => m?.conversationId != null && String(m.conversationId) === cid,
-  );
-}
+type UploadingAttachment = {
+  id: string;
+  name: string;
+  storageId?: Id<"_storage">;
+  uploading: boolean;
+  previewUrl?: string;
+  contentType?: string;
+};
 
-function messagesBelongToConversation(
-  msgs: any[],
-  conversationId: string,
-): boolean {
-  if (msgs.length === 0) return true;
-  const cid = String(conversationId);
-  return msgs.every(
-    (m) => m?.conversationId != null && String(m.conversationId) === cid,
-  );
-}
-
-interface ChatAreaProps {
+type ChatAreaProps = {
   conversationId: string | null;
-  conversation: any;
+  conversation: ChatConversation | null;
   currentUserId?: string;
-  /** When starting a new DM, conversation is created on first message send. */
-  pendingParticipant?: { _id: string; name?: string; email?: string };
-  /** Elevated users: open DM that will be created as staff "Admin" persona (separate from personal DM). */
+  pendingParticipant?: PendingChatParticipant;
   pendingAsAdmin?: boolean;
-  onFirstMessageSent?: (conversationId: string) => void;
+  onFirstMessageSent?: (conversationId: Id<"conversations">) => void;
   onAddMembers?: () => void;
-  /** Close the current conversation (clear selection). */
   onCloseConversation?: () => void;
-  /** Called after conversation is deleted (e.g. to clear selection). */
-  onDeleteConversation?: (conversationId: Id<"conversations">) => void;
+  onConversationUnavailable?: (conversationId: Id<"conversations">) => void;
+};
+
+function mergeMessages(
+  existing: ChatMessage[],
+  incoming: ChatMessage[],
+): ChatMessage[] {
+  const byId = new Map<string, ChatMessage>();
+  for (const message of existing) byId.set(message._id, message);
+  for (const message of incoming) byId.set(message._id, message);
+  return [...byId.values()].sort((left, right) => left.createdAt - right.createdAt);
+}
+
+function groupReactions(reactions: ChatReaction[]) {
+  const groups = new Map<string, ChatReaction[]>();
+  for (const reaction of reactions) {
+    groups.set(reaction.emoji, [...(groups.get(reaction.emoji) ?? []), reaction]);
+  }
+  return [...groups.entries()];
 }
 
 export function ChatArea({
@@ -121,7 +136,7 @@ export function ChatArea({
   onFirstMessageSent,
   onAddMembers,
   onCloseConversation,
-  onDeleteConversation,
+  onConversationUnavailable,
 }: ChatAreaProps) {
   const router = useRouter();
   const { toast } = useToast();
@@ -132,513 +147,436 @@ export function ChatArea({
   } = useOrganization();
   const sessionKeys = useChatSessionKeys();
   const messagesListRef = useRef<HTMLDivElement>(null);
-  const messagesTopRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [messageContent, setMessageContent] = useState("");
-  const [attachments, setAttachments] = useState<
-    Array<{
-      id: string;
-      name: string;
-      storageId?: string;
-      uploading?: boolean;
-      previewUrl?: string;
-      contentType?: string;
-    }>
-  >([]);
-  const [isDocumentModalOpen, setIsDocumentModalOpen] = useState(false);
-  const [forwardModalOpen, setForwardModalOpen] = useState(false);
+  const [attachments, setAttachments] = useState<UploadingAttachment[]>([]);
+  const attachmentsRef = useRef<UploadingAttachment[]>([]);
+  const [allMessages, setAllMessages] = useState<ChatMessage[]>([]);
+  const [oldestTimestamp, setOldestTimestamp] = useState<number | null>(null);
+  const [loadOlderBefore, setLoadOlderBefore] = useState<number | undefined>();
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [messageToForward, setMessageToForward] =
     useState<MessageToForward | null>(null);
-  const [replyingTo, setReplyingTo] = useState<{
-    messageId: string;
-    contentSnippet: string;
-    senderName: string;
-  } | null>(null);
-  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
-  const hoverLeaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  const [isUploading, setIsUploading] = useState(false);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [allMessages, setAllMessages] = useState<any[]>([]);
-  const [oldestTimestamp, setOldestTimestamp] = useState<number | null>(null);
-  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
-
-  const [loadOlderTrigger, setLoadOlderTrigger] = useState(0);
-  /** After prepending older messages, restore scroll so the viewport stays put */
+  const [forwardModalOpen, setForwardModalOpen] = useState(false);
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const [editContent, setEditContent] = useState("");
+  const [deletingMessage, setDeletingMessage] = useState<ChatMessage | null>(null);
+  const [conversationAction, setConversationAction] = useState<
+    "leave" | "archive" | null
+  >(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [messageSearch, setMessageSearch] = useState("");
   const scrollRestoreRef = useRef<{ height: number; top: number } | null>(null);
-  const prevMessageCountRef = useRef(0);
+  const previousMessageCountRef = useRef(0);
 
-  const messagesData = useQuery(
-    (api as any).chat.getMessages,
-    conversationId
-      ? {
-          conversationId: conversationId as Id<"conversations">,
-          limit: 25,
-          beforeTimestamp: loadOlderTrigger > 0 ? oldestTimestamp : undefined,
-        }
-      : "skip",
-  );
-
-  // Track if we're loading older messages
-  const isLoadingOlderRef = useRef(false);
-
-  // Reset first on conversation change so merges/cache never see the previous thread.
-  useEffect(() => {
-    let cancelled = false;
-    scrollRestoreRef.current = null;
-    prevMessageCountRef.current = 0;
-    setAllMessages([]);
-    setOldestTimestamp(null);
-    setIsLoadingOlder(false);
-    isLoadingOlderRef.current = false;
-    setLoadOlderTrigger(0);
-    setReplyingTo(null);
-    setHoveredMessageId(null);
-
-    if (!conversationId || !currentOrganizationId) return;
-
-    (async () => {
-      try {
-        await chatCache.initialize(currentOrganizationId);
-        const cached = await chatCache.getCachedMessages(conversationId);
-        if (cancelled || cached.length === 0) return;
-        setAllMessages((prev) =>
-          mergeChatMessagesById(
-            scopeMessagesToConversation(prev, conversationId),
-            cached,
-          ),
-        );
-      } catch (e) {
-        console.error("Hydrate messages from cache:", e);
+  const messageQueryArgs = conversationId
+    ? {
+        conversationId: conversationId as Id<"conversations">,
+        limit: 40,
+        beforeTimestamp: loadOlderBefore,
       }
-    })();
+    : null;
+  const messagesData = useQuery(
+    api.chat.getMessages,
+    messageQueryArgs ?? "skip",
+  );
+  const mutedConversationIds = useQuery(
+    api.chat.getMutedConversationIds,
+    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+  );
+  const sendMessage = useMutation(api.chat.sendMessage);
+  const createConversation = useMutation(api.chat.getOrCreateConversation);
+  const markMessagesAsRead = useMutation(api.chat.markMessagesAsRead);
+  const toggleMessageReaction = useMutation(api.chat.toggleMessageReaction);
+  const editMessage = useMutation(api.chat.editMessage);
+  const deleteMessage = useMutation(api.chat.deleteMessage);
+  const leaveConversation = useMutation(api.chat.leaveConversation);
+  const archiveConversation = useMutation(api.chat.archiveConversation);
+  const setConversationMuted = useMutation(api.chat.setConversationMuted);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [conversationId, currentOrganizationId]);
-
-  // Sync from Convex after reset (same tick: [] then merge sees empty prev)
   useEffect(() => {
     if (!conversationId || !messagesData) return;
-
     const incoming = messagesData.messages.filter(
-      (m: any) => String(m.conversationId) === String(conversationId),
-    );
-    // Drop stale query results from the previous conversation
-    if (
-      messagesData.messages.length > 0 &&
-      incoming.length === 0
-    ) {
-      return;
-    }
-
-    if (isLoadingOlderRef.current) {
-      setAllMessages((prev) => {
-        const base = scopeMessagesToConversation(prev, conversationId);
-        const newMessages = incoming.filter(
-          (newMsg: any) =>
-            !base.some((oldMsg: any) => oldMsg._id === newMsg._id),
-        );
-        return [...newMessages, ...base];
-      });
-    } else {
-      setAllMessages((prev) =>
-        mergeChatMessagesById(
-          incoming,
-          scopeMessagesToConversation(prev, conversationId),
-        ),
+      (message) => message.conversationId === conversationId,
+    ) as ChatMessage[];
+    const frame = requestAnimationFrame(() => {
+      setAllMessages((previous) =>
+        loadOlderBefore
+          ? mergeMessages(incoming, previous)
+          : mergeMessages(previous, incoming),
       );
-    }
-    setIsLoadingOlder(false);
-    isLoadingOlderRef.current = false;
-  }, [conversationId, messagesData]);
+      if (incoming.length > 0) {
+        setOldestTimestamp(
+          Math.min(...incoming.map((message) => message.createdAt)),
+        );
+      }
+      setIsLoadingOlder(false);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [conversationId, loadOlderBefore, messagesData]);
 
-  const messages = useMemo(
-    () => scopeMessagesToConversation(allMessages, conversationId),
-    [allMessages, conversationId],
-  );
-
-  const sessionKeyB64 =
-    conversationId && sessionKeys[conversationId]
-      ? sessionKeys[conversationId]
-      : undefined;
-
-  const displayMessages = useMemo(() => {
-    if (!sessionKeyB64) return messages;
-    return messages.map((m: any) => ({
-      ...m,
-      content: decryptWithSessionKeyB64(m.content, sessionKeyB64),
-      replyTo: m.replyTo
-        ? {
-            ...m.replyTo,
-            content:
-              typeof m.replyTo.content === "string" &&
-              isEncryptedPayload(m.replyTo.content)
-                ? decryptWithSessionKeyB64(m.replyTo.content, sessionKeyB64)
-                : m.replyTo.content,
-          }
-        : null,
-    }));
-  }, [messages, sessionKeyB64]);
-
-  // Oldest message time for pagination (current thread only)
   useEffect(() => {
-    if (messages.length === 0) {
-      setOldestTimestamp(null);
+    if (!conversationId || !currentUserId || allMessages.length === 0) return;
+    const unreadIds = allMessages
+      .filter(
+        (message) =>
+          message.senderId !== currentUserId &&
+          !message.readBy.includes(currentUserId as Id<"users">),
+      )
+      .map((message) => message._id);
+    if (unreadIds.length === 0) return;
+    void markMessagesAsRead({
+      conversationId: conversationId as Id<"conversations">,
+      messageIds: unreadIds,
+    });
+  }, [allMessages, conversationId, currentUserId, markMessagesAsRead]);
+
+  useLayoutEffect(() => {
+    const list = messagesListRef.current;
+    if (!list || allMessages.length === 0) return;
+    if (scrollRestoreRef.current) {
+      const previous = scrollRestoreRef.current;
+      scrollRestoreRef.current = null;
+      list.scrollTop = previous.top + list.scrollHeight - previous.height;
+      previousMessageCountRef.current = allMessages.length;
       return;
     }
-    setOldestTimestamp(
-      Math.min(...messages.map((m: any) => m.createdAt)),
-    );
-  }, [messages]);
+    if (allMessages.length > previousMessageCountRef.current) {
+      list.scrollTop = list.scrollHeight;
+    }
+    previousMessageCountRef.current = allMessages.length;
+  }, [allMessages]);
 
-  // Clear hover leave timeout on unmount
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
   useEffect(() => {
     return () => {
-      if (hoverLeaveTimeoutRef.current)
-        clearTimeout(hoverLeaveTimeoutRef.current);
+      for (const attachment of attachmentsRef.current) {
+        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      }
     };
   }, []);
 
-  const hasMoreMessages = messagesData?.hasMore || false;
-
-  const sendMessageMutation = useMutation((api as any).chat.sendMessage);
-  const getOrCreateConversationMutation = useMutation(
-    (api as any).chat.getOrCreateConversation,
-  );
-  const markMessagesAsReadMutation = useMutation(
-    (api as any).chat.markMessagesAsRead,
-  );
-  const deleteConversationMutation = useMutation(
-    (api as any).chat.deleteConversation,
-  );
-
-  // Mark messages as read when viewing this conversation
-  useEffect(() => {
-    if (
-      !conversationId ||
-      !currentUserId ||
-      messages.length === 0
-    )
-      return;
-    const unreadIds = messages
-      .filter(
-        (m: any) =>
-          m.senderId !== currentUserId &&
-          !(m.readBy || []).includes(currentUserId),
-      )
-      .map((m: any) => m._id);
-    if (unreadIds.length === 0) return;
-    markMessagesAsReadMutation({
-      conversationId: conversationId as Id<"conversations">,
-      messageIds: unreadIds,
-    }).catch((err) => console.error("markMessagesAsRead failed", err));
-  }, [conversationId, currentUserId, messages]);
-
-  // Cache only rows that belong to this conversation (avoids cross-thread writes on switch)
-  useEffect(() => {
-    if (
-      messages.length === 0 ||
-      !conversationId ||
-      !messagesBelongToConversation(messages, conversationId)
-    ) {
-      return;
-    }
-    chatCache.cacheMessages(conversationId, messages).catch((error) => {
-      console.error("Error caching messages:", error);
-    });
-  }, [messages, conversationId]);
-
-  const loadOlderMessages = () => {
-    if (!hasMoreMessages || isLoadingOlder || !oldestTimestamp) return;
-    const el = messagesListRef.current;
-    if (el) {
-      scrollRestoreRef.current = {
-        height: el.scrollHeight,
-        top: el.scrollTop,
+  const sessionKey = conversationId ? sessionKeys[conversationId] : undefined;
+  const displayMessages = useMemo(() => {
+    return allMessages.map((message) => {
+      if (!sessionKey || message.deletedAt !== undefined) return message;
+      const replyTo = message.replyTo
+        ? {
+            ...message.replyTo,
+            content: isEncryptedPayload(message.replyTo.content)
+              ? decryptWithSessionKeyB64(message.replyTo.content, sessionKey)
+              : message.replyTo.content,
+          }
+        : null;
+      return {
+        ...message,
+        content: decryptWithSessionKeyB64(message.content, sessionKey),
+        replyTo,
       };
-    }
-    setIsLoadingOlder(true);
-    isLoadingOlderRef.current = true;
-    // Trigger query with current oldestTimestamp to fetch older messages
-    setLoadOlderTrigger((prev) => prev + 1);
+    });
+  }, [allMessages, sessionKey]);
+
+  const filteredMessages = useMemo(() => {
+    const query = messageSearch.trim().toLowerCase();
+    if (!query) return displayMessages;
+    return displayMessages.filter((message) =>
+      message.content.toLowerCase().includes(query),
+    );
+  }, [displayMessages, messageSearch]);
+
+  const displayConversation = useMemo<ChatConversation | null>(() => {
+    if (conversation) return conversation;
+    if (!pendingParticipant || !currentOrganizationId) return null;
+    return {
+      _id: "pending" as Id<"conversations">,
+      organizationId: currentOrganizationId,
+      type: "direct",
+      participants: [pendingParticipant],
+      directThreadKind: pendingAsAdmin ? "staff_as_admin" : "standard",
+      adminPersonaUserId:
+        pendingAsAdmin && currentUserId
+          ? (currentUserId as Id<"users">)
+          : undefined,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+  }, [conversation, currentOrganizationId, currentUserId, pendingAsAdmin, pendingParticipant]);
+
+  const isMuted = Boolean(
+    conversationId &&
+      mutedConversationIds?.includes(conversationId as Id<"conversations">),
+  );
+  const role = currentOrganization?.role;
+  const isElevated = role === "owner" || role === "admin" || role === "hr";
+  const canArchive = Boolean(
+    conversation &&
+      conversation.type !== "direct" &&
+      (isElevated || conversation.createdBy === currentUserId),
+  );
+
+  const clearAttachments = () => {
+    setAttachments((previous) => {
+      for (const attachment of previous) {
+        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      }
+      return [];
+    });
   };
 
-  // Newer messages at bottom: scroll down when the list grows (open thread, sync, new msgs).
-  // "See more" prepends older rows — restore scroll so we don't jump to the bottom.
-  useLayoutEffect(() => {
-    const el = messagesListRef.current;
-    if (!el || !conversationId) return;
-
-    if (scrollRestoreRef.current != null) {
-      const { height: prevH, top: prevTop } = scrollRestoreRef.current;
-      scrollRestoreRef.current = null;
-      const delta = el.scrollHeight - prevH;
-      el.scrollTop = prevTop + delta;
-      prevMessageCountRef.current = messages.length;
-      return;
-    }
-
-    if (messages.length === 0) {
-      prevMessageCountRef.current = 0;
-      return;
-    }
-
-    const prevCount = prevMessageCountRef.current;
-    prevMessageCountRef.current = messages.length;
-
-    if (messages.length <= prevCount) return;
-
-    // Stick to newest messages (bottom). Older rows only load via "See more"
-    // above, which uses scrollRestoreRef instead of this path.
-    const pinBottom = () => {
-      el.scrollTop = el.scrollHeight;
-    };
-    pinBottom();
-    requestAnimationFrame(() => {
-      const list = messagesListRef.current;
-      if (list) list.scrollTop = list.scrollHeight;
+  const removeAttachment = (attachmentId: string) => {
+    setAttachments((previous) => {
+      const removed = previous.find((item) => item.id === attachmentId);
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      return previous.filter((item) => item.id !== attachmentId);
     });
-    requestAnimationFrame(() => {
-      const list = messagesListRef.current;
-      if (list) list.scrollTop = list.scrollHeight;
-    });
-  }, [messages, conversationId]);
+  };
 
-  // Images / late layout can grow scrollHeight; stay pinned if already near the bottom
-  useEffect(() => {
-    const el = messagesListRef.current;
-    if (!el || !conversationId) return;
-    const ro = new ResizeObserver(() => {
-      const list = messagesListRef.current;
-      if (!list || list.scrollHeight <= list.clientHeight) return;
-      const gap = list.scrollHeight - list.scrollTop - list.clientHeight;
-      if (gap < 160) list.scrollTop = list.scrollHeight;
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [conversationId]);
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0 || !currentOrganizationId) return;
+    setIsUploading(true);
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    const toUpload: File[] = [];
-    for (const file of Array.from(files)) {
-      const result = await validateChatFile(file);
-      if (!result.ok) {
+    for (const file of files) {
+      const validation = await validateChatFile(file);
+      if (!validation.ok) {
         toast({
-          title: "Invalid file",
-          description: `${file.name}: ${result.reason}`,
+          title: "Unsupported attachment",
+          description: `${file.name}: ${validation.reason}`,
           variant: "destructive",
         });
         continue;
       }
-      toUpload.push(file);
-    }
 
-    if (toUpload.length === 0) {
-      e.target.value = "";
-      return;
-    }
-
-    setIsUploading(true);
-
-    for (const file of toUpload) {
-      const fileId = `file-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const isImage = file.type.startsWith("image/");
-      const isVideo = file.type.startsWith("video/");
-      const previewUrl =
-        isImage || isVideo ? URL.createObjectURL(file) : undefined;
-      const contentType = isImage || isVideo ? file.type : undefined;
-      setAttachments((prev) => [
-        ...prev,
+      const id = `${Date.now()}-${crypto.randomUUID()}`;
+      const previewUrl = file.type.startsWith("image/")
+        ? URL.createObjectURL(file)
+        : undefined;
+      setAttachments((previous) => [
+        ...previous,
         {
-          id: fileId,
+          id,
           name: file.name,
           uploading: true,
           previewUrl,
-          contentType,
+          contentType: file.type,
         },
       ]);
-
       try {
-        if (!currentOrganizationId) throw new Error("Organization is required");
-        const storageId = await uploadFileToStorage({
+        const storageId = (await uploadFileToStorage({
           organizationId: currentOrganizationId,
           purpose: "chat_attachment",
           file,
-        });
-
-        setAttachments((prev) =>
-          prev.map((att) =>
-            att.id === fileId ? { ...att, storageId, uploading: false } : att,
+        })) as Id<"_storage">;
+        setAttachments((previous) =>
+          previous.map((attachment) =>
+            attachment.id === id
+              ? { ...attachment, storageId, uploading: false }
+              : attachment,
           ),
         );
-      } catch (error: any) {
-        console.error(`Error uploading ${file.name}:`, error);
-        setAttachments((prev) => prev.filter((att) => att.id !== fileId));
+      } catch (error: unknown) {
+        setAttachments((previous) =>
+          previous.filter((attachment) => attachment.id !== id),
+        );
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
         toast({
           title: "Upload failed",
-          description: error.message || `Failed to upload ${file.name}`,
+          description: errorMessage(error, `Could not upload ${file.name}.`),
           variant: "destructive",
         });
       }
     }
 
     setIsUploading(false);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
+    event.target.value = "";
   };
 
-  const handleRemoveAttachment = (id: string) => {
-    setAttachments((prev) => {
-      const att = prev.find((a) => a.id === id);
-      if (att?.previewUrl) URL.revokeObjectURL(att.previewUrl);
-      return prev.filter((att) => att.id !== id);
-    });
-  };
-
-  const handleSelectDocuments = (storageIds: string[]) => {
-    const newAttachments = storageIds.map((storageId, index) => ({
-      id: `doc-${Date.now()}-${index}`,
-      name: `Document ${index + 1}`,
-      storageId,
-      uploading: false,
-    }));
-    setAttachments((prev) => [...prev, ...newAttachments]);
-  };
-
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const hasContent = messageContent.trim() || attachments.length > 0;
-    if (!hasContent || (!conversationId && !pendingParticipant)) return;
-
-    const pendingAttachments = attachments.filter(
-      (att) => att.uploading || !att.storageId,
+  const handleSendMessage = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const uploaded = attachments.filter(
+      (attachment): attachment is UploadingAttachment & { storageId: Id<"_storage"> } =>
+        !attachment.uploading && attachment.storageId !== undefined,
     );
-    if (pendingAttachments.length > 0) {
-      toast({
-        title: "Please wait",
-        description: "Wait for all files to finish uploading",
-        variant: "destructive",
-      });
+    if (
+      (!messageContent.trim() && uploaded.length === 0) ||
+      attachments.some((attachment) => attachment.uploading) ||
+      (!conversationId && !pendingParticipant) ||
+      !currentOrganizationId
+    ) {
       return;
     }
 
-    const attachmentStorageIds = attachments
-      .filter((att) => att.storageId)
-      .map((att) => att.storageId!);
-    const content =
-      messageContent.trim() ||
-      (attachmentStorageIds.length > 0 ? "📎 File(s)" : "");
-
     try {
-      let targetConversationId = conversationId;
-      if (pendingParticipant && !conversationId && currentOrganizationId) {
-        const newConversationId = await getOrCreateConversationMutation({
-          organizationId: currentOrganizationId as Id<"organizations">,
-          participantId: pendingParticipant._id as Id<"users">,
+      let targetConversationId = conversationId as Id<"conversations"> | null;
+      if (!targetConversationId && pendingParticipant) {
+        targetConversationId = await createConversation({
+          organizationId: currentOrganizationId,
+          participantId: pendingParticipant._id,
           directThreadKind: pendingAsAdmin ? "staff_as_admin" : "standard",
         });
-        targetConversationId = newConversationId;
-        onFirstMessageSent?.(newConversationId);
+        onFirstMessageSent?.(targetConversationId);
       }
       if (!targetConversationId) return;
 
-      const keyForSend = sessionKeys[targetConversationId];
-      let contentOut = content;
-      if (keyForSend && contentOut) {
-        contentOut = encryptWithSessionKeyB64(contentOut, keyForSend);
-      }
-
-      await sendMessageMutation({
-        conversationId: targetConversationId as Id<"conversations">,
-        content: contentOut,
-        messageType: attachmentStorageIds.length > 0 ? "file" : "text",
+      const plainContent =
+        messageContent.trim() || (uploaded.length > 0 ? "Attached file" : "");
+      const targetSessionKey = sessionKeys[targetConversationId];
+      const content = targetSessionKey
+        ? encryptWithSessionKeyB64(plainContent, targetSessionKey)
+        : plainContent;
+      await sendMessage({
+        conversationId: targetConversationId,
+        content,
+        messageType: uploaded.length > 0 ? "file" : "text",
         attachments:
-          attachmentStorageIds.length > 0
-            ? attachmentStorageIds.map((id) => id as Id<"_storage">)
+          uploaded.length > 0
+            ? uploaded.map((attachment) => attachment.storageId)
             : undefined,
-        replyToMessageId: replyingTo
-          ? (replyingTo.messageId as Id<"messages">)
-          : undefined,
-      });
-      setAttachments((prev) => {
-        prev.forEach((att) => {
-          if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
-        });
-        return [];
+        replyToMessageId: replyingTo?._id,
       });
       setMessageContent("");
       setReplyingTo(null);
-    } catch (error: any) {
-      console.error("Error sending message:", error);
+      clearAttachments();
+    } catch (error: unknown) {
       toast({
-        title: "Failed to send",
-        description: error.message || "Please try again.",
+        title: "Message not sent",
+        description: errorMessage(error, "Please try again."),
         variant: "destructive",
       });
     }
   };
 
-  const displayConversation = useMemo(() => {
-    if (conversation) return conversation;
-    if (!pendingParticipant) return null;
-    const base = {
-      type: "direct" as const,
-      participants: [pendingParticipant],
-    };
-    if (pendingAsAdmin && currentUserId) {
-      return {
-        ...base,
-        directThreadKind: "staff_as_admin" as const,
-        adminPersonaUserId: currentUserId,
-      };
+  const handleReaction = async (
+    message: ChatMessage,
+    emoji: (typeof CHAT_REACTIONS)[number],
+  ) => {
+    if (!currentUserId) return;
+    const userId = currentUserId as Id<"users">;
+    const previousReactions = message.reactions;
+    const existing = previousReactions.find(
+      (reaction) => reaction.userId === userId && reaction.emoji === emoji,
+    );
+    const optimisticReactions = existing
+      ? previousReactions.filter((reaction) => reaction._id !== existing._id)
+      : [
+          ...previousReactions,
+          {
+            _id: `${message._id}:${userId}:${emoji}` as Id<"messageReactions">,
+            userId,
+            emoji,
+            createdAt: 0,
+          },
+        ];
+    setAllMessages((previous) =>
+      previous.map((item) =>
+        item._id === message._id
+          ? { ...item, reactions: optimisticReactions }
+          : item,
+      ),
+    );
+    try {
+      await toggleMessageReaction({ messageId: message._id, emoji });
+    } catch (error: unknown) {
+      setAllMessages((previous) =>
+        previous.map((item) =>
+          item._id === message._id
+            ? { ...item, reactions: previousReactions }
+            : item,
+        ),
+      );
+      toast({
+        title: "Reaction not saved",
+        description: errorMessage(error, "Your previous reaction was restored."),
+        variant: "destructive",
+      });
     }
-    return base;
-  }, [conversation, pendingParticipant, pendingAsAdmin, currentUserId]);
+  };
 
-  const headerTitle = displayConversation
-    ? displayConversation.type === "channel"
-      ? `# ${displayConversation.name || "Channel"}`
-      : displayConversation.type === "group"
-        ? displayConversation.name || "Group Chat"
-        : directConversationTitle(displayConversation, currentUserId)
-    : "";
+  const handleEdit = async () => {
+    if (!editingMessage || !editContent.trim()) return;
+    try {
+      const content = sessionKey
+        ? encryptWithSessionKeyB64(editContent.trim(), sessionKey)
+        : editContent.trim();
+      await editMessage({ messageId: editingMessage._id, content });
+      setEditingMessage(null);
+      setEditContent("");
+    } catch (error: unknown) {
+      toast({
+        title: "Message not updated",
+        description: errorMessage(error, "Please try again."),
+        variant: "destructive",
+      });
+    }
+  };
 
-  const headerSubtitle = displayConversation
-    ? directConversationSubtitle(displayConversation, currentUserId)
-    : "";
+  const handleDelete = async () => {
+    if (!deletingMessage) return;
+    try {
+      await deleteMessage({ messageId: deletingMessage._id });
+      setDeletingMessage(null);
+    } catch (error: unknown) {
+      toast({
+        title: "Message not removed",
+        description: errorMessage(error, "Please try again."),
+        variant: "destructive",
+      });
+    }
+  };
 
-  const headerInitials = displayConversation
-    ? displayConversation.type === "group"
-      ? displayConversation.name
-          ?.split(" ")
-          .map((n: string) => n[0])
-          .join("")
-          .toUpperCase()
-          .slice(0, 2) || "GC"
-      : displayConversation.type === "channel"
-        ? "#"
-        : directConversationAvatarInitials(displayConversation, currentUserId)
-    : "?";
+  const handleConversationAction = async () => {
+    if (!conversationId || !conversationAction) return;
+    const id = conversationId as Id<"conversations">;
+    try {
+      if (conversationAction === "leave") {
+        await leaveConversation({ conversationId: id });
+      } else {
+        await archiveConversation({ conversationId: id });
+      }
+      setConversationAction(null);
+      onConversationUnavailable?.(id);
+    } catch (error: unknown) {
+      toast({
+        title: conversationAction === "leave" ? "Could not leave" : "Could not archive",
+        description: errorMessage(error, "Please try again."),
+        variant: "destructive",
+      });
+    }
+  };
 
-  if (!conversationId && !pendingParticipant) {
+  const handleMuteChange = async () => {
+    if (!conversationId) return;
+    try {
+      await setConversationMuted({
+        conversationId: conversationId as Id<"conversations">,
+        muted: !isMuted,
+      });
+    } catch (error: unknown) {
+      toast({
+        title: isMuted ? "Could not unmute" : "Could not mute",
+        description: errorMessage(error, "Please try again."),
+        variant: "destructive",
+      });
+    }
+  };
+
+  if (!displayConversation) {
     return (
-      <div className="flex flex-1 flex-col min-h-0 bg-white">
-        {/* Spacer aligned with ConversationList header (same row height as Chat / thread header) */}
-        <div className="h-16 shrink-0 border-b border-gray-200 bg-white" aria-hidden />
-        <div className="flex flex-1 min-h-0 items-center justify-center px-6">
-          <div className="text-center max-w-md">
-            <div className="text-lg font-medium text-gray-900 mb-2">
-              Select a conversation
+      <div className="flex min-h-0 flex-1 flex-col bg-background">
+        <div className="h-16 border-b" />
+        <div className="flex flex-1 items-center justify-center p-8">
+          <div className="max-w-sm text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-purple/10 text-brand-purple">
+              <Send className="h-6 w-6" />
             </div>
-            <p className="text-sm text-gray-500">
-              Choose a conversation from the list to start messaging
+            <h2 className="text-lg font-semibold">Your organization conversations</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Select a conversation or start a new one to communicate with your team.
             </p>
           </div>
         </div>
@@ -646,579 +584,519 @@ export function ChatArea({
     );
   }
 
-  const messagesToShow = conversationId ? displayMessages : [];
-  const canSend = !!conversationId || !!pendingParticipant;
+  const headerTitle =
+    displayConversation.type === "channel"
+      ? displayConversation.name ?? "Channel"
+      : directConversationTitle(displayConversation, currentUserId);
+  const headerSubtitle =
+    displayConversation.type === "channel"
+      ? "Official organization channel"
+      : displayConversation.type === "group"
+        ? `${displayConversation.participants.length} members`
+        : directConversationSubtitle(displayConversation, currentUserId);
 
   return (
-    <div className="flex-1 flex flex-col bg-white min-w-0 min-h-0">
-      {/* Chat header — h-16 matches ConversationList "Chat" row */}
-      <div className="flex h-16 shrink-0 items-center px-4 bg-white border-b border-gray-200">
-        <div className="flex items-center justify-between gap-2 w-full min-w-0">
-          <div className="flex items-center gap-3 min-w-0">
-            <Avatar className="h-9 w-9">
-              <AvatarFallback>
-                {displayConversation?.type === "group" ? (
-                  <Users className="h-5 w-5" />
-                ) : displayConversation?.type === "channel" ? (
-                  "#"
-                ) : (
-                  headerInitials
-                )}
-              </AvatarFallback>
-            </Avatar>
-            <div className="min-w-0 py-0.5">
-              <div className="text-sm font-semibold text-gray-900 truncate leading-tight">
-                {headerTitle}
-              </div>
-              {displayConversation?.type !== "group" &&
-                displayConversation?.type !== "channel" &&
-                headerSubtitle && (
-                  <div className="text-xs text-gray-500 truncate leading-tight mt-0.5">
-                    {headerSubtitle}
-                  </div>
-                )}
-            </div>
-          </div>
-          <div className="flex items-center gap-1 shrink-0">
-            {(displayConversation?.type === "group" ||
-              displayConversation?.type === "channel") && (
-              <>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 px-2 text-gray-600 hover:text-gray-900"
-                      aria-label="View members"
-                    >
-                      <Users className="h-4 w-4 mr-1.5" />
-                      <span className="text-sm font-medium">
-                        {displayConversation.participants?.length || 0}
-                      </span>
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-64 p-0">
-                    <div className="p-2 border-b border-gray-200">
-                      <div className="text-sm font-semibold text-gray-900">
-                        Members ({displayConversation.participants?.length || 0})
-                      </div>
-                    </div>
-                    <div className="max-h-60 overflow-y-auto p-2">
-                      {(displayConversation.participants || []).map((p: any) => (
-                        <div
-                          key={p._id}
-                          className="flex items-center gap-2 py-2 px-2 rounded hover:bg-gray-50"
-                        >
-                          <Avatar className="h-8 w-8">
-                            <AvatarFallback className="text-xs">
-                              {p.name
-                                ?.split(" ")
-                                .map((n: string) => n[0])
-                                .join("")
-                                .toUpperCase()
-                                .slice(0, 2) || p.email?.[0]?.toUpperCase() || "?"}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="min-w-0 flex-1">
-                            <div className="text-sm font-medium text-gray-900 truncate">
-                              {p.name || p.email}
-                            </div>
-                            {p.email && (
-                              <div className="text-xs text-gray-500 truncate">
-                                {p.email}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-                {onAddMembers && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                        <MoreVertical className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={onAddMembers}>
-                        <Users className="h-4 w-4 mr-2" />
-                        Add Members
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-              </>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+      <header className="flex h-16 shrink-0 items-center gap-3 border-b px-4">
+        <Avatar className="h-9 w-9">
+          <AvatarFallback className="bg-brand-purple/10 text-brand-purple">
+            {displayConversation.type === "channel" ? (
+              <Hash className="h-4 w-4" />
+            ) : displayConversation.type === "group" ? (
+              <Users className="h-4 w-4" />
+            ) : (
+              directConversationAvatarInitials(displayConversation, currentUserId)
             )}
-            {conversationId && onDeleteConversation && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 w-8 p-0 text-gray-500 hover:text-red-600"
-                  aria-label="Delete conversation"
-                  onClick={() => setDeleteConfirmOpen(true)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-                <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Delete conversation?</DialogTitle>
-                      <DialogDescription>
-                        This cannot be undone. All messages in this conversation will be permanently deleted.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter className="gap-2 sm:gap-0">
-                      <Button
-                        variant="outline"
-                        onClick={() => setDeleteConfirmOpen(false)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        onClick={async () => {
-                          try {
-                            await deleteConversationMutation({
-                              conversationId: conversationId as Id<"conversations">,
-                            });
-                            setDeleteConfirmOpen(false);
-                            onDeleteConversation(conversationId as Id<"conversations">);
-                          } catch (e) {
-                            console.error(e);
-                          }
-                        }}
-                      >
-                        Delete
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-              </>
-            )}
-            {onCloseConversation && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8 p-0 text-gray-500 hover:text-gray-700"
-                onClick={onCloseConversation}
-                aria-label="Close conversation"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            )}
-          </div>
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-sm font-semibold">
+            {displayConversation.type === "channel" ? "# " : ""}
+            {headerTitle}
+          </h1>
+          <p className="truncate text-xs text-muted-foreground">{headerSubtitle}</p>
         </div>
-      </div>
-
-      {/* Messages — min-h-0 so flex-1 can shrink; without it, min-height:auto grows with content and no inner scroll (page scrolls instead). */}
-      <div
-        ref={messagesListRef}
-        className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 bg-white"
-      >
-        {/* Load older messages button */}
-        {conversationId && hasMoreMessages && (
-          <div className="flex justify-center" ref={messagesTopRef}>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={loadOlderMessages}
-              disabled={isLoadingOlder}
-              className="mb-4"
-            >
-              {isLoadingOlder ? (
+        {searchOpen && conversationId && (
+          <div className="hidden w-64 items-center gap-2 md:flex">
+            <Input
+              value={messageSearch}
+              onChange={(event) => setMessageSearch(event.target.value)}
+              placeholder="Search loaded messages"
+              className="h-9"
+              autoFocus
+            />
+            <span className="whitespace-nowrap text-xs text-muted-foreground">
+              {filteredMessages.length} found
+            </span>
+          </div>
+        )}
+        {conversationId && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              setSearchOpen((open) => !open);
+              if (searchOpen) setMessageSearch("");
+            }}
+            aria-label="Search messages"
+          >
+            <Search className="h-4 w-4" />
+          </Button>
+        )}
+        {(displayConversation.type === "group" ||
+          displayConversation.type === "channel") && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="ghost" size="sm">
+                <Users className="mr-1.5 h-4 w-4" />
+                {displayConversation.participants.length}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 p-2">
+              <p className="border-b px-2 pb-2 text-sm font-semibold">Members</p>
+              <div className="max-h-64 overflow-y-auto py-1">
+                {displayConversation.participants.map((participant) => (
+                  <div key={participant._id} className="flex items-center gap-2 rounded-lg p-2">
+                    <Avatar className="h-8 w-8">
+                      <AvatarFallback className="text-xs">
+                        {(participant.name ?? participant.email).slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">
+                        {participant.name ?? participant.email}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {participant.email}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
+        {conversationId && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="icon" aria-label="Conversation actions">
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {onAddMembers && (
+                <DropdownMenuItem onClick={onAddMembers}>
+                  <Users className="mr-2 h-4 w-4" />
+                  Add members
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                onClick={() => void handleMuteChange()}
+              >
+                {isMuted ? (
+                  <Bell className="mr-2 h-4 w-4" />
+                ) : (
+                  <BellOff className="mr-2 h-4 w-4" />
+                )}
+                {isMuted ? "Unmute conversation" : "Mute conversation"}
+              </DropdownMenuItem>
+              {displayConversation.type !== "direct" && (
                 <>
-                  <div className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full mr-2" />
-                  Loading...
-                </>
-              ) : (
-                <>
-                  <ChevronUp className="h-4 w-4 mr-2" />
-                  See more
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setConversationAction("leave")}>
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Leave conversation
+                  </DropdownMenuItem>
+                  {canArchive && (
+                    <DropdownMenuItem
+                      onClick={() => setConversationAction("archive")}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Archive className="mr-2 h-4 w-4" />
+                      Archive conversation
+                    </DropdownMenuItem>
+                  )}
                 </>
               )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        {onCloseConversation && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onCloseConversation}
+            aria-label="Close conversation"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        )}
+      </header>
+
+      {searchOpen && conversationId && (
+        <div className="flex items-center gap-2 border-b p-2 md:hidden">
+          <Input
+            value={messageSearch}
+            onChange={(event) => setMessageSearch(event.target.value)}
+            placeholder="Search loaded messages"
+            className="h-9"
+            autoFocus
+          />
+          <span className="whitespace-nowrap text-xs text-muted-foreground">
+            {filteredMessages.length} found
+          </span>
+        </div>
+      )}
+
+      <div ref={messagesListRef} className="min-h-0 flex-1 overflow-y-auto bg-muted/20 px-3 py-5 sm:px-6">
+        {conversationId && messagesData?.hasMore && (
+          <div className="mb-5 flex justify-center">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isLoadingOlder}
+              onClick={() => {
+                const list = messagesListRef.current;
+                if (list) {
+                  scrollRestoreRef.current = {
+                    height: list.scrollHeight,
+                    top: list.scrollTop,
+                  };
+                }
+                setIsLoadingOlder(true);
+                setLoadOlderBefore(oldestTimestamp ?? undefined);
+              }}
+            >
+              {isLoadingOlder ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <ChevronUp className="mr-2 h-4 w-4" />
+              )}
+              Earlier messages
             </Button>
           </div>
         )}
-        {conversationId && isLoadingOlder && (
-          <div className="space-y-4 mb-4">
-            <MessageListSkeleton />
-          </div>
-        )}
-        {conversationId &&
-        messagesData === undefined &&
-        messages.length === 0 ? (
+        {conversationId && messagesData === undefined && allMessages.length === 0 ? (
           <MessageListSkeleton />
-        ) : (messagesToShow?.length ?? 0) === 0 ? (
-          <div className="text-center text-gray-500 py-8">
-            {pendingParticipant
-              ? "Send a message to start the conversation."
-              : "No messages yet. Start the conversation!"}
-          </div>
-        ) : (
-          messagesToShow?.map((message: any) => {
-            const isOwnMessage = message.senderId === currentUserId;
-            const threadConv =
-              conversationId && conversation
-                ? conversation
-                : displayConversation;
-            const isHovered = hoveredMessageId === message._id;
-            const actionButtons = (
-              <div
-                onMouseEnter={() => {
-                  if (hoverLeaveTimeoutRef.current) {
-                    clearTimeout(hoverLeaveTimeoutRef.current);
-                    hoverLeaveTimeoutRef.current = null;
-                  }
-                  setHoveredMessageId(message._id);
-                }}
-                onMouseLeave={() => setHoveredMessageId(null)}
-                className={`flex items-center justify-center gap-0.5 w-20 shrink-0 transition-opacity ${
-                  isOwnMessage ? "order-first" : "order-last"
-                } ${isHovered ? "opacity-100" : "opacity-0 pointer-events-none"}`}
-              >
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 w-7 p-0 text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                  aria-label="Reply"
-                  onClick={() => {
-                    setReplyingTo({
-                      messageId: message._id,
-                      contentSnippet:
-                        message.content.slice(0, 80) +
-                        (message.content.length > 80 ? "…" : ""),
-                      senderName: messageSenderLabelInDirect(
-                        message.senderId,
-                        message.sender,
-                        threadConv,
-                        currentUserId,
-                      ),
-                    });
-                  }}
-                >
-                  <Reply className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 w-7 p-0 text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                  aria-label="React"
-                >
-                  <Smile className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 w-7 p-0 text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                  aria-label="Forward"
-                  onClick={() => {
-                    setMessageToForward({
-                      content: message.content,
-                      attachments: message.attachments,
-                      messageType: message.messageType,
-                    });
-                    setForwardModalOpen(true);
-                  }}
-                >
-                  <Forward className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            );
-
-            return (
-              <div
-                key={message._id}
-                className={`flex items-center ${
-                  isOwnMessage ? "justify-end" : "justify-start"
-                }`}
-              >
-                {actionButtons}
-                <div
-                  role="article"
-                  onMouseEnter={() => {
-                    if (hoverLeaveTimeoutRef.current) {
-                      clearTimeout(hoverLeaveTimeoutRef.current);
-                      hoverLeaveTimeoutRef.current = null;
-                    }
-                    setHoveredMessageId(message._id);
-                  }}
-                  onMouseLeave={() => {
-                    hoverLeaveTimeoutRef.current = setTimeout(() => {
-                      setHoveredMessageId(null);
-                      hoverLeaveTimeoutRef.current = null;
-                    }, 150);
-                  }}
-                  className={`max-w-[70%] rounded-lg px-4 py-2 cursor-default ${
-                    isOwnMessage
-                      ? "bg-brand-purple text-white"
-                      : "bg-gray-100 text-gray-900"
-                  }`}
-                >
-                  {isOwnMessage &&
-                    threadConv?.type === "direct" &&
-                    threadConv.directThreadKind === "staff_as_admin" &&
-                    threadConv.adminPersonaUserId === message.senderId && (
-                      <div className="text-xs font-medium mb-1 opacity-80 text-right">
-                        {messageSenderLabelInDirect(
-                          message.senderId,
-                          message.sender,
-                          threadConv,
-                          currentUserId,
-                        )}
-                      </div>
-                    )}
-                  {!isOwnMessage && (
-                    <div className="text-xs font-medium mb-1 opacity-70">
-                      {messageSenderLabelInDirect(
-                        message.senderId,
-                        message.sender,
-                        threadConv,
-                        currentUserId,
-                      )}
-                    </div>
-                  )}
-                  {message.replyTo && (
-                    <div
-                      className={`text-xs rounded border-l-2 pl-2 py-1 mb-2 ${
-                        isOwnMessage
-                          ? "border-purple-300 text-purple-100 bg-purple-500/20"
-                          : "border-gray-300 text-gray-500 bg-gray-50"
-                      }`}
-                    >
-                      <div className="font-medium opacity-90">
-                        {message.replyTo.senderName}
-                      </div>
-                      <div className="truncate opacity-80">
-                        {message.replyTo.content}
-                      </div>
-                    </div>
-                  )}
-                  <div className="text-sm whitespace-pre-wrap">
-                    {message.content}
-                  </div>
-                  {message.attachments && message.attachments.length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      {message.attachments.map(
-                        (attachmentId: string, idx: number) => (
-                          <CachedFileAttachment
-                            key={idx}
-                            storageId={attachmentId}
-                            isOwnMessage={isOwnMessage}
-                            organizationId={currentOrganizationId || ""}
-                          />
-                        ),
-                      )}
-                    </div>
-                  )}
-                  {message.payslipId && (
-                    <div className="mt-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className={
-                          isOwnMessage
-                            ? "text-xs bg-white text-gray-900 border-white/60 shadow-sm hover:bg-gray-50"
-                            : "text-xs"
-                        }
-                        onClick={() => {
-                          const orgId =
-                            effectiveOrganizationId ?? currentOrganizationId;
-                          if (!orgId) return;
-                          // Employees are blocked from /payroll by route guard (→ /forbidden). Send them to My Payslips.
-                          const isEmployee = currentOrganization?.role === "employee";
-                          const subpath = isEmployee
-                            ? `payslips?payslipId=${message.payslipId}`
-                            : `payroll?payslipId=${message.payslipId}`;
-                          router.push(getOrganizationPath(orgId, subpath));
-                        }}
-                      >
-                        <Receipt className="h-3 w-3 mr-1" />
-                        View Payslip
-                      </Button>
-                    </div>
-                  )}
-                  <div
-                    className={`text-xs mt-1 ${
-                      isOwnMessage ? "text-purple-100" : "text-gray-500"
-                    }`}
-                  >
-                    {format(new Date(message.createdAt), "h:mm a")}
-                  </div>
-                </div>
-              </div>
-            );
-          })
-        )}
-        <div aria-hidden className="h-px shrink-0" />
-      </div>
-
-      {/* Message Input */}
-      <div className="bg-white border-t border-gray-200 p-4">
-        {replyingTo && (
-          <div className="mb-2 flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
-            <Reply className="h-4 w-4 shrink-0 text-gray-500" />
-            <div className="flex-1 min-w-0">
-              <span className="font-medium text-gray-700">
-                Replying to {replyingTo.senderName}
-              </span>
-              <p className="truncate text-gray-500 text-xs mt-0.5">
-                {replyingTo.contentSnippet}
+        ) : filteredMessages.length === 0 ? (
+          <div className="flex h-full min-h-64 items-center justify-center text-center">
+            <div>
+              <p className="text-sm font-medium">
+                {messageSearch ? "No matching messages" : "No messages yet"}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {messageSearch
+                  ? "Try another phrase. Search covers loaded messages."
+                  : "Send the first message to begin this conversation."}
               </p>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0 shrink-0"
-              onClick={() => setReplyingTo(null)}
-              aria-label="Cancel reply"
-            >
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {filteredMessages.map((message) => {
+              const isOwn = message.senderId === currentUserId;
+              const senderLabel = messageSenderLabelInDirect(
+                message.senderId,
+                message.sender,
+                displayConversation,
+                currentUserId,
+              );
+              const canEdit =
+                isOwn &&
+                message.deletedAt === undefined;
+              const canDelete =
+                message.deletedAt === undefined && (isOwn || isElevated);
+              return (
+                <article
+                  key={message._id}
+                  className={`group flex gap-2 ${isOwn ? "justify-end" : "justify-start"}`}
+                >
+                  {!isOwn && (
+                    <Avatar className="mt-5 h-8 w-8 shrink-0">
+                      <AvatarFallback className="text-xs">
+                        {senderLabel.slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                  )}
+                  <div className={`min-w-0 max-w-[82%] sm:max-w-[70%] ${isOwn ? "items-end" : "items-start"} flex flex-col`}>
+                    <div className="mb-1 flex items-center gap-2 px-1">
+                      {!isOwn && <span className="text-xs font-medium">{senderLabel}</span>}
+                      <span className="text-[11px] text-muted-foreground">
+                        {format(new Date(message.createdAt), "MMM d, h:mm a")}
+                      </span>
+                      {message.editedAt && message.deletedAt === undefined && (
+                        <span className="text-[11px] text-muted-foreground">edited</span>
+                      )}
+                    </div>
+                    <div className="relative">
+                      {message.deletedAt === undefined && (
+                        <div className={`absolute top-0 z-10 hidden -translate-y-[calc(100%+4px)] group-hover:block ${isOwn ? "right-0" : "left-0"}`}>
+                          <MessageActions
+                            canEdit={canEdit}
+                            canDelete={canDelete}
+                            canForward={!message.payslipId}
+                            onReply={() => setReplyingTo(message)}
+                            onReact={(emoji) => void handleReaction(message, emoji)}
+                            onEdit={() => {
+                              setEditingMessage(message);
+                              setEditContent(message.content);
+                            }}
+                            onDelete={() => setDeletingMessage(message)}
+                            onForward={() => {
+                              setMessageToForward({ messageId: message._id });
+                              setForwardModalOpen(true);
+                            }}
+                          />
+                        </div>
+                      )}
+                      <div
+                        className={`rounded-2xl px-3.5 py-2.5 shadow-sm ${
+                          message.deletedAt !== undefined
+                            ? "border bg-background text-muted-foreground"
+                            : isOwn
+                              ? "bg-brand-purple text-white"
+                              : "border bg-background text-foreground"
+                        }`}
+                      >
+                        {message.replyTo && message.deletedAt === undefined && (
+                          <div className={`mb-2 rounded-lg border-l-2 px-2 py-1 text-xs ${isOwn ? "border-white/50 bg-white/10" : "border-brand-purple/50 bg-muted"}`}>
+                            <p className="font-medium">{message.replyTo.senderName}</p>
+                            <p className="truncate opacity-80">{message.replyTo.content}</p>
+                          </div>
+                        )}
+                        {message.deletedAt !== undefined ? (
+                          <p className="text-sm italic">
+                            {message.deletionKind === "moderator"
+                              ? "Message removed by a moderator"
+                              : "Message removed"}
+                          </p>
+                        ) : (
+                          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                            {message.content}
+                          </p>
+                        )}
+                        {message.deletedAt === undefined && message.attachments.length > 0 && conversationId && (
+                          <div className="mt-2 space-y-2">
+                            {message.attachments.map((storageId) => (
+                              <ChatFileAttachment
+                                key={storageId}
+                                conversationId={conversationId as Id<"conversations">}
+                                messageId={message._id}
+                                storageId={storageId}
+                                isOwnMessage={isOwn}
+                              />
+                            ))}
+                          </div>
+                        )}
+                        {message.deletedAt === undefined && message.payslipId && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="mt-2 bg-background text-foreground"
+                            onClick={() => {
+                              const organizationId = effectiveOrganizationId ?? currentOrganizationId;
+                              if (!organizationId) return;
+                              const route = role === "employee" ? "payslips" : "payroll";
+                              router.push(
+                                getOrganizationPath(
+                                  organizationId,
+                                  `${route}?payslipId=${message.payslipId}`,
+                                ),
+                              );
+                            }}
+                          >
+                            <Receipt className="mr-1.5 h-3.5 w-3.5" />
+                            View payslip
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    {message.deletedAt === undefined && message.reactions.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1 px-1">
+                        {groupReactions(message.reactions).map(([emoji, reactions]) => {
+                          const reacted = reactions.some(
+                            (reaction) => reaction.userId === currentUserId,
+                          );
+                          return (
+                            <button
+                              key={emoji}
+                              type="button"
+                              onClick={() =>
+                                void handleReaction(
+                                  message,
+                                  emoji as (typeof CHAT_REACTIONS)[number],
+                                )
+                              }
+                              className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${reacted ? "border-brand-purple bg-brand-purple/10" : "bg-background hover:bg-muted"}`}
+                            >
+                              {emoji} {reactions.length}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {isOwn && message.readBy.length > 1 && (
+                      <span className="mt-1 flex items-center gap-1 px-1 text-[11px] text-muted-foreground">
+                        <CheckCheck className="h-3 w-3" /> Read
+                      </span>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <footer className="shrink-0 border-t bg-background p-3 sm:p-4">
+        {replyingTo && (
+          <div className="mb-2 flex items-center gap-2 rounded-xl border bg-muted/50 px-3 py-2">
+            <Reply className="h-4 w-4 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium">Replying to {messageSenderLabelInDirect(replyingTo.senderId, replyingTo.sender, displayConversation, currentUserId)}</p>
+              <p className="truncate text-xs text-muted-foreground">{replyingTo.content}</p>
+            </div>
+            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => setReplyingTo(null)}>
               <X className="h-4 w-4" />
             </Button>
           </div>
         )}
         {attachments.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-2">
-            {attachments.map((att) => {
-              const isImage =
-                att.contentType?.startsWith("image/") && att.previewUrl;
-              const isVideo =
-                att.contentType?.startsWith("video/") && att.previewUrl;
-              const showPreview = (isImage || isVideo) && !att.uploading;
-
-              return (
-                <div
-                  key={att.id}
-                  className="relative rounded-lg overflow-hidden bg-white border border-gray-200 w-[120px] h-[120px] shrink-0"
+          <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+            {attachments.map((attachment) => (
+              <div key={attachment.id} className="relative flex h-20 w-28 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-muted">
+                {attachment.previewUrl ? (
+                  <Image
+                    src={attachment.previewUrl}
+                    alt={attachment.name}
+                    fill
+                    unoptimized
+                    className="object-cover"
+                  />
+                ) : (
+                  <div className="min-w-0 p-2 text-center">
+                    {attachment.uploading ? (
+                      <Loader2 className="mx-auto mb-1 h-5 w-5 animate-spin" />
+                    ) : (
+                      <FileText className="mx-auto mb-1 h-5 w-5" />
+                    )}
+                    <p className="truncate text-xs">{attachment.name}</p>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(attachment.id)}
+                  className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white"
+                  aria-label="Remove attachment"
                 >
-                  {att.uploading ? (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-gray-50">
-                      <div className="animate-spin h-6 w-6 border-2 border-purple-600 border-t-transparent rounded-full" />
-                      <span className="text-xs text-gray-600 truncate px-1 max-w-full">
-                        {att.name}
-                      </span>
-                    </div>
-                  ) : showPreview ? (
-                    <>
-                      {isImage ? (
-                        <img
-                          src={att.previewUrl}
-                          alt={att.name}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <video
-                          src={att.previewUrl}
-                          className="w-full h-full object-cover"
-                          muted
-                          playsInline
-                        />
-                      )}
-                    </>
-                  ) : (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-gray-50 p-2">
-                      <FileText className="h-6 w-6 text-gray-500" />
-                      <span className="text-xs text-gray-600 truncate w-full text-center">
-                        {att.name}
-                      </span>
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveAttachment(att.id)}
-                    className="absolute top-1 right-1 h-6 w-6 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70"
-                    aria-label="Remove attachment"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              );
-            })}
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
           </div>
         )}
-        <form
-          onSubmit={handleSendMessage}
-          className="flex w-full items-end gap-2"
-        >
+        <form onSubmit={handleSendMessage} className="flex items-end gap-2">
           <input
             ref={fileInputRef}
             type="file"
             multiple
-            onChange={handleFileSelect}
             className="hidden"
-            id="file-upload"
+            onChange={(event) => void handleFileSelect(event)}
           />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={isUploading}
-                className="h-11 w-11 shrink-0 rounded-lg border-gray-200 p-0 hover:bg-gray-50"
-                aria-label="Attach"
-              >
-                <Paperclip className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuItem
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
-              >
-                <FileText className="h-4 w-4 mr-2" />
-                Upload File
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setIsDocumentModalOpen(true)}
-                disabled={isUploading}
-              >
-                <FileText className="h-4 w-4 mr-2" />
-                Select from Documents
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-11 w-11 shrink-0 rounded-xl"
+            disabled={isUploading}
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Attach files"
+          >
+            {isUploading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Paperclip className="h-4 w-4" />
+            )}
+          </Button>
           <Textarea
             value={messageContent}
-            onChange={(e) => setMessageContent(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter" || e.shiftKey) return;
-              if (e.nativeEvent.isComposing) return;
-              e.preventDefault();
-              if (isUploading || !canSend) return;
-              if (!messageContent.trim() && attachments.length === 0) return;
-              void handleSendMessage(
-                e as unknown as React.FormEvent<HTMLFormElement>,
-              );
+            onChange={(event) => setMessageContent(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
             }}
-            placeholder="Type a message..."
-            rows={1}
+            placeholder="Write a message"
             aria-label="Message"
-            className="min-h-11 max-h-40 min-w-0 flex-1 resize-none rounded-lg border-gray-200 py-2.5 text-sm leading-snug shadow-sm focus-visible:ring-2 focus-visible:ring-brand-purple/30"
+            rows={1}
+            maxLength={5000}
+            className="max-h-40 min-h-11 flex-1 resize-none rounded-xl py-2.5"
           />
           <Button
             type="submit"
+            size="icon"
+            className="h-11 w-11 shrink-0 rounded-xl bg-brand-purple hover:bg-brand-purple/90"
             disabled={
               (!messageContent.trim() && attachments.length === 0) ||
-              isUploading ||
-              !canSend
+              attachments.some((attachment) => attachment.uploading)
             }
-            className="h-11 w-11 shrink-0 rounded-lg p-0 bg-brand-purple text-white hover:bg-brand-purple/90 disabled:opacity-50"
             aria-label="Send message"
           >
             <Send className="h-4 w-4" />
           </Button>
         </form>
-      </div>
+      </footer>
 
-      <DocumentSelectorModal
-        isOpen={isDocumentModalOpen}
-        onOpenChange={setIsDocumentModalOpen}
-        onSelect={handleSelectDocuments}
-      />
+      <Dialog open={editingMessage !== null} onOpenChange={(open) => !open && setEditingMessage(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit message</DialogTitle>
+            <DialogDescription>Messages can be edited for 15 minutes after sending.</DialogDescription>
+          </DialogHeader>
+          <Textarea value={editContent} onChange={(event) => setEditContent(event.target.value)} rows={5} maxLength={5000} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingMessage(null)}>Cancel</Button>
+            <Button onClick={() => void handleEdit()} disabled={!editContent.trim()}>Save changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deletingMessage !== null} onOpenChange={(open) => !open && setDeletingMessage(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Remove message?</DialogTitle>
+            <DialogDescription>The content will be replaced with an attributed deletion record.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeletingMessage(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => void handleDelete()}>Remove message</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={conversationAction !== null} onOpenChange={(open) => !open && setConversationAction(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{conversationAction === "archive" ? "Archive conversation?" : "Leave conversation?"}</DialogTitle>
+            <DialogDescription>
+              {conversationAction === "archive"
+                ? "The conversation becomes read-only and disappears from active chat lists. Its history is retained."
+                : "The conversation and its history remain available to the other members."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConversationAction(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => void handleConversationAction()}>
+              {conversationAction === "archive" ? "Archive" : "Leave"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <ForwardMessageModal
         isOpen={forwardModalOpen}
         onOpenChange={(open) => {
@@ -1227,6 +1105,7 @@ export function ChatArea({
         }}
         message={messageToForward}
         currentConversationId={conversationId}
+        currentUserId={currentUserId}
       />
     </div>
   );

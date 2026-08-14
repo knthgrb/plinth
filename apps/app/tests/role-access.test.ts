@@ -23,4 +23,14 @@ describe("role access", () => {
     expect(rolesForPath("/payslips")).toContain("manager");
     expect(rolesForPath("/payroll")).not.toContain("manager");
   });
+
+  it("keeps evaluation records private to owner, admin, and HR", () => {
+    expect(rolesForPath("/evaluations")).toEqual(["admin", "owner", "hr"]);
+    expect(canAccessRoute("/evaluations", "owner")).toBe(true);
+    expect(canAccessRoute("/evaluations", "admin")).toBe(true);
+    expect(canAccessRoute("/evaluations", "hr")).toBe(true);
+    expect(canAccessRoute("/evaluations", "manager")).toBe(false);
+    expect(canAccessRoute("/evaluations", "accounting")).toBe(false);
+    expect(canAccessRoute("/evaluations", "employee")).toBe(false);
+  });
 });

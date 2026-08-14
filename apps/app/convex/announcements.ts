@@ -926,6 +926,7 @@ export const getComments = query({
         comments.map(async (comment) => ({
           _id: comment._id,
           announcementId: comment.announcementId,
+          parentCommentId: comment.parentCommentId,
           organizationId: comment.organizationId,
           author: comment.author,
           ...(await getCommentAuthorPresentation(ctx, comment)),
@@ -942,6 +943,7 @@ export const addComment = mutation({
     announcementId: v.id("memos"),
     organizationId: v.id("organizations"),
     content: v.string(),
+    parentCommentId: v.optional(v.id("announcementComments")),
     commentAs: v.optional(
       v.union(v.literal("admin"), v.literal("employee")),
     ),
@@ -956,10 +958,21 @@ export const addComment = mutation({
     );
     const content = args.content.trim();
     if (!content) throw new Error("Comment content is required");
+    if (args.parentCommentId) {
+      const parentComment = await ctx.db.get(args.parentCommentId);
+      if (
+        !parentComment ||
+        parentComment.announcementId !== args.announcementId ||
+        parentComment.organizationId !== args.organizationId
+      ) {
+        throw new Error("Reply target not found");
+      }
+    }
     const persona = await resolveCommentPersona(ctx, viewer, args.commentAs);
     const now = Date.now();
     return ctx.db.insert("announcementComments", {
       announcementId: args.announcementId,
+      parentCommentId: args.parentCommentId,
       organizationId: args.organizationId,
       author: viewer._id,
       ...persona,

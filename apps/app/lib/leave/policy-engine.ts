@@ -16,6 +16,13 @@ export interface CalculateEntitlementInput {
 }
 
 const DAY_IN_MILLISECONDS = 24 * 60 * 60 * 1000;
+const MANILA_OFFSET_MILLISECONDS = 8 * 60 * 60 * 1000;
+
+interface ManilaCalendarDate {
+  year: number;
+  monthIndex: number;
+  day: number;
+}
 
 export function validatePolicyRules(rules: LeavePolicyRules): void {
   if (
@@ -62,10 +69,16 @@ export function calculateEntitlement(input: CalculateEntitlementInput): number {
     return 0;
 
   const eligibilityDate = getEligibilityDate(input);
+  const eligibleFrom =
+    eligibilityDate === undefined
+      ? undefined
+      : addManilaCalendarMonths(
+          eligibilityDate,
+          rules.eligibility.completedServiceMonths,
+        );
   if (
-    eligibilityDate === undefined ||
-    completedMonthsBetween(eligibilityDate, input.asOf) <
-      rules.eligibility.completedServiceMonths
+    eligibleFrom === undefined ||
+    compareManilaCalendarDates(input.asOf, eligibleFrom) < 0
   ) {
     return 0;
   }
@@ -73,7 +86,7 @@ export function calculateEntitlement(input: CalculateEntitlementInput): number {
   const entitlement = prorateAnnualUnits(
     rules.annualUnits,
     rules.prorationMethod,
-    Math.max(input.periodStart, eligibilityDate),
+    Math.max(input.periodStart, eligibleFrom),
     input.periodEnd,
   );
   return roundLeaveUnits(entitlement, rules.roundingIncrement);
@@ -113,6 +126,8 @@ export function projectLeaveBalance(
           projection.expired -= entry.amount;
           break;
         case "restoration":
+          projection.used -= entry.amount;
+          break;
         case "adjustment":
         case "carryover":
         case "migration_reconciliation":
@@ -146,25 +161,13 @@ function getEligibilityDate(
   }
 }
 
-function completedMonthsBetween(startDate: number, endDate: number): number {
-  if (endDate < startDate) return 0;
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  let months =
-    (end.getUTCFullYear() - start.getUTCFullYear()) * 12 +
-    end.getUTCMonth() -
-    start.getUTCMonth();
-  if (end.getUTCDate() < start.getUTCDate()) months -= 1;
-  return months;
-}
-
 function prorateAnnualUnits(
   annualUnits: number,
   method: LeavePolicyRules["prorationMethod"],
   startDate: number,
   periodEnd: number,
 ): number {
-  if (startDate > periodEnd) return 0;
+  if (compareManilaCalendarDates(startDate, periodEnd) > 0) return 0;
   switch (method) {
     case "none":
       return annualUnits;
@@ -172,8 +175,8 @@ function prorateAnnualUnits(
       return (annualUnits * calendarMonthsInclusive(startDate, periodEnd)) / 12;
     case "actual_days":
       return (
-        (annualUnits * (periodEnd - startDate + DAY_IN_MILLISECONDS)) /
-        (daysInYear(new Date(periodEnd).getUTCFullYear()) * DAY_IN_MILLISECONDS)
+        (annualUnits * manilaCalendarDaysInclusive(startDate, periodEnd)) /
+        daysInYear(getManilaCalendarDate(periodEnd).year)
       );
     case "legacy_15th_day":
       return (annualUnits * legacyEligibleMonths(startDate, periodEnd)) / 12;
@@ -181,25 +184,74 @@ function prorateAnnualUnits(
 }
 
 function calendarMonthsInclusive(startDate: number, endDate: number): number {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
+  const start = getManilaCalendarDate(startDate);
+  const end = getManilaCalendarDate(endDate);
   return (
-    (end.getUTCFullYear() - start.getUTCFullYear()) * 12 +
-    end.getUTCMonth() -
-    start.getUTCMonth() +
-    1
+    (end.year - start.year) * 12 + end.monthIndex - start.monthIndex + 1
   );
 }
 
 function legacyEligibleMonths(startDate: number, endDate: number): number {
-  const start = new Date(startDate);
+  const start = getManilaCalendarDate(startDate);
   const firstEligibleMonth =
-    start.getUTCDate() <= 15
-      ? Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1)
-      : Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1);
-  return firstEligibleMonth > endDate
+    start.day <= 15
+      ? toManilaMidnight({ ...start, day: 1 })
+      : toManilaMidnight({
+          year: start.monthIndex === 11 ? start.year + 1 : start.year,
+          monthIndex: (start.monthIndex + 1) % 12,
+          day: 1,
+        });
+  return compareManilaCalendarDates(firstEligibleMonth, endDate) > 0
     ? 0
     : calendarMonthsInclusive(firstEligibleMonth, endDate);
+}
+
+function addManilaCalendarMonths(timestamp: number, months: number): number {
+  const date = getManilaCalendarDate(timestamp);
+  const monthOffset = date.monthIndex + months;
+  const year = date.year + Math.floor(monthOffset / 12);
+  const monthIndex = monthOffset % 12;
+  return toManilaMidnight({
+    year,
+    monthIndex,
+    day: Math.min(date.day, daysInMonth(year, monthIndex)),
+  });
+}
+
+function compareManilaCalendarDates(left: number, right: number): number {
+  const leftDate = getManilaCalendarDate(left);
+  const rightDate = getManilaCalendarDate(right);
+  return (
+    Date.UTC(leftDate.year, leftDate.monthIndex, leftDate.day) -
+    Date.UTC(rightDate.year, rightDate.monthIndex, rightDate.day)
+  );
+}
+
+function manilaCalendarDaysInclusive(startDate: number, endDate: number): number {
+  return (
+    compareManilaCalendarDates(endDate, startDate) / DAY_IN_MILLISECONDS + 1
+  );
+}
+
+function getManilaCalendarDate(timestamp: number): ManilaCalendarDate {
+  const shiftedDate = new Date(timestamp + MANILA_OFFSET_MILLISECONDS);
+  return {
+    year: shiftedDate.getUTCFullYear(),
+    monthIndex: shiftedDate.getUTCMonth(),
+    day: shiftedDate.getUTCDate(),
+  };
+}
+
+function toManilaMidnight(date: ManilaCalendarDate): number {
+  return (
+    Date.UTC(date.year, date.monthIndex, date.day) -
+    MANILA_OFFSET_MILLISECONDS
+  );
+}
+
+function daysInMonth(year: number, monthIndex: number): number {
+  if (monthIndex === 1) return daysInYear(year) === 366 ? 29 : 28;
+  return [3, 5, 8, 10].includes(monthIndex) ? 30 : 31;
 }
 
 function daysInYear(year: number): number {

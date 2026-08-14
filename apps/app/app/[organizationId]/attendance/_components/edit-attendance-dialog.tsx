@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,11 +38,22 @@ import { Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { holidayAppliesToEmployee } from "@/lib/payroll-calculations";
 
+type EmployeeWithScheduleOverrides = Doc<"employees"> & {
+  schedule: Doc<"employees">["schedule"] & {
+    scheduleOverrides?: Array<{
+      date: number;
+      in: string;
+      out: string;
+      reason?: string;
+    }>;
+  };
+};
+
 interface EditAttendanceDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  record: any | null;
-  employee?: any | null; // Used to backfill schedule when the row has no stored times
+  record: Doc<"attendance"> | null;
+  employee?: EmployeeWithScheduleOverrides | null;
   onSuccess?: () => void;
 }
 
@@ -60,7 +71,7 @@ const undertimeHelperText = (
 };
 
 function getScheduledTimesForDate(
-  employee: any,
+  employee: EmployeeWithScheduleOverrides,
   dateTs: number,
 ): { scheduleIn: string; scheduleOut: string } | null {
   if (!employee?.schedule?.defaultSchedule) return null;
@@ -77,9 +88,8 @@ function getScheduledTimesForDate(
       return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate() };
     };
     const targetParts = manilaParts(dateTs);
-    const override = scheduleOverrides.find((o: any) => {
-      if (o.date == null) return false;
-      const oTs = typeof o.date === "number" ? o.date : new Date(o.date).getTime();
+    const override = scheduleOverrides.find((scheduleOverride) => {
+      const oTs = scheduleOverride.date;
       const oParts = manilaParts(oTs);
       return oParts.y === targetParts.y && oParts.m === targetParts.m && oParts.d === targetParts.d;
     });
@@ -102,6 +112,7 @@ export function EditAttendanceDialog({
   const [editTimeOut, setEditTimeOut] = useState("");
   const [editOvertime, setEditOvertime] = useState("");
   const [editRemarks, setEditRemarks] = useState("");
+  const [correctionReason, setCorrectionReason] = useState("");
   const [editStatus, setEditStatus] = useState<
     "present" | "absent" | "half-day" | "leave" | "leave_with_pay" | "leave_without_pay" | "no_work"
   >("present");
@@ -112,11 +123,21 @@ export function EditAttendanceDialog({
   const [useManualUndertime, setUseManualUndertime] = useState(false);
 
   const updateAttendanceMutation = useMutation(
-    (api as any).attendance.updateAttendance,
+    api.attendance.updateAttendance,
   );
   const holidays = useQuery(
-    (api as any).holidays.getHolidays,
+    api.holidays.getHolidays,
     record?.organizationId ? { organizationId: record.organizationId } : "skip",
+  );
+  const auditHistory = useQuery(
+    api.attendance.getAttendanceAuditHistory,
+    record?.organizationId && record?._id
+      ? {
+          organizationId: record.organizationId,
+          attendanceId: record._id as Id<"attendance">,
+          limit: 10,
+        }
+      : "skip",
   );
 
   const canUseNoWorkStatus = useMemo(() => {
@@ -125,20 +146,22 @@ export function EditAttendanceDialog({
     const targetY = target.getFullYear();
     const targetM = target.getMonth();
     const targetD = target.getDate();
-    return holidays.some((h: any) => {
-      const holidayTs = h.offsetDate ?? h.date;
+    return holidays.some((holiday: Doc<"holidays">) => {
+      const holidayTs = holiday.offsetDate ?? holiday.date;
       const hd = new Date(holidayTs);
-      const yearMatches = h.isRecurring ? true : (h.year == null || h.year === targetY);
+      const yearMatches = holiday.isRecurring
+        ? true
+        : holiday.year == null || holiday.year === targetY;
       if (!yearMatches) return false;
-      const dayMatches = h.isRecurring
+      const dayMatches = holiday.isRecurring
         ? hd.getMonth() === targetM && hd.getDate() === targetD
         : hd.getFullYear() === targetY &&
           hd.getMonth() === targetM &&
           hd.getDate() === targetD;
       if (!dayMatches) return false;
       return (
-        (h.type === "regular" || h.type === "special") &&
-        holidayAppliesToEmployee(h, employee)
+        (holiday.type === "regular" || holiday.type === "special") &&
+        holidayAppliesToEmployee(holiday, employee)
       );
     });
   }, [record?.date, employee, holidays]);
@@ -175,6 +198,7 @@ export function EditAttendanceDialog({
         record.status === "leave" ? "leave_with_pay" : record.status
       );
       setEditRemarks(record.remarks || "");
+      setCorrectionReason("");
       // Seed manual fields from stored values (late in mins, undertime stored in hours → show as mins)
       setManualLate(
         record.late !== undefined && record.late !== null
@@ -279,6 +303,7 @@ export function EditAttendanceDialog({
         undertimeManualOverride: useManualUndertime ? true : undefined,
         remarks: editRemarks?.trim() || undefined,
         status: editStatus,
+        correctionReason: correctionReason.trim() || undefined,
       });
       onOpenChange(false);
       setEditScheduleIn("");
@@ -287,6 +312,7 @@ export function EditAttendanceDialog({
       setEditTimeOut("");
       setEditOvertime("");
       setEditRemarks("");
+      setCorrectionReason("");
       setEditStatus("present");
       toast({
         title: "Success",
@@ -294,11 +320,14 @@ export function EditAttendanceDialog({
         variant: "success",
       });
       onSuccess?.();
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Error updating attendance:", error);
       toast({
         title: "Error",
-        description: "Failed to update attendance record. Please try again.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to update attendance record. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -363,15 +392,16 @@ export function EditAttendanceDialog({
                 <Label htmlFor="editStatus">Status <span className="text-red-500">*</span></Label>
                 <Select
                   value={editStatus}
-                  onValueChange={(value: any) => {
-                    setEditStatus(value);
+                  onValueChange={(value) => {
+                    const nextStatus = value as typeof editStatus;
+                    setEditStatus(nextStatus);
                     // Auto-clear time in/out for leave types or absent
                     const clearsTime =
-                      value === "leave" ||
-                      value === "leave_with_pay" ||
-                      value === "leave_without_pay" ||
-                      value === "absent" ||
-                      value === "no_work";
+                      nextStatus === "leave" ||
+                      nextStatus === "leave_with_pay" ||
+                      nextStatus === "leave_without_pay" ||
+                      nextStatus === "absent" ||
+                      nextStatus === "no_work";
                     if (clearsTime) {
                       // Keep schedule, but clear actual times and overtime
                       setEditTimeIn("");
@@ -579,6 +609,43 @@ export function EditAttendanceDialog({
                   value={editRemarks}
                   onChange={(e) => setEditRemarks(e.target.value)}
                   placeholder="Optional note for this attendance record"
+                  disabled={isUpdating}
+                  rows={2}
+                  className="resize-none"
+                />
+              </div>
+              {auditHistory && auditHistory.length > 0 ? (
+                <div className="space-y-2 rounded-md border p-3">
+                  <Label>Recent change history</Label>
+                  <div className="space-y-2">
+                    {auditHistory.map((entry) => (
+                      <div
+                        key={entry._id}
+                        className="flex flex-col gap-0.5 text-xs text-gray-600 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <span className="capitalize">
+                          {entry.action.replaceAll("_", " ")} by {entry.actorRole}
+                        </span>
+                        <span>{format(new Date(entry.createdAt), "MMM d, yyyy h:mm a")}</span>
+                        {entry.correctionReason ? (
+                          <span className="sm:basis-full">
+                            Reason: {entry.correctionReason}
+                          </span>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              <div className="space-y-2">
+                <Label htmlFor="attendanceCorrectionReason">
+                  Payroll correction reason
+                </Label>
+                <Textarea
+                  id="attendanceCorrectionReason"
+                  value={correctionReason}
+                  onChange={(event) => setCorrectionReason(event.target.value)}
+                  placeholder="Required for owner/admin changes after payroll is finalized"
                   disabled={isUpdating}
                   rows={2}
                   className="resize-none"

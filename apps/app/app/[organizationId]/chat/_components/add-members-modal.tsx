@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import {
@@ -18,6 +18,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useOrganization } from "@/hooks/organization-context";
 import { Id } from "@/convex/_generated/dataModel";
 import { useToast } from "@/components/ui/use-toast";
+import { errorMessage } from "@/lib/chat/types";
 
 interface AddMembersModalProps {
   isOpen: boolean;
@@ -40,18 +41,26 @@ export function AddMembersModal({
   const [searchQuery, setSearchQuery] = useState("");
 
   const organizationUsers = useQuery(
-    (api as any).chat.getOrganizationUsers,
+    api.chat.getOrganizationUsers,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip"
   );
 
-  const addMembersMutation = useMutation((api as any).chat.addMembersToGroup);
+  const addMembersMutation = useMutation(api.chat.addMembersToGroup);
+
+  const handleOpenChange = (open: boolean) => {
+    if (!open) {
+      setSelectedUsers([]);
+      setSearchQuery("");
+    }
+    onOpenChange(open);
+  };
 
   // Filter out users who are already participants
   const availableUsers = organizationUsers?.filter(
-    (user: any) => !existingParticipantIds.includes(user._id)
+    (user) => !existingParticipantIds.includes(user._id),
   );
 
-  const filteredUsers = availableUsers?.filter((user: any) => {
+  const filteredUsers = availableUsers?.filter((user) => {
     if (!searchQuery) return true;
     const searchLower = searchQuery.toLowerCase();
     return (
@@ -92,27 +101,19 @@ export function AddMembersModal({
 
       setSelectedUsers([]);
       setSearchQuery("");
-      onOpenChange(false);
+      handleOpenChange(false);
       onSuccess?.();
-    } catch (error: any) {
-      console.error("Error adding members:", error);
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to add members",
+        description: errorMessage(error, "Failed to add members"),
         variant: "destructive",
       });
     }
   };
 
-  useEffect(() => {
-    if (!isOpen) {
-      setSelectedUsers([]);
-      setSearchQuery("");
-    }
-  }, [isOpen]);
-
   return (
-    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Add Members</DialogTitle>
@@ -143,7 +144,7 @@ export function AddMembersModal({
                             setSelectedUsers([]);
                           } else {
                             setSelectedUsers(
-                              filteredUsers.map((u: any) => u._id)
+                              filteredUsers.map((user) => user._id)
                             );
                           }
                         }}
@@ -153,7 +154,7 @@ export function AddMembersModal({
                           : "Select All"}
                       </Button>
                     </div>
-                    {filteredUsers.map((user: any) => (
+                    {filteredUsers.map((user) => (
                       <label
                         key={user._id}
                         className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer"

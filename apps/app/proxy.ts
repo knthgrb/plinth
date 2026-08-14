@@ -42,8 +42,8 @@ const ROUTE_ROLES: { routes: readonly string[]; roles: readonly Role[] }[] = [
   // Attendance: same as role-access (employee + accounting own records / view-as-employee, HR admin view)
   { routes: ["/attendance"], roles: ROLES_ALL_AUTH },
   { routes: ["/dashboard", "/employees", "/requirements"], roles: ROLES_PEOPLE },
-  { routes: ["/recruitment"], roles: ROLES_HR },
-  { routes: ["/documents", "/chat", "/announcements", "/leave", "/evaluations"], roles: ROLES_ALL_AUTH },
+  { routes: ["/recruitment", "/evaluations"], roles: ROLES_HR },
+  { routes: ["/documents", "/chat", "/announcements", "/leave"], roles: ROLES_ALL_AUTH },
 ];
 
 // ---------------------------------------------------------------------------
@@ -107,7 +107,6 @@ function buildPathWithOrg(orgId: string | null, path: string): string {
 function getDefaultRouteForRole(role: string | null): string {
   if (!role) return "/dashboard";
   const r = role.toLowerCase();
-  // Only employee and accounting land on announcements; admin/owner/hr land on dashboard
   if (r === "employee" || r === "accounting") return "/announcements";
   return "/dashboard";
 }

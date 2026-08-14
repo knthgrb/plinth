@@ -38,7 +38,7 @@ const ROUTE_ACCESS: Record<string, OrgRole[]> = {
   "/employee": ["admin", "owner", "hr", "manager", "accounting", "employee"],
   "/employees": ["admin", "owner", "hr", "manager"],
   "/attendance": ["admin", "owner", "hr", "manager", "employee", "accounting"],
-  "/evaluations": ["admin", "owner", "hr", "manager"],
+  "/evaluations": ["admin", "owner", "hr"],
   "/leave": ["admin", "owner", "hr", "manager", "employee"],
   "/requirements": ["admin", "owner", "hr", "manager", "employee"],
   "/recruitment": ["admin", "owner", "hr"],

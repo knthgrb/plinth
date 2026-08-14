@@ -3,32 +3,43 @@ import {
   maybeEncryptJsonForStorage,
 } from "./fieldEncryption";
 import { isEncryptionEnabled } from "./appEncryption";
+import type { Doc } from "./_generated/dataModel";
 
-export function encryptDraftConfigForDb(cfg: Record<string, any> | undefined) {
+type PayrollDraftConfig = Exclude<
+  Doc<"payrollRuns">["draftConfig"],
+  string | undefined
+>;
+
+export function encryptDraftConfigForDb(
+  cfg: PayrollDraftConfig | undefined,
+): Doc<"payrollRuns">["draftConfig"] {
   if (!cfg) return cfg;
   if (!isEncryptionEnabled()) return cfg;
-  return maybeEncryptJsonForStorage(cfg) as any;
+  return maybeEncryptJsonForStorage(cfg);
 }
 
 export function decryptDraftConfigFromDb(
-  cfg: Record<string, any> | string | undefined | null,
-): any {
-  if (cfg == null) return cfg;
+  cfg: Doc<"payrollRuns">["draftConfig"] | null,
+): PayrollDraftConfig | undefined {
+  if (cfg == null) return undefined;
   if (typeof cfg === "object") return cfg;
-  if (typeof cfg === "string") {
-    try {
-      return decryptJsonFromStorage(cfg);
-    } catch {
-      return { employeeIds: [] };
-    }
+  try {
+    return decryptJsonFromStorage<PayrollDraftConfig>(cfg);
+  } catch {
+    return undefined;
   }
-  return cfg;
 }
 
-export function decryptPayrollRunFromDb(run: any): any {
-  if (!run) return run;
+type DecryptedPayrollRun<T> = T extends Doc<"payrollRuns">
+  ? Omit<T, "draftConfig"> & { draftConfig?: PayrollDraftConfig }
+  : T;
+
+export function decryptPayrollRunFromDb<
+  T extends Doc<"payrollRuns"> | null | undefined,
+>(run: T): DecryptedPayrollRun<T> {
+  if (!run) return run as DecryptedPayrollRun<T>;
   return {
     ...run,
     draftConfig: decryptDraftConfigFromDb(run.draftConfig),
-  };
+  } as DecryptedPayrollRun<T>;
 }

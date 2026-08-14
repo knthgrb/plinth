@@ -75,4 +75,8 @@ export interface LeavePolicyRules {
   roundingIncrement: 0.25 | 0.5 | 1;
   carryover: { mode: "none" | "capped" | "unlimited"; capUnits?: number };
   conversion: { allowed: boolean; maxUnits?: number };
+  qualifyingEventRequired?: boolean;
+  maximumUnitsPerEvent?: number;
+  maximumUnitsPerYear?: number;
+  eventUseWindowDays?: number;
 }

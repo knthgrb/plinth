@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
@@ -39,7 +40,6 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { format } from "date-fns";
-import { bulkCreateAttendance } from "@/actions/attendance";
 import { useToast } from "@/components/ui/use-toast";
 import { EmployeeSelect } from "@/components/ui/employee-select";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -112,6 +112,28 @@ interface BulkDayTime {
   useManualUndertime?: boolean;
 }
 
+type AttendanceBatchEntry = {
+  organizationId: Id<"organizations">;
+  employeeId: Id<"employees">;
+  date: number;
+  scheduleIn: string;
+  scheduleOut: string;
+  actualIn?: string;
+  actualOut?: string;
+  overtime?: number;
+  late?: number;
+  undertime?: number;
+  remarks?: string;
+  status:
+    | "present"
+    | "absent"
+    | "leave"
+    | "leave_with_pay"
+    | "leave_without_pay"
+    | "no_work";
+  overwriteAttendanceId?: Id<"attendance">;
+};
+
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DAY_NAMES = [
   "sunday",
@@ -156,6 +178,7 @@ export function BulkAddAttendanceDialog({
   );
   const [bulkSelectedEmployee, setBulkSelectedEmployee] = useState("");
   const [isSubmittingBulk, setIsSubmittingBulk] = useState(false);
+  const [correctionReason, setCorrectionReason] = useState("");
   /** Rest days the user explicitly restored from excluded (manual bulk). */
   const manuallyIncludedRestDaysRef = useRef<Set<number>>(new Set());
   // Map of date timestamp to { timeIn, timeOut, status, overtime, late, undertime, notes, useManualOvertime, useManualLate, useManualUndertime }
@@ -185,6 +208,14 @@ export function BulkAddAttendanceDialog({
   const importRequestCoordinatorRef = useRef(
     new AttendanceImportRequestCoordinator(),
   );
+  const importRunIdRef = useRef<string | null>(null);
+  const conflictLookupGenerationRef = useRef(0);
+  const [orgAttendanceForCsv, setOrgAttendanceForCsv] = useState<
+    Doc<"attendance">[] | undefined
+  >(undefined);
+  const getAttendanceImportConflicts = useAction(
+    api.attendance.getAttendanceImportConflicts,
+  );
   const importLookupsReady = areAttendanceImportLookupsReady(
     employees,
     holidays,
@@ -196,6 +227,7 @@ export function BulkAddAttendanceDialog({
   }, []);
 
   const resetImportPreview = useCallback(() => {
+    importRunIdRef.current = null;
     setImportCandidates(null);
     setImportRowDecisions({});
     setCsvPreviewRows([]);
@@ -300,46 +332,63 @@ export function BulkAddAttendanceDialog({
     return map;
   }, [employeeRangeAttendance]);
 
-  const csvDateRange = useMemo(() => {
-    const timestamps = csvPreviewRows
-      .filter((r) => r.dateTs > 0 && r.employeeId)
-      .map((r) => r.dateTs);
-    if (timestamps.length === 0) return null;
-    return {
-      min: Math.min(...timestamps),
-      max: Math.max(...timestamps),
-    };
-  }, [csvPreviewRows]);
-
-  const orgAttendanceForCsv = useQuery(
-    api.attendance.getAttendance,
-    currentOrganizationId && csvDateRange
-      ? {
-          organizationId: currentOrganizationId as Id<"organizations">,
-          startDate: csvDateRange.min - 86400000,
-          endDate: csvDateRange.max + 86400000 * 2,
-        }
-      : "skip",
+  const csvBasePreview = useMemo(
+    () =>
+      importCandidates === null
+        ? undefined
+        : buildAttendanceImportPreviewWhenReady(
+            importCandidates,
+            employees,
+            holidays,
+          ),
+    [employees, holidays, importCandidates],
   );
 
   useEffect(() => {
-    if (importCandidates === null) {
+    const generation = ++conflictLookupGenerationRef.current;
+    if (!currentOrganizationId || csvBasePreview === undefined) {
+      setOrgAttendanceForCsv(undefined);
+      return;
+    }
+    const entries = csvBasePreview
+      .filter((row) => row.employeeId && row.dateTs > 0)
+      .map((row) => ({
+        employeeId: row.employeeId as Id<"employees">,
+        date: row.dateTs,
+      }));
+    if (entries.length === 0) {
+      setOrgAttendanceForCsv([]);
       return;
     }
 
-    const preview = buildAttendanceImportPreviewWhenReady(
-      importCandidates,
-      employees,
-      holidays,
-    );
+    setOrgAttendanceForCsv(undefined);
+    void getAttendanceImportConflicts({
+      organizationId: currentOrganizationId as Id<"organizations">,
+      entries,
+    })
+      .then((records) => {
+        if (conflictLookupGenerationRef.current === generation) {
+          setOrgAttendanceForCsv(records);
+        }
+      })
+      .catch((error: unknown) => {
+        if (conflictLookupGenerationRef.current === generation) {
+          setCsvParseError(
+            error instanceof Error
+              ? error.message
+              : "Could not check existing attendance.",
+          );
+        }
+      });
+  }, [csvBasePreview, currentOrganizationId, getAttendanceImportConflicts]);
 
-    if (preview === undefined) {
-      setCsvPreviewRows([]);
+  useEffect(() => {
+    if (csvBasePreview === undefined) {
       return;
     }
 
     const reconciliation = reconcileAttendanceImportPreviewState(
-      applyAttendanceImportConflicts(preview, orgAttendanceForCsv),
+      applyAttendanceImportConflicts(csvBasePreview, orgAttendanceForCsv),
       importRowDecisions,
       orgAttendanceForCsv !== undefined,
     );
@@ -349,9 +398,7 @@ export function BulkAddAttendanceDialog({
       setImportRowDecisions(reconciliation.decisions);
     }
   }, [
-    employees,
-    holidays,
-    importCandidates,
+    csvBasePreview,
     importRowDecisions,
     orgAttendanceForCsv,
   ]);
@@ -502,7 +549,9 @@ export function BulkAddAttendanceDialog({
     }
     setIsImportingCsv(true);
     try {
-      const entries = toImport.map((r) => ({
+      const importRunId = importRunIdRef.current ?? crypto.randomUUID();
+      importRunIdRef.current = importRunId;
+      const entries = toImport.map((r, index) => ({
         organizationId: currentOrganizationId as Id<"organizations">,
         employeeId: r.employeeId as Id<"employees">,
         date: r.dateTs,
@@ -512,15 +561,23 @@ export function BulkAddAttendanceDialog({
         actualOut: r.actualOut,
         status: r.status,
         remarks: r.notes || undefined,
+        importKey: `${importRunId}:${r.sourceSheet}:${r.sourceRow}:${index}`,
         overwriteAttendanceId:
           r.overwriteExisting && r.existingAttendanceId
             ? r.existingAttendanceId
             : undefined,
       }));
-      await bulkCreateMutation({ entries });
+      const batchSize = 100;
+      for (let offset = 0; offset < entries.length; offset += batchSize) {
+        await bulkCreateMutation({
+          entries: entries.slice(offset, offset + batchSize),
+          correctionReason: correctionReason.trim() || undefined,
+        });
+      }
       setIsBulkDialogOpen(false);
       setBulkMode("manual");
       invalidateAndResetImport();
+      setCorrectionReason("");
       toast({
         title: "Import complete",
         description: `Imported ${entries.length} attendance record(s).`,
@@ -691,17 +748,7 @@ export function BulkAddAttendanceDialog({
 
       // Generate entries for each day in the range
       const dates = getBulkDates();
-      const entries: Array<{
-        organizationId: string;
-        employeeId: string;
-        date: number;
-        scheduleIn: string;
-        scheduleOut: string;
-        actualIn?: string;
-        actualOut?: string;
-        overtime?: number;
-        status: "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay" | "no_work";
-      }> = [];
+      const entries: AttendanceBatchEntry[] = [];
 
       if (manualUnresolvedConflictCount > 0) {
         toast({
@@ -822,23 +869,9 @@ export function BulkAddAttendanceDialog({
                 ? calculatedUndertimeValue
                 : undefined;
 
-        const entry: {
-          organizationId: string;
-          employeeId: string;
-          date: number;
-          scheduleIn: string;
-          scheduleOut: string;
-          actualIn?: string;
-          actualOut?: string;
-          overtime?: number;
-          late?: number;
-          undertime?: number;
-          remarks?: string;
-          status: "present" | "absent" | "leave" | "leave_with_pay" | "leave_without_pay" | "no_work";
-          overwriteAttendanceId?: string;
-        } = {
-          organizationId: currentOrganizationId,
-          employeeId: bulkSelectedEmployee,
+        const entry: AttendanceBatchEntry = {
+          organizationId: currentOrganizationId as Id<"organizations">,
+          employeeId: bulkSelectedEmployee as Id<"employees">,
           date: dateInfo.timestamp,
           scheduleIn: daySchedule.in,
           scheduleOut: daySchedule.out,
@@ -879,25 +912,34 @@ export function BulkAddAttendanceDialog({
         return;
       }
 
-      await bulkCreateAttendance(entries);
+      const batchSize = 100;
+      for (let offset = 0; offset < entries.length; offset += batchSize) {
+        await bulkCreateMutation({
+          entries: entries.slice(offset, offset + batchSize),
+          correctionReason: correctionReason.trim() || undefined,
+        });
+      }
 
       setIsBulkDialogOpen(false);
       setBulkSelectedEmployee("");
       manuallyIncludedRestDaysRef.current = new Set();
       setBulkDayTimes({});
       setExcludedDates(new Set());
+      setCorrectionReason("");
       toast({
         title: "Success",
         description: `Successfully created ${entries.length} attendance record(s)`,
         variant: "success",
       });
       onSuccess?.();
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Error creating bulk attendance:", error);
       toast({
         title: "Error",
         description:
-          "Failed to create bulk attendance records. Please try again.",
+          error instanceof Error
+            ? error.message
+            : "Failed to create bulk attendance records. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -958,6 +1000,20 @@ export function BulkAddAttendanceDialog({
             </div>
           </div>
         </DialogHeader>
+        <div className="border-b border-gray-200/80 px-5 py-3 sm:px-6">
+          <Label htmlFor="bulkAttendanceCorrectionReason">
+            Payroll correction reason
+          </Label>
+          <Textarea
+            id="bulkAttendanceCorrectionReason"
+            value={correctionReason}
+            onChange={(event) => setCorrectionReason(event.target.value)}
+            placeholder="Required for owner/admin changes after payroll is finalized"
+            disabled={isSubmittingBulk || isImportingCsv}
+            rows={2}
+            className="mt-1.5 resize-none"
+          />
+        </div>
         {bulkMode === "file" ? (
           <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-4">

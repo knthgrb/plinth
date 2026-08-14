@@ -1,5 +1,10 @@
 import { ConvexError, v } from "convex/values";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { authComponent } from "./auth";
 import { requireActiveMembership, requirePayslipMembership } from "./access";
@@ -40,6 +45,10 @@ import {
 } from "@/lib/payroll-calculations";
 import { formatManilaNumericDate, getManilaDateParts } from "@/lib/manila-date";
 import {
+  isAttendancePayrollLocked,
+  recordAttendanceSystemAudit,
+} from "./attendanceIntegrity";
+import {
   getUserIdForEmployeeInOrg,
   insertInAppNotification,
 } from "./notificationHelpers";
@@ -58,6 +67,7 @@ import {
   computeSupplementalWithholdingTaxForSpecialBenefit,
   splitTrainNinetyThousandBenefit,
 } from "@/lib/ph-special-benefits";
+import { isMigratedLegacyLeaveRequestForPayroll } from "@/lib/leave/payroll-integration";
 import {
   calculateAnnualLeaveBase,
   calculateAnniversaryLeave,
@@ -75,10 +85,49 @@ import {
   isFinalSettlementReadyForPayroll,
 } from "@/utils/final-settlement";
 import {
+  assertLeaveConversionPayrollReadyForFinalize,
+  getApprovedLeaveConversionAmountsForPayroll,
+  getFinalSettlementLeaveConversionAmount,
+  isCanonicalLeaveEngineActive,
+  linkApprovedLeaveConversionsToPayrollRun,
+  linkFinalSettlementLeaveConversionsToPayrollRun,
+  syncLeaveConversionsForPayrollStatus,
+} from "./leaveConversions";
+import {
   loadEffectivePayrollRunNotes,
   replacePayrollRunNotes,
 } from "./assetsPayrollCompatibility";
 import { loadEffectiveEmployee } from "./leaveEmployeeCompatibility";
+import {
+  loadApprovedLeaveOccurrences,
+  lockApprovedLeaveOccurrencesForPayrollRun,
+} from "./leaveOccurrencePayroll";
+import {
+  removeBenefitReconciliationPayrollAllocationsForRun,
+  syncBenefitReconciliationPayrollAllocation,
+} from "./leaveBenefitPayroll";
+
+async function syncAttendanceHolidayMetadata(
+  ctx: MutationCtx,
+  actor: {
+    _id: Id<"users">;
+    role: Doc<"userOrganizations">["role"];
+  },
+  attendance: Doc<"attendance">,
+  update: Pick<Doc<"attendance">, "isHoliday"> & {
+    holidayType?: Doc<"attendance">["holidayType"];
+    updatedAt: number;
+  },
+): Promise<void> {
+  if (await isAttendancePayrollLocked(ctx, attendance)) return;
+  await ctx.db.patch(attendance._id, update);
+  await recordAttendanceSystemAudit(ctx, {
+    actor,
+    action: "payroll_sync",
+    before: attendance,
+    after: await ctx.db.get(attendance._id),
+  });
+}
 
 function getPayrollErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message?.trim()) {
@@ -1575,12 +1624,34 @@ async function buildEmployeePayrollBase(
       )
       .collect());
 
-  const approvedLeaves = await getApprovedLeaveRequestsForPayrollPeriod(
+  const canonicalLeaveEngineActive = await isCanonicalLeaveEngineActive(
+    ctx,
+    employee.organizationId,
+  );
+  const legacyApprovedLeaves = await getApprovedLeaveRequestsForPayrollPeriod(
     ctx,
     employee._id,
     cutoffStart,
     cutoffEnd,
   );
+  const approvedLeaves = canonicalLeaveEngineActive
+    ? legacyApprovedLeaves.filter(isMigratedLegacyLeaveRequestForPayroll)
+    : legacyApprovedLeaves;
+  const formatManilaLocalDate = (timestamp: number): string => {
+    const { year, monthIndex, day } = getManilaDateParts(timestamp);
+    return [
+      year,
+      String(monthIndex + 1).padStart(2, "0"),
+      String(day).padStart(2, "0"),
+    ].join("-");
+  };
+  const leaveOccurrences = canonicalLeaveEngineActive
+    ? await loadApprovedLeaveOccurrences(ctx, {
+        employeeId: employee._id,
+        startLocalDate: formatManilaLocalDate(cutoffStart),
+        endLocalDate: formatManilaLocalDate(cutoffEnd),
+      })
+    : [];
 
   const leaveTypes =
     args.leaveTypes ??
@@ -1613,6 +1684,14 @@ async function buildEmployeePayrollBase(
     holidays,
     leaveRequests: approvedLeaves,
     leaveTypes,
+    leaveOccurrences: leaveOccurrences.map((occurrence) => ({
+      leaveRequestId: String(occurrence.leaveRequestId),
+      localDate: occurrence.localDate,
+      scheduledMinutes: occurrence.scheduledMinutes,
+      leaveMinutes: occurrence.leaveMinutes,
+      payTreatment: occurrence.payTreatment,
+      isWorkday: occurrence.scheduleSnapshot.isWorkday,
+    })),
   });
 }
 
@@ -2623,18 +2702,30 @@ async function buildFinalPayAutomaticIncentives(
     ),
   );
 
-  const settings = await getEffectiveSettings(ctx, args.organizationId);
-  const maxConvertibleLeaveDays = settings?.maxConvertibleLeaveDays ?? 5;
-  const vacationBalance =
-    Number(args.employee?.leaveCredits?.vacation?.balance) || 0;
-  const sickBalance = Number(args.employee?.leaveCredits?.sick?.balance) || 0;
-  const convertibleLeaveDays = Math.min(
-    maxConvertibleLeaveDays,
-    Math.max(0, round2(vacationBalance + sickBalance)),
+  const canonicalLeaveEngineActive = await isCanonicalLeaveEngineActive(
+    ctx,
+    args.organizationId,
   );
-  const leaveConversionAmount = round2(
-    convertibleLeaveDays * round2(args.payrollBase.dailyRate || 0),
-  );
+  let leaveConversionAmount: number;
+  if (canonicalLeaveEngineActive) {
+    leaveConversionAmount = await getFinalSettlementLeaveConversionAmount(
+      ctx,
+      args.employeeId,
+    );
+  } else {
+    const settings = await getEffectiveSettings(ctx, args.organizationId);
+    const maxConvertibleLeaveDays = settings?.maxConvertibleLeaveDays ?? 5;
+    const vacationBalance =
+      Number(args.employee?.leaveCredits?.vacation?.balance) || 0;
+    const sickBalance = Number(args.employee?.leaveCredits?.sick?.balance) || 0;
+    const convertibleLeaveDays = Math.min(
+      maxConvertibleLeaveDays,
+      Math.max(0, round2(vacationBalance + sickBalance)),
+    );
+    leaveConversionAmount = round2(
+      convertibleLeaveDays * round2(args.payrollBase.dailyRate || 0),
+    );
+  }
 
   const lines: PayrollLine[] = [];
   if (thirteenthMonthAccrual > 0) {
@@ -2761,6 +2852,10 @@ async function syncFinalSettlementForGeneratedPayslip(
     payrollRunId: args.payrollRunId,
     payslipId: args.payslipId,
     updatedAt: Date.now(),
+  });
+  await linkFinalSettlementLeaveConversionsToPayrollRun(ctx, {
+    finalSettlementId: args.settlement._id,
+    payrollRunId: args.payrollRunId,
   });
 }
 
@@ -3316,6 +3411,10 @@ export const computeEmployeePayroll = query({
       basicPay: payrollBase.basicPay,
       daysWorked: payrollBase.daysWorked,
       absences: payrollBase.absences,
+      statutoryBenefitSupportedLeaveDays:
+        payrollBase.statutoryBenefitSupportedLeaveDays,
+      statutoryBenefitSupportedLeavePay:
+        payrollBase.statutoryBenefitSupportedLeavePay,
       lateHours: payrollBase.lateHours,
       undertimeHours: payrollBase.undertimeHours,
       overtimeHours: payrollBase.overtimeHours,
@@ -3697,7 +3796,7 @@ export const createPayrollRun = mutation({
             rec.isHoliday !== nextIsHoliday ||
             rec.holidayType !== nextHolidayType
           ) {
-            await ctx.db.patch(rec._id, {
+            await syncAttendanceHolidayMetadata(ctx, userRecord, rec, {
               isHoliday: nextIsHoliday,
               holidayType: nextHolidayType,
               updatedAt: now,
@@ -3705,7 +3804,7 @@ export const createPayrollRun = mutation({
           }
         } else if (rec.isHoliday || rec.holidayType) {
           // Holiday deleted or doesn't apply to this employee's province — clear
-          await ctx.db.patch(rec._id, {
+          await syncAttendanceHolidayMetadata(ctx, userRecord, rec, {
             isHoliday: false,
             holidayType: undefined,
             updatedAt: now,
@@ -3813,6 +3912,10 @@ export const createPayrollRun = mutation({
           netPay: canonical.netPay,
           daysWorked: payrollBase.daysWorked,
           absences: payrollBase.absences,
+          statutoryBenefitSupportedLeaveDays:
+            payrollBase.statutoryBenefitSupportedLeaveDays,
+          statutoryBenefitSupportedLeavePay:
+            payrollBase.statutoryBenefitSupportedLeavePay,
           lateHours: payrollBase.lateHours,
           undertimeHours: payrollBase.undertimeHours,
           overtimeHours: payrollBase.overtimeHours,
@@ -3883,6 +3986,19 @@ export const createPayrollRun = mutation({
           createdAt: now,
         }) as any,
       );
+      for (const benefit of
+        payrollBase.statutoryBenefitSupportedLeaveBreakdown ?? []) {
+        await syncBenefitReconciliationPayrollAllocation(ctx, {
+          organizationId: args.organizationId,
+          employeeId,
+          leaveRequestId: benefit.leaveRequestId as Id<"leaveRequests">,
+          payrollRunId,
+          payslipId,
+          attributedPay: benefit.attributedPay,
+          actorId: userRecord._id,
+          now,
+        });
+      }
       if (finalSettlement) {
         await syncFinalSettlementForGeneratedPayslip(ctx, {
           settlement: finalSettlement,
@@ -4175,6 +4291,12 @@ export const updatePayrollRun = mutation({
             })
           : new Map<string, any>();
 
+      await removeBenefitReconciliationPayrollAllocationsForRun(
+        ctx,
+        args.payrollRunId,
+        userRecord._id,
+        Date.now(),
+      );
       for (const payslip of existingPayslips) {
         await ctx.db.delete(payslip._id);
       }
@@ -4241,14 +4363,14 @@ export const updatePayrollRun = mutation({
               rec.isHoliday !== nextIsHoliday ||
               rec.holidayType !== nextHolidayType
             ) {
-              await ctx.db.patch(rec._id, {
+              await syncAttendanceHolidayMetadata(ctx, userRecord, rec, {
                 isHoliday: nextIsHoliday,
                 holidayType: nextHolidayType,
                 updatedAt: nowUpdate,
               });
             }
           } else if (rec.isHoliday || rec.holidayType) {
-            await ctx.db.patch(rec._id, {
+            await syncAttendanceHolidayMetadata(ctx, userRecord, rec, {
               isHoliday: false,
               holidayType: undefined,
               updatedAt: nowUpdate,
@@ -4382,6 +4504,10 @@ export const updatePayrollRun = mutation({
               netPay: generatedPayslip.netPay,
               daysWorked: payrollBase.daysWorked,
               absences: payrollBase.absences,
+              statutoryBenefitSupportedLeaveDays:
+                payrollBase.statutoryBenefitSupportedLeaveDays,
+              statutoryBenefitSupportedLeavePay:
+                payrollBase.statutoryBenefitSupportedLeavePay,
               lateHours: payrollBase.lateHours,
               undertimeHours: payrollBase.undertimeHours,
               overtimeHours: payrollBase.overtimeHours,
@@ -4422,6 +4548,19 @@ export const updatePayrollRun = mutation({
           .catch((error: unknown) => {
             throwPayrollRunUpdateError(error);
           });
+        for (const benefit of
+          payrollBase.statutoryBenefitSupportedLeaveBreakdown ?? []) {
+          await syncBenefitReconciliationPayrollAllocation(ctx, {
+            organizationId: payrollRun.organizationId,
+            employeeId,
+            leaveRequestId: benefit.leaveRequestId as Id<"leaveRequests">,
+            payrollRunId: args.payrollRunId,
+            payslipId,
+            attributedPay: benefit.attributedPay,
+            actorId: userRecord._id,
+            now: Date.now(),
+          });
+        }
         if (finalSettlement) {
           await syncFinalSettlementForGeneratedPayslip(ctx, {
             settlement: finalSettlement,
@@ -4730,6 +4869,15 @@ export const updatePayrollRunStatus = mutation({
     if (args.status === "finalized" && payrollRun.status === "draft") {
       await assertDraftDependenciesFreshForFinalize(ctx, payrollRun);
       assertDraftOverrideReviewCompleteForFinalize(payrollRun);
+      await assertLeaveConversionPayrollReadyForFinalize(
+        ctx,
+        args.payrollRunId,
+      );
+      await lockApprovedLeaveOccurrencesForPayrollRun(
+        ctx,
+        args.payrollRunId,
+        Date.now(),
+      );
     }
 
     if (args.status === "finalized" || args.status === "paid") {
@@ -4754,6 +4902,15 @@ export const updatePayrollRunStatus = mutation({
       updatedAt: Date.now(),
     });
 
+    if (args.status === "cancelled") {
+      await removeBenefitReconciliationPayrollAllocationsForRun(
+        ctx,
+        args.payrollRunId,
+        userRecord._id,
+        Date.now(),
+      );
+    }
+
     if (args.status !== "cancelled") {
       await persistPayrollRunSummarySnapshot(ctx, args.payrollRunId);
     }
@@ -4767,6 +4924,7 @@ export const updatePayrollRunStatus = mutation({
         args.status,
         userRecord._id,
       );
+      await syncLeaveConversionsForPayrollStatus(ctx, updatedRun, args.status);
     }
 
     if (args.status === "finalized" && updatedRun) {
@@ -4870,6 +5028,12 @@ export const deletePayrollRun = mutation({
 
     // Delete all associated accounting cost items (Payroll, SSS, Pag-IBIG, PhilHealth, Tax) created when this run was finalized
     await deleteExpenseItemsFromPayroll(ctx, payrollRun);
+    await removeBenefitReconciliationPayrollAllocationsForRun(
+      ctx,
+      args.payrollRunId,
+      userRecord._id,
+      Date.now(),
+    );
 
     // Delete payslips
     const payslips = await (ctx.db.query("payslips") as any)
@@ -4882,6 +5046,7 @@ export const deletePayrollRun = mutation({
     }
 
     // Delete payroll run
+    await syncLeaveConversionsForPayrollStatus(ctx, payrollRun, "cancelled");
     await replacePayrollRunNotes(ctx, payrollRun, [], Date.now());
     await ctx.db.delete(args.payrollRunId);
     return { success: true };
@@ -4925,6 +5090,12 @@ export const deletePayrollRuns = mutation({
 
       // Delete associated accounting cost items
       await deleteExpenseItemsFromPayroll(ctx, payrollRun);
+      await removeBenefitReconciliationPayrollAllocationsForRun(
+        ctx,
+        payrollRun._id,
+        userRecord._id,
+        Date.now(),
+      );
 
       // Delete payslips
       const payslips = await (ctx.db.query("payslips") as any)
@@ -4937,6 +5108,7 @@ export const deletePayrollRuns = mutation({
       }
 
       // Delete payroll run
+      await syncLeaveConversionsForPayrollStatus(ctx, payrollRun, "cancelled");
       await replacePayrollRunNotes(ctx, payrollRun, [], Date.now());
       await ctx.db.delete(payrollRun._id);
       deletedCount += 1;
@@ -5762,6 +5934,14 @@ async function computeLeaveConversionAmountsInternal(
     employeeIds: any[];
   },
 ) {
+  if (await isCanonicalLeaveEngineActive(ctx, args.organizationId)) {
+    return await getApprovedLeaveConversionAmountsForPayroll(ctx, {
+      organizationId: args.organizationId,
+      employeeIds: args.employeeIds,
+      includeFinalSettlement: false,
+      year: args.year,
+    });
+  }
   const settings = await getEffectiveSettings(ctx, args.organizationId);
   const { payrollSettings } = await getEffectivePayrollSettings(
     ctx,
@@ -5791,7 +5971,9 @@ async function computeLeaveConversionAmountsInternal(
   const currentYear = new Date().getFullYear();
   const rowsMap = new Map(
     balanceRows
-      .filter((row: Doc<"employeeLeaveBalances">) => row.leaveTypeKey === "general")
+      .filter(
+        (row: Doc<"employeeLeaveBalances">) => row.leaveTypeKey === "general",
+      )
       .map((row: Doc<"employeeLeaveBalances">) => [
         row.employeeId,
         { annualSilOverride: row.annualSilOverride, availed: row.used },
@@ -6022,6 +6204,14 @@ export const createLeaveConversionRun = mutation({
     });
 
     await persistPayrollRunSummarySnapshot(ctx, payrollRunId);
+
+    if (await isCanonicalLeaveEngineActive(ctx, args.organizationId)) {
+      await linkApprovedLeaveConversionsToPayrollRun(ctx, {
+        organizationId: args.organizationId,
+        payrollRunId,
+        employeeIds,
+      });
+    }
 
     return payrollRunId;
   },

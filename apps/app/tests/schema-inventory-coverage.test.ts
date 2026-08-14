@@ -6,6 +6,7 @@ import {
   resolveSchemaFieldPolicy,
   resolveSchemaIndexPolicy,
 } from "../convex/fullSchemaInventory";
+import { LEAVE_FIELD_MANIFEST } from "../convex/schemaFieldManifest";
 import reviewedSchemaInventory from "./fixtures/schema-inventory.reviewed.json";
 import {
   parseSchemaSourceInventory,
@@ -53,7 +54,7 @@ describe("schema source inventory", () => {
 
   it("finds all current Convex tables", () => {
     const inventory = parseSchemaSourceInventory(schemaSource);
-    expect(inventory.tables).toHaveLength(78);
+    expect(inventory.tables).toHaveLength(97);
     expect(inventory.tables.map(({ name }) => name)).toContain("assets");
     expect(inventory.tables.map(({ name }) => name)).toContain(
       "payslipCredentials",
@@ -71,11 +72,64 @@ describe("schema source inventory", () => {
         "memoAudienceMembers",
         "conversationMembers",
         "messageReceipts",
+        "messageReactions",
         "userPinnedConversations",
+        "userConversationPreferences",
         "documentAccessGrants",
         "storageObjectLinks",
       ]),
     );
+  });
+
+  it("classifies canonical leave rows and maps legacy leave fields", () => {
+    const canonicalLeaveTables = [
+      "leavePolicies",
+      "leavePolicyVersions",
+      "leaveLedgerEntries",
+      "leaveRequestOccurrences",
+      "leaveRequestEvents",
+      "employeeLeaveQualifications",
+      "leaveBenefitEvents",
+      "leaveBenefitPayrollReconciliations",
+      "leaveBenefitPayrollAllocations",
+      "leaveSensitiveAccessGrants",
+      "leaveAdministrativeEvents",
+      "leaveConversionRequests",
+    ] as const;
+
+    for (const table of canonicalLeaveTables) {
+      expect(FULL_SCHEMA_TABLE_POLICIES[table]).toMatchObject({
+        domain: "leave",
+        disposition: "retain",
+        defaultFieldClassification: "canonical_row",
+      });
+    }
+
+    expect(LEAVE_FIELD_MANIFEST).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          table: "employees",
+          field: "leaveCredits",
+          target: "employeeLeaveBalances",
+        }),
+        expect.objectContaining({
+          table: "leaveTypes",
+          field: "name",
+          target: "leavePolicies.name",
+        }),
+        expect.objectContaining({
+          table: "leaveRequests",
+          field: "numberOfDays",
+          target: "leaveRequests.chargeableDuration",
+        }),
+      ]),
+    );
+
+    for (const entry of LEAVE_FIELD_MANIFEST) {
+      expect(resolveSchemaFieldPolicy(entry.table, entry.field)).toEqual(
+        entry,
+      );
+    }
   });
 
   it("matches the reviewed schema-item inventory exactly", () => {

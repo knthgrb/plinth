@@ -1,25 +1,24 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "@/convex/_generated/api";
-import { MainLayout } from "@/components/layout/main-layout";
-import { useOrganization } from "@/hooks/organization-context";
-import { useToast } from "@/components/ui/use-toast";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { useMemo, useState } from "react";
+import { useQuery } from "convex/react";
+import { format } from "date-fns";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  CalendarCheck,
+  CalendarClock,
+  CircleAlert,
+  ClipboardCheck,
+  History,
+  Plus,
+  Search,
+  ShieldCheck,
+} from "lucide-react";
+import { api } from "@/convex/_generated/api";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { MainLayout } from "@/components/layout/main-layout";
 import {
   Select,
   SelectContent,
@@ -28,1518 +27,375 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useOrganization } from "@/hooks/organization-context";
+import type {
+  EvaluationRecord,
+  EvaluationWorkspaceEmployee,
+} from "@/lib/evaluations/types";
 import {
-  Columns,
-  Calendar,
-  X,
-  MessageSquare,
-  Pencil,
-  Search,
-  Plus,
-  ChevronDown,
-} from "lucide-react";
-import { format, startOfMonth, endOfMonth } from "date-fns";
+  filterEvaluationEmployees,
+  paginateEvaluationEmployees,
+  type EvaluationEmployeeListItem,
+  type EvaluationTimingFilter,
+} from "@/lib/evaluations/view";
+import { getEvaluationTiming, type EvaluationTiming } from "@/lib/evaluations/workflow";
 import {
-  createEvaluation,
-  lockEvaluation,
-  updateEvaluation,
-} from "@/actions/evaluations";
-import { updateEvaluationColumns } from "@/actions/settings";
-import { cn } from "@/utils/utils";
-import { EvaluationColumnManagementModal } from "./evaluation-column-management-modal";
+  EvaluationEditorDialog,
+  type EvaluationEditorMode,
+} from "./evaluation-editor-dialog";
+import { EvaluationHistoryDialog } from "./evaluation-history-dialog";
 
-type EvaluationColumn = {
-  id: string;
-  label: string;
-  type: "date" | "number" | "text" | "rating";
-  hidden?: boolean;
-  hasRatingColumn?: boolean;
-  hasNotesColumn?: boolean;
+type EmployeeViewRow = EvaluationEmployeeListItem & {
+  source: EvaluationWorkspaceEmployee;
 };
+
+type EditorState = {
+  open: boolean;
+  mode: EvaluationEditorMode;
+  employeeId?: string;
+  evaluation?: EvaluationRecord;
+};
+
+const PAGE_SIZE = 20;
+
+const timingLabels: Record<EvaluationTiming, string> = {
+  scheduled: "Scheduled",
+  due_soon: "Due soon",
+  overdue: "Overdue",
+  completed: "Completed",
+  cancelled: "Cancelled",
+};
+
+function timingBadgeClass(timing: EvaluationTiming): string {
+  if (timing === "overdue") return "border-red-200 bg-red-50 text-red-700";
+  if (timing === "due_soon") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (timing === "completed") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (timing === "cancelled") return "border-gray-200 bg-gray-100 text-gray-600";
+  return "border-indigo-200 bg-indigo-50 text-indigo-700";
+}
+
+function cadenceLabel(row: EvaluationWorkspaceEmployee): string {
+  const activeSchedule = row.schedules.find((schedule) => schedule.isActive);
+  const schedule = activeSchedule ?? row.schedules[0];
+  if (!schedule) return "Ad hoc";
+  if (!schedule.isActive) return "Paused";
+  if (schedule.cadenceKind === "custom") {
+    return `Every ${schedule.intervalMonths} month${schedule.intervalMonths === 1 ? "" : "s"}`;
+  }
+  if (schedule.cadenceKind === "quarterly") return "Quarterly";
+  if (schedule.cadenceKind === "semiannual") return "Every 6 months";
+  return "Annual";
+}
 
 export function EvaluationsContent() {
   const { currentOrganizationId } = useOrganization();
-  const { toast } = useToast();
-
-  const user = useQuery((api as any).organizations.getCurrentUser, {
+  const user = useQuery(api.organizations.getCurrentUser, {
     organizationId: currentOrganizationId || undefined,
   });
-
-  const employees = useQuery(
-    (api as any).employees.getEmployees,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
-  );
-
-  const evaluations = useQuery(
-    (api as any).evaluations.getEvaluations,
-    currentOrganizationId
-      ? {
-          organizationId: currentOrganizationId,
-        }
+  const canManageEvaluations =
+    user?.role === "owner" || user?.role === "admin" || user?.role === "hr";
+  const workspace = useQuery(
+    api.evaluations.getEvaluationWorkspace,
+    currentOrganizationId && canManageEvaluations
+      ? { organizationId: currentOrganizationId }
       : "skip",
   );
 
-  const evaluationTemplates = useQuery(
-    (api as any).evaluations.getEvaluationTemplates,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
-  );
-
-  const organizationMembers = useQuery(
-    (api as any).organizations.getOrganizationMembers,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
-  );
-
-  const settings = useQuery(
-    (api as any).settings.getSettings,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
-  );
-
-  // Load columns from settings
-  const [evaluationColumns, setEvaluationColumns] = useState<
-    EvaluationColumn[]
-  >([]);
-
-  useEffect(() => {
-    if (settings?.evaluationColumns) {
-      // Filter out any rating column entries (those with -rating suffix)
-      // Rating columns are now rendered dynamically based on hasRatingColumn flag
-      const filteredColumns = settings.evaluationColumns.filter(
-        (col: EvaluationColumn) => !col.id.endsWith("-rating"),
-      );
-      setEvaluationColumns(filteredColumns);
-    }
-  }, [settings]);
-
-  const [isManageColumnsModalOpen, setIsManageColumnsModalOpen] =
-    useState(false);
-
-  const [upcomingBannerDismissed, setUpcomingBannerDismissed] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return (
-      sessionStorage.getItem("evaluations-upcoming-banner-dismissed") === "1"
-    );
+  const [search, setSearch] = useState("");
+  const [referenceNow] = useState(Date.now);
+  const [department, setDepartment] = useState("all");
+  const [timing, setTiming] = useState<EvaluationTimingFilter>("all");
+  const [page, setPage] = useState(1);
+  const [historyEmployee, setHistoryEmployee] =
+    useState<EvaluationWorkspaceEmployee | null>(null);
+  const [editor, setEditor] = useState<EditorState>({
+    open: false,
+    mode: "schedule",
   });
 
-  const [isViewModalOpen, setIsViewModalOpen] = useState(false);
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [employeeSearch, setEmployeeSearch] = useState("");
-  const [departmentFilter, setDepartmentFilter] = useState<string>("all");
-  const [departmentPopoverOpen, setDepartmentPopoverOpen] = useState(false);
-  const [editingCell, setEditingCell] = useState<{
-    employeeId: string;
-    columnId: string;
-    columnLabel: string;
-    columnType: string;
-    existingEvaluation?: any;
-    isRatingColumn?: boolean; // True if clicking on a rating column
-    isNotesColumn?: boolean; // True if clicking on a notes column
-  } | null>(null);
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>("");
-  const [evaluationDate, setEvaluationDate] = useState<string>("");
-  const [label, setLabel] = useState("Initial evaluation");
-  const [rating, setRating] = useState<string>("");
-  const [textValue, setTextValue] = useState<string>("");
-  const [attachmentUrl, setAttachmentUrl] = useState("");
-  const [notes, setNotes] = useState("");
-  const [templateId, setTemplateId] = useState("none");
-  const [reviewCycle, setReviewCycle] = useState("");
-  const [selfReviewNotes, setSelfReviewNotes] = useState("");
-  const [managerReviewNotes, setManagerReviewNotes] = useState("");
-  const [assignedReviewerIds, setAssignedReviewerIds] = useState<string[]>([]);
-  const [isSaving, setIsSaving] = useState(false);
-  const [initializedFromUrl, setInitializedFromUrl] = useState(false);
-
-  type UpcomingItem = {
-    employeeId: string;
-    employeeName: string;
-    date: number;
-    label: string;
-  };
-  const upcomingEvaluations = useMemo((): UpcomingItem[] => {
-    const now = new Date();
-    const monthStart = startOfMonth(now).getTime();
-    const monthEnd = endOfMonth(now).getTime();
-    const today = now.getTime();
-    return (evaluations || [])
-      .filter(
-        (e: any) =>
-          e.evaluationDate > today &&
-          e.evaluationDate >= monthStart &&
-          e.evaluationDate <= monthEnd,
-      )
-      .map((e: any) => {
-        const emp = employees?.find((em: any) => em._id === e.employeeId);
-        return {
-          employeeId: e.employeeId,
-          employeeName: emp
-            ? `${emp.personalInfo.firstName} ${emp.personalInfo.lastName}`
-            : "Unknown",
-          date: e.evaluationDate,
-          label: e.label,
-        };
-      })
-      .sort((a: UpcomingItem, b: UpcomingItem) => a.date - b.date);
-  }, [evaluations, employees]);
-
-  const evaluationDepartments = useMemo(() => {
-    const depts = settings?.departments || [];
-    return depts.length > 0 && typeof depts[0] === "string"
-      ? (depts as string[]).map((name) => ({ name, color: "#3B82F6" }))
-      : (depts as { name: string; color: string }[]);
-  }, [settings]);
-
-  const displayedEmployees = useMemo(() => {
-    const list = employees || [];
-    const q = employeeSearch.trim().toLowerCase();
-    const bySearch = q
-      ? list.filter(
-          (emp: any) =>
-            `${emp.personalInfo?.firstName ?? ""} ${emp.personalInfo?.lastName ?? ""}`
-              .toLowerCase()
-              .includes(q) ||
-            emp.personalInfo?.email?.toLowerCase().includes(q),
-        )
-      : list;
-    if (departmentFilter === "all") return bySearch;
-    return bySearch.filter(
-      (emp: any) => emp.employment?.department === departmentFilter,
-    );
-  }, [employees, employeeSearch, departmentFilter]);
-
-  const reviewerOptions = useMemo(() => {
-    const elevatedRoles = new Set(["owner", "admin", "hr", "manager"]);
-    return (organizationMembers || [])
-      .filter((member: any) => elevatedRoles.has(member.role))
-      .sort((a: any, b: any) =>
-        (a.name || a.email || "").localeCompare(b.name || b.email || ""),
-      );
-  }, [organizationMembers]);
-  const [page, setPage] = useState(1);
-  const pageSize = 20;
-  const totalEmployees = displayedEmployees.length;
-  const totalPages = Math.max(1, Math.ceil(totalEmployees / pageSize));
-  const startIndex = (page - 1) * pageSize;
-  const endIndex = Math.min(startIndex + pageSize, totalEmployees);
-  const paginatedEmployees = useMemo(
-    () => displayedEmployees.slice(startIndex, endIndex),
-    [displayedEmployees, startIndex, endIndex],
+  const employeeRows = useMemo<EmployeeViewRow[]>(
+    () =>
+      (workspace?.employees ?? []).map((row) => ({
+        id: row.employee._id,
+        name: `${row.employee.firstName} ${row.employee.lastName}`,
+        employeeCode: row.employee.employeeCode,
+        position: row.employee.position,
+        department: row.employee.department,
+        nextEvaluation: row.nextEvaluation
+          ? {
+              status: row.nextEvaluation.status,
+              scheduledFor: row.nextEvaluation.scheduledFor,
+            }
+          : null,
+        hasCompleted: row.lastCompleted !== undefined,
+        source: row,
+      })),
+    [workspace],
+  );
+  const departments = useMemo(
+    () =>
+      Array.from(new Set(employeeRows.map((row) => row.department)))
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right)),
+    [employeeRows],
+  );
+  const filteredRows = useMemo(
+    () =>
+      filterEvaluationEmployees(employeeRows, {
+        search,
+        department,
+        timing,
+        now: referenceNow,
+      }),
+    [department, employeeRows, referenceNow, search, timing],
+  );
+  const pagination = useMemo(
+    () => paginateEvaluationEmployees(filteredRows, page, PAGE_SIZE),
+    [filteredRows, page],
   );
 
-  const isOwnerOrAdminOrHr =
-    user?.role === "owner" ||
-    user?.role === "admin" ||
-    user?.role === "hr" ||
-    user?.role === "manager" ||
-    user?.role === "accounting";
-
-  const evaluationsDataLoading =
-    user === undefined ||
-    settings === undefined ||
-    employees === undefined ||
-    evaluations === undefined ||
-    evaluationTemplates === undefined;
-  useEffect(() => {
-    if (initializedFromUrl) return;
-    if (typeof window === "undefined") return;
-    if (!employees || !evaluations || evaluationColumns.length === 0) return;
-
-    const params = new URLSearchParams(window.location.search);
-    const employeeId = params.get("employeeId");
-    const labelParam = params.get("label");
-    const evalDateParam = params.get("evaluationDate");
-
-    if (!employeeId || !labelParam) return;
-
-    const column = evaluationColumns.find((c) => c.label === labelParam);
-    if (!column) return;
-
-    const existing = evaluations.find(
-      (e: any) =>
-        e.employeeId === employeeId &&
-        e.label === labelParam &&
-        (!evalDateParam || String(e.evaluationDate) === evalDateParam),
-    );
-
-    handleCellClick(employeeId, column, existing);
-    setInitializedFromUrl(true);
-  }, [employees, evaluations, evaluationColumns, initializedFromUrl]);
-
-  // When a modal that was opened from URL params is closed, clean the URL
-  // so that refreshing the page does not auto-open the modal again.
-  useEffect(() => {
-    if (!initializedFromUrl) return;
-    if (isViewModalOpen || isEditDialogOpen) return;
-    if (typeof window === "undefined") return;
-
-    const params = new URLSearchParams(window.location.search);
-    params.delete("employeeId");
-    params.delete("label");
-    params.delete("evaluationDate");
-
-    const basePath = window.location.pathname;
-    const newSearch = params.toString();
-    const newUrl = newSearch ? `${basePath}?${newSearch}` : basePath;
-
-    window.history.replaceState(null, "", newUrl);
-    setInitializedFromUrl(false);
-  }, [isViewModalOpen, isEditDialogOpen, initializedFromUrl]);
+  const openSchedule = (employeeId?: string) => {
+    setHistoryEmployee(null);
+    setEditor({ open: true, mode: "schedule", employeeId });
+  };
+  const openExisting = (
+    mode: "reschedule" | "complete",
+    evaluation: EvaluationRecord,
+  ) => {
+    setHistoryEmployee(null);
+    setEditor({
+      open: true,
+      mode,
+      employeeId: evaluation.employeeId,
+      evaluation,
+    });
+  };
 
   if (!currentOrganizationId) {
+    return <MainLayout><div className="p-8">No organization selected.</div></MainLayout>;
+  }
+
+  if (user !== undefined && !canManageEvaluations) {
     return (
       <MainLayout>
-        <div className="p-8">No organization selected.</div>
+        <div className="mx-auto max-w-xl p-8 text-center">
+          <ShieldCheck className="mx-auto h-10 w-10 text-[rgb(130,130,130)]" />
+          <h1 className="mt-4 text-xl font-semibold">Private evaluation records</h1>
+          <p className="mt-2 text-sm text-[rgb(110,110,110)]">
+            Evaluations are available only to Owner, Admin, and HR roles.
+          </p>
+        </div>
       </MainLayout>
     );
   }
 
-  if (user !== undefined && !isOwnerOrAdminOrHr) {
-    return (
-      <MainLayout>
-        <div className="p-8">You are not authorized to view this page.</div>
-      </MainLayout>
-    );
-  }
-
-  const handleSaveColumns = async (columns: EvaluationColumn[]) => {
-    if (!currentOrganizationId) return;
-    try {
-      // Filter out any rating column entries before saving
-      // Rating columns are rendered dynamically, not stored as separate entries
-      const columnsToSave = columns.filter(
-        (col) => !col.id.endsWith("-rating"),
-      );
-      await updateEvaluationColumns({
-        organizationId: currentOrganizationId,
-        columns: columnsToSave,
-      });
-      setEvaluationColumns(columnsToSave);
-      toast({
-        title: "Columns saved",
-        description: "Evaluation columns have been updated.",
-      });
-    } catch (error: any) {
-      console.error("Error saving columns", error);
-      toast({
-        title: "Error",
-        description: error.message || "Failed to save columns",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleCellClick = (
-    employeeId: string,
-    column: EvaluationColumn,
-    existingEvaluation?: any,
-  ) => {
-    setEditingCell({
-      employeeId,
-      columnId: column.id,
-      columnLabel: column.label,
-      columnType: column.type,
-      existingEvaluation,
-      isRatingColumn: false,
-      isNotesColumn: false,
-    });
-    setSelectedEmployeeId(employeeId);
-    if (existingEvaluation) {
-      setEvaluationDate(
-        format(new Date(existingEvaluation.evaluationDate), "yyyy-MM-dd"),
-      );
-      setLabel(existingEvaluation.label);
-      setRating(
-        existingEvaluation.rating != null
-          ? String(existingEvaluation.rating)
-          : "",
-      );
-      setTextValue(existingEvaluation.notes || "");
-      setAttachmentUrl(existingEvaluation.attachmentUrl || "");
-      setNotes(existingEvaluation.notes || "");
-      setTemplateId(existingEvaluation.templateId || "none");
-      setReviewCycle(existingEvaluation.reviewCycle || "");
-      setSelfReviewNotes(existingEvaluation.selfReview?.notes || "");
-      setManagerReviewNotes(existingEvaluation.managerReview?.notes || "");
-      setAssignedReviewerIds(existingEvaluation.assignedReviewerIds || []);
-    } else {
-      setEvaluationDate("");
-      setLabel(column.label);
-      setRating("");
-      setTextValue("");
-      setAttachmentUrl("");
-      setNotes("");
-      setTemplateId("none");
-      setReviewCycle("");
-      setSelfReviewNotes("");
-      setManagerReviewNotes("");
-      setAssignedReviewerIds([]);
-    }
-    setIsViewModalOpen(true);
-  };
-
-  const handleOpenEditFromView = () => {
-    setIsViewModalOpen(false);
-    setIsEditDialogOpen(true);
-  };
-
-  const handleSaveEvaluation = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedEmployeeId || !editingCell) return;
-    if (editingCell.existingEvaluation?.lockedAt) return;
-
-    // Date is required for date columns, optional for others
-    const needsDate = editingCell.columnType === "date";
-    if (needsDate && !evaluationDate) return;
-
-    // For rating/number columns, rating is required
-    const needsRating =
-      editingCell.columnType === "rating" ||
-      editingCell.columnType === "number";
-    if (needsRating && !rating) return;
-
-    // For text columns, text is required
-    const needsText = editingCell.columnType === "text";
-    if (needsText && !textValue) return;
-
-    try {
-      setIsSaving(true);
-      // Determine if we should save rating
-      const shouldSaveRating =
-        editingCell.columnType === "rating" ||
-        editingCell.columnType === "number" ||
-        editingCell.isRatingColumn ||
-        (editingCell.columnType === "date" &&
-          evaluationColumns.find((c) => c.id === editingCell.columnId)
-            ?.hasRatingColumn);
-
-      // Determine if we should save notes/attachments
-      const shouldSaveNotes =
-        editingCell.columnType === "text" ||
-        editingCell.isNotesColumn ||
-        (editingCell.columnType === "date" &&
-          evaluationColumns.find((c) => c.id === editingCell.columnId)
-            ?.hasNotesColumn);
-
-      // Use evaluationDate if provided, otherwise use current date or existing date
-      const evalDate = evaluationDate
-        ? new Date(evaluationDate).getTime()
-        : editingCell.existingEvaluation?.evaluationDate || Date.now();
-      const selectedTemplateId = templateId !== "none" ? templateId : undefined;
-      const trimmedReviewCycle = reviewCycle.trim() || undefined;
-      const trimmedSelfReview = selfReviewNotes.trim();
-      const trimmedManagerReview = managerReviewNotes.trim();
-      const workflowPayload = {
-        templateId: selectedTemplateId,
-        reviewCycle: trimmedReviewCycle,
-        selfReview: trimmedSelfReview
-          ? {
-              notes: trimmedSelfReview,
-              submittedAt:
-                editingCell.existingEvaluation?.selfReview?.submittedAt ||
-                Date.now(),
-            }
-          : undefined,
-        managerReview: trimmedManagerReview
-          ? {
-              notes: trimmedManagerReview,
-              submittedAt:
-                editingCell.existingEvaluation?.managerReview?.submittedAt ||
-                Date.now(),
-            }
-          : undefined,
-        assignedReviewerIds:
-          assignedReviewerIds.length > 0 ? assignedReviewerIds : undefined,
-      };
-
-      if (editingCell.existingEvaluation) {
-        // Update existing
-        await updateEvaluation({
-          evaluationId: editingCell.existingEvaluation._id,
-          ...workflowPayload,
-          evaluationDate: evalDate,
-          label: editingCell.columnLabel,
-          rating: shouldSaveRating && rating ? Number(rating) : undefined,
-          attachmentUrl:
-            shouldSaveNotes && attachmentUrl ? attachmentUrl : undefined,
-          notes: shouldSaveNotes && notes ? notes : undefined,
-        });
-        toast({
-          title: "Evaluation updated",
-          description: "Employee evaluation has been updated.",
-        });
-      } else {
-        // Create new
-        await createEvaluation({
-          organizationId: currentOrganizationId,
-          employeeId: selectedEmployeeId,
-          ...workflowPayload,
-          evaluationDate: evalDate,
-          label: editingCell.columnLabel,
-          rating: shouldSaveRating && rating ? Number(rating) : undefined,
-          attachmentUrl:
-            shouldSaveNotes && attachmentUrl ? attachmentUrl : undefined,
-          notes: shouldSaveNotes && notes ? notes : undefined,
-        });
-        toast({
-          title: "Evaluation added",
-          description: "Employee evaluation has been recorded.",
-        });
-      }
-      setIsEditDialogOpen(false);
-      setEditingCell(null);
-      setSelectedEmployeeId("");
-      setEvaluationDate("");
-      setLabel("");
-      setRating("");
-      setTextValue("");
-      setAttachmentUrl("");
-      setNotes("");
-      setTemplateId("none");
-      setReviewCycle("");
-      setSelfReviewNotes("");
-      setManagerReviewNotes("");
-      setAssignedReviewerIds([]);
-    } catch (error: any) {
-      console.error("Error saving evaluation", error);
-      toast({
-        title: "Error",
-        description: error.message || "Failed to save evaluation",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // Filter visible columns
-  const visibleColumns = evaluationColumns.filter((col) => !col.hidden);
-
-  // Default columns that are always shown (unless hidden)
-  const defaultColumns = [
-    { id: "employee", label: "Employee", type: "text" as const },
-    { id: "position", label: "Position", type: "text" as const },
-    { id: "hiredDate", label: "Hired Date", type: "date" as const },
-  ].filter((dc) => {
-    const col = evaluationColumns.find((c) => c.id === dc.id);
-    return !col?.hidden;
-  });
-
-  const evaluationTableColCount =
-    defaultColumns.length +
-    visibleColumns.filter(
-      (col) =>
-        !["employee", "employeeId", "position", "hiredDate"].includes(col.id),
-    ).length;
-
-  const getCellValue = (
-    employeeId: string,
-    column: EvaluationColumn,
-    isRatingColumn: boolean = false,
-  ) => {
-    const ev = evaluations?.find(
-      (e: any) => e.employeeId === employeeId && e.label === column.label,
-    );
-    if (!ev) return null;
-
-    // If this is a rating column, always return the rating value (number)
-    if (isRatingColumn) {
-      return ev.rating != null ? ev.rating : null;
-    }
-
-    // Otherwise, return the appropriate value based on column type
-    if (column.type === "date") {
-      return ev.evaluationDate
-        ? format(new Date(ev.evaluationDate), "MMM dd, yyyy")
-        : null;
-    }
-
-    if (column.type === "number") {
-      return ev.rating != null ? ev.rating : null;
-    }
-
-    if (column.type === "text") {
-      return ev.notes || null;
-    }
-
-    if (column.type === "rating") {
-      return ev.rating != null ? ev.rating : null;
-    }
-
-    return null;
-  };
-
-  /** Combined display for one evaluation type (one cell = date + rating + note indicator) */
-  const getCellDisplay = (
-    employeeId: string,
-    column: EvaluationColumn,
-  ): { primary: string; rating?: number | null; hasNotes: boolean } | null => {
-    const ev = evaluations?.find(
-      (e: any) => e.employeeId === employeeId && e.label === column.label,
-    );
-    if (!ev) return null;
-    const hasNotes = !!(ev.notes?.trim() || ev.attachmentUrl);
-    const rating = ev.rating != null ? Number(ev.rating) : null;
-    if (column.type === "date") {
-      const dateStr = ev.evaluationDate
-        ? format(new Date(ev.evaluationDate), "MMM d, yyyy")
-        : "";
-      return { primary: dateStr, rating, hasNotes };
-    }
-    if (column.type === "number") {
-      return {
-        primary: rating != null ? String(rating) : "",
-        rating,
-        hasNotes,
-      };
-    }
-    if (column.type === "text") {
-      return { primary: ev.notes || "", hasNotes };
-    }
-    return { primary: rating != null ? String(rating) : "", rating, hasNotes };
-  };
-
-  const handleDismissUpcomingBanner = () => {
-    setUpcomingBannerDismissed(true);
-    if (typeof window !== "undefined") {
-      sessionStorage.setItem("evaluations-upcoming-banner-dismissed", "1");
-    }
-  };
-
-  const handleToggleReviewer = (reviewerId: string, checked: boolean) => {
-    setAssignedReviewerIds((current) =>
-      checked
-        ? Array.from(new Set([...current, reviewerId]))
-        : current.filter((id) => id !== reviewerId),
-    );
-  };
-
-  const handleLockEvaluation = async () => {
-    const evaluationId = editingCell?.existingEvaluation?._id;
-    if (!evaluationId) return;
-
-    try {
-      setIsSaving(true);
-      await lockEvaluation(evaluationId);
-      toast({
-        title: "Evaluation locked",
-        description: "This evaluation can no longer be edited.",
-      });
-      setIsViewModalOpen(false);
-      setEditingCell(null);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to lock evaluation",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  const isLoading = user === undefined || workspace === undefined;
 
   return (
     <MainLayout>
-      <div className="p-3 sm:p-4 md:p-6 lg:p-8 space-y-4 sm:space-y-6">
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
-          Evaluations
-        </h1>
-
-        {evaluations !== undefined &&
-        upcomingEvaluations.length > 0 &&
-        !upcomingBannerDismissed ? (
-          <div
-            className="flex flex-wrap items-center gap-2 sm:gap-3 rounded-xl border border-[rgb(230,230,230)] bg-[rgb(250,250,250)] px-4 py-3 shadow-sm"
-            role="region"
-            aria-label="Upcoming evaluation"
-          >
-            <div className="flex items-center gap-2 shrink-0">
-              <Calendar className="h-4 w-4 text-[rgb(120,120,120)] shrink-0" />
-              <span className="font-semibold text-sm text-[rgb(64,64,64)]">
-                Upcoming evaluation
-              </span>
+      <div className="space-y-5 p-3 sm:p-4 md:p-6 lg:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl">Evaluations</h1>
+              <Badge variant="outline" className="border-[#DDD8FF] bg-[#F7F5FF] text-[#584EC7]">
+                <ShieldCheck className="mr-1 h-3 w-3" /> Private
+              </Badge>
             </div>
-            <p className="text-sm text-[rgb(64,64,64)] min-w-0 flex-1">
-              {upcomingEvaluations.length === 1
-                ? `${upcomingEvaluations[0].employeeName} – ${format(new Date(upcomingEvaluations[0].date), "MMM d, yyyy")} (${upcomingEvaluations[0].label})`
-                : upcomingEvaluations.length <= 3
-                  ? upcomingEvaluations
-                      .map(
-                        (u: UpcomingItem) =>
-                          `${u.employeeName} (${format(new Date(u.date), "MMM d")})`,
-                      )
-                      .join(", ")
-                  : `${upcomingEvaluations.length} evaluations due this month: ${upcomingEvaluations
-                      .slice(0, 2)
-                      .map(
-                        (u: UpcomingItem) =>
-                          `${u.employeeName} (${format(new Date(u.date), "MMM d")})`,
-                      )
-                      .join(", ")} and ${upcomingEvaluations.length - 2} more`}
+            <p className="mt-1 text-sm text-[rgb(105,105,105)]">
+              Schedule employee-specific reviews, track due dates, and retain locked records.
             </p>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                className="text-sm font-medium text-[#695eff] hover:text-[#5547e8]"
-                onClick={() => {
-                  const first = upcomingEvaluations[0];
-                  if (!first) return;
-                  const column = evaluationColumns.find(
-                    (c) => c.label === first.label,
-                  );
-                  if (!column) return;
-                  const existing = (evaluations || []).find(
-                    (e: any) =>
-                      e.employeeId === first.employeeId &&
-                      e.label === first.label &&
-                      e.evaluationDate === first.date,
-                  );
-                  handleCellClick(first.employeeId, column, existing);
+          </div>
+          <Button onClick={() => openSchedule()}>
+            <Plus className="mr-1.5 h-4 w-4" /> Schedule evaluation
+          </Button>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            { label: "Overdue", value: workspace?.summary.overdue ?? 0, icon: CircleAlert, tone: "text-red-600 bg-red-50" },
+            { label: "Due in 14 days", value: workspace?.summary.dueSoon ?? 0, icon: CalendarClock, tone: "text-amber-600 bg-amber-50" },
+            { label: "Scheduled later", value: workspace?.summary.scheduled ?? 0, icon: CalendarCheck, tone: "text-indigo-600 bg-indigo-50" },
+            { label: "Completed records", value: workspace?.summary.completed ?? 0, icon: ClipboardCheck, tone: "text-emerald-600 bg-emerald-50" },
+          ].map((item) => (
+            <Card key={item.label}>
+              <CardContent className="flex items-center justify-between p-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[rgb(120,120,120)]">{item.label}</p>
+                  <p className="mt-1 text-2xl font-bold text-[rgb(48,48,48)]">{isLoading ? "—" : item.value}</p>
+                </div>
+                <div className={`rounded-xl p-2.5 ${item.tone}`}><item.icon className="h-5 w-5" /></div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        <Card>
+          <div className="flex flex-col gap-3 border-b border-[#E6E6E6] p-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="relative w-full lg:max-w-sm">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[rgb(130,130,130)]" />
+              <Input
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(1);
+                }}
+                placeholder="Search employee, ID, position, or department"
+                className="pl-9"
+              />
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Select
+                value={department}
+                onValueChange={(value) => {
+                  setDepartment(value);
+                  setPage(1);
                 }}
               >
-                View
-              </button>
-              <button
-                type="button"
-                onClick={handleDismissUpcomingBanner}
-                className="p-1 rounded hover:bg-[rgb(230,230,230)] text-[rgb(100,100,100)] hover:text-[rgb(64,64,64)]"
-                aria-label="Dismiss"
+                <SelectTrigger className="w-full sm:w-48"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All departments</SelectItem>
+                  {departments.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select
+                value={timing}
+                onValueChange={(value) => {
+                  setTiming(value as EvaluationTimingFilter);
+                  setPage(1);
+                }}
               >
-                <X className="h-4 w-4" />
-              </button>
+                <SelectTrigger className="w-full sm:w-44"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="overdue">Overdue</SelectItem>
+                  <SelectItem value="due_soon">Due soon</SelectItem>
+                  <SelectItem value="scheduled">Scheduled later</SelectItem>
+                  <SelectItem value="completed">Has completed records</SelectItem>
+                  <SelectItem value="not_scheduled">Not scheduled</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
-        ) : null}
 
-        <Card className="flex flex-col max-h-[calc(100vh-180px)] sm:max-h-[calc(100vh-200px)]">
-          <div className="shrink-0 flex flex-col gap-3 p-4 sm:p-5 md:p-6 pb-1.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="relative w-full max-w-[200px]">
-                <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[rgb(133,133,133)] pointer-events-none" />
-                <Input
-                  placeholder="Search employees..."
-                  value={employeeSearch}
-                  onChange={(e) => setEmployeeSearch(e.target.value)}
-                  className="h-8 pl-7 pr-2 rounded-lg text-[11px] font-semibold text-[rgb(64,64,64)] bg-white border border-solid border-[#DDDDDD] shadow-sm focus-visible:ring-[#695eff] focus-visible:ring-offset-0 placeholder:text-[rgb(133,133,133)]"
-                />
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsManageColumnsModalOpen(true)}
-                className="h-8 text-xs px-3 rounded-lg border-[#DDDDDD] hover:border-[rgb(120,120,120)] bg-white text-[rgb(64,64,64)] font-semibold [&_svg]:text-current shrink-0"
-                style={{ color: "rgb(64,64,64)" }}
-              >
-                <Columns className="h-3.5 w-3.5 mr-1.5 shrink-0" />
-                Manage Columns
-              </Button>
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-              <Popover
-                open={departmentPopoverOpen}
-                onOpenChange={setDepartmentPopoverOpen}
-              >
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    className={cn(
-                      "inline-flex items-center gap-1 h-7 px-2 rounded-xl text-[11px] font-semibold text-[rgb(64,64,64)] bg-white transition-colors hover:bg-[rgb(250,250,250)]",
-                      departmentFilter !== "all"
-                        ? "border border-[#DDDDDD] border-solid"
-                        : "border border-dashed border-[#DDDDDD]",
-                    )}
-                  >
-                    {departmentFilter !== "all" ? (
-                      <>
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDepartmentFilter("all");
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setDepartmentFilter("all");
-                            }
-                          }}
-                          className="flex items-center justify-center w-3.5 h-3.5 rounded-full hover:bg-[rgb(230,230,230)] text-[rgb(100,100,100)] cursor-pointer"
-                          aria-label="Clear department"
-                        >
-                          <X className="h-2 w-2" />
-                        </span>
-                        <span className="text-[rgb(133,133,133)] font-semibold">
-                          Department
-                        </span>
-                        <span className="font-semibold">
-                          {evaluationDepartments.find(
-                            (d) => d.name === departmentFilter,
-                          )?.name ?? "All"}
-                        </span>
-                        <div
-                          className="h-2 w-2 rounded-full shrink-0"
-                          style={{
-                            backgroundColor:
-                              evaluationDepartments.find(
-                                (d) => d.name === departmentFilter,
-                              )?.color ?? "#9CA3AF",
-                          }}
-                        />
-                        <ChevronDown className="h-2.5 w-2.5 shrink-0 text-[rgb(133,133,133)]" />
-                      </>
-                    ) : (
-                      <>
-                        <span className="flex items-center justify-center w-3.5 h-3.5 rounded-full border border-[rgb(180,180,180)] text-[rgb(120,120,120)]">
-                          <Plus className="h-2 w-2" />
-                        </span>
-                        <span className="font-semibold">Department</span>
-                        <ChevronDown className="h-2.5 w-2.5 shrink-0 text-[rgb(133,133,133)]" />
-                      </>
-                    )}
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent className="w-64 p-3" align="start">
-                  <h4 className="font-semibold text-[11px] text-[rgb(64,64,64)] mb-2">
-                    Filter by: Department
-                  </h4>
-                  <div className="space-y-0.5 max-h-[280px] overflow-y-auto">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDepartmentFilter("all");
-                        setDepartmentPopoverOpen(false);
-                      }}
-                      className={cn(
-                        "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold",
-                        departmentFilter === "all"
-                          ? "bg-[rgb(245,245,245)]"
-                          : "hover:bg-[rgb(250,250,250)]",
-                      )}
-                    >
-                      <div className="h-2.5 w-2.5 rounded-full shrink-0 bg-[#9CA3AF]" />
-                      <span>All</span>
-                    </button>
-                    {evaluationDepartments.map((dept) => (
-                      <button
-                        key={dept.name}
-                        type="button"
-                        onClick={() => {
-                          setDepartmentFilter(dept.name);
-                          setDepartmentPopoverOpen(false);
-                        }}
-                        className={cn(
-                          "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold",
-                          departmentFilter === dept.name
-                            ? "bg-[rgb(245,245,245)]"
-                            : "hover:bg-[rgb(250,250,250)]",
-                        )}
-                      >
-                        <div
-                          className="h-2.5 w-2.5 rounded-full shrink-0"
-                          style={{ backgroundColor: dept.color }}
-                        />
-                        <span>{dept.name}</span>
-                      </button>
-                    ))}
-                  </div>
-                </PopoverContent>
-              </Popover>
-              {(employeeSearch?.trim() ?? "") !== "" ||
-              (departmentFilter !== "all" && departmentFilter !== "") ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmployeeSearch("");
-                    setDepartmentFilter("all");
-                  }}
-                  className="text-[11px] font-semibold text-[#695eff] hover:text-[#5547e8] shrink-0"
-                >
-                  Clear filters
-                </button>
-              ) : null}
-            </div>
-          </div>
-          <CardContent className="flex-1 overflow-auto relative p-3 sm:p-4 pt-0 sm:pt-0">
-            <div className="overflow-x-auto -mx-3 sm:mx-0">
-              <table className="w-full text-sm">
-                <thead className="bg-white">
-                  <tr className="border-b border-[rgb(230,230,230)] h-9">
-                    {defaultColumns.map((col) => (
-                      <th
-                        key={col.id}
-                        className="py-2 px-3 text-left align-middle text-xs font-semibold text-[rgb(64,64,64)]"
-                      >
-                        {col.label}
-                      </th>
-                    ))}
-                    {visibleColumns
-                      .filter(
-                        (col) =>
-                          ![
-                            "employee",
-                            "employeeId",
-                            "position",
-                            "hiredDate",
-                          ].includes(col.id),
-                      )
-                      .map((col) => (
-                        <th
-                          key={col.id}
-                          className="py-2 px-3 text-left align-middle text-xs font-semibold text-[rgb(64,64,64)]"
-                        >
-                          {col.label}
-                        </th>
-                      ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {evaluationsDataLoading ? (
-                    Array.from({ length: 8 }).map((_, rowIdx) => (
-                      <tr
-                        key={`eval-skel-${rowIdx}`}
-                        className="border-b last:border-b-0 border-[rgb(230,230,230)] h-9"
-                      >
-                        {Array.from({ length: evaluationTableColCount }).map(
-                          (_, cIdx) => (
-                            <td key={cIdx} className="py-2 px-3 align-middle">
-                              <div className="h-3.5 w-full max-w-[100px] rounded bg-[rgb(235,235,235)] animate-pulse" />
-                            </td>
-                          ),
-                        )}
-                      </tr>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Employee</TableHead>
+                  <TableHead>Position</TableHead>
+                  <TableHead>Department</TableHead>
+                  <TableHead>Cadence</TableHead>
+                  <TableHead>Last completed</TableHead>
+                  <TableHead>Next due</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoading
+                  ? Array.from({ length: 8 }, (_, index) => (
+                      <TableRow key={index}>
+                        {Array.from({ length: 8 }, (_, cell) => (
+                          <TableCell key={cell}><div className="h-4 w-24 animate-pulse rounded bg-[rgb(235,235,235)]" /></TableCell>
+                        ))}
+                      </TableRow>
                     ))
-                  ) : paginatedEmployees.length > 0 ? (
-                    paginatedEmployees.map((emp: any) => (
-                      <tr
-                        key={emp._id}
-                        className="border-b last:border-b-0 border-[rgb(230,230,230)] transition-colors hover:bg-[rgb(250,250,250)] text-sm h-9"
-                      >
-                        {/* Default columns */}
-                        {defaultColumns.map((col) => {
-                          if (col.id === "employee") {
-                            return (
-                              <td key={col.id} className="py-2 px-3">
-                                {emp.personalInfo.firstName}{" "}
-                                {emp.personalInfo.lastName}
-                              </td>
-                            );
-                          }
-                          if (col.id === "position") {
-                            return (
-                              <td key={col.id} className="py-2 px-3">
-                                {emp.employment.position}
-                              </td>
-                            );
-                          }
-                          if (col.id === "hiredDate") {
-                            return (
-                              <td key={col.id} className="py-2 px-3">
-                                {emp.employment.hireDate
-                                  ? format(
-                                      new Date(emp.employment.hireDate),
-                                      "MMM dd, yyyy",
-                                    )
-                                  : "—"}
-                              </td>
-                            );
-                          }
-                          return null;
-                        })}
-                        {/* Custom evaluation columns – one cell per type (date + rating + note indicator) */}
-                        {visibleColumns
-                          .filter(
-                            (col) =>
-                              ![
-                                "employee",
-                                "employeeId",
-                                "position",
-                                "hiredDate",
-                              ].includes(col.id),
-                          )
-                          .map((col) => {
-                            const ev = evaluations?.find(
-                              (e: any) =>
-                                e.employeeId === emp._id &&
-                                e.label === col.label,
-                            );
-                            const display = getCellDisplay(emp._id, col);
-                            const isDueThisMonth = (() => {
-                              if (!ev) return false;
-                              const now = new Date();
-                              const d = new Date(ev.evaluationDate);
-                              const sameMonth =
-                                d.getFullYear() === now.getFullYear() &&
-                                d.getMonth() === now.getMonth();
-                              const isPastOrToday =
-                                ev.evaluationDate <= now.getTime();
-                              const hasRating = ev.rating != null;
-                              // Due = in current month, date is today/past, and no rating yet.
-                              return sameMonth && isPastOrToday && !hasRating;
-                            })();
-                            const showRating =
-                              col.type === "date" &&
-                              col.hasRatingColumn &&
-                              display?.rating != null;
-                            const showNoteIcon = display?.hasNotes;
-                            return (
-                              <td
-                                key={col.id}
-                                onClick={() =>
-                                  handleCellClick(emp._id, col, ev || undefined)
-                                }
-                                className={cn(
-                                  "py-2 px-3 text-xs cursor-pointer transition-colors align-middle",
-                                  isDueThisMonth &&
-                                    "border border-rose-200 bg-rose-50/70",
-                                )}
-                                title="Click to view"
-                              >
-                                {display ? (
-                                  <span className="inline-flex items-center gap-1 flex-wrap">
-                                    <span>
-                                      {display.primary || "—"}
-                                      {showRating && ` • ${display.rating}/5`}
-                                    </span>
-                                    {showNoteIcon && (
-                                      <MessageSquare
-                                        className="h-3.5 w-3.5 shrink-0 text-[#695eff]/80"
-                                        aria-hidden
-                                      />
-                                    )}
-                                  </span>
-                                ) : (
-                                  <span className="text-[11px] text-gray-400">
-                                    Click to add evaluation
-                                  </span>
-                                )}
-                              </td>
-                            );
-                          })}
-                      </tr>
-                    ))
-                  ) : (
-                    <tr className="border-b border-[rgb(230,230,230)]">
-                      <td
-                        colSpan={evaluationTableColCount}
-                        className="py-6 text-center text-gray-500 text-sm"
-                      >
-                        No employees found.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-          {totalEmployees > pageSize && (
-            <div className="flex flex-col sm:flex-row items-center justify-between border-t border-[#DDDDDD] p-3 sm:p-4 text-sm text-gray-600">
-              <div className="text-center sm:text-left">
-                Showing {totalEmployees === 0 ? 0 : startIndex + 1}–
-                {endIndex} of {totalEmployees} employees
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page <= 1}
-                  className="text-xs sm:text-sm"
-                >
-                  Previous
-                </Button>
-                <span className="text-xs sm:text-sm">
-                  Page {page} of {totalPages}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    setPage((p) => Math.min(totalPages, p + 1))
-                  }
-                  disabled={page >= totalPages}
-                  className="text-xs sm:text-sm"
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
-        </Card>
-
-        {/* View evaluation details (read-only) – Edit opens the edit dialog */}
-        <Dialog open={isViewModalOpen} onOpenChange={setIsViewModalOpen}>
-          <DialogContent className="max-w-md">
-            <DialogHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pr-10">
-              <DialogTitle className="min-w-0">
-                {editingCell?.columnLabel ?? "Evaluation"}
-              </DialogTitle>
-              {editingCell &&
-                selectedEmployeeId &&
-                editingCell.existingEvaluation && (
-                  <div className="flex items-center gap-2">
-                    {!editingCell.existingEvaluation.lockedAt && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleLockEvaluation}
-                        disabled={isSaving}
-                        className="shrink-0 rounded-lg border-[#DDDDDD] bg-white text-[rgb(64,64,64)] hover:bg-[rgb(250,250,250)] hover:border-[rgb(150,150,150)]"
-                      >
-                        Lock evaluation
-                      </Button>
-                    )}
-                    {!editingCell.existingEvaluation.lockedAt && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleOpenEditFromView}
-                        className="shrink-0 rounded-lg border-[#DDDDDD] bg-white text-[rgb(64,64,64)] hover:bg-[rgb(250,250,250)] hover:border-[rgb(150,150,150)] [&_svg]:text-current"
-                        style={{ color: "rgb(64,64,64)" }}
-                      >
-                        <Pencil className="h-3.5 w-3.5 mr-1.5" />
-                        Edit
-                      </Button>
-                    )}
-                  </div>
-                )}
-            </DialogHeader>
-            <div className="space-y-4 pt-2">
-              {editingCell &&
-                selectedEmployeeId &&
-                (() => {
-                  const emp = employees?.find(
-                    (e: any) => e._id === selectedEmployeeId,
-                  );
-                  const empName = emp
-                    ? `${emp.personalInfo.firstName} ${emp.personalInfo.lastName}`
-                    : "—";
-                  const ev = editingCell.existingEvaluation;
-                  const col = evaluationColumns.find(
-                    (c) => c.id === editingCell.columnId,
-                  );
-                  const template = evaluationTemplates?.find(
-                    (item: any) => item._id === ev?.templateId,
-                  );
-                  return (
-                    <>
-                      <div>
-                        <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
-                          Employee
-                        </p>
-                        <p className="mt-1 text-sm font-medium text-[rgb(64,64,64)]">
-                          {empName}
-                        </p>
-                      </div>
-                      {ev ? (
-                        <>
-                          {template && (
-                            <div>
-                              <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
-                                Template
-                              </p>
-                              <p className="mt-1 text-sm text-[rgb(64,64,64)]">
-                                {template.name}
-                              </p>
-                            </div>
-                          )}
-                          {ev.reviewCycle && (
-                            <div>
-                              <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
-                                Review cycle
-                              </p>
-                              <p className="mt-1 text-sm text-[rgb(64,64,64)]">
-                                {ev.reviewCycle}
-                              </p>
-                            </div>
-                          )}
-                          {editingCell.columnType === "date" &&
-                            ev.evaluationDate && (
-                              <div>
-                                <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
-                                  Date
-                                </p>
-                                <p className="mt-1 text-sm text-[rgb(64,64,64)]">
-                                  {format(
-                                    new Date(ev.evaluationDate),
-                                    "MMMM d, yyyy",
-                                  )}
-                                </p>
-                              </div>
+                  : pagination.items.map((row) => {
+                      const next = row.source.nextEvaluation;
+                      const timingValue = next
+                        ? getEvaluationTiming(next.status, next.scheduledFor, referenceNow)
+                        : null;
+                      return (
+                        <TableRow key={row.id} className="hover:bg-[rgb(250,250,250)]">
+                          <TableCell>
+                            <button type="button" className="text-left" onClick={() => setHistoryEmployee(row.source)}>
+                              <span className="block font-semibold text-[rgb(48,48,48)]">{row.name}</span>
+                              <span className="text-xs text-[rgb(120,120,120)]">{row.employeeCode}</span>
+                            </button>
+                          </TableCell>
+                          <TableCell>{row.position}</TableCell>
+                          <TableCell>{row.department}</TableCell>
+                          <TableCell>{cadenceLabel(row.source)}</TableCell>
+                          <TableCell>
+                            {row.source.lastCompleted?.completedAt
+                              ? format(new Date(row.source.lastCompleted.completedAt), "MMM d, yyyy")
+                              : "—"}
+                          </TableCell>
+                          <TableCell>{next ? format(new Date(next.scheduledFor), "MMM d, yyyy") : "—"}</TableCell>
+                          <TableCell>
+                            {timingValue ? (
+                              <Badge variant="outline" className={timingBadgeClass(timingValue)}>{timingLabels[timingValue]}</Badge>
+                            ) : (
+                              <Badge variant="secondary">Not scheduled</Badge>
                             )}
-                          {(editingCell.columnType === "number" ||
-                            col?.hasRatingColumn) &&
-                            ev.rating != null && (
-                              <div>
-                                <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
-                                  {editingCell.columnType === "date"
-                                    ? "Rating"
-                                    : "Value"}
-                                </p>
-                                <p className="mt-1 text-sm text-[rgb(64,64,64)]">
-                                  {editingCell.columnType === "date"
-                                    ? `${ev.rating}/5`
-                                    : ev.rating}
-                                </p>
-                              </div>
-                            )}
-                          {editingCell.columnType === "text" &&
-                            ev.notes?.trim() && (
-                              <div>
-                                <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
-                                  Text
-                                </p>
-                                <p className="mt-1 text-sm text-[rgb(64,64,64)] whitespace-pre-wrap">
-                                  {ev.notes}
-                                </p>
-                              </div>
-                            )}
-                          {ev.notes?.trim() &&
-                            editingCell.columnType !== "text" && (
-                              <div>
-                                <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
-                                  Notes
-                                </p>
-                                <p className="mt-1 text-sm text-[rgb(64,64,64)] whitespace-pre-wrap">
-                                  {ev.notes}
-                                </p>
-                              </div>
-                            )}
-                          {ev.attachmentUrl && (
-                            <div>
-                              <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
-                                Attachment
-                              </p>
-                              <a
-                                href={ev.attachmentUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="mt-1 text-sm text-[#695eff] hover:underline break-all"
-                              >
-                                {ev.attachmentUrl}
-                              </a>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex justify-end gap-2">
+                              <Button type="button" variant="outline" size="sm" onClick={() => setHistoryEmployee(row.source)}>
+                                <History className="mr-1.5 h-3.5 w-3.5" /> History
+                              </Button>
+                              {next ? (
+                                <Button type="button" size="sm" onClick={() => openExisting("complete", next)}>Complete</Button>
+                              ) : (
+                                <Button type="button" size="sm" onClick={() => openSchedule(row.id)}>Schedule</Button>
+                              )}
                             </div>
-                          )}
-                          {ev.assignedReviewerIds?.length > 0 && (
-                            <div>
-                              <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
-                                Assigned reviewers
-                              </p>
-                              <p className="mt-1 text-sm text-[rgb(64,64,64)]">
-                                {ev.assignedReviewerIds.length} reviewer(s)
-                              </p>
-                            </div>
-                          )}
-                          {ev.selfReview?.notes && (
-                            <div>
-                              <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
-                                Self review
-                              </p>
-                              <p className="mt-1 text-sm text-[rgb(64,64,64)] whitespace-pre-wrap">
-                                {ev.selfReview.notes}
-                              </p>
-                            </div>
-                          )}
-                          {ev.managerReview?.notes && (
-                            <div>
-                              <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
-                                Manager review
-                              </p>
-                              <p className="mt-1 text-sm text-[rgb(64,64,64)] whitespace-pre-wrap">
-                                {ev.managerReview.notes}
-                              </p>
-                            </div>
-                          )}
-                          {ev.lockedAt && (
-                            <div>
-                              <p className="text-xs font-medium text-[rgb(133,133,133)] uppercase tracking-wider">
-                                Status
-                              </p>
-                              <p className="mt-1 text-sm text-[rgb(64,64,64)]">
-                                Locked on{" "}
-                                {format(new Date(ev.lockedAt), "MMM d, yyyy")}
-                              </p>
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <div className="flex flex-col items-center gap-3 pt-2">
-                          <p className="text-sm text-[rgb(133,133,133)]">
-                            No evaluation recorded yet.
-                          </p>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={handleOpenEditFromView}
-                            className="rounded-lg border-[#DDDDDD] bg-white text-[rgb(64,64,64)] hover:bg-[rgb(250,250,250)] hover:border-[rgb(150,150,150)] [&_svg]:text-current"
-                            style={{ color: "rgb(64,64,64)" }}
-                          >
-                            <Pencil className="h-3.5 w-3.5 mr-1.5" />
-                            Add evaluation
-                          </Button>
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Column Management Modal */}
-        <EvaluationColumnManagementModal
-          isOpen={isManageColumnsModalOpen}
-          onOpenChange={setIsManageColumnsModalOpen}
-          columns={evaluationColumns}
-          onColumnsChange={handleSaveColumns}
-        />
-
-        {/* Edit Evaluation Dialog – one form for date, rating, notes */}
-        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>
-                {editingCell?.existingEvaluation ? "Edit" : "Add"}{" "}
-                {editingCell?.columnLabel ?? "evaluation"}
-              </DialogTitle>
-              {!editingCell && (
-                <DialogDescription>
-                  Select employee and enter evaluation details.
-                </DialogDescription>
-              )}
-            </DialogHeader>
-            <form onSubmit={handleSaveEvaluation} className="space-y-4">
-              {!editingCell && (
-                <div className="space-y-2">
-                  <Label>Employee</Label>
-                  <Select
-                    value={selectedEmployeeId}
-                    onValueChange={setSelectedEmployeeId}
-                    required
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select employee" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {employees?.map((emp: any) => (
-                        <SelectItem key={emp._id} value={emp._id}>
-                          {emp.personalInfo.firstName}{" "}
-                          {emp.personalInfo.lastName} –{" "}
-                          {emp.employment.employeeId}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Template</Label>
-                  <Select
-                    value={templateId}
-                    onValueChange={(value) => {
-                      setTemplateId(value);
-                      const selectedTemplate = evaluationTemplates?.find(
-                        (template: any) => template._id === value,
+                          </TableCell>
+                        </TableRow>
                       );
-                      if (selectedTemplate?.reviewCycle && !reviewCycle) {
-                        setReviewCycle(selectedTemplate.reviewCycle);
-                      }
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select template" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No template</SelectItem>
-                      {evaluationTemplates?.map((template: any) => (
-                        <SelectItem key={template._id} value={template._id}>
-                          {template.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                    })}
+                {!isLoading && pagination.items.length === 0 ? (
+                  <TableRow><TableCell colSpan={8} className="py-10 text-center text-[rgb(110,110,110)]">No employees match these filters.</TableCell></TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
+          </CardContent>
 
-                <div className="space-y-2">
-                  <Label>Review cycle</Label>
-                  <Input
-                    value={reviewCycle}
-                    onChange={(e) => setReviewCycle(e.target.value)}
-                    placeholder="Annual, probationary, quarterly"
-                  />
-                </div>
+          {!isLoading ? (
+            <div className="flex flex-col items-center justify-between gap-3 border-t border-[#E6E6E6] px-4 py-3 text-sm text-[rgb(100,100,100)] sm:flex-row">
+              <span>
+                Showing {pagination.totalItems === 0 ? 0 : pagination.startIndex + 1}–{pagination.endIndex} of {pagination.totalItems} employees
+              </span>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled={pagination.page <= 1} onClick={() => setPage(pagination.page - 1)}>Previous</Button>
+                <span className="min-w-24 text-center">Page {pagination.page} of {pagination.totalPages}</span>
+                <Button variant="outline" size="sm" disabled={pagination.page >= pagination.totalPages} onClick={() => setPage(pagination.page + 1)}>Next</Button>
               </div>
-
-              {/* Dynamic fields based on column type */}
-              {editingCell?.columnType === "date" && (
-                <div className="space-y-2">
-                  <Label>Evaluation Date</Label>
-                  <Input
-                    type="date"
-                    value={evaluationDate}
-                    onChange={(e) => setEvaluationDate(e.target.value)}
-                    required
-                  />
-                </div>
-              )}
-
-              {editingCell?.columnType === "rating" && (
-                <div className="space-y-2">
-                  <Label>Rating</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={5}
-                    step={0.5}
-                    value={rating}
-                    onChange={(e) => setRating(e.target.value)}
-                    placeholder="e.g., 4.5"
-                    required
-                  />
-                </div>
-              )}
-
-              {editingCell?.columnType === "number" && (
-                <div className="space-y-2">
-                  <Label>Value</Label>
-                  <Input
-                    type="number"
-                    value={rating}
-                    onChange={(e) => setRating(e.target.value)}
-                    placeholder="Enter numeric value"
-                    required
-                  />
-                </div>
-              )}
-
-              {editingCell?.columnType === "text" && (
-                <div className="space-y-2">
-                  <Label>Text</Label>
-                  <Textarea
-                    value={textValue}
-                    onChange={(e) => setTextValue(e.target.value)}
-                    placeholder="Enter text notes"
-                    rows={4}
-                    required
-                  />
-                </div>
-              )}
-
-              {/* Show rating field if column has rating column or if clicking on rating column */}
-              {(editingCell?.isRatingColumn ||
-                (editingCell?.columnType === "date" &&
-                  evaluationColumns.find((c) => c.id === editingCell.columnId)
-                    ?.hasRatingColumn)) && (
-                <div className="space-y-2">
-                  <Label>Rating</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={5}
-                    step={0.5}
-                    value={rating}
-                    onChange={(e) => setRating(e.target.value)}
-                    placeholder="e.g., 4.5"
-                  />
-                </div>
-              )}
-
-              {/* Show notes field if column has notes column or if clicking on notes column */}
-              {(editingCell?.isNotesColumn ||
-                (editingCell?.columnType === "date" &&
-                  evaluationColumns.find((c) => c.id === editingCell.columnId)
-                    ?.hasNotesColumn)) && (
-                <>
-                  <div className="space-y-2">
-                    <Label>Notes</Label>
-                    <Textarea
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      placeholder="Enter notes, summary, key points, or next steps"
-                      rows={4}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Attachment Link (optional)</Label>
-                    <Input
-                      value={attachmentUrl}
-                      onChange={(e) => setAttachmentUrl(e.target.value)}
-                      placeholder="Paste link to evaluation file (Google Drive, etc.)"
-                    />
-                  </div>
-                </>
-              )}
-
-              <div className="space-y-2">
-                <Label>Assigned reviewers</Label>
-                <div className="max-h-32 space-y-2 overflow-y-auto rounded-lg border border-[#DDDDDD] p-3">
-                  {reviewerOptions.length > 0 ? (
-                    reviewerOptions.map((member: any) => (
-                      <label
-                        key={member._id}
-                        className="flex items-center gap-2 text-sm text-[rgb(64,64,64)]"
-                      >
-                        <Checkbox
-                          checked={assignedReviewerIds.includes(member._id)}
-                          onCheckedChange={(checked) =>
-                            handleToggleReviewer(member._id, checked === true)
-                          }
-                        />
-                        <span className="min-w-0 truncate">
-                          {member.name || member.email} ({member.role})
-                        </span>
-                      </label>
-                    ))
-                  ) : (
-                    <p className="text-sm text-[rgb(133,133,133)]">
-                      No eligible reviewers found.
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Self review</Label>
-                <Textarea
-                  value={selfReviewNotes}
-                  onChange={(e) => setSelfReviewNotes(e.target.value)}
-                  placeholder="Employee self-review notes"
-                  rows={3}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Manager review</Label>
-                <Textarea
-                  value={managerReviewNotes}
-                  onChange={(e) => setManagerReviewNotes(e.target.value)}
-                  placeholder="Manager review notes and next steps"
-                  rows={3}
-                />
-              </div>
-
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setIsEditDialogOpen(false)}
-                  disabled={isSaving}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={isSaving}>
-                  {isSaving ? "Saving..." : "Save Evaluation"}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+            </div>
+          ) : null}
+        </Card>
       </div>
+
+      {workspace ? (
+        <>
+          <EvaluationHistoryDialog
+            open={historyEmployee !== null}
+            onOpenChange={(open) => { if (!open) setHistoryEmployee(null); }}
+            employeeRow={historyEmployee}
+            evaluations={workspace.evaluations}
+            onSchedule={openSchedule}
+            onEdit={(evaluation) => openExisting("reschedule", evaluation)}
+            onComplete={(evaluation) => openExisting("complete", evaluation)}
+          />
+          <EvaluationEditorDialog
+            open={editor.open}
+            onOpenChange={(open) => setEditor((current) => ({ ...current, open }))}
+            mode={editor.mode}
+            organizationId={currentOrganizationId}
+            workspace={workspace}
+            employeeId={editor.employeeId}
+            evaluation={editor.evaluation}
+          />
+        </>
+      ) : null}
     </MainLayout>
   );
 }

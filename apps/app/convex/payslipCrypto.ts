@@ -13,6 +13,8 @@ const NUMERIC_KEYS = [
   "nonTaxableAllowance",
   "daysWorked",
   "absences",
+  "statutoryBenefitSupportedLeaveDays",
+  "statutoryBenefitSupportedLeavePay",
   "lateHours",
   "undertimeHours",
   "overtimeHours",
@@ -48,7 +50,10 @@ export function encryptPayslipRowForDb(
   if (Array.isArray(out.incentives) && out.incentives.length > 0) {
     out.incentives = maybeEncryptJsonForStorage(out.incentives) as any;
   }
-  if (Array.isArray(out.nightDiffBreakdown) && out.nightDiffBreakdown.length > 0) {
+  if (
+    Array.isArray(out.nightDiffBreakdown) &&
+    out.nightDiffBreakdown.length > 0
+  ) {
     out.nightDiffBreakdown = maybeEncryptJsonForStorage(
       out.nightDiffBreakdown,
     ) as any;

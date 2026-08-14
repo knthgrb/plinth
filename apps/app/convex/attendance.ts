@@ -1,6 +1,15 @@
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { paginationOptsValidator } from "convex/server";
+import {
+  action,
+  internalQuery,
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import { requireActiveMembership } from "./access";
 import { isOrgQueryAuthGraceError } from "./queryAuthGrace";
 import { canUseEmployeeSelfService } from "@/utils/employee-lifecycle";
@@ -14,15 +23,30 @@ import {
   normalizeAttendanceDateMs,
   sameManilaCalendarDay,
 } from "@/lib/manila-date";
+import { markAttendanceConflictForDate } from "./leaveOccurrencePayroll";
+import { getEffectiveAttendanceSettings } from "./organizationConfiguration";
+import { findFinalizedPayrollRunForAttendance } from "./attendanceIntegrity";
+
+type OrganizationRole = Doc<"userOrganizations">["role"];
+type AttendanceAction = Doc<"attendanceAuditLogs">["action"];
+type AttendanceSnapshot = Doc<"attendance"> | null;
+
+interface AttendanceActor {
+  _id: Id<"users">;
+  role: OrganizationRole;
+}
+
+interface AttendanceWriteAuthorization {
+  payrollRunId?: Id<"payrollRuns">;
+  correctionReason?: string;
+}
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+const ATTENDANCE_QUERY_LIMIT = 10_000;
+const ATTENDANCE_WRITE_BATCH_LIMIT = 100;
 function getManilaDateParts(ts: number) {
   const d = new Date(ts + MANILA_OFFSET_MS);
   return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate() };
-}
-/** Day of week in Manila (0 = Sunday, 6 = Saturday) so schedule uses correct day regardless of server TZ. */
-function getManilaDayOfWeek(ts: number): number {
-  return new Date(ts + MANILA_OFFSET_MS).getUTCDay();
 }
 /** Returns the full matching holiday entry for a date, or null. */
 function getMatchingHolidayEntryForDate(
@@ -74,7 +98,7 @@ function isNoWorkAllowedForEmployeeDate(
     applyToAll?: boolean;
     provinces?: string[];
   }[],
-  employee: any,
+  employee: Doc<"employees">,
 ): boolean {
   const holidayEntry = getMatchingHolidayEntryForDate(dateTs, holidays);
   if (!holidayEntry) return false;
@@ -144,8 +168,8 @@ async function checkAuth(
 }
 
 async function checkAuthForQuery(
-  ctx: any,
-  organizationId: any,
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
   requiredRole?: "owner" | "admin" | "hr",
 ) {
   try {
@@ -154,6 +178,91 @@ async function checkAuthForQuery(
     if (isOrgQueryAuthGraceError(e)) return null;
     throw e;
   }
+}
+
+async function authorizeAttendanceWrite(
+  ctx: MutationCtx,
+  actor: AttendanceActor,
+  organizationId: Id<"organizations">,
+  employeeId: Id<"employees">,
+  date: number,
+  correctionReason?: string,
+): Promise<AttendanceWriteAuthorization> {
+  const { attendanceSettings } = await getEffectiveAttendanceSettings(
+    ctx,
+    organizationId,
+  );
+  const policy = attendanceSettings?.payrollLockPolicy;
+  if (policy?.lockAttendanceAfterPayrollFinalized === false) {
+    return {};
+  }
+
+  const payrollRun = await findFinalizedPayrollRunForAttendance(
+    ctx,
+    organizationId,
+    employeeId,
+    date,
+  );
+  if (!payrollRun) {
+    return {};
+  }
+
+  const trimmedReason = correctionReason?.trim();
+  const canCorrect = actor.role === "owner" || actor.role === "admin";
+  if (
+    policy?.allowAdminCorrectionWithReason !== false &&
+    canCorrect &&
+    trimmedReason
+  ) {
+    return {
+      payrollRunId: payrollRun._id,
+      correctionReason: trimmedReason,
+    };
+  }
+
+  if (
+    policy?.allowAdminCorrectionWithReason !== false &&
+    canCorrect &&
+    !trimmedReason
+  ) {
+    throw new Error(
+      "Attendance is inside a finalized payroll period. An owner or admin correction reason is required.",
+    );
+  }
+
+  throw new Error(
+    "Attendance is inside a finalized payroll period and can no longer be changed.",
+  );
+}
+
+async function recordAttendanceAudit(
+  ctx: MutationCtx,
+  input: {
+    actor: AttendanceActor;
+    action: AttendanceAction;
+    attendanceId: Id<"attendance">;
+    organizationId: Id<"organizations">;
+    employeeId: Id<"employees">;
+    authorization?: AttendanceWriteAuthorization;
+    before?: AttendanceSnapshot;
+    after?: AttendanceSnapshot;
+  },
+): Promise<void> {
+  await ctx.db.insert("attendanceAuditLogs", {
+    organizationId: input.organizationId,
+    employeeId: input.employeeId,
+    attendanceId: input.attendanceId,
+    actorUserId: input.actor._id,
+    actorRole: input.actor.role,
+    action: input.action,
+    payrollRunId: input.authorization?.payrollRunId,
+    correctionReason: input.authorization?.correctionReason,
+    beforeJson:
+      input.before === undefined ? undefined : JSON.stringify(input.before),
+    afterJson:
+      input.after === undefined ? undefined : JSON.stringify(input.after),
+    createdAt: Date.now(),
+  });
 }
 
 /** Resolves the employee id for the current user in this org (payslips / employee-view + punch). */
@@ -180,9 +289,17 @@ async function findAttendanceOnManilaDay(
   employeeId: Id<"employees">,
   dateTs: number,
 ): Promise<Doc<"attendance">[]> {
+  const normalizedDate = normalizeAttendanceDateMs(dateTs);
+  const rangeStart = normalizedDate - MANILA_OFFSET_MS;
+  const rangeEnd = rangeStart + 24 * 60 * 60 * 1000;
   const records = await ctx.db
     .query("attendance")
-    .withIndex("by_employee", (q) => q.eq("employeeId", employeeId))
+    .withIndex("by_employee_date", (query) =>
+      query
+        .eq("employeeId", employeeId)
+        .gte("date", rangeStart)
+        .lt("date", rangeEnd),
+    )
     .collect();
   return records.filter((record) =>
     sameManilaCalendarDay(record.date, dateTs),
@@ -191,73 +308,17 @@ async function findAttendanceOnManilaDay(
 
 async function deleteDuplicateAttendanceOnDay(
   ctx: Pick<MutationCtx, "db">,
-  records: readonly Pick<Doc<"attendance">, "_id">[],
+  records: readonly Doc<"attendance">[],
   keepId: Id<"attendance">,
-): Promise<void> {
-  for (const r of records) {
-    if (r._id !== keepId) {
-      await ctx.db.delete(r._id);
+): Promise<Doc<"attendance">[]> {
+  const deleted: Doc<"attendance">[] = [];
+  for (const record of records) {
+    if (record._id !== keepId) {
+      await ctx.db.delete(record._id);
+      deleted.push(record);
     }
   }
-}
-
-// Helper to get the employee's scheduled in/out time for a specific date,
-// taking into account defaultSchedule and any scheduleOverrides.
-// Uses Manila timezone for day-of-week so the correct per-day schedule is used.
-function getScheduledTimesForDate(
-  date: number,
-  employeeSchedule: any,
-): { scheduleIn: string | null; scheduleOut: string | null } {
-  if (!employeeSchedule?.defaultSchedule) {
-    return { scheduleIn: null, scheduleOut: null };
-  }
-
-  const dayNames = [
-    "sunday",
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
-  ] as const;
-
-  const manilaParts = getManilaDateParts(date);
-
-  // First check for an explicit override on this date (compare in Manila calendar)
-  if (
-    employeeSchedule.scheduleOverrides &&
-    Array.isArray(employeeSchedule.scheduleOverrides)
-  ) {
-    const override = employeeSchedule.scheduleOverrides.find((o: any) => {
-      if (o.date == null) return false;
-      const oParts = getManilaDateParts(
-        typeof o.date === "number" ? o.date : new Date(o.date).getTime(),
-      );
-      return (
-        oParts.y === manilaParts.y &&
-        oParts.m === manilaParts.m &&
-        oParts.d === manilaParts.d
-      );
-    });
-    if (override && override.in && override.out) {
-      return { scheduleIn: override.in, scheduleOut: override.out };
-    }
-  }
-
-  // Fall back to defaultSchedule based on day of week in Manila
-  const manilaDay = getManilaDayOfWeek(date);
-  const dayName = dayNames[manilaDay];
-  const daySchedule =
-    employeeSchedule.defaultSchedule[
-      dayName as keyof typeof employeeSchedule.defaultSchedule
-    ];
-
-  if (!daySchedule || !daySchedule.in || !daySchedule.out) {
-    return { scheduleIn: null, scheduleOut: null };
-  }
-
-  return { scheduleIn: daySchedule.in, scheduleOut: daySchedule.out };
+  return deleted;
 }
 
 // Get attendance for employee
@@ -283,22 +344,34 @@ export const getEmployeeAttendance = query({
       }
     }
 
-    let attendance = await (ctx.db.query("attendance") as any)
-      .withIndex("by_employee", (q: any) => q.eq("employeeId", args.employeeId))
-      .collect();
+    const attendanceQuery = ctx.db.query("attendance");
+    const rangedQuery =
+      args.startDate !== undefined && args.endDate !== undefined
+        ? attendanceQuery.withIndex("by_employee_date", (query) =>
+            query
+              .eq("employeeId", args.employeeId)
+              .gte("date", args.startDate!)
+              .lte("date", args.endDate!),
+          )
+        : args.startDate !== undefined
+          ? attendanceQuery.withIndex("by_employee_date", (query) =>
+              query
+                .eq("employeeId", args.employeeId)
+                .gte("date", args.startDate!),
+            )
+          : args.endDate !== undefined
+            ? attendanceQuery.withIndex("by_employee_date", (query) =>
+                query
+                  .eq("employeeId", args.employeeId)
+                  .lte("date", args.endDate!),
+              )
+            : attendanceQuery.withIndex("by_employee_date", (query) =>
+                query.eq("employeeId", args.employeeId),
+              );
 
-    // Filter by date range
-    if (args.startDate) {
-      attendance = attendance.filter((a: any) => a.date >= args.startDate!);
-    }
-    if (args.endDate) {
-      attendance = attendance.filter((a: any) => a.date <= args.endDate!);
-    }
-
-    // Sort by date descending
-    attendance.sort((a: any, b: any) => b.date - a.date);
-
-    return attendance;
+    return rangedQuery
+      .order("desc")
+      .take(ATTENDANCE_QUERY_LIMIT);
   },
 });
 
@@ -314,28 +387,256 @@ export const getAttendance = query({
     const userRecord = await checkAuthForQuery(ctx, args.organizationId, "hr");
     if (!userRecord) return [];
 
-    let attendance = await (ctx.db.query("attendance") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
-      )
-      .collect();
-
-    // Filter by date range
-    attendance = attendance.filter(
-      (a: any) => a.date >= args.startDate && a.date <= args.endDate,
-    );
-
-    // Filter by employee if specified
     if (args.employeeId) {
-      attendance = attendance.filter(
-        (a: any) => a.employeeId === args.employeeId,
-      );
+      const employee = await ctx.db.get(args.employeeId);
+      if (!employee || employee.organizationId !== args.organizationId) {
+        throw new Error("Employee does not belong to this organization");
+      }
+      return ctx.db
+        .query("attendance")
+        .withIndex("by_employee_date", (query) =>
+          query
+            .eq("employeeId", args.employeeId!)
+            .gte("date", args.startDate)
+            .lte("date", args.endDate),
+        )
+        .order("desc")
+        .take(ATTENDANCE_QUERY_LIMIT);
     }
 
-    // Sort by date descending
-    attendance.sort((a: any, b: any) => b.date - a.date);
+    return ctx.db
+      .query("attendance")
+      .withIndex("by_organization_date", (query) =>
+        query
+          .eq("organizationId", args.organizationId)
+          .gte("date", args.startDate)
+          .lte("date", args.endDate),
+      )
+      .order("desc")
+      .take(ATTENDANCE_QUERY_LIMIT);
+  },
+});
 
-    return attendance;
+export const getAttendancePage = query({
+  args: {
+    organizationId: v.id("organizations"),
+    startDate: v.number(),
+    endDate: v.number(),
+    employeeId: v.optional(v.id("employees")),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId, "hr");
+    if (!userRecord) {
+      return {
+        page: [],
+        isDone: true,
+        continueCursor: "",
+      };
+    }
+
+    if (args.employeeId) {
+      const employee = await ctx.db.get(args.employeeId);
+      if (!employee || employee.organizationId !== args.organizationId) {
+        throw new Error("Employee does not belong to this organization");
+      }
+      return ctx.db
+        .query("attendance")
+        .withIndex("by_employee_date", (query) =>
+          query
+            .eq("employeeId", args.employeeId!)
+            .gte("date", args.startDate)
+            .lte("date", args.endDate),
+        )
+        .order("desc")
+        .paginate(args.paginationOpts);
+    }
+
+    return ctx.db
+      .query("attendance")
+      .withIndex("by_organization_date", (query) =>
+        query
+          .eq("organizationId", args.organizationId)
+          .gte("date", args.startDate)
+          .lte("date", args.endDate),
+      )
+      .order("desc")
+      .paginate(args.paginationOpts);
+  },
+});
+
+export const getAttendanceForEmployees = query({
+  args: {
+    organizationId: v.id("organizations"),
+    employeeIds: v.array(v.id("employees")),
+    startDate: v.number(),
+    endDate: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId, "hr");
+    if (!userRecord) return [];
+    if (args.employeeIds.length > 50) {
+      throw new Error("Attendance summaries are limited to 50 employees per page");
+    }
+
+    const employees = await Promise.all(
+      args.employeeIds.map((employeeId) => ctx.db.get(employeeId)),
+    );
+    if (
+      employees.some(
+        (employee) =>
+          !employee || employee.organizationId !== args.organizationId,
+      )
+    ) {
+      throw new Error("Employee does not belong to this organization");
+    }
+
+    const attendanceByEmployee = await Promise.all(
+      args.employeeIds.map((employeeId) =>
+        ctx.db
+          .query("attendance")
+          .withIndex("by_employee_date", (query) =>
+            query
+              .eq("employeeId", employeeId)
+              .gte("date", args.startDate)
+              .lte("date", args.endDate),
+          )
+          .collect(),
+      ),
+    );
+    return attendanceByEmployee.flat();
+  },
+});
+
+export const getAttendanceConflictsBatch = internalQuery({
+  args: {
+    organizationId: v.id("organizations"),
+    entries: v.array(
+      v.object({
+        employeeId: v.id("employees"),
+        date: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId, "hr");
+    if (!userRecord) throw new Error("Not authorized");
+    if (args.entries.length > ATTENDANCE_WRITE_BATCH_LIMIT) {
+      throw new Error("Attendance conflict batches are limited to 100 rows");
+    }
+
+    const records = await Promise.all(
+      args.entries.map(async (entry) => {
+        const normalizedDate = normalizeAttendanceDateMs(entry.date);
+        const rangeStart = normalizedDate - MANILA_OFFSET_MS;
+        const rangeEnd = rangeStart + 24 * 60 * 60 * 1000;
+        return ctx.db
+          .query("attendance")
+          .withIndex("by_employee_date", (query) =>
+            query
+              .eq("employeeId", entry.employeeId)
+              .gte("date", rangeStart)
+              .lt("date", rangeEnd),
+          )
+          .filter((query) =>
+            query.eq(query.field("organizationId"), args.organizationId),
+          )
+          .first();
+      }),
+    );
+    return records.filter((record): record is Doc<"attendance"> => !!record);
+  },
+});
+
+export const getAttendanceImportConflicts = action({
+  args: {
+    organizationId: v.id("organizations"),
+    entries: v.array(
+      v.object({
+        employeeId: v.id("employees"),
+        date: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, args): Promise<Doc<"attendance">[]> => {
+    if (args.entries.length > 10_000) {
+      throw new Error("Attendance imports are limited to 10,000 rows");
+    }
+
+    const uniqueEntries = [
+      ...new Map(
+        args.entries.map((entry) => [
+          `${entry.employeeId}:${normalizeAttendanceDateMs(entry.date)}`,
+          entry,
+        ]),
+      ).values(),
+    ];
+    const results: Doc<"attendance">[] = [];
+    for (
+      let offset = 0;
+      offset < uniqueEntries.length;
+      offset += ATTENDANCE_WRITE_BATCH_LIMIT
+    ) {
+      const batch = await ctx.runQuery(
+        internal.attendance.getAttendanceConflictsBatch,
+        {
+          organizationId: args.organizationId,
+          entries: uniqueEntries.slice(
+            offset,
+            offset + ATTENDANCE_WRITE_BATCH_LIMIT,
+          ),
+        },
+      );
+      results.push(...batch);
+    }
+    return results;
+  },
+});
+
+export const getAttendanceAuditHistory = query({
+  args: {
+    organizationId: v.id("organizations"),
+    attendanceId: v.optional(v.id("attendance")),
+    employeeId: v.optional(v.id("employees")),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userRecord = await checkAuthForQuery(ctx, args.organizationId, "hr");
+    if (!userRecord) return [];
+
+    const limit = Math.min(Math.max(Math.floor(args.limit ?? 100), 1), 500);
+    if (args.attendanceId) {
+      return ctx.db
+        .query("attendanceAuditLogs")
+        .withIndex("by_attendance_created", (query) =>
+          query.eq("attendanceId", args.attendanceId!),
+        )
+        .filter((query) =>
+          query.eq(query.field("organizationId"), args.organizationId),
+        )
+        .order("desc")
+        .take(limit);
+    }
+    if (args.employeeId) {
+      const employee = await ctx.db.get(args.employeeId);
+      if (!employee || employee.organizationId !== args.organizationId) {
+        throw new Error("Employee does not belong to this organization");
+      }
+      return ctx.db
+        .query("attendanceAuditLogs")
+        .withIndex("by_employee_created", (query) =>
+          query.eq("employeeId", args.employeeId!),
+        )
+        .order("desc")
+        .take(limit);
+    }
+    return ctx.db
+      .query("attendanceAuditLogs")
+      .withIndex("by_organization_created", (query) =>
+        query.eq("organizationId", args.organizationId),
+      )
+      .order("desc")
+      .take(limit);
   },
 });
 
@@ -371,11 +672,24 @@ export const createAttendance = mutation({
       v.literal("no_work"),
     ),
     overwriteAttendanceId: v.optional(v.id("attendance")),
+    correctionReason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId, "hr");
 
     const normalizedDate = normalizeAttendanceDateMs(args.date);
+    const employee = await ctx.db.get(args.employeeId);
+    if (!employee || employee.organizationId !== args.organizationId) {
+      throw new Error("Employee does not belong to this organization");
+    }
+    const writeAuthorization = await authorizeAttendanceWrite(
+      ctx,
+      userRecord,
+      args.organizationId,
+      args.employeeId,
+      normalizedDate,
+      args.correctionReason,
+    );
     const existingOnDay = await findAttendanceOnManilaDay(
       ctx,
       args.employeeId,
@@ -384,7 +698,7 @@ export const createAttendance = mutation({
 
     if (args.overwriteAttendanceId) {
       const target = existingOnDay.find(
-        (r: any) => r._id === args.overwriteAttendanceId,
+        (record) => record._id === args.overwriteAttendanceId,
       );
       if (!target) {
         throw new Error(
@@ -399,14 +713,14 @@ export const createAttendance = mutation({
 
     // On regular/special holiday with no time in/out → no_work (no additional pay)
     let resolvedStatus = args.status;
-    const holidays = await (ctx.db.query("holidays") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
+    const holidays = await ctx.db
+      .query("holidays")
+      .withIndex("by_organization", (query) =>
+        query.eq("organizationId", args.organizationId),
       )
       .collect();
 
-    const employee = await ctx.db.get(args.employeeId);
-    if (args.status === "no_work" && employee) {
+    if (args.status === "no_work") {
       if (!isNoWorkAllowedForEmployeeDate(normalizedDate, holidays, employee)) {
         throw new Error(
           "No work status is only allowed on holidays that apply to this employee",
@@ -416,7 +730,6 @@ export const createAttendance = mutation({
     if (
       !args.actualIn &&
       !args.actualOut &&
-      employee &&
       !STATUSES_PRESERVED_ON_HOLIDAY_NO_TIME.has(args.status)
     ) {
       const holidayEntry = getMatchingHolidayEntryForDate(
@@ -431,21 +744,17 @@ export const createAttendance = mutation({
         resolvedStatus = "no_work";
       }
     }
-    const scheduleWithLunch = employee
-      ? await getScheduleWithLunch(
-          ctx,
-          employee,
-          normalizedDate,
-          args.organizationId,
-        )
-      : null;
+    const scheduleWithLunch = await getScheduleWithLunch(
+      ctx,
+      employee,
+      normalizedDate,
+      args.organizationId,
+    );
 
     const scheduleIn = scheduleWithLunch?.scheduleIn ?? args.scheduleIn;
     const scheduleOut = scheduleWithLunch?.scheduleOut ?? args.scheduleOut;
     const lunchStart = scheduleWithLunch?.lunchStart;
     const lunchEnd = scheduleWithLunch?.lunchEnd;
-    const lunchMinutes = scheduleWithLunch?.lunchMinutes ?? 0;
-
     const calculatedUndertime =
       args.undertime !== undefined
         ? args.undertime
@@ -475,14 +784,16 @@ export const createAttendance = mutation({
       );
       if (
         holidayEntry &&
-        employee &&
         holidayAppliesToEmployee(holidayEntry, employee)
       ) {
         isHoliday = true;
         holidayType = holidayEntry.type as "regular" | "special" | "special_working";
       }
     }
-    const rowPayload: Record<string, unknown> = {
+    const rowPayload: Omit<
+      Doc<"attendance">,
+      "_id" | "_creationTime" | "createdAt"
+    > = {
       organizationId: args.organizationId,
       employeeId: args.employeeId,
       date: normalizedDate,
@@ -503,19 +814,68 @@ export const createAttendance = mutation({
     if (lunchEnd != null) rowPayload.lunchEnd = lunchEnd;
 
     if (args.overwriteAttendanceId) {
-      await ctx.db.patch(args.overwriteAttendanceId, rowPayload as any);
-      await deleteDuplicateAttendanceOnDay(
+      const before = await ctx.db.get(args.overwriteAttendanceId);
+      await ctx.db.patch(args.overwriteAttendanceId, rowPayload);
+      const removedDuplicates = await deleteDuplicateAttendanceOnDay(
         ctx,
         existingOnDay,
         args.overwriteAttendanceId,
       );
+      await markAttendanceConflictForDate(ctx, {
+        organizationId: args.organizationId,
+        employeeId: args.employeeId,
+        attendanceDate: normalizedDate,
+        hasActualWork: Boolean(args.actualIn || args.actualOut),
+        updatedAt: now,
+      });
+      const after = await ctx.db.get(args.overwriteAttendanceId);
+      await recordAttendanceAudit(ctx, {
+        actor: userRecord,
+        action: "update",
+        attendanceId: args.overwriteAttendanceId,
+        organizationId: args.organizationId,
+        employeeId: args.employeeId,
+        authorization: writeAuthorization,
+        before,
+        after,
+      });
+      for (const duplicate of removedDuplicates) {
+        await recordAttendanceAudit(ctx, {
+          actor: userRecord,
+          action: "duplicate_cleanup",
+          attendanceId: duplicate._id,
+          organizationId: duplicate.organizationId,
+          employeeId: duplicate.employeeId,
+          authorization: writeAuthorization,
+          before: duplicate,
+          after: null,
+        });
+      }
       return args.overwriteAttendanceId;
     }
 
     const attendanceId = await ctx.db.insert("attendance", {
       ...rowPayload,
       createdAt: now,
-    } as any);
+    });
+    const after = await ctx.db.get(attendanceId);
+    await recordAttendanceAudit(ctx, {
+      actor: userRecord,
+      action: "create",
+      attendanceId,
+      organizationId: args.organizationId,
+      employeeId: args.employeeId,
+      authorization: writeAuthorization,
+      after,
+    });
+
+    await markAttendanceConflictForDate(ctx, {
+      organizationId: args.organizationId,
+      employeeId: args.employeeId,
+      attendanceDate: normalizedDate,
+      hasActualWork: Boolean(args.actualIn || args.actualOut),
+      updatedAt: now,
+    });
 
     return attendanceId;
   },
@@ -554,12 +914,21 @@ export const updateAttendance = mutation({
         v.literal("no_work"),
       ),
     ),
+    correctionReason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const attendance = await ctx.db.get(args.attendanceId);
     if (!attendance) throw new Error("Attendance not found");
 
     const userRecord = await checkAuth(ctx, attendance.organizationId, "hr");
+    const writeAuthorization = await authorizeAttendanceWrite(
+      ctx,
+      userRecord,
+      attendance.organizationId,
+      attendance.employeeId,
+      attendance.date,
+      args.correctionReason,
+    );
 
     const employee = await ctx.db.get(attendance.employeeId);
     const scheduleWithLunch = employee
@@ -583,7 +952,8 @@ export const updateAttendance = mutation({
         ? args.scheduleOut
         : attendance.scheduleOut ?? scheduleWithLunch?.scheduleOut ?? null;
 
-    const updates: any = { updatedAt: Date.now() };
+    const updatedAt = Date.now();
+    const updates: Partial<Doc<"attendance">> = { updatedAt };
     if (args.scheduleIn !== undefined) updates.scheduleIn = args.scheduleIn;
     if (args.scheduleOut !== undefined) updates.scheduleOut = args.scheduleOut;
     if (args.actualIn !== undefined) updates.actualIn = args.actualIn;
@@ -617,15 +987,14 @@ export const updateAttendance = mutation({
       ? (scheduleWithLunch?.lunchEnd ?? attendance.lunchEnd)
       : (attendance.lunchEnd ?? scheduleWithLunch?.lunchEnd);
 
-    const currentScheduleIn = args.scheduleIn ?? attendance.scheduleIn;
-    const currentScheduleOut = args.scheduleOut ?? attendance.scheduleOut;
     const currentActualIn = args.actualIn ?? attendance.actualIn;
     const currentActualOut = args.actualOut ?? attendance.actualOut;
     let currentStatus = args.status ?? attendance.status;
 
-    const holidays = await (ctx.db.query("holidays") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", attendance.organizationId),
+    const holidays = await ctx.db
+      .query("holidays")
+      .withIndex("by_organization", (query) =>
+        query.eq("organizationId", attendance.organizationId),
       )
       .collect();
 
@@ -711,6 +1080,24 @@ export const updateAttendance = mutation({
     }
 
     await ctx.db.patch(args.attendanceId, updates);
+    await markAttendanceConflictForDate(ctx, {
+      organizationId: attendance.organizationId,
+      employeeId: attendance.employeeId,
+      attendanceDate: attendance.date,
+      hasActualWork: Boolean(currentActualIn || currentActualOut),
+      updatedAt,
+    });
+    const after = await ctx.db.get(args.attendanceId);
+    await recordAttendanceAudit(ctx, {
+      actor: userRecord,
+      action: "update",
+      attendanceId: args.attendanceId,
+      organizationId: attendance.organizationId,
+      employeeId: attendance.employeeId,
+      authorization: writeAuthorization,
+      before: attendance,
+      after,
+    });
     return { success: true };
   },
 });
@@ -719,14 +1106,37 @@ export const updateAttendance = mutation({
 export const deleteAttendance = mutation({
   args: {
     attendanceId: v.id("attendance"),
+    correctionReason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const attendance = await ctx.db.get(args.attendanceId);
     if (!attendance) throw new Error("Attendance record not found");
 
-    await checkAuth(ctx, attendance.organizationId, "hr");
+    const userRecord = await checkAuth(
+      ctx,
+      attendance.organizationId,
+      "hr",
+    );
+    const writeAuthorization = await authorizeAttendanceWrite(
+      ctx,
+      userRecord,
+      attendance.organizationId,
+      attendance.employeeId,
+      attendance.date,
+      args.correctionReason,
+    );
 
     await ctx.db.delete(args.attendanceId);
+    await recordAttendanceAudit(ctx, {
+      actor: userRecord,
+      action: "delete",
+      attendanceId: args.attendanceId,
+      organizationId: attendance.organizationId,
+      employeeId: attendance.employeeId,
+      authorization: writeAuthorization,
+      before: attendance,
+      after: null,
+    });
     return { success: true };
   },
 });
@@ -756,7 +1166,7 @@ export const punchSelfAttendance = mutation({
 
     const employee = await ctx.db.get(employeeId);
     if (!employee) throw new Error("Employee not found");
-    if (!canUseEmployeeSelfService((employee as any).employment?.status)) {
+    if (!canUseEmployeeSelfService(employee.employment.status)) {
       throw new Error(
         "Separated or inactive employees cannot use self-service attendance.",
       );
@@ -764,6 +1174,13 @@ export const punchSelfAttendance = mutation({
 
     const dateTs = getManilaTodayDateUtcMs();
     const timeStr = getManilaNowHHmm();
+    const writeAuthorization = await authorizeAttendanceWrite(
+      ctx,
+      userRecord,
+      args.organizationId,
+      employeeId,
+      dateTs,
+    );
 
     const existingOnDay = await findAttendanceOnManilaDay(
       ctx,
@@ -772,9 +1189,10 @@ export const punchSelfAttendance = mutation({
     );
     const existing = existingOnDay[0] ?? null;
 
-    const holidays = await (ctx.db.query("holidays") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
+    const holidays = await ctx.db
+      .query("holidays")
+      .withIndex("by_organization", (query) =>
+        query.eq("organizationId", args.organizationId),
       )
       .collect();
 
@@ -799,7 +1217,7 @@ export const punchSelfAttendance = mutation({
 
       const scheduleWithLunch = await getScheduleWithLunch(
         ctx,
-        employee as any,
+        employee,
         dateTs,
         args.organizationId,
       );
@@ -828,7 +1246,10 @@ export const punchSelfAttendance = mutation({
         }
 
         const calculatedLate = calculateLate(scheduleIn, timeStr, lunchStart);
-        const insertPayload: Record<string, unknown> = {
+        const insertPayload: Omit<
+          Doc<"attendance">,
+          "_id" | "_creationTime"
+        > = {
           organizationId: args.organizationId,
           employeeId,
           date: dateTs,
@@ -846,13 +1267,23 @@ export const punchSelfAttendance = mutation({
         if (lunchStart != null) insertPayload.lunchStart = lunchStart;
         if (lunchEnd != null) insertPayload.lunchEnd = lunchEnd;
 
-        await ctx.db.insert("attendance", insertPayload as any);
+        const attendanceId = await ctx.db.insert("attendance", insertPayload);
+        const after = await ctx.db.get(attendanceId);
+        await recordAttendanceAudit(ctx, {
+          actor: userRecord,
+          action: "self_punch_in",
+          attendanceId,
+          organizationId: args.organizationId,
+          employeeId,
+          authorization: writeAuthorization,
+          after,
+        });
         return { success: true, action: "in" as const };
       }
 
       // Existing row, no time in yet: fill time in
       const lateRecalc = calculateLate(scheduleIn, timeStr, lunchStart);
-      const updates: any = {
+      const updates: Partial<Doc<"attendance">> = {
         actualIn: timeStr,
         status: "present",
         late: lateRecalc > 0 ? lateRecalc : 0,
@@ -870,6 +1301,17 @@ export const punchSelfAttendance = mutation({
         updates.lunchEnd = scheduleWithLunch.lunchEnd;
       }
       await ctx.db.patch(existing._id, updates);
+      const after = await ctx.db.get(existing._id);
+      await recordAttendanceAudit(ctx, {
+        actor: userRecord,
+        action: "self_punch_in",
+        attendanceId: existing._id,
+        organizationId: args.organizationId,
+        employeeId,
+        authorization: writeAuthorization,
+        before: existing,
+        after,
+      });
       return { success: true, action: "in" as const };
     }
 
@@ -886,7 +1328,7 @@ export const punchSelfAttendance = mutation({
 
     const scheduleWithLunch = await getScheduleWithLunch(
       ctx,
-      employee as any,
+      employee,
       dateTs,
       args.organizationId,
     );
@@ -927,6 +1369,17 @@ export const punchSelfAttendance = mutation({
       undertimeManualOverride: false,
       updatedAt: Date.now(),
     });
+    const after = await ctx.db.get(existing._id);
+    await recordAttendanceAudit(ctx, {
+      actor: userRecord,
+      action: "self_punch_out",
+      attendanceId: existing._id,
+      organizationId: args.organizationId,
+      employeeId,
+      authorization: writeAuthorization,
+      before: existing,
+      after,
+    });
     return { success: true, action: "out" as const };
   },
 });
@@ -934,6 +1387,7 @@ export const punchSelfAttendance = mutation({
 // Bulk create attendance
 export const bulkCreateAttendance = mutation({
   args: {
+    correctionReason: v.optional(v.string()),
     entries: v.array(
       v.object({
         organizationId: v.id("organizations"),
@@ -955,6 +1409,7 @@ export const bulkCreateAttendance = mutation({
           ),
         ),
         remarks: v.optional(v.string()),
+        importKey: v.optional(v.string()),
         status: v.union(
           v.literal("present"),
           v.literal("absent"),
@@ -972,6 +1427,11 @@ export const bulkCreateAttendance = mutation({
     if (args.entries.length === 0) {
       throw new Error("Attendance batch cannot be empty");
     }
+    if (args.entries.length > ATTENDANCE_WRITE_BATCH_LIMIT) {
+      throw new Error(
+        `Attendance batches are limited to ${ATTENDANCE_WRITE_BATCH_LIMIT} rows`,
+      );
+    }
 
     const now = Date.now();
     const results = [];
@@ -984,7 +1444,36 @@ export const bulkCreateAttendance = mutation({
       throw new Error("All attendance entries must belong to the same organization");
     }
 
-    await checkAuth(ctx, organizationId, "hr");
+    const userRecord = await checkAuth(ctx, organizationId, "hr");
+
+    const importKeys = args.entries
+      .map((entry) => entry.importKey)
+      .filter((key): key is string => key !== undefined);
+    if (new Set(importKeys).size !== importKeys.length) {
+      throw new Error("Attendance import keys must be unique within a batch");
+    }
+
+    const idempotentAttendance = await Promise.all(
+      args.entries.map(async (entry) => {
+        if (!entry.importKey) return null;
+        const existing = await ctx.db
+          .query("attendance")
+          .withIndex("by_organization_import_key", (query) =>
+            query
+              .eq("organizationId", organizationId)
+              .eq("importKey", entry.importKey),
+          )
+          .unique();
+        if (
+          existing &&
+          (existing.employeeId !== entry.employeeId ||
+            !sameManilaCalendarDay(existing.date, entry.date))
+        ) {
+          throw new Error("Attendance import key was already used for another row");
+        }
+        return existing;
+      }),
+    );
 
     const employeesById = new Map<Id<"employees">, Doc<"employees">>();
 
@@ -1004,6 +1493,20 @@ export const bulkCreateAttendance = mutation({
 
     const normalizedDates = args.entries.map((entry) =>
       normalizeAttendanceDateMs(entry.date),
+    );
+    const writeAuthorizations = await Promise.all(
+      normalizedDates.map((date, index) =>
+        idempotentAttendance[index]
+          ? Promise.resolve({})
+          : authorizeAttendanceWrite(
+              ctx,
+              userRecord,
+              organizationId,
+              args.entries[index].employeeId,
+              date,
+              args.correctionReason,
+            ),
+      ),
     );
     const batchSeen = new Set<string>();
 
@@ -1046,6 +1549,11 @@ export const bulkCreateAttendance = mutation({
 
     for (const [index, entry] of args.entries.entries()) {
       const normalizedDate = normalizedDates[index];
+      const alreadyImported = idempotentAttendance[index];
+      if (alreadyImported) {
+        results.push({ id: alreadyImported._id, action: "unchanged" });
+        continue;
+      }
 
       const existingOnDay = (await findAttendanceOnManilaDay(
         ctx,
@@ -1101,9 +1609,8 @@ export const bulkCreateAttendance = mutation({
       const scheduleOut = scheduleWithLunch?.scheduleOut ?? entry.scheduleOut;
       const lunchStart = scheduleWithLunch?.lunchStart;
       const lunchEnd = scheduleWithLunch?.lunchEnd;
-      const lunchMinutes = scheduleWithLunch?.lunchMinutes ?? 0;
-
       if (existing) {
+        const before = existing;
         const updates: Partial<
           Pick<
             Doc<"attendance">,
@@ -1121,6 +1628,7 @@ export const bulkCreateAttendance = mutation({
             | "undertime"
             | "late"
             | "date"
+            | "importKey"
           >
         > & { updatedAt: number } = { updatedAt: now };
         if (entry.actualIn !== undefined) updates.actualIn = entry.actualIn;
@@ -1141,6 +1649,7 @@ export const bulkCreateAttendance = mutation({
           }
         }
         if (entry.remarks !== undefined) updates.remarks = entry.remarks;
+        if (entry.importKey !== undefined) updates.importKey = entry.importKey;
         updates.status = resolvedStatus;
         if (scheduleWithLunch) {
           updates.scheduleIn = scheduleIn;
@@ -1179,11 +1688,34 @@ export const bulkCreateAttendance = mutation({
 
         updates.date = normalizedDate;
         await ctx.db.patch(existing._id, updates);
-        await deleteDuplicateAttendanceOnDay(
+        const removedDuplicates = await deleteDuplicateAttendanceOnDay(
           ctx,
           existingOnDay,
           existing._id,
         );
+        const after = await ctx.db.get(existing._id);
+        await recordAttendanceAudit(ctx, {
+          actor: userRecord,
+          action: "bulk_update",
+          attendanceId: existing._id,
+          organizationId,
+          employeeId: entry.employeeId,
+          authorization: writeAuthorizations[index],
+          before,
+          after,
+        });
+        for (const duplicate of removedDuplicates) {
+          await recordAttendanceAudit(ctx, {
+            actor: userRecord,
+            action: "duplicate_cleanup",
+            attendanceId: duplicate._id,
+            organizationId: duplicate.organizationId,
+            employeeId: duplicate.employeeId,
+            authorization: writeAuthorizations[index],
+            before: duplicate,
+            after: null,
+          });
+        }
         results.push({ id: existing._id, action: "updated" });
       } else {
         const calculatedUndertime =
@@ -1237,14 +1769,32 @@ export const bulkCreateAttendance = mutation({
           isHoliday,
           holidayType,
           remarks: entry.remarks,
+          importKey: entry.importKey,
           createdAt: now,
           updatedAt: now,
         };
         if (lunchStart != null) insertPayload.lunchStart = lunchStart;
         if (lunchEnd != null) insertPayload.lunchEnd = lunchEnd;
         const attendanceId = await ctx.db.insert("attendance", insertPayload);
+        const after = await ctx.db.get(attendanceId);
+        await recordAttendanceAudit(ctx, {
+          actor: userRecord,
+          action: "bulk_create",
+          attendanceId,
+          organizationId,
+          employeeId: entry.employeeId,
+          authorization: writeAuthorizations[index],
+          after,
+        });
         results.push({ id: attendanceId, action: "created" });
       }
+      await markAttendanceConflictForDate(ctx, {
+        organizationId: entry.organizationId,
+        employeeId: entry.employeeId,
+        attendanceDate: normalizedDate,
+        hasActualWork: Boolean(currentActualIn || currentActualOut),
+        updatedAt: now,
+      });
     }
 
     return results;
@@ -1259,10 +1809,12 @@ export const recalculateEmployeeAttendance = mutation({
     employeeId: v.id("employees"),
     startDate: v.optional(v.number()),
     endDate: v.optional(v.number()),
+    correctionReason: v.optional(v.string()),
+    cursor: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     // HR/admin/owner only
-    await checkAuth(ctx, args.organizationId, "hr");
+    const userRecord = await checkAuth(ctx, args.organizationId, "hr");
 
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
@@ -1270,42 +1822,57 @@ export const recalculateEmployeeAttendance = mutation({
       throw new Error("Employee does not belong to this organization");
     }
 
-    let records = await (ctx.db.query("attendance") as any)
-      .withIndex("by_employee", (q: any) => q.eq("employeeId", args.employeeId))
-      .collect();
+    const minDate = args.startDate ?? getManilaTodayDateUtcMs();
+    const attendanceQuery = ctx.db.query("attendance");
+    const rangedQuery =
+      args.endDate !== undefined
+        ? attendanceQuery.withIndex("by_employee_date", (query) =>
+            query
+              .eq("employeeId", args.employeeId)
+              .gte("date", minDate)
+              .lte("date", args.endDate!),
+          )
+        : attendanceQuery.withIndex("by_employee_date", (query) =>
+            query.eq("employeeId", args.employeeId).gte("date", minDate),
+          );
+    const attendancePage = await rangedQuery.paginate({
+      cursor: args.cursor ?? null,
+      numItems: ATTENDANCE_WRITE_BATCH_LIMIT,
+    });
+    const records = attendancePage.page;
 
     if (records.length === 0) {
-      return { updated: 0 };
+      return {
+        updated: 0,
+        isDone: attendancePage.isDone,
+        continueCursor: attendancePage.continueCursor,
+      };
     }
 
-    // Determine effective date range if not provided.
-    // Default to today's Manila day so schedule edits don't rewrite historical attendance.
-    const minDate = args.startDate ?? getManilaTodayDateUtcMs();
-    const maxDate =
-      args.endDate ??
-      records.reduce(
-        (max: number, r: any) => (r.date > max ? r.date : max),
-        records[0].date,
-      );
-
-    records = records.filter(
-      (r: any) => r.date >= minDate && r.date <= maxDate,
+    const writeAuthorizations = await Promise.all(
+      records.map((record) =>
+        authorizeAttendanceWrite(
+          ctx,
+          userRecord,
+          args.organizationId,
+          args.employeeId,
+          record.date,
+          args.correctionReason,
+        ),
+      ),
     );
 
-    if (records.length === 0) {
-      return { updated: 0 };
-    }
-
-    const holidays = await (ctx.db.query("holidays") as any)
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId),
+    const holidays = await ctx.db
+      .query("holidays")
+      .withIndex("by_organization", (query) =>
+        query.eq("organizationId", args.organizationId),
       )
       .collect();
 
     const now = Date.now();
     let updatedCount = 0;
 
-    for (const record of records) {
+    for (const [index, record] of records.entries()) {
       const scheduleWithLunch = await getScheduleWithLunch(
         ctx,
         employee,
@@ -1343,6 +1910,8 @@ export const recalculateEmployeeAttendance = mutation({
           scheduleOut,
           actualIn,
           actualOut,
+          lunchStart,
+          lunchEnd,
         );
         newUndertime = undertime > 0 ? undertime : 0;
 
@@ -1353,7 +1922,7 @@ export const recalculateEmployeeAttendance = mutation({
         newLate = 0;
       }
 
-      const patchPayload: Record<string, unknown> = {
+      const patchPayload: Partial<Doc<"attendance">> = {
         undertime: newUndertime,
         late: newLate,
         updatedAt: now,
@@ -1378,10 +1947,25 @@ export const recalculateEmployeeAttendance = mutation({
       if (record.lunchEnd == null && scheduleWithLunch?.lunchEnd != null) {
         patchPayload.lunchEnd = scheduleWithLunch.lunchEnd;
       }
-      await ctx.db.patch(record._id, patchPayload as any);
+      await ctx.db.patch(record._id, patchPayload);
+      const after = await ctx.db.get(record._id);
+      await recordAttendanceAudit(ctx, {
+        actor: userRecord,
+        action: "recalculate",
+        attendanceId: record._id,
+        organizationId: args.organizationId,
+        employeeId: args.employeeId,
+        authorization: writeAuthorizations[index],
+        before: record,
+        after,
+      });
       updatedCount++;
     }
 
-    return { updated: updatedCount };
+    return {
+      updated: updatedCount,
+      isDone: attendancePage.isDone,
+      continueCursor: attendancePage.continueCursor,
+    };
   },
 });

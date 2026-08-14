@@ -1,6 +1,7 @@
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { normalizeMigrationSourceKey } from "./leaveEmployeeMigrationPlanner";
+import { assertLegacyLeaveWriteAllowed } from "./leaveMigration";
 
 const MIGRATION_VERSION = 1;
 
@@ -640,6 +641,7 @@ export async function replaceEmployeeLeaveCredits(
   credits: EmployeeLeaveCredits,
   now: number,
 ): Promise<void> {
+  await assertLegacyLeaveWriteAllowed(ctx, employee.organizationId);
   const year = currentManilaYear(now);
   const existing = await ctx.db
     .query("employeeLeaveBalances")

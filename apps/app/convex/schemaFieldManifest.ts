@@ -1,6 +1,7 @@
 export type SchemaFieldClassification =
   | "canonical"
   | "compatibility_read"
+  | "compatibility_write"
   | "migration_only"
   | "historical_snapshot"
   | "removable";
@@ -117,5 +118,183 @@ export const ORGANIZATION_CONFIGURATION_FIELD_MANIFEST = [
     field: "cursor",
     classification: "migration_only",
     releaseGate: "retain_until_all_contract_releases_complete",
+  },
+] as const satisfies readonly SchemaFieldManifestEntry[];
+
+export const LEAVE_FIELD_MANIFEST = [
+  {
+    table: "employees",
+    field: "leaveCredits",
+    classification: "compatibility_read",
+    target: "employeeLeaveBalances",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "settings",
+    field: "leaveTypes",
+    classification: "compatibility_write",
+    target: "leavePolicies",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "settings",
+    field: "leaveTrackerRows",
+    classification: "compatibility_write",
+    target: "employeeLeaveBalances",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "settings",
+    field: "leaveTrackerByYear",
+    classification: "compatibility_write",
+    target: "employeeLeaveBalances",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveTypes",
+    field: "sourceKey",
+    classification: "compatibility_read",
+    target: "leavePolicies.sourceKey",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveTypes",
+    field: "name",
+    classification: "compatibility_read",
+    target: "leavePolicies.name",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveTypes",
+    field: "maxDays",
+    classification: "compatibility_read",
+    target: "leavePolicyVersions.annualUnits",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveTypes",
+    field: "isPaid",
+    classification: "compatibility_read",
+    target: "leavePolicyVersions.payTreatment",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveTypes",
+    field: "accrualRate",
+    classification: "compatibility_read",
+    target: "leavePolicyVersions.accrualRate",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveTypes",
+    field: "defaultCredits",
+    classification: "compatibility_read",
+    target: "leavePolicyVersions.annualUnits",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveTypes",
+    field: "maxConsecutiveDays",
+    classification: "compatibility_read",
+    target: "leavePolicyVersions.maximumConsecutiveUnits",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveTypes",
+    field: "carryOver",
+    classification: "compatibility_read",
+    target: "leavePolicyVersions.carryoverMode",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveTypes",
+    field: "maxCarryOver",
+    classification: "compatibility_read",
+    target: "leavePolicyVersions.carryoverCap",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveRequests",
+    field: "leaveType",
+    classification: "compatibility_read",
+    target: "leaveRequests.policyId",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveRequests",
+    field: "customLeaveType",
+    classification: "compatibility_read",
+    target: "leaveRequests.policyId",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveRequests",
+    field: "startDate",
+    classification: "compatibility_read",
+    target: "leaveRequests.requestedStart",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveRequests",
+    field: "endDate",
+    classification: "compatibility_read",
+    target: "leaveRequests.requestedEnd",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveRequests",
+    field: "numberOfDays",
+    classification: "compatibility_read",
+    target: "leaveRequests.chargeableDuration",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveRequests",
+    field: "isPaid",
+    classification: "compatibility_read",
+    target: "leaveRequests.payTreatment",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveRequests",
+    field: "filedDate",
+    classification: "compatibility_read",
+    target: "leaveRequests.createdAt",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveRequests",
+    field: "reviewedBy",
+    classification: "compatibility_read",
+    target: "leaveRequests.reviewerId",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveRequests",
+    field: "reviewedDate",
+    classification: "compatibility_read",
+    target: "leaveRequests.reviewedAt",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveRequests",
+    field: "remarks",
+    classification: "compatibility_read",
+    target: "leaveRequests.decisionReason",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveRequests",
+    field: "approvedByName",
+    classification: "compatibility_read",
+    target: "leaveRequests.reviewerSnapshot.displayName",
+    releaseGate: "leave_v2_cutover_complete",
+  },
+  {
+    table: "leaveRequests",
+    field: "reviewerPosition",
+    classification: "compatibility_read",
+    target: "leaveRequests.reviewerSnapshot.position",
+    releaseGate: "leave_v2_cutover_complete",
   },
 ] as const satisfies readonly SchemaFieldManifestEntry[];

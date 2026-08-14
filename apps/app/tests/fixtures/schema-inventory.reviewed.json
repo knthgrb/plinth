@@ -1,5 +1,5 @@
 {
-  "tableCount": 78,
+  "tableCount": 97,
   "tables": [
     {
       "name": "accountingCostItems",
@@ -10,8 +10,8 @@
     },
     {
       "name": "announcementComments",
-      "fieldCount": 9,
-      "fieldsSha256": "d39849089c76d2cd0413cff35bb0fd64319306ee22779df6175ad46efbdc75a7",
+      "fieldCount": 10,
+      "fieldsSha256": "c2e9e6a01929782948d56b89b19603cbec4937ef3aef316812c0f1d575dbb596",
       "indexCount": 2,
       "indexesSha256": "500e17109a688304ad3b3552a485271b3d0c28ea0142ce4875437e0db816f52e"
     },
@@ -101,10 +101,17 @@
     },
     {
       "name": "attendance",
-      "fieldCount": 20,
-      "fieldsSha256": "185bddbfb43aa1fc960c86907ae7a30cd53c03941e527a855229204df74edc60",
-      "indexCount": 4,
-      "indexesSha256": "00f2f5c711a1a3b50c134743bd06247173bc8ea50ffee6e942030099f508f37d"
+      "fieldCount": 21,
+      "fieldsSha256": "976c72e64122c785e262dacdc227d98f8e776b7f2f64d76613ae7322fe67d5aa",
+      "indexCount": 6,
+      "indexesSha256": "317ee8f6f918566cfbb874e4fe9fab2f8c87e253d9ca7d856826201c963df7e6"
+    },
+    {
+      "name": "attendanceAuditLogs",
+      "fieldCount": 11,
+      "fieldsSha256": "4e26b7caff7e1a60d61a47af90e30bd614222dc657868f9be56ed41ad3733f85",
+      "indexCount": 3,
+      "indexesSha256": "d77d03de7d5e214dfb745580fa4fae109cd7a419f202451f12ddc4aa80322399"
     },
     {
       "name": "conversationMembers",
@@ -115,8 +122,8 @@
     },
     {
       "name": "conversations",
-      "fieldCount": 11,
-      "fieldsSha256": "9d1edec8b20f20548995c4ef4c644bd27bab48f9caa5b67b827b2cc758adfc3b",
+      "fieldCount": 13,
+      "fieldsSha256": "7233b3780bfbfbc3d3df8b8e315f6ea23245f4629e0820cce1b0085e87586d0f",
       "indexCount": 1,
       "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
     },
@@ -171,10 +178,17 @@
     },
     {
       "name": "employeeLeaveBalances",
-      "fieldCount": 16,
-      "fieldsSha256": "690908c81403b21dd0a74bf9d765cae37e90f0ff0270db3993a0d95a29b8bd0b",
+      "fieldCount": 28,
+      "fieldsSha256": "fa29309bc977e2772bcf57a5087816cec1a12897e28a4f136d27506918e5381a",
+      "indexCount": 5,
+      "indexesSha256": "4d71f03f416a7de7f146dadc24d6c16876522d8d8cd9a46fdfb2f120c5f10498"
+    },
+    {
+      "name": "employeeLeaveQualifications",
+      "fieldCount": 12,
+      "fieldsSha256": "e2642f038ac395336af3b64567d60ea396e40bd6fdf6781b310ff7464f5efd3f",
       "indexCount": 2,
-      "indexesSha256": "e72554642d1a3ba77916f169585ac450a973462c2dcb8e19e44175cb3d8c2a83"
+      "indexesSha256": "4930922748cbb7135a2016c6acd40add7d068d8e50c11024628e6a29ad2c784c"
     },
     {
       "name": "employeeLifecycleEvents",
@@ -241,10 +255,17 @@
     },
     {
       "name": "evaluations",
-      "fieldCount": 21,
-      "fieldsSha256": "47a3df4f212c2f8997a41b06e69f5f5fd31ced0240cc223a42e7d4f06e0052eb",
-      "indexCount": 2,
-      "indexesSha256": "db8b6c9f85a3a577e91fab98f3c43a9212989281de1060e869a0f6a6f952e859"
+      "fieldCount": 31,
+      "fieldsSha256": "1d80a7835477049b9cc9747d62d099aa7a6a349510027f513a5dbfacd13ad6c0",
+      "indexCount": 4,
+      "indexesSha256": "b2e2bd1c50dd398a09e0449c4850466f6cf819f2ff3fbbbffd14ff97413b761f"
+    },
+    {
+      "name": "evaluationSchedules",
+      "fieldCount": 13,
+      "fieldsSha256": "7df831f35cf039ecf7f1d34a2a7e26996dc5093f85d3508832475c1456e49a76",
+      "indexCount": 3,
+      "indexesSha256": "589a4fda732c6fc5dbe8c59cfb30a4bcfa78a68931abbf1c586c58105bb3b62e"
     },
     {
       "name": "evaluationTemplates",
@@ -282,11 +303,109 @@
       "indexesSha256": "dfcb796064aacbec4e96cd67759a1d5dd7a3dd4f24e6fca95e8c4f093d29e4a3"
     },
     {
+      "name": "leaveAdministrativeEvents",
+      "fieldCount": 6,
+      "fieldsSha256": "5ad9d12546ef715edde97050e0e8767f6c56a1279835b1b918af4210c77ac0f2",
+      "indexCount": 2,
+      "indexesSha256": "1462c5e1a9b7c13d7bd0642fbfa4ad82e495e0973c34518640698ce7f0b61202"
+    },
+    {
+      "name": "leaveBenefitEvents",
+      "fieldCount": 15,
+      "fieldsSha256": "bca0e36d99f23ed028250b6938546e2d6fd2eea282743237ea01040e51e402b0",
+      "indexCount": 3,
+      "indexesSha256": "cc835382091c8483995409ed88dae9bcd8ad6a62886ed036e312e730ace6bc63"
+    },
+    {
+      "name": "leaveBenefitPayrollAllocations",
+      "fieldCount": 9,
+      "fieldsSha256": "761a3d24d9823fd0cff6b33d4b351183bb575172723c21ca7433056ba5d9d89e",
+      "indexCount": 4,
+      "indexesSha256": "0c06e48453387b8a97614dd11729ed1d222297a4c2500c4f2a14c9788187d1e8"
+    },
+    {
+      "name": "leaveBenefitPayrollReconciliations",
+      "fieldCount": 14,
+      "fieldsSha256": "73d20308b9ae6229c5c4a8cf481227db0d7327a6c73b5ab5a230844939def693",
+      "indexCount": 3,
+      "indexesSha256": "8affeb75e45a4ecf9211d59b2ac3e8ec126b5df519f50c5a8a41b0c11d795b2f"
+    },
+    {
+      "name": "leaveConversionRequests",
+      "fieldCount": 19,
+      "fieldsSha256": "d3490bca74d709e00e42fdc0fce5c3e92e04bbf7d5cbcaefc5785dda40da605d",
+      "indexCount": 4,
+      "indexesSha256": "bc0c81f736bcb6a8eccd96beb912d4f201ad5480bdc13c3c16af9649cbcde693"
+    },
+    {
+      "name": "leaveLedgerEntries",
+      "fieldCount": 19,
+      "fieldsSha256": "93e8ca17d5731bb7a2c4d4f6b2fd7d489d5e7aa4fc934775235f2cdfd18ab933",
+      "indexCount": 4,
+      "indexesSha256": "fd2e9702d94189778d2d813fe101e4ec1b6387e5b2b2be1e28c32f78fc4fb15d"
+    },
+    {
+      "name": "leaveMigrationBalanceSnapshots",
+      "fieldCount": 16,
+      "fieldsSha256": "e5ed225a7247fa277d9f6dff25915b7551b0c9c45bb5e3f6cb8368a2df305ded",
+      "indexCount": 2,
+      "indexesSha256": "1821e5a66051ee87e025eaad7d261279f6d67e25d73dd48bd11645ae1be11b5f"
+    },
+    {
+      "name": "leaveMigrationRequestSnapshots",
+      "fieldCount": 10,
+      "fieldsSha256": "9c717e5a8a3dd618a088a572c1aac999d05c6583efde427e910397b0f3cc6b90",
+      "indexCount": 2,
+      "indexesSha256": "c1267aa3cb36ed9ad906219fbc084a65eb8864c8836553b589aef93e2d7fd57d"
+    },
+    {
+      "name": "leaveMigrationRuns",
+      "fieldCount": 44,
+      "fieldsSha256": "4095e2ee92ed62b58187418efce7cdec6823f5ab1a6a197763bd2f468e7561a6",
+      "indexCount": 2,
+      "indexesSha256": "befb84fae3025aaf83770d47f123e48cf311a84f5caac0817de63e649e2d714c"
+    },
+    {
+      "name": "leavePolicies",
+      "fieldCount": 13,
+      "fieldsSha256": "fbafbeb8e08789a483a0af1ac6498a5f9d2e111ffa14dd164c4e926cfc50a4ca",
+      "indexCount": 3,
+      "indexesSha256": "87278be3bede4781a01f2b896f0343d0b30ee4b6f69b4706f2963fdd1a33c643"
+    },
+    {
+      "name": "leavePolicyVersions",
+      "fieldCount": 37,
+      "fieldsSha256": "96261e1d267edc6c0389adf456ace3c00a09715684385fbd0b9a9151629bd045",
+      "indexCount": 3,
+      "indexesSha256": "ee04290be3e955ea802fc4a11e41b66dcf2e0127da018bffedc9061dfba925b6"
+    },
+    {
+      "name": "leaveRequestEvents",
+      "fieldCount": 7,
+      "fieldsSha256": "baead1511d0cdf85d6fbc7597bd82656bd73e87a2accafb16ebdb9986c3fa5ef",
+      "indexCount": 2,
+      "indexesSha256": "6f0c08a8368f177daba0ae47f82038c6ff03ddd6aa7ab977db128a971992bbcf"
+    },
+    {
+      "name": "leaveRequestOccurrences",
+      "fieldCount": 21,
+      "fieldsSha256": "cc8e22de2d0ca072fc8bcb4f4191be4f673f60a163e117a01e4798c7b1b314f4",
+      "indexCount": 4,
+      "indexesSha256": "1fe5820cb952b2f4aff2e7134540f418f36d6f594cc489f241f33c3f91dba88c"
+    },
+    {
       "name": "leaveRequests",
-      "fieldCount": 23,
-      "fieldsSha256": "b1e58cc229a2697f4465346f50bc6c616c083e8eaa5e0a2c8593bdb5f74e8ab1",
-      "indexCount": 5,
-      "indexesSha256": "7c5f9530c1cb0aaf9343812b7c8d6ace2cf35256c7bdfa7f848db246c3a2a334"
+      "fieldCount": 44,
+      "fieldsSha256": "931aaee9a070c0d5b8cbcbd07626503c362a645375df5e19c7fe997f772fc123",
+      "indexCount": 6,
+      "indexesSha256": "73034c876213251583e2d4787c27e135a04523677713aa2a53aa9a9ed18378f0"
+    },
+    {
+      "name": "leaveSensitiveAccessGrants",
+      "fieldCount": 7,
+      "fieldsSha256": "2dead200c3592fbc721ceef0ae22725033c80212bd244ac89ccc4defa971b72f",
+      "indexCount": 2,
+      "indexesSha256": "eaa00ba784c3a04b07215b712c7916baac0aa3f4118aa34467952f08561ccded"
     },
     {
       "name": "leaveTypes",
@@ -331,6 +450,13 @@
       "indexesSha256": "a44c513df5b3d6e520ff7d7538bfd173767bfe9ca6b4f67fb29392332b78581a"
     },
     {
+      "name": "messageReactions",
+      "fieldCount": 7,
+      "fieldsSha256": "119eec226ed0c334f56329197db87a963b029966e76e65a942491c0f00f4348e",
+      "indexCount": 2,
+      "indexesSha256": "7ac540baa327e3123f0ffeb1aec70fdf3d211ff92900494ee6642c6972ef98f8"
+    },
+    {
       "name": "messageReceipts",
       "fieldCount": 9,
       "fieldsSha256": "dea6a8963a7d8681f4203e529276604980a1565e8d89d65ea2ebebfe175b55cd",
@@ -339,10 +465,10 @@
     },
     {
       "name": "messages",
-      "fieldCount": 7,
-      "fieldsSha256": "8a8493a49c1a9a6d7849c40bf7d0a809b23c7d02f3d2bdc609670f3d2c5f9f1b",
-      "indexCount": 3,
-      "indexesSha256": "c3ce8af2a7a2e5202dc562df13970087e475203a1c3acd9497a0efd0d25b8fc7"
+      "fieldCount": 11,
+      "fieldsSha256": "9f7e0f16a1b9d2f31f57aef5e8a7b6f6df36086fd53a751d0947d452ca1e65a7",
+      "indexCount": 4,
+      "indexesSha256": "7a3e28985c26bfdb7ef8ef028cea2c383804a1eb17d8f2c63059319a2111d52d"
     },
     {
       "name": "migrationAudits",
@@ -395,8 +521,8 @@
     },
     {
       "name": "organizationLeaveSettings",
-      "fieldCount": 26,
-      "fieldsSha256": "2ad3ffc3a95d0b9465dd224687a35ae8061a853bb5a0d3732757e1295422edbd",
+      "fieldCount": 33,
+      "fieldsSha256": "25abe5ae94ab98ebab9017d2843f3d6e73b26e5e6fdf996edda4c052adbaa8a6",
       "indexCount": 1,
       "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
     },
@@ -446,8 +572,8 @@
       "name": "payrollRuns",
       "fieldCount": 75,
       "fieldsSha256": "1f1e5ee519862c366cccf2b11fae1d321d5046ea5c6ef317bb4a80ebf9b99c03",
-      "indexCount": 3,
-      "indexesSha256": "be609d55044ff0e4c8dd35615d4cc271af37cb354bde1c42e2ab9eb7dbbbe30d"
+      "indexCount": 5,
+      "indexesSha256": "74bec7e53ab90b506f6723bdaa50893f9a32196dcacef04420e6581bc79a0613"
     },
     {
       "name": "payslipCorrections",
@@ -479,10 +605,10 @@
     },
     {
       "name": "payslips",
-      "fieldCount": 53,
-      "fieldsSha256": "bfd0b99dc606d6b95fa6c182eddc8f414fa8b1af48cb44763783b83a73161fea",
-      "indexCount": 5,
-      "indexesSha256": "325e5d72a28e564cdd2166441869afc2866e9a76a82a73d34827a0944cd29576"
+      "fieldCount": 55,
+      "fieldsSha256": "a78a25663f8a4b92f6ea9031880325d8166d2ee65d866f12863c0dff0d90b9f7",
+      "indexCount": 6,
+      "indexesSha256": "a602f3c024a7a285a62f9a2ef61d6d3796306b54446005758d67bb820a4ec29a"
     },
     {
       "name": "settings",
@@ -525,6 +651,13 @@
       "fieldsSha256": "ff5a07d17997cc7ef924e8a704c274161e64bd4b0961370a7e1e3a84c5daf877",
       "indexCount": 1,
       "indexesSha256": "fbdc3b721dde9314e7256e356bdf5b033a2a5bd6e57f5e8e30c09528b9f81380"
+    },
+    {
+      "name": "userConversationPreferences",
+      "fieldCount": 7,
+      "fieldsSha256": "8209aca1c7d9e8b04d26712fd834889279c30004ce464b46b6f900bc733a2676",
+      "indexCount": 2,
+      "indexesSha256": "e2c2687dc779c2b6c74044a524f24e70b543a639f9e1487207db198b284cd0b2"
     },
     {
       "name": "userOrganizations",

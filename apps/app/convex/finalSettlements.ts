@@ -12,6 +12,7 @@ import {
   type FinalSettlementLoanPayoff,
 } from "@/utils/final-settlement";
 import { loadEffectiveEmployee } from "./leaveEmployeeCompatibility";
+import { prepareEmployeeLeaveForFinalSettlement } from "./leaveConversions";
 
 const clearanceStatusValidator = v.union(
   v.literal("pending"),
@@ -236,7 +237,18 @@ export const prepareFinalSettlement = mutation({
     }
 
     const existing = await findSettlementByEmployee(ctx, args.employeeId);
-    if (existing) return existing._id;
+    if (existing) {
+      await prepareEmployeeLeaveForFinalSettlement(ctx, {
+        organizationId: args.organizationId,
+        employeeId: args.employeeId,
+        separationDate:
+          employee.employment.separationDate ??
+          employee.employment.lastWorkingDay ??
+          Date.now(),
+        actorId: userRecord._id,
+      });
+      return existing._id;
+    }
 
     const now = Date.now();
     const separationType =
@@ -280,6 +292,16 @@ export const prepareFinalSettlement = mutation({
         clearanceStatus: employee.employment.clearanceStatus ?? "pending",
       },
       updatedAt: now,
+    });
+
+    await prepareEmployeeLeaveForFinalSettlement(ctx, {
+      organizationId: args.organizationId,
+      employeeId: args.employeeId,
+      separationDate:
+        employee.employment.separationDate ??
+        employee.employment.lastWorkingDay ??
+        now,
+      actorId: userRecord._id,
     });
 
     return settlementId;

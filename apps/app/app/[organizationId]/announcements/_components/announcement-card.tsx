@@ -1,11 +1,12 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { format } from "date-fns";
 import {
+  CornerDownRight,
   Download,
   Edit,
   FileText,
@@ -32,12 +33,21 @@ import { TiptapViewer } from "@/components/tiptap-viewer";
 import { useToast } from "@/components/ui/use-toast";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { applyOptimisticReaction } from "@/lib/announcements/client-state";
+import {
+  applyOptimisticReaction,
+  buildCommentThreads,
+  type CommentThread,
+  getReactionBarEmojis,
+  getReactionPickerEmojis,
+} from "@/lib/announcements/client-state";
 
 export type Announcement = FunctionReturnType<
   typeof api.announcements.getAnnouncements
 >[number];
 type CommentPersona = "admin" | "employee";
+type AnnouncementComment = FunctionReturnType<
+  typeof api.announcements.getComments
+>[number];
 
 type AnnouncementCardProps = {
   announcement: Announcement;
@@ -159,6 +169,12 @@ export function AnnouncementCard({
   const [commentText, setCommentText] = useState("");
   const [commentAs, setCommentAs] = useState<CommentPersona>("admin");
   const [submittingComment, setSubmittingComment] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<{
+    commentId: Id<"announcementComments">;
+    authorName: string;
+  } | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [submittingReply, setSubmittingReply] = useState(false);
   const [previewFile, setPreviewFile] = useState<{
     url: string;
     name: string;
@@ -203,6 +219,15 @@ export function AnnouncementCard({
       (left, right) => right.count - left.count,
     );
   }, [announcement.reactions]);
+  const reactionBarEmojis = useMemo(
+    () => getReactionBarEmojis(announcement.reactions),
+    [announcement.reactions],
+  );
+  const reactionPickerEmojis = getReactionPickerEmojis();
+  const commentThreads = useMemo(
+    () => buildCommentThreads(comments ?? []),
+    [comments],
+  );
   const viewerReaction = currentUserId
     ? announcement.reactions.find(
         (reaction) => String(reaction.userId) === String(currentUserId),
@@ -252,6 +277,137 @@ export function AnnouncementCard({
       setSubmittingComment(false);
     }
   };
+
+  const handleAddReply = async () => {
+    const content = replyText.trim();
+    if (!content || !replyingTo) return;
+    setSubmittingReply(true);
+    try {
+      await addComment({
+        announcementId: announcement._id,
+        organizationId,
+        content,
+        parentCommentId: replyingTo.commentId,
+        commentAs: canManage ? commentAs : undefined,
+      });
+      setReplyText("");
+      setReplyingTo(null);
+    } catch (error: unknown) {
+      toast({
+        title: "Reply not posted",
+        description: getErrorMessage(error),
+        variant: "destructive",
+      });
+    } finally {
+      setSubmittingReply(false);
+    }
+  };
+
+  const renderComment = (
+    comment: CommentThread<AnnouncementComment>,
+    depth = 0,
+  ): ReactNode => (
+    <li
+      key={comment._id}
+      className={
+        depth === 0
+          ? "rounded-xl border border-gray-200 bg-white p-3 shadow-sm"
+          : depth === 1
+            ? "ml-4 border-l-2 border-[#695eff]/15 pl-3"
+            : "border-l-2 border-[#695eff]/15"
+      }
+    >
+      <div className={depth === 0 ? "" : "rounded-lg bg-white/80 px-3 py-2.5"}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <Avatar className="h-7 w-7 shrink-0">
+              <AvatarFallback className="bg-[#695eff]/10 text-[10px] font-semibold text-[#5547e8]">
+                {comment.authorName
+                  .split(/\s+/)
+                  .map((part) => part[0])
+                  .join("")
+                  .toUpperCase()
+                  .slice(0, 2) || "M"}
+              </AvatarFallback>
+            </Avatar>
+            <span className="truncate text-sm font-semibold text-gray-900">
+              {comment.authorName}
+            </span>
+          </div>
+          <time className="shrink-0 pt-1 text-xs text-gray-400">
+            {format(new Date(comment.createdAt), "MMM d · h:mm a")}
+          </time>
+        </div>
+        <p className="mt-2 break-words pl-9 text-sm leading-5 text-gray-700">
+          {comment.content}
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            setReplyingTo({
+              commentId: comment._id,
+              authorName: comment.authorName,
+            });
+            setReplyText("");
+          }}
+          className="mt-1.5 ml-9 inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-[#5547e8]"
+        >
+          <CornerDownRight className="h-3.5 w-3.5" /> Reply
+        </button>
+
+        {replyingTo?.commentId === comment._id && (
+          <div className="mt-2 ml-9 rounded-lg bg-gray-50 p-2">
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <span className="truncate text-xs text-gray-500">
+                Replying to {replyingTo.authorName}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setReplyingTo(null);
+                  setReplyText("");
+                }}
+                className="text-xs font-medium text-gray-500 hover:text-gray-800"
+              >
+                Cancel
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                value={replyText}
+                onChange={(event) => setReplyText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void handleAddReply();
+                  }
+                }}
+                placeholder="Write a reply"
+                aria-label={`Reply to ${replyingTo.authorName}`}
+                className="h-8 border-gray-200 bg-white"
+              />
+              <Button
+                type="button"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                onClick={handleAddReply}
+                disabled={!replyText.trim() || submittingReply}
+                aria-label="Send reply"
+              >
+                <Send className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {comment.replies.length > 0 && (
+        <ul className="mt-2 space-y-2">
+          {comment.replies.map((reply) => renderComment(reply, depth + 1))}
+        </ul>
+      )}
+    </li>
+  );
 
   const handleDelete = async () => {
     if (!window.confirm("Delete this announcement and its comments?")) return;
@@ -372,7 +528,9 @@ export function AnnouncementCard({
 
         {announcement.publicationStatus === "published" && (
           <div className="mt-4 flex flex-wrap items-center gap-1 border-t border-gray-100 pt-3">
-            {REACTIONS.slice(0, 3).map((reaction) => {
+            {reactionBarEmojis.map((emoji) => {
+              const reaction = REACTIONS.find((option) => option.emoji === emoji);
+              if (!reaction) return null;
               const count =
                 reactionGroups.find((group) => group.emoji === reaction.emoji)
                   ?.count ?? 0;
@@ -400,15 +558,21 @@ export function AnnouncementCard({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
-                {REACTIONS.map((reaction) => (
-                  <DropdownMenuItem
-                    key={reaction.emoji}
-                    onClick={() => handleReaction(reaction.emoji)}
-                  >
-                    <span className="mr-2">{reaction.emoji}</span>
-                    {reaction.label}
-                  </DropdownMenuItem>
-                ))}
+                {reactionPickerEmojis.map((emoji) => {
+                  const reaction = REACTIONS.find(
+                    (option) => option.emoji === emoji,
+                  );
+                  if (!reaction) return null;
+                  return (
+                    <DropdownMenuItem
+                      key={reaction.emoji}
+                      onClick={() => handleReaction(reaction.emoji)}
+                    >
+                      <span className="mr-2">{reaction.emoji}</span>
+                      {reaction.label}
+                    </DropdownMenuItem>
+                  );
+                })}
               </DropdownMenuContent>
             </DropdownMenu>
             {reactionGroups.length > 0 && (
@@ -427,23 +591,9 @@ export function AnnouncementCard({
             <MessageCircle className="h-4 w-4" />
             Comments{comments?.length ? ` (${comments.length})` : ""}
           </div>
-          {comments && comments.length > 0 && (
-            <ul className="mb-3 space-y-2">
-              {comments.map((comment) => (
-                <li key={comment._id} className="rounded-xl border bg-white px-3 py-2.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="truncate text-sm font-medium text-gray-900">
-                      {comment.authorName}
-                    </span>
-                    <time className="shrink-0 text-xs text-gray-400">
-                      {format(new Date(comment.createdAt), "MMM d · h:mm a")}
-                    </time>
-                  </div>
-                  <p className="mt-1 break-words text-sm text-gray-700">
-                    {comment.content}
-                  </p>
-                </li>
-              ))}
+          {commentThreads.length > 0 && (
+            <ul className="mb-4 space-y-3">
+              {commentThreads.map((comment) => renderComment(comment))}
             </ul>
           )}
 
@@ -481,7 +631,7 @@ export function AnnouncementCard({
               }}
               placeholder="Write a comment"
               aria-label="Comment"
-              className="h-9 bg-white"
+              className="h-9 border-gray-200 bg-white shadow-sm"
             />
             <Button
               type="button"

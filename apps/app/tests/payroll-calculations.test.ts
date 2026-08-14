@@ -98,6 +98,176 @@ function calculate({
 }
 
 describe("payroll calculations", () => {
+  it("combines a half-day paid leave occurrence with a half-day absence", () => {
+    const date = localDate(2026, 1, 20);
+    const input = {
+      employee: createEmployee(),
+      cutoffStart: date,
+      cutoffEnd: date,
+      payFrequency: "bimonthly" as const,
+      payrollRates: baseRates,
+      attendance: [],
+      holidays: [],
+      leaveRequests: [],
+      leaveTypes: [],
+      leaveOccurrences: [
+        {
+          localDate: "2026-02-20",
+          scheduledMinutes: 480,
+          leaveMinutes: 240,
+          payTreatment: "company_paid" as const,
+        },
+      ],
+    };
+
+    const result = calculatePayrollBaseFromRecords(input);
+
+    expect(result.daysWorked).toBe(0.5);
+    expect(result.absences).toBe(0.5);
+    expect(result.absentDeduction).toBeCloseTo(689.66, 2);
+  });
+
+  it("treats uncovered and unpaid halves as one full absence", () => {
+    const date = localDate(2026, 1, 20);
+    const input = {
+      employee: createEmployee(),
+      cutoffStart: date,
+      cutoffEnd: date,
+      payFrequency: "bimonthly" as const,
+      payrollRates: baseRates,
+      attendance: [],
+      holidays: [],
+      leaveRequests: [],
+      leaveTypes: [],
+      leaveOccurrences: [
+        {
+          localDate: "2026-02-20",
+          scheduledMinutes: 480,
+          leaveMinutes: 240,
+          payTreatment: "unpaid" as const,
+        },
+      ],
+    };
+
+    const result = calculatePayrollBaseFromRecords(input);
+
+    expect(result.daysWorked).toBe(0);
+    expect(result.absences).toBe(1);
+    expect(result.absentDeduction).toBeCloseTo(1379.31, 2);
+  });
+
+  it("does not deduct undertime covered by a partial paid leave occurrence", () => {
+    const date = localDate(2026, 1, 20);
+    const input = {
+      employee: createEmployee(),
+      cutoffStart: date,
+      cutoffEnd: date,
+      payFrequency: "bimonthly" as const,
+      payrollRates: baseRates,
+      attendance: [
+        {
+          date,
+          status: "half-day",
+          actualIn: "09:00",
+          actualOut: "14:00",
+          scheduleIn: "09:00",
+          scheduleOut: "18:00",
+          lunchStart: "12:00",
+          lunchEnd: "13:00",
+        },
+      ],
+      holidays: [],
+      leaveRequests: [],
+      leaveTypes: [],
+      leaveOccurrences: [
+        {
+          localDate: "2026-02-20",
+          scheduledMinutes: 480,
+          leaveMinutes: 240,
+          payTreatment: "company_paid" as const,
+        },
+      ],
+    };
+
+    const result = calculatePayrollBaseFromRecords(input);
+
+    expect(result.daysWorked).toBe(1);
+    expect(result.absences).toBe(0);
+    expect(result.undertimeHours).toBe(0);
+    expect(result.undertimeDeduction).toBe(0);
+  });
+
+  it("exposes statutory benefit-supported leave days and attributed payroll pay", () => {
+    const date = localDate(2026, 1, 20);
+    const input = {
+      employee: createEmployee(),
+      cutoffStart: date,
+      cutoffEnd: date,
+      payFrequency: "bimonthly" as const,
+      payrollRates: baseRates,
+      attendance: [],
+      holidays: [],
+      leaveRequests: [],
+      leaveTypes: [],
+      leaveOccurrences: [
+        {
+          localDate: "2026-02-20",
+          scheduledMinutes: 480,
+          leaveMinutes: 480,
+          payTreatment: "statutory_benefit_supported" as const,
+          leaveRequestId: "maternity-request",
+          isWorkday: true,
+        },
+      ],
+    };
+
+    const result = calculatePayrollBaseFromRecords(input);
+
+    expect(result.statutoryBenefitSupportedLeaveDays).toBe(1);
+    expect(result.statutoryBenefitSupportedLeavePay).toBeCloseTo(1379.31, 2);
+    expect(result.statutoryBenefitSupportedLeaveBreakdown).toEqual([
+      {
+        leaveRequestId: "maternity-request",
+        days: 1,
+        attributedPay: 1379.31,
+      },
+    ]);
+  });
+
+  it("reconciles only the benefit-supported fraction actually paid after attendance coverage", () => {
+    const date = localDate(2026, 1, 20);
+    const result = calculatePayrollBaseFromRecords({
+      employee: createEmployee(),
+      cutoffStart: date,
+      cutoffEnd: date,
+      payFrequency: "bimonthly",
+      payrollRates: baseRates,
+      attendance: [{ date, status: "half-day" }],
+      holidays: [],
+      leaveRequests: [],
+      leaveTypes: [],
+      leaveOccurrences: [
+        {
+          leaveRequestId: "maternity-request",
+          localDate: "2026-02-20",
+          scheduledMinutes: 480,
+          leaveMinutes: 480,
+          payTreatment: "statutory_benefit_supported",
+          isWorkday: true,
+        },
+      ],
+    });
+
+    expect(result.statutoryBenefitSupportedLeaveDays).toBe(0.5);
+    expect(result.statutoryBenefitSupportedLeaveBreakdown).toEqual([
+      {
+        leaveRequestId: "maternity-request",
+        days: 0.5,
+        attributedPay: 689.66,
+      },
+    ]);
+  });
+
   it("pays regular holiday premium (basic+allowance when include allowance on daily rate is enabled)", () => {
     const date = localDate(2026, 1, 20);
     const result = calculate({
@@ -1041,9 +1211,27 @@ describe("payroll calculations", () => {
     const cutoffEnd = day2 + 24 * 60 * 60 * 1000 - 1;
     const result = calculate({
       attendance: [
-        { date: day1, status: "present", actualIn: "18:00", actualOut: "03:00", scheduleIn: "18:00", scheduleOut: "03:00", lunchStart: "23:00", lunchEnd: "00:00" },
+        {
+          date: day1,
+          status: "present",
+          actualIn: "18:00",
+          actualOut: "03:00",
+          scheduleIn: "18:00",
+          scheduleOut: "03:00",
+          lunchStart: "23:00",
+          lunchEnd: "00:00",
+        },
         // Second day: actual 11:00-12:00 (no night overlap); schedule 18:00-03:00 → fallback gives 4h night diff
-        { date: day2, status: "present", actualIn: "11:00", actualOut: "12:00", scheduleIn: "18:00", scheduleOut: "03:00", lunchStart: "23:00", lunchEnd: "00:00" },
+        {
+          date: day2,
+          status: "present",
+          actualIn: "11:00",
+          actualOut: "12:00",
+          scheduleIn: "18:00",
+          scheduleOut: "03:00",
+          lunchStart: "23:00",
+          lunchEnd: "00:00",
+        },
       ],
       cutoffStart: day1,
       cutoffEnd,
@@ -1120,7 +1308,7 @@ describe("payroll calculations", () => {
 
   it("regular holiday night diff: 1h at 20% + 3h at 10% = P100.58 (hourly P201.15, next day weekday)", () => {
     // Exact scenario from corrected breakdown: only 10–11pm holiday, 12–3am regular.
-    const monthly = 201.15 * 8 * 261 / 12; // ~35k so hourly = 201.15
+    const monthly = (201.15 * 8 * 261) / 12; // ~35k so hourly = 201.15
     const employee = createEmployee({
       compensation: {
         basicSalary: Math.round(monthly * 0.7),
@@ -1252,7 +1440,6 @@ describe("payroll calculations", () => {
     expect(result.absentDeduction).toBeCloseTo(1379.31, 2);
     expect(result.holidayPay).toBe(0);
   });
-
 
   it("treats leave_with_pay as paid (no deduction)", () => {
     const date = localDate(2026, 1, 23); // Friday

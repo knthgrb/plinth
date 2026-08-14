@@ -173,6 +173,26 @@ describe("tenant-owned storage", () => {
     expect(url).toMatch(/^https:\/\//);
   });
 
+  it("does not expose chat attachments through the organization-wide file endpoint", async () => {
+    const { t, email, organizationId } = await createMembershipFixture();
+    const actor = t.withIdentity({ email });
+    const intent = await actor.mutation(api.files.createUploadIntent, {
+      organizationId,
+      purpose: "chat_attachment",
+    });
+    const storageId = await t.run((ctx) =>
+      ctx.storage.store(new Blob(["private chat attachment"])),
+    );
+    await actor.mutation(api.files.registerUploadedFile, {
+      intentId: intent.intentId,
+      storageId,
+    });
+
+    await expect(
+      actor.query(api.files.getFileUrl, { organizationId, storageId }),
+    ).rejects.toThrow("Chat attachments require conversation access");
+  });
+
   it("does not issue upload intents to alumni", async () => {
     const { t, email, organizationId } = await createMembershipFixture("alumni");
 

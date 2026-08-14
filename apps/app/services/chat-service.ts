@@ -8,7 +8,7 @@ export class ChatService {
     employeeId: string;
   }) {
     const convex = await getAuthedConvexClient();
-    return await (convex.query as any)((api as any).chat.getUserByEmployeeId, {
+    return await convex.query(api.chat.getUserByEmployeeId, {
       organizationId: data.organizationId as Id<"organizations">,
       employeeId: data.employeeId as Id<"employees">,
     });
@@ -20,8 +20,8 @@ export class ChatService {
     directThreadKind?: "standard" | "staff_as_admin";
   }) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).chat.getOrCreateConversation,
+    return await convex.mutation(
+      api.chat.getOrCreateConversation,
       {
         organizationId: data.organizationId as Id<"organizations">,
         participantId: data.participantId as Id<"users">,
@@ -38,7 +38,7 @@ export class ChatService {
     payslipId?: string;
   }) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)((api as any).chat.sendMessage, {
+    return await convex.mutation(api.chat.sendMessage, {
       conversationId: data.conversationId as Id<"conversations">,
       content: data.content,
       messageType: data.messageType || "text",
@@ -52,8 +52,8 @@ export class ChatService {
     messageIds: string[];
   }) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).chat.markMessagesAsRead,
+    return await convex.mutation(
+      api.chat.markMessagesAsRead,
       {
         conversationId: data.conversationId as Id<"conversations">,
         messageIds: data.messageIds as Id<"messages">[],
@@ -69,9 +69,6 @@ export class ChatService {
     attachments?: string[];
     payslipId?: string;
   }) {
-    const convex = await getAuthedConvexClient();
-
-    // Get user associated with employee ID
     const employeeUser = await this.getUserByEmployeeId({
       organizationId: data.organizationId,
       employeeId: data.employeeId,
@@ -81,13 +78,11 @@ export class ChatService {
       throw new Error("No user account found for this employee");
     }
 
-    // Get or create conversation
     const conversationId = await this.getOrCreateConversation({
       organizationId: data.organizationId,
       participantId: employeeUser._id,
     });
 
-    // Send message
     return await this.sendMessage({
       conversationId,
       content: data.content,
@@ -103,7 +98,7 @@ export class ChatService {
     participantIds: string[];
   }) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)((api as any).chat.createGroupChat, {
+    return await convex.mutation(api.chat.createGroupChat, {
       organizationId: data.organizationId as Id<"organizations">,
       name: data.name,
       participantIds: data.participantIds as Id<"users">[],
@@ -115,7 +110,7 @@ export class ChatService {
     participantIds: string[];
   }) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)((api as any).chat.addMembersToGroup, {
+    return await convex.mutation(api.chat.addMembersToGroup, {
       conversationId: data.conversationId as Id<"conversations">,
       participantIds: data.participantIds as Id<"users">[],
     });
@@ -126,8 +121,8 @@ export class ChatService {
     conversationId: string;
   }) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).chat.togglePinConversation,
+    return await convex.mutation(
+      api.chat.togglePinConversation,
       {
         organizationId: data.organizationId as Id<"organizations">,
         conversationId: data.conversationId as Id<"conversations">,

@@ -9,6 +9,7 @@ export type StoragePurpose =
   | "chat_attachment"
   | "document_attachment"
   | "employee_requirement"
+  | "evaluation_attachment"
   | "leave_attachment"
   | "memo_attachment"
   | "payslip_pdf";

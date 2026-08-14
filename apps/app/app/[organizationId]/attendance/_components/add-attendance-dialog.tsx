@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,7 +46,7 @@ import {
 } from "@/lib/manila-date";
 
 interface AddAttendanceDialogProps {
-  employees: any[] | undefined;
+  employees: Doc<"employees">[] | undefined;
   currentOrganizationId: string | null;
   onSuccess?: () => void;
 }
@@ -75,6 +76,7 @@ export function AddAttendanceDialog({
   const [useManualLate, setUseManualLate] = useState(false);
   const [useManualUndertime, setUseManualUndertime] = useState(false);
   const [notes, setNotes] = useState("");
+  const [correctionReason, setCorrectionReason] = useState("");
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
 
   const attendanceDateTs = useMemo(() => {
@@ -86,10 +88,10 @@ export function AddAttendanceDialog({
   }, [selectedDate]);
 
   const employeeAttendance = useQuery(
-    (api as any).attendance.getEmployeeAttendance,
+    api.attendance.getEmployeeAttendance,
     selectedEmployee && attendanceDateTs != null
       ? {
-          employeeId: selectedEmployee,
+          employeeId: selectedEmployee as Id<"employees">,
           startDate: attendanceDateTs - 86400000,
           endDate: attendanceDateTs + 86400000,
         }
@@ -107,8 +109,10 @@ export function AddAttendanceDialog({
     existingOnDay.length > 0 ? (existingOnDay[0] as { _id: string })._id : null;
 
   const holidays = useQuery(
-    (api as any).holidays.getHolidays,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    api.holidays.getHolidays,
+    currentOrganizationId
+      ? { organizationId: currentOrganizationId as Id<"organizations"> }
+      : "skip",
   );
 
   const getDayName = (date: Date): string => {
@@ -127,7 +131,7 @@ export function AddAttendanceDialog({
   // Get employee schedule for calculations
   const employeeSchedule = useMemo(() => {
     if (!selectedEmployee) return null;
-    const employee = employees?.find((e: any) => e._id === selectedEmployee);
+    const employee = employees?.find((entry) => entry._id === selectedEmployee);
     if (!employee) return null;
     const dayName = getDayName(new Date(selectedDate));
     return employee.schedule.defaultSchedule[
@@ -137,26 +141,28 @@ export function AddAttendanceDialog({
 
   const canUseNoWorkStatus = useMemo(() => {
     if (!selectedEmployee || !selectedDate || !holidays) return false;
-    const employee = employees?.find((e: any) => e._id === selectedEmployee);
+    const employee = employees?.find((entry) => entry._id === selectedEmployee);
     if (!employee) return false;
     const target = new Date(selectedDate);
     const targetY = target.getFullYear();
     const targetM = target.getMonth();
     const targetD = target.getDate();
-    return holidays.some((h: any) => {
-      const holidayTs = h.offsetDate ?? h.date;
+    return holidays.some((holiday: Doc<"holidays">) => {
+      const holidayTs = holiday.offsetDate ?? holiday.date;
       const hd = new Date(holidayTs);
-      const yearMatches = h.isRecurring ? true : (h.year == null || h.year === targetY);
+      const yearMatches = holiday.isRecurring
+        ? true
+        : holiday.year == null || holiday.year === targetY;
       if (!yearMatches) return false;
-      const dayMatches = h.isRecurring
+      const dayMatches = holiday.isRecurring
         ? hd.getMonth() === targetM && hd.getDate() === targetD
         : hd.getFullYear() === targetY &&
           hd.getMonth() === targetM &&
           hd.getDate() === targetD;
       if (!dayMatches) return false;
       return (
-        (h.type === "regular" || h.type === "special") &&
-        holidayAppliesToEmployee(h, employee)
+        (holiday.type === "regular" || holiday.type === "special") &&
+        holidayAppliesToEmployee(holiday, employee)
       );
     });
   }, [selectedEmployee, selectedDate, holidays, employees]);
@@ -170,11 +176,7 @@ export function AddAttendanceDialog({
   // Calculate late and undertime automatically
   const calculatedLate = useMemo(() => {
     if (!employeeSchedule || !timeIn || status !== "present") return 0;
-    return calculateLate(
-      employeeSchedule.in,
-      timeIn,
-      employeeSchedule.lunchStart,
-    );
+    return calculateLate(employeeSchedule.in, timeIn);
   }, [employeeSchedule, timeIn, status]);
 
   const calculatedUndertime = useMemo(() => {
@@ -185,8 +187,6 @@ export function AddAttendanceDialog({
       employeeSchedule.out,
       timeIn,
       timeOut,
-      employeeSchedule.lunchStart,
-      employeeSchedule.lunchEnd,
     );
   }, [employeeSchedule, timeIn, timeOut, status]);
 
@@ -230,7 +230,9 @@ export function AddAttendanceDialog({
         return;
       }
 
-      const employee = employees?.find((e: any) => e._id === selectedEmployee);
+      const employee = employees?.find(
+        (entry) => entry._id === selectedEmployee,
+      );
       if (!employee) return;
 
       // For present, at least one time should be provided; no_work/leave/absent do not require times
@@ -286,6 +288,7 @@ export function AddAttendanceDialog({
           : undefined,
         status: status,
         remarks: notes.trim() || undefined,
+        correctionReason: correctionReason.trim() || undefined,
       });
       setIsDialogOpen(false);
       setSelectedEmployee("");
@@ -294,6 +297,7 @@ export function AddAttendanceDialog({
       setOvertime("");
       setStatus("present");
       setNotes("");
+      setCorrectionReason("");
       setManualLate("");
       setManualUndertime("");
       setUseManualLate(false);
@@ -309,6 +313,7 @@ export function AddAttendanceDialog({
     },
     [
       attendanceDateTs,
+      correctionReason,
       currentOrganizationId,
       employees,
       finalLate,
@@ -443,14 +448,15 @@ export function AddAttendanceDialog({
                 <Label htmlFor="status">Status <span className="text-red-500">*</span></Label>
                 <Select
                   value={status}
-                  onValueChange={(value: any) => {
-                    setStatus(value);
+                  onValueChange={(value) => {
+                    const nextStatus = value as typeof status;
+                    setStatus(nextStatus);
                     // Auto-clear time in/out for leave types, absent, or no_work
                     if (
-                      value === "leave_with_pay" ||
-                      value === "leave_without_pay" ||
-                      value === "absent" ||
-                      value === "no_work"
+                      nextStatus === "leave_with_pay" ||
+                      nextStatus === "leave_without_pay" ||
+                      nextStatus === "absent" ||
+                      nextStatus === "no_work"
                     ) {
                       setTimeIn("");
                       setTimeOut("");
@@ -564,6 +570,20 @@ export function AddAttendanceDialog({
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Optional note for this attendance record"
+                  disabled={isSubmitting}
+                  rows={2}
+                  className="resize-none"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="createAttendanceCorrectionReason">
+                  Payroll correction reason
+                </Label>
+                <Textarea
+                  id="createAttendanceCorrectionReason"
+                  value={correctionReason}
+                  onChange={(event) => setCorrectionReason(event.target.value)}
+                  placeholder="Required for owner/admin changes after payroll is finalized"
                   disabled={isSubmitting}
                   rows={2}
                   className="resize-none"

@@ -20,6 +20,7 @@ import { fetchAuthQuery, getToken } from "@/lib/auth-server";
 import { type NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 interface RouteMetrics {
   correlationId: string;

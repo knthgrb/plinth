@@ -2,14 +2,13 @@
 
 import { useState, useEffect, useRef, Fragment } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Users,
   Calendar,
   FileText,
   Briefcase,
-  MessageSquare,
   Receipt,
   Clock,
   ClipboardList,
@@ -18,10 +17,6 @@ import {
   Bell,
   Package,
   ChevronDown,
-  ChevronLeft,
-  Wallet,
-  BriefcaseIcon,
-  Users as UsersIcon,
   Calendar as CalendarIcon,
   Plus,
 } from "lucide-react";
@@ -193,16 +188,13 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       : "skip",
   );
 
-  const chatUnreadCounts = useQuery(
-    api.chat.getUnreadCounts,
+  const chatUnreadCount = useQuery(
+    api.chat.getUnreadNotificationCount,
     !isLoggingOut && effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
   );
-  const chatUnreadTotal: number =
-    chatUnreadCounts && typeof chatUnreadCounts === "object"
-      ? (Object.values(chatUnreadCounts) as number[]).reduce((a, b) => a + b, 0)
-      : 0;
+  const chatUnreadTotal = chatUnreadCount ?? 0;
 
   const announcementsUnreadCount = useQuery(
     api.announcements.getUnreadAnnouncementsCount,
@@ -298,9 +290,9 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   const navRef = useRef<HTMLElement>(null);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Set mounted state after initial render to prevent flash of submenu items
   useEffect(() => {
-    setIsMounted(true);
+    const frame = requestAnimationFrame(() => setIsMounted(true));
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   // Handle scroll detection for sidebar
