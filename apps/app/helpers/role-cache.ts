@@ -8,6 +8,7 @@ const roleCookieSecret = process.env.ROLE_COOKIE_SECRET || "";
 type RoleCachePayload = {
   role: string | null;
   organizationId: string | null;
+  accessStatus?: string | null;
   exp: number;
 };
 
@@ -105,12 +106,14 @@ async function readRoleCookie(
 async function writeRoleCookie(
   response: NextResponse,
   role: string | null,
-  organizationId: string | null
+  organizationId: string | null,
+  accessStatus: string | null,
 ) {
   if (!roleCookieSecret) return;
   const payload: RoleCachePayload = {
     role,
     organizationId,
+    accessStatus,
     exp: Date.now() + ROLE_COOKIE_TTL_MS,
   };
   const payloadJson = JSON.stringify(payload);
@@ -132,10 +135,12 @@ async function writeRoleCookie(
 
 export async function getRoleWithCache(
   request: NextRequest,
-  organizationId?: string | null
+  organizationId?: string | null,
+  requireAccessStatus = false,
 ): Promise<{
   role: string | null;
   organizationId: string | null;
+  accessStatus: string | null | undefined;
   fromCache: boolean;
 }> {
   // Try cookie first (avoids getToken() in proxy/middleware where it often has no request context)
@@ -144,10 +149,11 @@ export async function getRoleWithCache(
     const matchesOrg =
       !organizationId ||
       cached.organizationId === organizationId;
-    if (matchesOrg) {
+    if (matchesOrg && (!requireAccessStatus || cached.accessStatus !== undefined)) {
       return {
         role: cached.role,
         organizationId: cached.organizationId,
+        accessStatus: cached.accessStatus,
         fromCache: true,
       };
     }
@@ -155,10 +161,14 @@ export async function getRoleWithCache(
 
   // No valid cookie or org mismatch: fetch fresh role from Convex
   try {
-    const result = await UserService.getUserRoleAndOrg(organizationId || undefined);
+    const result = await UserService.getUserRoleAndOrg(
+      organizationId || undefined,
+      new Headers(request.headers),
+    );
     return {
       role: result.role,
       organizationId: result.organizationId,
+      accessStatus: result.accessStatus,
       fromCache: false,
     };
   } catch (error) {
@@ -171,6 +181,7 @@ export async function getRoleWithCache(
         return {
           role: cached.role,
           organizationId: cached.organizationId,
+          accessStatus: cached.accessStatus,
           fromCache: true,
         };
       }
@@ -186,13 +197,19 @@ export async function getRoleWithCache(
         return {
           role: fallbackCached.role,
           organizationId: fallbackCached.organizationId,
+          accessStatus: fallbackCached.accessStatus,
           fromCache: true,
         };
       }
     } catch {
       // ignore
     }
-    return { role: null, organizationId: null, fromCache: false };
+    return {
+      role: null,
+      organizationId: null,
+      accessStatus: null,
+      fromCache: false,
+    };
   }
 }
 
@@ -200,10 +217,11 @@ export async function setRoleCookieIfNeeded(
   response: NextResponse,
   role: string | null,
   organizationId: string | null,
-  shouldSet: boolean
+  shouldSet: boolean,
+  accessStatus: string | null = null,
 ) {
   if (!shouldSet) return response;
-  await writeRoleCookie(response, role, organizationId);
+  await writeRoleCookie(response, role, organizationId, accessStatus);
   return response;
 }
 

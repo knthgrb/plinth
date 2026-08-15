@@ -11,6 +11,7 @@ import {
   selectPreferredOrganizationForEntry,
 } from "@/utils/org-membership-lifecycle";
 import { canAccessRoute } from "@/utils/role-access";
+import { resolveOrganizationTransition } from "@/utils/organization-routing";
 
 type Organization = {
   _id: Id<"organizations">;
@@ -41,7 +42,6 @@ type OrganizationContextType = {
   switchOrganization: (organizationId: Id<"organizations">) => void;
   /** Clear current org (e.g. on logout) so org-dependent queries skip and no backend auth errors */
   clearOrganization: () => void;
-  refreshOrganizations: () => void;
 };
 
 const OrganizationContext = createContext<OrganizationContextType | undefined>(
@@ -49,6 +49,7 @@ const OrganizationContext = createContext<OrganizationContextType | undefined>(
 );
 
 const STORAGE_KEY = "current_organization_id";
+const EMPTY_ORGANIZATIONS: Organization[] = [];
 
 function getDefaultRouteForRole(
   role: string | null | undefined,
@@ -78,45 +79,29 @@ export function OrganizationProvider({
   /** When set, layout must not sync URL -> context (avoids loop when switching org) */
   const [switchingToOrganizationId, setSwitchingToOrganizationId] =
     useState<Id<"organizations"> | null>(null);
-  /** Ref set synchronously so layout/loading see switching state before state flush (every switch shows overlay) */
-  const switchingToOrganizationIdRef = useRef<Id<"organizations"> | null>(null);
   const clearSwitchingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Set true when clearOrganization (logout) is called so switch overlay never shows during sign-out */
   const [isLoggingOut, setIsLoggingOut] = useState(false);
-  /** Ref set synchronously so layout/loading see logout state before state flush (avoid switch overlay on logout) */
-  const isLoggingOutRef = useRef(false);
-
-  const [refreshKey, setRefreshKey] = useState(0);
   const updateLastActive = useMutation(
     api.organizations.updateLastActiveOrganization,
   );
 
-  const [authChecked, setAuthChecked] = useState(false);
-  const [hasAuthSession, setHasAuthSession] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    authClient.getSession().then((res) => {
-      if (cancelled) return;
-      setHasAuthSession(!!res?.data?.session);
-      setAuthChecked(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { data: browserSession, isPending: isSessionPending } =
+    authClient.useSession();
+  const authChecked = !isSessionPending;
+  const hasAuthSession = Boolean(browserSession?.session);
 
   const organizationsQuery = useQuery(
     api.organizations.getUserOrganizations,
-    authChecked && hasAuthSession ? {} : "skip",
+    authChecked && hasAuthSession && !isLoggingOut ? {} : "skip",
   );
 
   // Handle query errors gracefully (e.g., when user is not authenticated yet)
-  const organizations = organizationsQuery || [];
+  const organizations = organizationsQuery ?? EMPTY_ORGANIZATIONS;
 
   // Initialize from URL params first, then localStorage, then lastActiveOrganizationId
   useEffect(() => {
-    if (typeof window === "undefined" || isInitialized) return;
+    if (typeof window === "undefined" || isInitialized || isLoggingOut) return;
 
     if (!authChecked) return;
     if (hasAuthSession && organizationsQuery === undefined) return;
@@ -159,9 +144,10 @@ export function OrganizationProvider({
     }
 
     if (orgIdToUse) {
-      isLoggingOutRef.current = false;
-      setIsLoggingOut(false);
-      setCurrentOrganizationId(orgIdToUse);
+      queueMicrotask(() => {
+        setIsLoggingOut(false);
+        setCurrentOrganizationId(orgIdToUse);
+      });
       localStorage.setItem(STORAGE_KEY, orgIdToUse);
 
       // If we're not on an organization route, redirect to include organizationId (skip invite flow and other public routes)
@@ -182,11 +168,12 @@ export function OrganizationProvider({
       }
     }
 
-    setIsInitialized(true);
+    queueMicrotask(() => setIsInitialized(true));
   }, [
     authChecked,
     hasAuthSession,
     isInitialized,
+    isLoggingOut,
     organizations,
     organizationsQuery,
     urlOrganizationId,
@@ -218,7 +205,6 @@ export function OrganizationProvider({
       }
       clearSwitchingTimeoutRef.current = setTimeout(() => {
         setSwitchingToOrganizationId(null);
-        switchingToOrganizationIdRef.current = null;
         clearSwitchingTimeoutRef.current = null;
       }, 400);
     }
@@ -285,7 +271,7 @@ export function OrganizationProvider({
       !organizations.some((org) => org._id === currentOrganizationId) &&
       currentOrganizationId !== switchingToOrganizationId
     ) {
-      setCurrentOrganizationId(null);
+      queueMicrotask(() => setCurrentOrganizationId(null));
       if (typeof window !== "undefined") {
         localStorage.removeItem(STORAGE_KEY);
       }
@@ -299,12 +285,14 @@ export function OrganizationProvider({
   ]);
 
   const switchOrganization = (organizationId: Id<"organizations">) => {
-    setIsLoggingOut(false);
-    // Set ref synchronously so layout/loading see switching state before state flush (every switch shows overlay)
-    switchingToOrganizationIdRef.current = organizationId;
-    // Prevent layout from syncing URL -> context back to previous org while navigation is in flight
-    setSwitchingToOrganizationId(organizationId);
-    setCurrentOrganizationId(organizationId);
+    const transition = resolveOrganizationTransition<Id<"organizations">>({
+      type: "switch",
+      organizationId,
+    });
+    setIsLoggingOut(transition.isLoggingOut);
+    setSwitchingToOrganizationId(transition.switchingToOrganizationId);
+    setCurrentOrganizationId(transition.currentOrganizationId);
+    setIsInitialized(transition.isInitialized);
     if (typeof window !== "undefined") {
       localStorage.setItem(STORAGE_KEY, organizationId);
 
@@ -327,19 +315,16 @@ export function OrganizationProvider({
   };
 
   const clearOrganization = () => {
-    isLoggingOutRef.current = true;
-    setIsLoggingOut(true);
-    switchingToOrganizationIdRef.current = null;
-    setSwitchingToOrganizationId(null);
-    setCurrentOrganizationId(null);
-    setIsInitialized(false); // Allow init effect to run again after login so isLoggingOut gets cleared
+    const transition = resolveOrganizationTransition<Id<"organizations">>({
+      type: "logout",
+    });
+    setIsLoggingOut(transition.isLoggingOut);
+    setSwitchingToOrganizationId(transition.switchingToOrganizationId);
+    setCurrentOrganizationId(transition.currentOrganizationId);
+    setIsInitialized(transition.isInitialized);
     if (typeof window !== "undefined") {
       localStorage.removeItem(STORAGE_KEY);
     }
-  };
-
-  const refreshOrganizations = () => {
-    setRefreshKey((prev) => prev + 1);
   };
 
   const currentOrganization =
@@ -350,12 +335,6 @@ export function OrganizationProvider({
     (urlOrganizationId
       ? (urlOrganizationId as Id<"organizations">)
       : null);
-
-  // Expose ref value so layout/loading see switching state before state flush (every switch shows overlay)
-  const effectiveSwitchingToOrganizationId =
-    switchingToOrganizationId ?? switchingToOrganizationIdRef.current;
-  // Expose ref so layout/loading never show switch overlay during logout (sync with clearOrganization)
-  const effectiveIsLoggingOut = isLoggingOut || isLoggingOutRef.current;
 
   const orgQueryPending = hasAuthSession && organizationsQuery === undefined;
 
@@ -370,11 +349,10 @@ export function OrganizationProvider({
           !authChecked ||
           orgQueryPending ||
           !isInitialized,
-        switchingToOrganizationId: effectiveSwitchingToOrganizationId,
-        isLoggingOut: effectiveIsLoggingOut,
+        switchingToOrganizationId,
+        isLoggingOut,
         switchOrganization,
         clearOrganization,
-        refreshOrganizations,
       }}
     >
       {children}

@@ -616,4 +616,41 @@ describe("professional organization chat", () => {
       employee.query(getUnreadNotificationCount, { organizationId }),
     ).resolves.toBe(2);
   });
+
+  it("clears a sender's unread badge when they reply in the conversation", async () => {
+    const { t, actors, organizationId, employeeId } = await setupOrganization();
+    const owner = t.withIdentity({ email: actors.owner });
+    const employee = t.withIdentity({ email: actors.employee });
+    const conversationId = await owner.mutation(api.chat.createGroupChat, {
+      organizationId,
+      name: "Active conversation",
+      participantIds: [employeeId],
+    });
+
+    await owner.mutation(api.chat.sendMessage, {
+      conversationId,
+      content: "Can you review this?",
+    });
+    expect(
+      (await employee.query(api.chat.getUnreadCounts, { organizationId }))[
+        conversationId
+      ],
+    ).toBe(1);
+
+    await employee.mutation(api.chat.sendMessage, {
+      conversationId,
+      content: "Reviewed.",
+    });
+
+    expect(
+      (await employee.query(api.chat.getUnreadCounts, { organizationId }))[
+        conversationId
+      ],
+    ).toBe(0);
+    expect(
+      (await owner.query(api.chat.getUnreadCounts, { organizationId }))[
+        conversationId
+      ],
+    ).toBe(1);
+  });
 });

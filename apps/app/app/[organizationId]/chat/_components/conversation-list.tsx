@@ -216,7 +216,7 @@ export function ConversationList({
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-background lg:w-80">
-      <div className="flex h-16 shrink-0 items-center justify-between border-b px-4">
+      <div className="flex h-16 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4">
         <div>
           <h1 className="text-base font-semibold">Messages</h1>
           <p className="text-xs text-muted-foreground">Organization communication</p>
@@ -275,14 +275,14 @@ export function ConversationList({
           </DropdownMenu>
         </div>
       </div>
-      <div className="border-b p-3">
+      <div className="border-b border-gray-200 bg-white p-3">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search conversations"
-            className="h-9 rounded-xl bg-muted/50 pl-9"
+            className="h-9 rounded-xl border-gray-200 bg-gray-50 pl-9 shadow-none hover:border-gray-300"
           />
         </div>
       </div>

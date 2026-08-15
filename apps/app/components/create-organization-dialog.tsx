@@ -1,8 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation } from "convex/react";
-import { api } from "@/convex/_generated/api";
 import {
   Dialog,
   DialogContent,
@@ -34,7 +32,7 @@ export function CreateOrganizationDialog({
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const { refreshOrganizations, switchOrganization } = useOrganization();
+  const { switchOrganization } = useOrganization();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,12 +55,12 @@ export function CreateOrganizationDialog({
         taxId: "",
       });
 
-      // Refresh organizations and switch to the new one (switchOrganization also navigates to /orgId/dashboard)
-      refreshOrganizations();
-      switchOrganization(organizationId as any);
+      switchOrganization(organizationId);
       onOpenChange(false);
-    } catch (err: any) {
-      setError(err.message || "Failed to create organization");
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error ? err.message : "Failed to create organization",
+      );
     } finally {
       setLoading(false);
     }

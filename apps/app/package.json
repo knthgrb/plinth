@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3001",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
     "schema:inventory": "vitest run tests/schema-inventory-coverage.test.ts tests/schema-contract-references.test.ts tests/full-schema-readiness.test.ts",

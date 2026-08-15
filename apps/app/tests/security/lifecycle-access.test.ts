@@ -903,6 +903,56 @@ describe("employee lifecycle access", () => {
     ).rejects.toThrow("Not authorized");
   });
 
+  it("keeps archived organizations discoverable without granting active access", async () => {
+    const t = convexTest(schema, modules);
+    const email = "archived-org-owner@example.com";
+    const organizationId = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Archived Organization",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const userId = await ctx.db.insert("users", {
+        email,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId,
+        organizationId,
+        role: "owner",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      return organizationId;
+    });
+
+    await t
+      .withIdentity({ email })
+      .mutation(api.organizations.deleteOrganization, {
+        organizationId,
+      });
+
+    await expect(
+      t
+        .withIdentity({ email })
+        .query(api.organizations.getUserOrganizations, {}),
+    ).resolves.toEqual([]);
+    await expect(
+      t
+        .withIdentity({ email })
+        .query(api.organizations.getArchivedUserOrganizations, {}),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        _id: organizationId,
+        name: "Archived Organization",
+        status: "archived",
+        role: "owner",
+      }),
+    ]);
+  });
+
   it("lets authenticated accounts create organizations regardless of current membership", async () => {
     const t = convexTest(schema, modules);
     const identities = {

@@ -104,7 +104,11 @@ function buildPathWithOrg(orgId: string | null, path: string): string {
   return `/${orgId}/${path.startsWith("/") ? path.slice(1) : path}`;
 }
 
-function getDefaultRouteForRole(role: string | null): string {
+function getDefaultRouteForRole(
+  role: string | null,
+  accessStatus?: string | null,
+): string {
+  if (accessStatus === "alumni") return "/payslips";
   if (!role) return "/dashboard";
   const r = role.toLowerCase();
   if (r === "employee" || r === "accounting") return "/announcements";
@@ -147,18 +151,29 @@ export async function proxy(request: NextRequest) {
   let shouldSetRoleCookie = false;
   let roleCookieRole: string | null = null;
   let roleCookieOrgId: string | null = null;
+  let cachedAccessStatus: string | null | undefined = undefined;
+  let roleCookieAccessStatus: string | null = null;
 
   const getUserRoleCached = async (): Promise<string | null> => {
     if (cachedUserRole !== undefined) return cachedUserRole;
     try {
       const orgIdToUse = urlOrganizationId ?? cachedOrganizationId ?? null;
-      const result = await getRoleWithCache(request, orgIdToUse);
+      const needsCanonicalDefault =
+        pathname === "/" ||
+        (urlOrganizationId !== null && removeOrganizationId(pathname) === pathname);
+      const result = await getRoleWithCache(
+        request,
+        orgIdToUse,
+        needsCanonicalDefault,
+      );
       cachedUserRole = result.role;
       cachedOrganizationId = result.organizationId ?? orgIdToUse;
+      cachedAccessStatus = result.accessStatus;
       if (!result.fromCache) {
         shouldSetRoleCookie = true;
         roleCookieRole = result.role;
         roleCookieOrgId = result.organizationId ?? orgIdToUse;
+        roleCookieAccessStatus = result.accessStatus ?? null;
       }
     } catch (e) {
       console.error("[PROXY] Error getting user role:", e);
@@ -170,7 +185,13 @@ export async function proxy(request: NextRequest) {
 
   const applyCookie = async (res: NextResponse) => {
     if (shouldSetRoleCookie)
-      await setRoleCookieIfNeeded(res, roleCookieRole, roleCookieOrgId, true);
+      await setRoleCookieIfNeeded(
+        res,
+        roleCookieRole,
+        roleCookieOrgId,
+        true,
+        roleCookieAccessStatus,
+      );
     return res;
   };
 
@@ -191,14 +212,39 @@ export async function proxy(request: NextRequest) {
   if (isAuthRoute(pathname)) return redirectToDefault();
 
   if (pathname === "/") {
-    // Let app/page.tsx compute default route from live org membership + role.
-    // This avoids incorrect redirects caused by stale role cache.
-    return applyCookie(NextResponse.next());
+    const userRole = await getUserRoleCached();
+    const organizationId = cachedOrganizationId;
+    if (!userRole || !organizationId) return applyCookie(NextResponse.next());
+    return applyCookie(
+      NextResponse.redirect(
+        new URL(
+          buildPathWithOrg(
+            organizationId,
+            getDefaultRouteForRole(userRole, cachedAccessStatus),
+          ),
+          request.url,
+        ),
+      ),
+    );
   }
 
   const cleanPathname = urlOrganizationId ? removeOrganizationId(pathname) : pathname;
   const userRole = await getUserRoleCached();
   const normalizedRole = normalizeRole(userRole);
+
+  if (urlOrganizationId && cleanPathname === pathname && normalizedRole) {
+    return applyCookie(
+      NextResponse.redirect(
+        new URL(
+          buildPathWithOrg(
+            urlOrganizationId,
+            getDefaultRouteForRole(userRole, cachedAccessStatus),
+          ),
+          request.url,
+        ),
+      ),
+    );
+  }
 
   if (matchesRoute(cleanPathname, "/forbidden"))
     return applyCookie(NextResponse.next());

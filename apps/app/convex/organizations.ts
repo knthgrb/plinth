@@ -386,6 +386,38 @@ export const getUserOrganizations = query({
   },
 });
 
+export const getArchivedUserOrganizations = query({
+  args: {},
+  handler: async (ctx) => {
+    const userRecord = await getUserRecordOrNull(ctx);
+    if (!userRecord) return [];
+
+    const memberships = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_user", (query) => query.eq("userId", userRecord._id))
+      .collect();
+    const archivedOrganizations = await Promise.all(
+      memberships.map(async (membership) => {
+        const organization = await ctx.db.get(membership.organizationId);
+        if (!organization || organization.status !== "archived") return null;
+
+        return {
+          _id: organization._id,
+          name: organization.name,
+          status: organization.status,
+          archivedAt: organization.archivedAt,
+          role: membership.role,
+          joinedAt: membership.joinedAt,
+        };
+      }),
+    );
+
+    return archivedOrganizations
+      .filter((organization) => organization !== null)
+      .sort((left, right) => (right.archivedAt ?? 0) - (left.archivedAt ?? 0));
+  },
+});
+
 // Get current user with current organization context
 export const getCurrentUser = query({
   args: {

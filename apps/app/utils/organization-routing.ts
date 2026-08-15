@@ -1,5 +1,34 @@
 import { Id } from "@/convex/_generated/dataModel";
 
+type OrganizationTransition<T extends string> = {
+  currentOrganizationId: T | null;
+  switchingToOrganizationId: T | null;
+  isLoggingOut: boolean;
+  isInitialized: boolean;
+};
+
+export function resolveOrganizationTransition<T extends string>(
+  transition:
+    | { type: "switch"; organizationId: T }
+    | { type: "logout" },
+): OrganizationTransition<T> {
+  if (transition.type === "switch") {
+    return {
+      currentOrganizationId: transition.organizationId,
+      switchingToOrganizationId: transition.organizationId,
+      isLoggingOut: false,
+      isInitialized: true,
+    };
+  }
+
+  return {
+    currentOrganizationId: null,
+    switchingToOrganizationId: null,
+    isLoggingOut: true,
+    isInitialized: false,
+  };
+}
+
 /**
  * Generate a URL with organizationId prefix
  * @param organizationId - The organization ID

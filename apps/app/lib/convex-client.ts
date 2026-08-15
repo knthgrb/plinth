@@ -1,6 +1,6 @@
 import { ConvexHttpClient } from "convex/browser";
-import { getToken } from "@/lib/auth-server";
-import { cookies } from "next/headers";
+import { headers } from "next/headers";
+import { getAuthToken } from "@/lib/convex-auth-proxy";
 
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL!;
 
@@ -10,18 +10,10 @@ if (!convexUrl) {
 
 // Returns a Convex client authenticated with the current Better Auth session.
 // Works in both server actions and middleware contexts
-export async function getAuthedConvexClient() {
+export async function getAuthedConvexClient(incomingHeaders?: Headers) {
   try {
-    // Ensure cookies are available (for server actions)
-    // In middleware, this will be a no-op but won't hurt
-    try {
-      await cookies();
-    } catch {
-      // In middleware, cookies() might not be available, but getToken() should still work
-      // with the request context
-    }
-
-    const token = await getToken();
+    const requestHeaders = incomingHeaders ?? new Headers(await headers());
+    const token = await getAuthToken(requestHeaders);
     if (!token) {
       throw new Error("Not authenticated - no token available");
     }

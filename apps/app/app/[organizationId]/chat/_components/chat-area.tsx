@@ -568,7 +568,7 @@ export function ChatArea({
   if (!displayConversation) {
     return (
       <div className="flex min-h-0 flex-1 flex-col bg-background">
-        <div className="h-16 border-b" />
+        <div className="h-16 border-b border-gray-200 bg-white" />
         <div className="flex flex-1 items-center justify-center p-8">
           <div className="max-w-sm text-center">
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-purple/10 text-brand-purple">
@@ -597,7 +597,7 @@ export function ChatArea({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-      <header className="flex h-16 shrink-0 items-center gap-3 border-b px-4">
+      <header className="flex h-16 shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-4">
         <Avatar className="h-9 w-9">
           <AvatarFallback className="bg-brand-purple/10 text-brand-purple">
             {displayConversation.type === "channel" ? (
@@ -654,7 +654,7 @@ export function ChatArea({
               </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-72 p-2">
-              <p className="border-b px-2 pb-2 text-sm font-semibold">Members</p>
+              <p className="border-b border-gray-200 px-2 pb-2 text-sm font-semibold">Members</p>
               <div className="max-h-64 overflow-y-auto py-1">
                 {displayConversation.participants.map((participant) => (
                   <div key={participant._id} className="flex items-center gap-2 rounded-lg p-2">
@@ -736,7 +736,7 @@ export function ChatArea({
       </header>
 
       {searchOpen && conversationId && (
-        <div className="flex items-center gap-2 border-b p-2 md:hidden">
+        <div className="flex items-center gap-2 border-b border-gray-200 bg-white p-2 md:hidden">
           <Input
             value={messageSearch}
             onChange={(event) => setMessageSearch(event.target.value)}
@@ -855,10 +855,10 @@ export function ChatArea({
                       <div
                         className={`rounded-2xl px-3.5 py-2.5 shadow-sm ${
                           message.deletedAt !== undefined
-                            ? "border bg-background text-muted-foreground"
+                            ? "border border-gray-200 bg-white text-muted-foreground"
                             : isOwn
                               ? "bg-brand-purple text-white"
-                              : "border bg-background text-foreground"
+                              : "border border-gray-200 bg-white text-foreground"
                         }`}
                       >
                         {message.replyTo && message.deletedAt === undefined && (
@@ -931,7 +931,7 @@ export function ChatArea({
                                   emoji as (typeof CHAT_REACTIONS)[number],
                                 )
                               }
-                              className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${reacted ? "border-brand-purple bg-brand-purple/10" : "bg-background hover:bg-muted"}`}
+                              className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${reacted ? "border-brand-purple bg-brand-purple/10" : "border-gray-200 bg-white hover:bg-gray-50"}`}
                             >
                               {emoji} {reactions.length}
                             </button>
@@ -952,9 +952,9 @@ export function ChatArea({
         )}
       </div>
 
-      <footer className="shrink-0 border-t bg-background p-3 sm:p-4">
+      <footer className="shrink-0 border-t border-gray-200 bg-white p-3 sm:p-4">
         {replyingTo && (
-          <div className="mb-2 flex items-center gap-2 rounded-xl border bg-muted/50 px-3 py-2">
+          <div className="mb-2 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
             <Reply className="h-4 w-4 text-muted-foreground" />
             <div className="min-w-0 flex-1">
               <p className="text-xs font-medium">Replying to {messageSenderLabelInDirect(replyingTo.senderId, replyingTo.sender, displayConversation, currentUserId)}</p>
@@ -968,7 +968,7 @@ export function ChatArea({
         {attachments.length > 0 && (
           <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
             {attachments.map((attachment) => (
-              <div key={attachment.id} className="relative flex h-20 w-28 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-muted">
+              <div key={attachment.id} className="relative flex h-20 w-28 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
                 {attachment.previewUrl ? (
                   <Image
                     src={attachment.previewUrl}
@@ -1011,7 +1011,7 @@ export function ChatArea({
             type="button"
             variant="outline"
             size="icon"
-            className="h-11 w-11 shrink-0 rounded-xl"
+            className="h-11 w-11 shrink-0 rounded-xl border-gray-200 shadow-none"
             disabled={isUploading}
             onClick={() => fileInputRef.current?.click()}
             aria-label="Attach files"
@@ -1034,7 +1034,7 @@ export function ChatArea({
             aria-label="Message"
             rows={1}
             maxLength={5000}
-            className="max-h-40 min-h-11 flex-1 resize-none rounded-xl py-2.5"
+            className="max-h-40 min-h-11 flex-1 resize-none rounded-xl border-gray-200 py-2.5 shadow-none"
           />
           <Button
             type="submit"

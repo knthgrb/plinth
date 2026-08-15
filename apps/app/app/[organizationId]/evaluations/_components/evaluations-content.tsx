@@ -220,10 +220,26 @@ export function EvaluationsContent() {
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[
-            { label: "Overdue", value: workspace?.summary.overdue ?? 0, icon: CircleAlert, tone: "text-red-600 bg-red-50" },
-            { label: "Due in 14 days", value: workspace?.summary.dueSoon ?? 0, icon: CalendarClock, tone: "text-amber-600 bg-amber-50" },
-            { label: "Scheduled later", value: workspace?.summary.scheduled ?? 0, icon: CalendarCheck, tone: "text-indigo-600 bg-indigo-50" },
-            { label: "Completed records", value: workspace?.summary.completed ?? 0, icon: ClipboardCheck, tone: "text-emerald-600 bg-emerald-50" },
+            {
+              label: "Overdue",
+              value: workspace?.summary.overdue ?? 0,
+              icon: CircleAlert,
+            },
+            {
+              label: "Due in 14 days",
+              value: workspace?.summary.dueSoon ?? 0,
+              icon: CalendarClock,
+            },
+            {
+              label: "Scheduled later",
+              value: workspace?.summary.scheduled ?? 0,
+              icon: CalendarCheck,
+            },
+            {
+              label: "Completed records",
+              value: workspace?.summary.completed ?? 0,
+              icon: ClipboardCheck,
+            },
           ].map((item) => (
             <Card key={item.label}>
               <CardContent className="flex items-center justify-between p-4">
@@ -231,7 +247,9 @@ export function EvaluationsContent() {
                   <p className="text-xs font-semibold uppercase tracking-wide text-[rgb(120,120,120)]">{item.label}</p>
                   <p className="mt-1 text-2xl font-bold text-[rgb(48,48,48)]">{isLoading ? "—" : item.value}</p>
                 </div>
-                <div className={`rounded-xl p-2.5 ${item.tone}`}><item.icon className="h-5 w-5" /></div>
+                <div className="rounded-xl bg-brand-purple/10 p-2.5 text-brand-purple">
+                  <item.icon className="h-5 w-5" />
+                </div>
               </CardContent>
             </Card>
           ))}

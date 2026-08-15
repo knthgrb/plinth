@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { authClient } from "@/lib/auth-client";
+import { authClient, signOutAndRedirectToLogin } from "@/lib/auth-client";
 import { MainLoader } from "@/components/main-loader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Building2, LogOut } from "lucide-react";
+import { Archive, Building2, LogOut } from "lucide-react";
 import { selectPreferredOrganizationForEntry } from "@/utils/org-membership-lifecycle";
 
 function getDefaultRouteForRole(
@@ -22,17 +22,6 @@ function getDefaultRouteForRole(
   return "/dashboard";
 }
 
-async function clearRoleCacheCookie() {
-  try {
-    await fetch("/api/auth/clear-role-cache", {
-      method: "POST",
-      credentials: "include",
-    });
-  } catch {
-    // Non-fatal: login will refresh role from Convex on the next session.
-  }
-}
-
 export default function AppHomePage() {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
@@ -41,6 +30,10 @@ export default function AppHomePage() {
 
   const organizations = useQuery(
     api.organizations.getUserOrganizations,
+    authChecked && hasSession ? {} : "skip",
+  );
+  const archivedOrganizations = useQuery(
+    api.organizations.getArchivedUserOrganizations,
     authChecked && hasSession ? {} : "skip",
   );
 
@@ -75,17 +68,16 @@ export default function AppHomePage() {
     // No organizations (e.g. removed from all orgs) — show create-org option, don't redirect
   }, [authChecked, hasSession, organizations, router]);
 
-  const handleLogout = async () => {
-    setIsSigningOut(true);
-    try {
-      await authClient.signOut();
-      await clearRoleCacheCookie();
-    } finally {
-      router.replace("/login");
-    }
+  const handleLogout = () => {
+    void signOutAndRedirectToLogin(() => setIsSigningOut(true));
   };
 
-  if (!authChecked || !hasSession || organizations === undefined) {
+  if (
+    !authChecked ||
+    !hasSession ||
+    organizations === undefined ||
+    archivedOrganizations === undefined
+  ) {
     return <MainLoader />;
   }
 
@@ -94,18 +86,53 @@ export default function AppHomePage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-      <Card className="w-full max-w-md">
+    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-8">
+      <Card className="w-full max-w-lg">
         <CardHeader className="text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-purple-100">
             <Building2 className="h-6 w-6 text-purple-600" />
           </div>
-          <CardTitle className="text-xl">No organizations</CardTitle>
+          <CardTitle className="text-xl">No active organizations</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-center text-sm text-muted-foreground">
-            You are not in any organizations. Create one to get started.
+            {archivedOrganizations.length > 0
+              ? "You can review your archived organizations or create a new one."
+              : "You are not in any active organizations. Create one to get started."}
           </p>
+          {archivedOrganizations.length > 0 && (
+            <section
+              aria-labelledby="archived-organizations-heading"
+              className="space-y-2"
+            >
+              <h2
+                id="archived-organizations-heading"
+                className="text-sm font-semibold text-foreground"
+              >
+                Archived organizations
+              </h2>
+              <div className="space-y-2">
+                {archivedOrganizations.map((organization) => (
+                  <div
+                    key={organization._id}
+                    className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3"
+                  >
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-gray-100">
+                      <Archive className="h-4 w-4 text-gray-600" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">
+                        {organization.name}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Archived organization
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
           <Button
             className="w-full"
             onClick={() => router.push("/signup?step=2")}

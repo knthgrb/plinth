@@ -104,7 +104,6 @@ export function OrganizationManagement(): React.ReactElement {
     currentOrganizationId,
     organizations,
     currentOrganization,
-    refreshOrganizations,
   } = useOrganization();
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
@@ -233,7 +232,6 @@ export function OrganizationManagement(): React.ReactElement {
         phone: "",
         taxId: "",
       });
-      refreshOrganizations();
     } catch (error: unknown) {
       toast({
         title: "Could not save organization",

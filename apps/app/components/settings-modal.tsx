@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
@@ -27,7 +26,7 @@ import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
 import { useEmployeeView } from "@/hooks/employee-view-context";
 import type { Id } from "@/convex/_generated/dataModel";
-import { authClient } from "@/lib/auth-client";
+import { authClient, signOutAndRedirectToLogin } from "@/lib/auth-client";
 import { UserOrganizationsCard } from "@/components/user-organizations-card";
 import { OrganizationManagement } from "@/components/organization-management";
 import { PayrollSettingsContent } from "@/components/settings/payroll-settings-content";
@@ -117,7 +116,6 @@ export function SettingsModal({
   onOpenChange,
   initialSection: propInitialSection,
 }: SettingsModalProps) {
-  const router = useRouter();
   const { toast } = useToast();
   const { currentOrganizationId, clearOrganization } = useOrganization();
   const { effectiveSelfEmployeeId, isEmployeeExperienceUI } = useEmployeeView();
@@ -158,7 +156,7 @@ export function SettingsModal({
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
   const employeeRecord = useQuery(
-    (api as any).employees.getEmployee,
+    api.employees.getEmployee,
     currentOrganizationId && effectiveSelfEmployeeId
       ? {
           employeeId: effectiveSelfEmployeeId as Id<"employees">,
@@ -169,13 +167,7 @@ export function SettingsModal({
 
   const handleLogout = () => {
     onOpenChange(false);
-    clearOrganization();
-    sessionStorage.setItem("pendingSignOut", "1");
-    void fetch("/api/auth/clear-role-cache", {
-      method: "POST",
-      credentials: "include",
-    });
-    router.replace("/login");
+    void signOutAndRedirectToLogin(clearOrganization);
   };
 
   const userInitials =
@@ -269,10 +261,13 @@ export function SettingsModal({
         title: "Password updated",
         description: "Your account password has been changed.",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Password not updated",
-        description: error?.message || "Failed to change password.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to change password.",
         variant: "destructive",
       });
     } finally {

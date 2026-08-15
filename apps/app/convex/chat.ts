@@ -613,7 +613,7 @@ export const sendMessage = mutation({
       }
     }
 
-    const now = Date.now();
+    const now = Math.max(Date.now(), (conversation.lastMessageAt ?? 0) + 1);
     const messageType = args.messageType || "text";
     if (messageType === "system") {
       throw new Error("System messages cannot be sent by users");
@@ -713,6 +713,12 @@ export const sendMessage = mutation({
       args.attachments ?? [],
       now,
     );
+    await upsertConversationPreference(ctx, {
+      organizationId: conversation.organizationId,
+      userId: userRecord._id,
+      conversationId: conversation._id,
+      lastReadAt: now,
+    });
 
     // Update conversation's lastMessageAt
     await ctx.db.patch(args.conversationId, {

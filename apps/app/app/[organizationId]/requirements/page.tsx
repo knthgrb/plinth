@@ -511,25 +511,21 @@ export default function RequirementsPage() {
       label: "Compliant employees",
       value: workspaceSummary.compliantEmployees,
       icon: CheckCircle2,
-      tone: "text-emerald-700 bg-emerald-50",
     },
     {
       label: "Awaiting review",
       value: workspaceSummary.awaitingReview,
       icon: Clock3,
-      tone: "text-amber-700 bg-amber-50",
     },
     {
       label: "Missing",
       value: workspaceSummary.missing,
       icon: FileWarning,
-      tone: "text-red-700 bg-red-50",
     },
     {
       label: "Expiring / expired",
       value: workspaceSummary.expiring + workspaceSummary.expired,
       icon: AlertTriangle,
-      tone: "text-orange-700 bg-orange-50",
     },
   ];
 
@@ -551,10 +547,10 @@ export default function RequirementsPage() {
           />
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {metrics.map(({ label, value, icon: Icon, tone }) => (
+          {metrics.map(({ label, value, icon: Icon }) => (
             <Card key={label} className="border-[#E7E5F4]">
               <CardContent className="flex items-center gap-3 p-4">
-                <div className={`rounded-xl p-2 ${tone}`}>
+                <div className="rounded-xl bg-brand-purple/10 p-2 text-brand-purple">
                   <Icon className="h-4 w-4" />
                 </div>
                 <div>

@@ -1,8 +1,12 @@
 "use client";
 
 import { ConvexReactClient, useConvexAuth } from "convex/react";
-import { ReactNode, useEffect, useRef, useState } from "react";
-import { authClient } from "@/lib/auth-client";
+import { ReactNode, useEffect, useRef } from "react";
+import {
+  authClient,
+  resolveAuthGateState,
+  resolveAuthGateView,
+} from "@/lib/auth-client";
 import {
   type AuthClient,
   ConvexBetterAuthProvider,
@@ -31,25 +35,19 @@ const convexAuthClient = authClient as unknown as AuthClient;
  */
 function ConvexSessionReadyGate({ children }: { children: ReactNode }) {
   const { isLoading: convexAuthLoading, isAuthenticated } = useConvexAuth();
-  const [sessionResolved, setSessionResolved] = useState(false);
-  const [hasBrowserSession, setHasBrowserSession] = useState(false);
+  const { data: browserSession, isPending: isSessionPending } =
+    authClient.useSession();
   const sessionInvalidRedirectStarted = useRef(false);
+  const gateState = resolveAuthGateState({
+    isSessionPending,
+    hasSession: Boolean(browserSession?.session),
+    isConvexAuthLoading: convexAuthLoading,
+    isConvexAuthenticated: isAuthenticated,
+  });
+  const gateView = resolveAuthGateView(gateState);
 
   useEffect(() => {
-    let cancelled = false;
-    void authClient.getSession().then((res) => {
-      if (cancelled) return;
-      setHasBrowserSession(!!res?.data?.session);
-      setSessionResolved(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!sessionResolved || !hasBrowserSession || convexAuthLoading) return;
-    if (isAuthenticated) {
+    if (gateState !== "invalid") {
       sessionInvalidRedirectStarted.current = false;
       return;
     }
@@ -58,33 +56,10 @@ function ConvexSessionReadyGate({ children }: { children: ReactNode }) {
     void authClient.signOut({ fetchOptions: { throw: false } }).finally(() => {
       window.location.replace("/login");
     });
-  }, [
-    sessionResolved,
-    hasBrowserSession,
-    convexAuthLoading,
-    isAuthenticated,
-  ]);
+  }, [gateState]);
 
-  if (!sessionResolved) {
+  if (gateView === "loader") {
     return <MainLoader />;
-  }
-
-  if (!hasBrowserSession) {
-    return <>{children}</>;
-  }
-
-  if (convexAuthLoading) {
-    return <MainLoader />;
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-white px-4">
-        <p className="text-center text-sm text-gray-500">
-          Redirecting to sign in…
-        </p>
-      </div>
-    );
   }
 
   return <>{children}</>;

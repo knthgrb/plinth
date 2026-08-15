@@ -195,7 +195,7 @@ export default function ChatPage() {
 
         {/* Full-height column divider (dedicated strut so the line meets the bottom; border-l on main could clip short) */}
         <div
-          className="hidden lg:block w-px shrink-0 self-stretch bg-gray-300"
+          className="hidden w-px shrink-0 self-stretch bg-gray-200 lg:block"
           aria-hidden
         />
 

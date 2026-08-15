@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
-import { authClient } from "@/lib/auth-client";
+import { authClient, clearRoleCacheCookie } from "@/lib/auth-client";
 import {
   getInvitationAuthContext,
   getSafeInternalRedirect,
@@ -14,18 +14,6 @@ import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
 import { AuthSidePanel } from "@/components/auth-side-panel";
 
-const PENDING_SIGNOUT_KEY = "pendingSignOut";
-
-async function clearRoleCacheCookie() {
-  try {
-    await fetch("/api/auth/clear-role-cache", {
-      method: "POST",
-      credentials: "include",
-    });
-  } catch {
-    // Non-fatal: middleware will refresh role from Convex when cookie is missing
-  }
-}
 const marketingUrl =
   process.env.NEXT_PUBLIC_MARKETING_APP_URL ?? process.env.NEXT_PUBLIC_MARKETING_URL ?? "/";
 
@@ -57,18 +45,6 @@ export default function LoginPage() {
     if (emailParam) setEmail(emailParam);
   }, [invitedEmail, searchParams]);
 
-  // Complete sign-out after navigating here (org tree is unmounted, so no Convex auth errors)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (sessionStorage.getItem(PENDING_SIGNOUT_KEY)) {
-      sessionStorage.removeItem(PENDING_SIGNOUT_KEY);
-      void (async () => {
-        await authClient.signOut();
-        await clearRoleCacheCookie();
-      })();
-    }
-  }, []);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -86,12 +62,7 @@ export default function LoginPage() {
           variant: "destructive",
         });
       } else {
-        // Ensure session is readable, then full navigation so cookies + middleware see auth
-        // (client router.push alone can race Convex / role cookie on first load).
-        await Promise.all([
-          authClient.getSession(),
-          clearRoleCacheCookie(),
-        ]);
+        await clearRoleCacheCookie();
         window.location.assign(redirectPath);
       }
     } catch (err: unknown) {

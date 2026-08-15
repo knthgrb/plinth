@@ -12,7 +12,7 @@ import {
   BookOpen,
   Mail,
 } from "lucide-react";
-import { authClient } from "@/lib/auth-client";
+import { signOutAndRedirectToLogin } from "@/lib/auth-client";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useOrganization } from "@/hooks/organization-context";
@@ -45,7 +45,7 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
   const router = useRouter();
   const { effectiveOrganizationId, clearOrganization } = useOrganization();
   const user = useQuery(
-    (api as any).organizations.getCurrentUser,
+    api.organizations.getCurrentUser,
     effectiveOrganizationId
       ? { organizationId: effectiveOrganizationId }
       : "skip",
@@ -63,13 +63,7 @@ export function Header({ onMobileMenuOpen }: HeaderProps) {
     useEmployeeView();
 
   const handleLogout = () => {
-    clearOrganization();
-    sessionStorage.setItem("pendingSignOut", "1");
-    void fetch("/api/auth/clear-role-cache", {
-      method: "POST",
-      credentials: "include",
-    });
-    router.replace("/login");
+    void signOutAndRedirectToLogin(clearOrganization);
   };
 
   const userInitials =

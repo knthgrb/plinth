@@ -38,7 +38,7 @@ export function MessageActions({
   onForward,
 }: MessageActionsProps) {
   return (
-    <div className="flex items-center rounded-lg border bg-background p-0.5 shadow-sm">
+    <div className="flex items-center rounded-lg border border-gray-200 bg-white p-0.5 shadow-sm">
       <Button
         type="button"
         variant="ghost"
