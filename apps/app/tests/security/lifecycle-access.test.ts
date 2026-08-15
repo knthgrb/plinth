@@ -485,7 +485,7 @@ describe("employee lifecycle access", () => {
     );
   });
 
-  it("archives a standalone membership while retaining the user account", async () => {
+  it("deletes a standalone membership while retaining the user account", async () => {
     const t = convexTest(schema, modules);
     const ownerEmail = "standalone-remove-owner@example.com";
     const fixture = await t.run(async (ctx) => {
@@ -523,32 +523,27 @@ describe("employee lifecycle access", () => {
       return { organizationId, memberUserId, membershipId };
     });
 
-    await t
+    const result = await t
       .withIdentity({ email: ownerEmail })
       .mutation(api.organizations.removeUserFromOrganization, {
         organizationId: fixture.organizationId,
         userId: fixture.memberUserId,
       });
 
+    expect(result).toEqual({ success: true, outcome: "deleted" });
+
     const state = await t.run(async (ctx) => ({
       membership: await ctx.db.get(fixture.membershipId),
       user: await ctx.db.get(fixture.memberUserId),
     }));
-    expect(state.membership).toMatchObject({
-      accessStatus: "removed",
-    });
+    expect(state.membership).toBeNull();
     expect(state.user?._id).toBe(fixture.memberUserId);
 
     await expect(
       t
         .withIdentity({ email: "standalone-member@example.com" })
         .query(api.organizations.getArchivedUserOrganizations, {}),
-    ).resolves.toEqual([
-      expect.objectContaining({
-        _id: fixture.organizationId,
-        accessStatus: "removed",
-      }),
-    ]);
+    ).resolves.toEqual([]);
   });
 
   it("rejects rehiring an alumni employee through generic editing", async () => {

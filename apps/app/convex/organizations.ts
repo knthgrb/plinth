@@ -830,13 +830,8 @@ export const removeUserFromOrganization = mutation({
 
     const now = Date.now();
     if (!targetUserOrg.employeeId) {
-      await ctx.db.patch(targetUserOrg._id, {
-        accessStatus: "removed",
-        accessUpdatedAt: now,
-        accessUpdatedBy: user._id,
-        updatedAt: now,
-      });
-      return { success: true, outcome: "removed" as const };
+      await ctx.db.delete(targetUserOrg._id);
+      return { success: true, outcome: "deleted" as const };
     }
 
     if (!args.separation) {
