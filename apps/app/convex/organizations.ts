@@ -399,22 +399,37 @@ export const getArchivedUserOrganizations = query({
     const archivedOrganizations = await Promise.all(
       memberships.map(async (membership) => {
         const organization = await ctx.db.get(membership.organizationId);
-        if (!organization || organization.status !== "archived") return null;
+        if (!organization) return null;
+        const accessStatus = normalizeOrgMembershipAccessStatus(
+          membership.accessStatus,
+        );
+        const organizationStatus = organization.status ?? "active";
+        const hasInactiveMembership =
+          accessStatus !== "active" && accessStatus !== "alumni";
+        if (organizationStatus !== "archived" && !hasInactiveMembership) {
+          return null;
+        }
 
         return {
           _id: organization._id,
           name: organization.name,
-          status: organization.status,
+          status: organizationStatus,
           archivedAt: organization.archivedAt,
+          accessStatus,
           role: membership.role,
           joinedAt: membership.joinedAt,
+          lastAccessChangeAt: membership.accessUpdatedAt ?? membership.updatedAt,
         };
       }),
     );
 
     return archivedOrganizations
       .filter((organization) => organization !== null)
-      .sort((left, right) => (right.archivedAt ?? 0) - (left.archivedAt ?? 0));
+      .sort(
+        (left, right) =>
+          (right.archivedAt ?? right.lastAccessChangeAt) -
+          (left.archivedAt ?? left.lastAccessChangeAt),
+      );
   },
 });
 
@@ -815,8 +830,13 @@ export const removeUserFromOrganization = mutation({
 
     const now = Date.now();
     if (!targetUserOrg.employeeId) {
-      await ctx.db.delete(targetUserOrg._id);
-      return { success: true, outcome: "deleted" as const };
+      await ctx.db.patch(targetUserOrg._id, {
+        accessStatus: "removed",
+        accessUpdatedAt: now,
+        accessUpdatedBy: user._id,
+        updatedAt: now,
+      });
+      return { success: true, outcome: "removed" as const };
     }
 
     if (!args.separation) {

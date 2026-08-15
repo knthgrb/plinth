@@ -485,7 +485,7 @@ describe("employee lifecycle access", () => {
     );
   });
 
-  it("deletes a standalone membership while retaining the user account", async () => {
+  it("archives a standalone membership while retaining the user account", async () => {
     const t = convexTest(schema, modules);
     const ownerEmail = "standalone-remove-owner@example.com";
     const fixture = await t.run(async (ctx) => {
@@ -534,8 +534,21 @@ describe("employee lifecycle access", () => {
       membership: await ctx.db.get(fixture.membershipId),
       user: await ctx.db.get(fixture.memberUserId),
     }));
-    expect(state.membership).toBeNull();
+    expect(state.membership).toMatchObject({
+      accessStatus: "removed",
+    });
     expect(state.user?._id).toBe(fixture.memberUserId);
+
+    await expect(
+      t
+        .withIdentity({ email: "standalone-member@example.com" })
+        .query(api.organizations.getArchivedUserOrganizations, {}),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        _id: fixture.organizationId,
+        accessStatus: "removed",
+      }),
+    ]);
   });
 
   it("rejects rehiring an alumni employee through generic editing", async () => {
@@ -949,6 +962,49 @@ describe("employee lifecycle access", () => {
         name: "Archived Organization",
         status: "archived",
         role: "owner",
+      }),
+    ]);
+  });
+
+  it("keeps removed memberships discoverable while the organization remains active", async () => {
+    const t = convexTest(schema, modules);
+    const email = "removed-employee@example.com";
+    const organizationId = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Former Employer",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const userId = await ctx.db.insert("users", {
+        email,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId,
+        organizationId,
+        role: "employee",
+        accessStatus: "removed",
+        joinedAt: 1,
+        updatedAt: 2,
+      });
+      return organizationId;
+    });
+
+    await expect(
+      t.withIdentity({ email }).query(api.organizations.getUserOrganizations, {}),
+    ).resolves.toEqual([]);
+    await expect(
+      t
+        .withIdentity({ email })
+        .query(api.organizations.getArchivedUserOrganizations, {}),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        _id: organizationId,
+        name: "Former Employer",
+        status: "active",
+        accessStatus: "removed",
+        role: "employee",
       }),
     ]);
   });

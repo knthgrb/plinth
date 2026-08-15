@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Archive, Building2, LogOut } from "lucide-react";
 import { selectPreferredOrganizationForEntry } from "@/utils/org-membership-lifecycle";
+import { CreateOrganizationDialog } from "@/components/create-organization-dialog";
 
 function getDefaultRouteForRole(
   role: string | null | undefined,
@@ -27,6 +28,8 @@ export default function AppHomePage() {
   const [authChecked, setAuthChecked] = useState(false);
   const [hasSession, setHasSession] = useState<boolean | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isCreateOrganizationOpen, setIsCreateOrganizationOpen] =
+    useState(false);
 
   const organizations = useQuery(
     api.organizations.getUserOrganizations,
@@ -125,7 +128,13 @@ export default function AppHomePage() {
                         {organization.name}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Archived organization
+                        {organization.status === "archived"
+                          ? "Organization archived"
+                          : organization.accessStatus === "removed"
+                            ? "Access removed"
+                            : organization.accessStatus === "disabled"
+                              ? "Access disabled"
+                              : "Access suspended"}
                       </p>
                     </div>
                   </div>
@@ -135,7 +144,7 @@ export default function AppHomePage() {
           )}
           <Button
             className="w-full"
-            onClick={() => router.push("/signup?step=2")}
+            onClick={() => setIsCreateOrganizationOpen(true)}
           >
             Create organization
           </Button>
@@ -150,6 +159,10 @@ export default function AppHomePage() {
           </Button>
         </CardContent>
       </Card>
+      <CreateOrganizationDialog
+        open={isCreateOrganizationOpen}
+        onOpenChange={setIsCreateOrganizationOpen}
+      />
     </div>
   );
 }

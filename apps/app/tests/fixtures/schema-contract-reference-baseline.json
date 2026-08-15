@@ -19,9 +19,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 10169,
+      "totalMatches": 10170,
       "fileCount": 288,
-      "fingerprint": "cb48c29f91da692629dad67fb143475c027fbe561ff850419f202777fa70ba43",
+      "fingerprint": "02c63f8324b9b31e9d683c56757b5aa8b73fbec4c3662e1b2de983c0a5070779",
       "symbols": [
         {
           "symbol": "accrualRate",
@@ -435,8 +435,8 @@
         },
         {
           "symbol": "status",
-          "matches": 1096,
-          "files": 116
+          "matches": 1097,
+          "files": 117
         },
         {
           "symbol": "supportingDocuments",

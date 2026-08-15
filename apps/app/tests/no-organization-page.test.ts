@@ -23,4 +23,14 @@ describe("no organization page", () => {
     expect(source).toContain("signOutAndRedirectToLogin");
     expect(source).not.toContain("await authClient.signOut()");
   });
+
+  it("creates an organization inside the authenticated app", () => {
+    const source = readFileSync(
+      new URL("../app/page.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain("CreateOrganizationDialog");
+    expect(source).not.toContain("/signup?step=2");
+  });
 });
