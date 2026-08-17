@@ -56,15 +56,16 @@ const workbook: WorkbookData = {
   rowCount: 1,
   cellCount: 2,
 };
+const templateHeader = {
+  rowNumber: 1,
+  cells: ["Employee", "Date", "Time In", "Time Out", "Status", "Notes"],
+};
 const templateWorkbook: WorkbookData = {
   sheets: [
     {
       name: "CSV",
       rows: [
-        {
-          rowNumber: 1,
-          cells: ["Employee", "Date", "Time In", "Time Out", "Status", "Notes"],
-        },
+        templateHeader,
         {
           rowNumber: 7,
           cells: ["EMP-008", "2026-08-03", "09:15", "23:12", "", "Closing"],
@@ -330,6 +331,69 @@ describe("POST /api/attendance/import/transform", () => {
     expect(extractAttendanceWithGeminiMock).not.toHaveBeenCalled();
   });
 
+  it("keeps invalid matching template rows off the Gemini path", async () => {
+    readAttendanceWorkbookMock.mockResolvedValue({
+      sheets: [
+        {
+          name: "CSV",
+          rows: [
+            templateHeader,
+            {
+              rowNumber: 9,
+              cells: ["EMP-009", "2026-02-29", "09:15", "", "present", ""],
+            },
+          ],
+        },
+      ],
+      rowCount: 2,
+      cellCount: 10,
+    });
+    extractAttendanceWithGeminiMock.mockRejectedValue(
+      new GeminiAttendanceError("unavailable", "Gemini must not be called"),
+    );
+
+    const response = await POST(makeMultipartRequest());
+    const body = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      candidates: [
+        expect.objectContaining({
+          sourceRow: 9,
+          employeeKey: "EMP-009",
+          timeIn: "9:15 AM",
+          issues: [
+            { code: "invalid_date", message: "Date must be a valid ISO date." },
+            { code: "missing_time_out", message: "Time out is required." },
+          ],
+        }),
+      ],
+    });
+    expect(extractAttendanceWithGeminiMock).not.toHaveBeenCalled();
+  });
+
+  it("returns no attendance for an empty matching template without calling Gemini", async () => {
+    readAttendanceWorkbookMock.mockResolvedValue({
+      sheets: [{ name: "CSV", rows: [templateHeader] }],
+      rowCount: 1,
+      cellCount: 6,
+    });
+    extractAttendanceWithGeminiMock.mockRejectedValue(
+      new GeminiAttendanceError("unavailable", "Gemini must not be called"),
+    );
+
+    const response = await POST(makeMultipartRequest());
+
+    expect(response.status).toBe(422);
+    expect(await readJson(response)).toEqual({
+      ok: false,
+      code: "no_attendance",
+      message: "No attendance candidates were found.",
+    });
+    expect(extractAttendanceWithGeminiMock).not.toHaveBeenCalled();
+  });
+
   it("returns 401 without a token before querying membership or transforming", async () => {
     getTokenMock.mockResolvedValue(undefined);
 
@@ -547,6 +611,27 @@ describe("POST /api/attendance/import/transform", () => {
     expect(response.status).toBe(200);
     expect(readAttendanceWorkbookMock).toHaveBeenCalledOnce();
     expect(readAttendanceWorkbookMock.mock.calls[0]?.[0].name).toBe(name);
+  });
+
+  it.each([
+    ["attendance.xls", "application/vnd.ms-excel"],
+    [
+      "attendance.xlsx",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ],
+    [
+      "attendance.xlsm",
+      "application/vnd.ms-excel.sheet.macroEnabled.12",
+    ],
+  ])("uses Gemini for the non-CSV workbook %s", async (name, type) => {
+    readAttendanceWorkbookMock.mockResolvedValue(templateWorkbook);
+    const file = new File(["workbook"], name, { type });
+
+    const response = await POST(makeMultipartRequest({ file }));
+
+    expect(response.status).toBe(200);
+    expect(await readJson(response)).toEqual({ ok: true, candidates });
+    expect(extractAttendanceWithGeminiMock).toHaveBeenCalledWith(templateWorkbook);
   });
 
   it.each([
