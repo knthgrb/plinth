@@ -80,6 +80,12 @@ import {
   isAttendanceConflictCheckPending,
   runLatestAttendanceImportRequest,
 } from "@/lib/attendance-import/lifecycle";
+import {
+  getPayrollCorrectionRequirement,
+  type AttendancePayrollLockedEntry,
+  type AttendancePayrollReviewRow,
+  type PayrollCorrectionRequirement,
+} from "@/lib/attendance-import/payroll-correction";
 import { AttendanceImportFileControls } from "./attendance-import-file-controls";
 
 function formatHHmmTo12h(hhmm: string | undefined): string {
@@ -133,6 +139,12 @@ type AttendanceBatchEntry = {
     | "no_work";
   overwriteAttendanceId?: Id<"attendance">;
 };
+
+interface AttendanceBatchReview {
+  conflicts: Doc<"attendance">[];
+  lockedEntries: AttendancePayrollLockedEntry[];
+  canCorrectWithReason: boolean;
+}
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DAY_NAMES = [
@@ -210,11 +222,18 @@ export function BulkAddAttendanceDialog({
   );
   const importRunIdRef = useRef<string | null>(null);
   const conflictLookupGenerationRef = useRef(0);
-  const [orgAttendanceForCsv, setOrgAttendanceForCsv] = useState<
-    Doc<"attendance">[] | undefined
+  const manualReviewGenerationRef = useRef(0);
+  const [csvBatchReview, setCsvBatchReview] = useState<
+    AttendanceBatchReview | undefined
   >(undefined);
-  const getAttendanceImportConflicts = useAction(
-    api.attendance.getAttendanceImportConflicts,
+  const [manualBatchReview, setManualBatchReview] = useState<
+    AttendanceBatchReview | undefined
+  >(undefined);
+  const [manualReviewError, setManualReviewError] = useState<string | null>(
+    null,
+  );
+  const getAttendanceImportReview = useAction(
+    api.attendance.getAttendanceImportReview,
   );
   const importLookupsReady = areAttendanceImportLookupsReady(
     employees,
@@ -231,7 +250,9 @@ export function BulkAddAttendanceDialog({
     setImportCandidates(null);
     setImportRowDecisions({});
     setCsvPreviewRows([]);
+    setCsvBatchReview(undefined);
     setCsvParseError(null);
+    setCorrectionReason("");
   }, []);
 
   const invalidateAndResetImport = useCallback(() => {
@@ -332,6 +353,70 @@ export function BulkAddAttendanceDialog({
     return map;
   }, [employeeRangeAttendance]);
 
+  const manualPayrollReviewRows = useMemo<AttendancePayrollReviewRow[]>(() => {
+    if (!bulkSelectedEmployee) return [];
+
+    return getBulkDates().map((dateInfo) => ({
+      employeeId: bulkSelectedEmployee as Id<"employees">,
+      date: dateInfo.timestamp,
+      included:
+        bulkConflictResolutions[dateInfo.timestamp] !== "exclude",
+    }));
+  }, [bulkConflictResolutions, bulkSelectedEmployee, getBulkDates]);
+
+  useEffect(() => {
+    const generation = ++manualReviewGenerationRef.current;
+    if (
+      !isBulkDialogOpen ||
+      bulkMode !== "manual" ||
+      !currentOrganizationId
+    ) {
+      setManualBatchReview(undefined);
+      setManualReviewError(null);
+      return;
+    }
+
+    if (manualPayrollReviewRows.length === 0) {
+      setManualBatchReview({
+        conflicts: [],
+        lockedEntries: [],
+        canCorrectWithReason: false,
+      });
+      setManualReviewError(null);
+      return;
+    }
+
+    setManualBatchReview(undefined);
+    setManualReviewError(null);
+    void getAttendanceImportReview({
+      organizationId: currentOrganizationId as Id<"organizations">,
+      entries: manualPayrollReviewRows.map(({ employeeId, date }) => ({
+        employeeId,
+        date,
+      })),
+    })
+      .then((review) => {
+        if (manualReviewGenerationRef.current === generation) {
+          setManualBatchReview(review);
+        }
+      })
+      .catch((error: unknown) => {
+        if (manualReviewGenerationRef.current === generation) {
+          setManualReviewError(
+            error instanceof Error
+              ? error.message
+              : "Could not review finalized payroll periods.",
+          );
+        }
+      });
+  }, [
+    bulkMode,
+    currentOrganizationId,
+    getAttendanceImportReview,
+    isBulkDialogOpen,
+    manualPayrollReviewRows,
+  ]);
+
   const csvBasePreview = useMemo(
     () =>
       importCandidates === null
@@ -347,7 +432,7 @@ export function BulkAddAttendanceDialog({
   useEffect(() => {
     const generation = ++conflictLookupGenerationRef.current;
     if (!currentOrganizationId || csvBasePreview === undefined) {
-      setOrgAttendanceForCsv(undefined);
+      setCsvBatchReview(undefined);
       return;
     }
     const entries = csvBasePreview
@@ -357,18 +442,22 @@ export function BulkAddAttendanceDialog({
         date: row.dateTs,
       }));
     if (entries.length === 0) {
-      setOrgAttendanceForCsv([]);
+      setCsvBatchReview({
+        conflicts: [],
+        lockedEntries: [],
+        canCorrectWithReason: false,
+      });
       return;
     }
 
-    setOrgAttendanceForCsv(undefined);
-    void getAttendanceImportConflicts({
+    setCsvBatchReview(undefined);
+    void getAttendanceImportReview({
       organizationId: currentOrganizationId as Id<"organizations">,
       entries,
     })
-      .then((records) => {
+      .then((review) => {
         if (conflictLookupGenerationRef.current === generation) {
-          setOrgAttendanceForCsv(records);
+          setCsvBatchReview(review);
         }
       })
       .catch((error: unknown) => {
@@ -380,7 +469,7 @@ export function BulkAddAttendanceDialog({
           );
         }
       });
-  }, [csvBasePreview, currentOrganizationId, getAttendanceImportConflicts]);
+  }, [csvBasePreview, currentOrganizationId, getAttendanceImportReview]);
 
   useEffect(() => {
     if (csvBasePreview === undefined) {
@@ -388,9 +477,9 @@ export function BulkAddAttendanceDialog({
     }
 
     const reconciliation = reconcileAttendanceImportPreviewState(
-      applyAttendanceImportConflicts(csvBasePreview, orgAttendanceForCsv),
+      applyAttendanceImportConflicts(csvBasePreview, csvBatchReview?.conflicts),
       importRowDecisions,
-      orgAttendanceForCsv !== undefined,
+      csvBatchReview !== undefined,
     );
     setCsvPreviewRows(reconciliation.rows);
 
@@ -400,11 +489,15 @@ export function BulkAddAttendanceDialog({
   }, [
     csvBasePreview,
     importRowDecisions,
-    orgAttendanceForCsv,
+    csvBatchReview,
   ]);
 
   useEffect(() => {
     setBulkConflictResolutions({});
+  }, [bulkSelectedEmployee, bulkStartDate, bulkEndDate]);
+
+  useEffect(() => {
+    setCorrectionReason("");
   }, [bulkSelectedEmployee, bulkStartDate, bulkEndDate]);
 
   useEffect(() => {
@@ -468,10 +561,41 @@ export function BulkAddAttendanceDialog({
       ).length,
     [csvPreviewRows],
   );
+  const csvPayrollReviewRows = useMemo<AttendancePayrollReviewRow[]>(
+    () =>
+      csvPreviewRows
+        .filter(
+          (row) => row.employeeId && !row.error && row.dateTs > 0,
+        )
+        .map((row) => ({
+          employeeId: row.employeeId as Id<"employees">,
+          date: row.dateTs,
+          included: row.includeInImport,
+        })),
+    [csvPreviewRows],
+  );
   const isCheckingImportConflicts = isAttendanceConflictCheckPending(
     csvImportableRowCount > 0,
-    orgAttendanceForCsv,
+    csvBatchReview?.conflicts,
   );
+  const isCheckingManualPayrollLocks =
+    manualPayrollReviewRows.some((row) => row.included) &&
+    manualBatchReview === undefined &&
+    manualReviewError === null;
+  const csvPayrollCorrectionRequirement = getPayrollCorrectionRequirement(
+    csvPayrollReviewRows,
+    csvBatchReview?.lockedEntries ?? [],
+    csvBatchReview?.canCorrectWithReason ?? false,
+  );
+  const manualPayrollCorrectionRequirement = getPayrollCorrectionRequirement(
+    manualPayrollReviewRows,
+    manualBatchReview?.lockedEntries ?? [],
+    manualBatchReview?.canCorrectWithReason ?? false,
+  );
+  const payrollCorrectionRequirement: PayrollCorrectionRequirement =
+    bulkMode === "file"
+      ? csvPayrollCorrectionRequirement
+      : manualPayrollCorrectionRequirement;
 
   const handleCSVFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -520,6 +644,29 @@ export function BulkAddAttendanceDialog({
         title: "Checking existing attendance",
         description:
           "Wait for the attendance conflict check to finish before importing.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (csvPayrollCorrectionRequirement === "blocked") {
+      toast({
+        title: "Finalized payroll cannot be changed",
+        description:
+          "Remove the locked rows from this import or ask an owner or admin to submit the correction.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (
+      csvPayrollCorrectionRequirement === "reason-required" &&
+      !correctionReason.trim()
+    ) {
+      toast({
+        title: "Correction reason required",
+        description:
+          "Provide a reason before changing attendance included in finalized payroll.",
         variant: "destructive",
       });
       return;
@@ -717,6 +864,40 @@ export function BulkAddAttendanceDialog({
   const handleBulkSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentOrganizationId || !bulkSelectedEmployee) return;
+
+    if (isCheckingManualPayrollLocks || manualReviewError) {
+      toast({
+        title: "Payroll review unavailable",
+        description:
+          manualReviewError ??
+          "Wait for the finalized payroll review to finish before submitting.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (manualPayrollCorrectionRequirement === "blocked") {
+      toast({
+        title: "Finalized payroll cannot be changed",
+        description:
+          "Exclude the locked dates or ask an owner or admin to submit the correction.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (
+      manualPayrollCorrectionRequirement === "reason-required" &&
+      !correctionReason.trim()
+    ) {
+      toast({
+        title: "Correction reason required",
+        description:
+          "Provide a reason before changing attendance included in finalized payroll.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     setIsSubmittingBulk(true);
     try {
@@ -1000,20 +1181,35 @@ export function BulkAddAttendanceDialog({
             </div>
           </div>
         </DialogHeader>
-        <div className="border-b border-gray-200/80 px-5 py-3 sm:px-6">
-          <Label htmlFor="bulkAttendanceCorrectionReason">
-            Payroll correction reason
-          </Label>
-          <Textarea
-            id="bulkAttendanceCorrectionReason"
-            value={correctionReason}
-            onChange={(event) => setCorrectionReason(event.target.value)}
-            placeholder="Required for owner/admin changes after payroll is finalized"
-            disabled={isSubmittingBulk || isImportingCsv}
-            rows={2}
-            className="mt-1.5 resize-none"
-          />
-        </div>
+        {payrollCorrectionRequirement === "reason-required" && (
+          <div className="border-b border-amber-200 bg-amber-50/70 px-5 py-3 sm:px-6">
+            <Label htmlFor="bulkAttendanceCorrectionReason">
+              Payroll correction reason
+            </Label>
+            <p className="mt-1 text-xs text-amber-800">
+              One or more included dates are part of finalized payroll. Provide
+              a reason for the attendance audit trail.
+            </p>
+            <Textarea
+              id="bulkAttendanceCorrectionReason"
+              value={correctionReason}
+              onChange={(event) => setCorrectionReason(event.target.value)}
+              placeholder="Describe why finalized attendance is being corrected"
+              disabled={isSubmittingBulk || isImportingCsv}
+              rows={2}
+              className="mt-2 resize-none bg-white"
+            />
+          </div>
+        )}
+        {payrollCorrectionRequirement === "blocked" && (
+          <div className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-900 sm:px-6">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>
+              One or more included dates are part of finalized payroll and
+              cannot be changed by your role or the current attendance policy.
+            </p>
+          </div>
+        )}
         {bulkMode === "file" ? (
           <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-4">
@@ -1259,7 +1455,10 @@ export function BulkAddAttendanceDialog({
                   isImportingCsv ||
                   isCheckingImportConflicts ||
                   csvUnresolvedConflictCount > 0 ||
-                  csvImportableRowCount === 0
+                  csvImportableRowCount === 0 ||
+                  csvPayrollCorrectionRequirement === "blocked" ||
+                  (csvPayrollCorrectionRequirement === "reason-required" &&
+                    !correctionReason.trim())
                 }
               >
                 {isImportingCsv ? (
@@ -1327,6 +1526,12 @@ export function BulkAddAttendanceDialog({
                     <p className="text-sm text-amber-800 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
                       <AlertTriangle className="h-4 w-4 shrink-0" />
                       {manualUnresolvedConflictCount} day(s) already have attendance. Choose Overwrite or Exclude on each highlighted row before submitting.
+                    </p>
+                  )}
+                  {manualReviewError && (
+                    <p className="text-sm text-red-700 flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      {manualReviewError}
                     </p>
                   )}
                   <Label className="text-sm font-medium">
@@ -2140,7 +2345,15 @@ export function BulkAddAttendanceDialog({
             </Button>
             <Button
               type="submit"
-              disabled={isSubmittingBulk || manualUnresolvedConflictCount > 0}
+              disabled={
+                isSubmittingBulk ||
+                manualUnresolvedConflictCount > 0 ||
+                isCheckingManualPayrollLocks ||
+                manualReviewError !== null ||
+                manualPayrollCorrectionRequirement === "blocked" ||
+                (manualPayrollCorrectionRequirement === "reason-required" &&
+                  !correctionReason.trim())
+              }
               className="w-full sm:w-auto order-1 sm:order-2"
             >
               {isSubmittingBulk ? (

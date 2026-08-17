@@ -19,9 +19,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 10179,
-      "fileCount": 289,
-      "fingerprint": "6d286df35365f66ed9f5586b52a671caf829a6cecf4d1151dcad0762786a1709",
+      "totalMatches": 10204,
+      "fileCount": 290,
+      "fingerprint": "e2ac10629b38c945449a6079baf27b3733e23cef1b3feeaff7aa345b242ee083",
       "symbols": [
         {
           "symbol": "accrualRate",
@@ -80,7 +80,7 @@
         },
         {
           "symbol": "attendanceSettings",
-          "matches": 23,
+          "matches": 25,
           "files": 7
         },
         {
@@ -135,8 +135,8 @@
         },
         {
           "symbol": "employeeId",
-          "matches": 1480,
-          "files": 126
+          "matches": 1495,
+          "files": 127
         },
         {
           "symbol": "enableAnniversaryLeave",
@@ -300,7 +300,7 @@
         },
         {
           "symbol": "organizationId",
-          "matches": 2196,
+          "matches": 2202,
           "files": 180
         },
         {
@@ -395,8 +395,8 @@
         },
         {
           "symbol": "role",
-          "matches": 467,
-          "files": 88
+          "matches": 469,
+          "files": 89
         },
         {
           "symbol": "salaryPaymentFrequency",

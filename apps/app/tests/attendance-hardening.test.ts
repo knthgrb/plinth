@@ -911,4 +911,45 @@ describe("attendance pagination", () => {
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0]).toMatchObject({ employeeId, date: matchingDate });
   });
+
+  it("reviews exact import rows for finalized payroll corrections", async () => {
+    const { actor, organizationId, employeeId } = await setup("owner");
+    const lockedDate = Date.UTC(2026, 6, 10);
+    const unlockedDate = Date.UTC(2026, 7, 10);
+
+    const review = await actor.action(
+      api.attendance.getAttendanceImportReview,
+      {
+        organizationId,
+        entries: [
+          { employeeId, date: lockedDate },
+          { employeeId, date: unlockedDate },
+        ],
+      },
+    );
+
+    expect(review.conflicts).toEqual([]);
+    expect(review.lockedEntries).toEqual([
+      { employeeId, date: lockedDate },
+    ]);
+    expect(review.canCorrectWithReason).toBe(true);
+  });
+
+  it("does not offer reason-based payroll corrections to HR members", async () => {
+    const { actor, organizationId, employeeId } = await setup("hr");
+    const lockedDate = Date.UTC(2026, 6, 10);
+
+    const review = await actor.action(
+      api.attendance.getAttendanceImportReview,
+      {
+        organizationId,
+        entries: [{ employeeId, date: lockedDate }],
+      },
+    );
+
+    expect(review.lockedEntries).toEqual([
+      { employeeId, date: lockedDate },
+    ]);
+    expect(review.canCorrectWithReason).toBe(false);
+  });
 });

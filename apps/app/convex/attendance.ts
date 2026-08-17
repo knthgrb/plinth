@@ -41,6 +41,17 @@ interface AttendanceWriteAuthorization {
   correctionReason?: string;
 }
 
+interface AttendanceImportReviewEntry {
+  employeeId: Id<"employees">;
+  date: number;
+}
+
+interface AttendanceImportReview {
+  conflicts: Doc<"attendance">[];
+  lockedEntries: AttendanceImportReviewEntry[];
+  canCorrectWithReason: boolean;
+}
+
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 const ATTENDANCE_QUERY_LIMIT = 10_000;
 const ATTENDANCE_WRITE_BATCH_LIMIT = 100;
@@ -508,7 +519,7 @@ export const getAttendanceForEmployees = query({
   },
 });
 
-export const getAttendanceConflictsBatch = internalQuery({
+export const getAttendanceImportReviewBatch = internalQuery({
   args: {
     organizationId: v.id("organizations"),
     entries: v.array(
@@ -518,33 +529,82 @@ export const getAttendanceConflictsBatch = internalQuery({
       }),
     ),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<AttendanceImportReview> => {
     const userRecord = await checkAuthForQuery(ctx, args.organizationId, "hr");
     if (!userRecord) throw new Error("Not authorized");
     if (args.entries.length > ATTENDANCE_WRITE_BATCH_LIMIT) {
       throw new Error("Attendance conflict batches are limited to 100 rows");
     }
 
-    const records = await Promise.all(
+    const employees = await Promise.all(
+      args.entries.map((entry) => ctx.db.get(entry.employeeId)),
+    );
+    if (
+      employees.some(
+        (employee) =>
+          !employee || employee.organizationId !== args.organizationId,
+      )
+    ) {
+      throw new Error("Employee does not belong to this organization");
+    }
+
+    const { attendanceSettings } = await getEffectiveAttendanceSettings(
+      ctx,
+      args.organizationId,
+    );
+    const payrollLockPolicy = attendanceSettings?.payrollLockPolicy;
+    const payrollLockEnabled =
+      payrollLockPolicy?.lockAttendanceAfterPayrollFinalized !== false;
+    const canCorrectWithReason =
+      payrollLockPolicy?.allowAdminCorrectionWithReason !== false &&
+      (userRecord.role === "owner" || userRecord.role === "admin");
+
+    const reviewedEntries = await Promise.all(
       args.entries.map(async (entry) => {
         const normalizedDate = normalizeAttendanceDateMs(entry.date);
         const rangeStart = normalizedDate - MANILA_OFFSET_MS;
         const rangeEnd = rangeStart + 24 * 60 * 60 * 1000;
-        return ctx.db
-          .query("attendance")
-          .withIndex("by_employee_date", (query) =>
-            query
-              .eq("employeeId", entry.employeeId)
-              .gte("date", rangeStart)
-              .lt("date", rangeEnd),
-          )
-          .filter((query) =>
-            query.eq(query.field("organizationId"), args.organizationId),
-          )
-          .first();
+        const [conflict, payrollRun] = await Promise.all([
+          ctx.db
+            .query("attendance")
+            .withIndex("by_employee_date", (query) =>
+              query
+                .eq("employeeId", entry.employeeId)
+                .gte("date", rangeStart)
+                .lt("date", rangeEnd),
+            )
+            .filter((query) =>
+              query.eq(query.field("organizationId"), args.organizationId),
+            )
+            .first(),
+          payrollLockEnabled
+            ? findFinalizedPayrollRunForAttendance(
+                ctx,
+                args.organizationId,
+                entry.employeeId,
+                normalizedDate,
+              )
+            : Promise.resolve(null),
+        ]);
+        return {
+          conflict,
+          lockedEntry: payrollRun
+            ? { employeeId: entry.employeeId, date: normalizedDate }
+            : null,
+        };
       }),
     );
-    return records.filter((record): record is Doc<"attendance"> => !!record);
+    return {
+      conflicts: reviewedEntries
+        .map((entry) => entry.conflict)
+        .filter((record): record is Doc<"attendance"> => !!record),
+      lockedEntries: reviewedEntries
+        .map((entry) => entry.lockedEntry)
+        .filter(
+          (entry): entry is AttendanceImportReviewEntry => entry !== null,
+        ),
+      canCorrectWithReason,
+    };
   },
 });
 
@@ -578,7 +638,7 @@ export const getAttendanceImportConflicts = action({
       offset += ATTENDANCE_WRITE_BATCH_LIMIT
     ) {
       const batch = await ctx.runQuery(
-        internal.attendance.getAttendanceConflictsBatch,
+        internal.attendance.getAttendanceImportReviewBatch,
         {
           organizationId: args.organizationId,
           entries: uniqueEntries.slice(
@@ -587,9 +647,62 @@ export const getAttendanceImportConflicts = action({
           ),
         },
       );
-      results.push(...batch);
+      results.push(...batch.conflicts);
     }
     return results;
+  },
+});
+
+export const getAttendanceImportReview = action({
+  args: {
+    organizationId: v.id("organizations"),
+    entries: v.array(
+      v.object({
+        employeeId: v.id("employees"),
+        date: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, args): Promise<AttendanceImportReview> => {
+    if (args.entries.length > 10_000) {
+      throw new Error("Attendance imports are limited to 10,000 rows");
+    }
+
+    const uniqueEntries = [
+      ...new Map(
+        args.entries.map((entry) => [
+          `${entry.employeeId}:${normalizeAttendanceDateMs(entry.date)}`,
+          entry,
+        ]),
+      ).values(),
+    ];
+    const review: AttendanceImportReview = {
+      conflicts: [],
+      lockedEntries: [],
+      canCorrectWithReason: false,
+    };
+
+    for (
+      let offset = 0;
+      offset < uniqueEntries.length;
+      offset += ATTENDANCE_WRITE_BATCH_LIMIT
+    ) {
+      const batch = await ctx.runQuery(
+        internal.attendance.getAttendanceImportReviewBatch,
+        {
+          organizationId: args.organizationId,
+          entries: uniqueEntries.slice(
+            offset,
+            offset + ATTENDANCE_WRITE_BATCH_LIMIT,
+          ),
+        },
+      );
+      review.conflicts.push(...batch.conflicts);
+      review.lockedEntries.push(...batch.lockedEntries);
+      review.canCorrectWithReason = batch.canCorrectWithReason;
+    }
+
+    return review;
   },
 });
 
