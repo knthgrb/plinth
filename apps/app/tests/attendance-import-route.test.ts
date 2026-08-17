@@ -56,6 +56,25 @@ const workbook: WorkbookData = {
   rowCount: 1,
   cellCount: 2,
 };
+const templateWorkbook: WorkbookData = {
+  sheets: [
+    {
+      name: "CSV",
+      rows: [
+        {
+          rowNumber: 1,
+          cells: ["Employee", "Date", "Time In", "Time Out", "Status", "Notes"],
+        },
+        {
+          rowNumber: 7,
+          cells: ["EMP-008", "2026-08-03", "09:15", "23:12", "", "Closing"],
+        },
+      ],
+    },
+  ],
+  rowCount: 2,
+  cellCount: 12,
+};
 const candidates: NormalizedAttendanceCandidate[] = [
   {
     sourceSheet: "CSV",
@@ -281,6 +300,34 @@ describe("POST /api/attendance/import/transform", () => {
     });
     readAttendanceWorkbookMock.mockResolvedValue(workbook);
     extractAttendanceWithGeminiMock.mockResolvedValue(candidates);
+  });
+
+  it("returns matching template CSV candidates without calling Gemini", async () => {
+    readAttendanceWorkbookMock.mockResolvedValue(templateWorkbook);
+    extractAttendanceWithGeminiMock.mockRejectedValue(
+      new GeminiAttendanceError("unavailable", "Gemini must not be called"),
+    );
+
+    const response = await POST(makeMultipartRequest());
+
+    expect(response.status).toBe(200);
+    expect(await readJson(response)).toEqual({
+      ok: true,
+      candidates: [
+        {
+          sourceSheet: "CSV",
+          sourceRow: 7,
+          employeeKey: "EMP-008",
+          date: "2026-08-03",
+          timeIn: "9:15 AM",
+          timeOut: "11:12 PM",
+          status: "present",
+          notes: "Closing",
+          issues: [],
+        },
+      ],
+    });
+    expect(extractAttendanceWithGeminiMock).not.toHaveBeenCalled();
   });
 
   it("returns 401 without a token before querying membership or transforming", async () => {

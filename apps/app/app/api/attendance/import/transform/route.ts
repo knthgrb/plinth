@@ -12,6 +12,7 @@ import {
   type AttendanceImportTransformResponse,
   type NormalizedAttendanceCandidate,
 } from "@/lib/attendance-import/types";
+import { parseAttendanceTemplateWorkbook } from "@/lib/attendance-import/template";
 import {
   readAttendanceWorkbook,
   type WorkbookData,
@@ -221,16 +222,23 @@ export async function POST(
   metrics.rowCount = workbook.rowCount;
 
   let candidates: NormalizedAttendanceCandidate[];
+  const templateCandidates = fileValue.name.toLowerCase().endsWith(".csv")
+    ? parseAttendanceTemplateWorkbook(workbook)
+    : null;
 
-  try {
-    candidates = await extractAttendanceWithGemini(workbook);
-  } catch (error: unknown) {
-    if (error instanceof GeminiAttendanceError) {
-      const mappedError = GEMINI_ERROR_RESPONSES[error.code];
-      return errorResponse(mappedError.code, mappedError.status, metrics);
+  if (templateCandidates !== null) {
+    candidates = templateCandidates;
+  } else {
+    try {
+      candidates = await extractAttendanceWithGemini(workbook);
+    } catch (error: unknown) {
+      if (error instanceof GeminiAttendanceError) {
+        const mappedError = GEMINI_ERROR_RESPONSES[error.code];
+        return errorResponse(mappedError.code, mappedError.status, metrics);
+      }
+
+      return errorResponse("invalid_provider_response", 502, metrics);
     }
-
-    return errorResponse("invalid_provider_response", 502, metrics);
   }
 
   metrics.candidateCount = candidates.length;

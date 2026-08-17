@@ -25,7 +25,7 @@ describe("Gemini attendance normalization", () => {
     expect(result.issues).toEqual([]);
   });
 
-  it("uses earliest and latest punches when explicit columns are absent", () => {
+  it("uses the first and last punches in source order when explicit columns are absent", () => {
     const result = normalizeGeminiAttendanceCandidate({
       sourceSheet: "Punches",
       sourceRow: 3,
@@ -39,9 +39,46 @@ describe("Gemini attendance normalization", () => {
       extractionIssues: [],
     });
 
-    expect(result.timeIn).toBe("6:01 AM");
-    expect(result.timeOut).toBe("12:00 PM");
+    expect(result.timeIn).toBe("7:02 AM");
+    expect(result.timeOut).toBe("8:01 AM");
     expect(result.status).toBe("present");
+  });
+
+  it("splits adjacent 24-hour punches before selecting the first and last", () => {
+    const result = normalizeGeminiAttendanceCandidate({
+      sourceSheet: "Att.log report",
+      sourceRow: 18,
+      employeeKey: "8",
+      date: "2026-08-03",
+      explicitTimeIn: "",
+      explicitTimeOut: "",
+      punches: ["09:1512:3812:3813:5913:5917:5518:4918:4923:12"],
+      status: "",
+      notes: "",
+      extractionIssues: [],
+    });
+
+    expect(result.timeIn).toBe("9:15 AM");
+    expect(result.timeOut).toBe("11:12 PM");
+    expect(result.issues).toEqual([]);
+  });
+
+  it("preserves overnight punch order instead of sorting by clock time", () => {
+    const result = normalizeGeminiAttendanceCandidate({
+      sourceSheet: "Night shift",
+      sourceRow: 4,
+      employeeKey: "EMP-002",
+      date: "2026-08-17",
+      explicitTimeIn: "",
+      explicitTimeOut: "",
+      punches: ["10:00 PM", "2:00 AM"],
+      status: "present",
+      notes: "",
+      extractionIssues: [],
+    });
+
+    expect(result.timeIn).toBe("10:00 PM");
+    expect(result.timeOut).toBe("2:00 AM");
   });
 
   it("derives only time in from a single punch", () => {

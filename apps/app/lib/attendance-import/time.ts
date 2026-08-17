@@ -13,6 +13,9 @@ export interface ParsedAttendanceTime {
 
 const TWELVE_HOUR_TIME = /^(0?[1-9]|1[0-2]):([0-5][0-9]) (AM|PM)$/;
 const TWENTY_FOUR_HOUR_TIME = /^([01][0-9]|2[0-3]):([0-5][0-9])$/;
+const PUNCH_TIME_TOKEN =
+  /(?:0?[1-9]|1[0-2]):[0-5][0-9] (?:AM|PM)|(?:[01][0-9]|2[0-3]):[0-5][0-9]/g;
+const PUNCH_TOKEN_SEPARATORS = /^[\s,;|/\-]*$/;
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 export function parseAttendanceTime(value: string): ParsedAttendanceTime | undefined {
@@ -60,10 +63,7 @@ export function normalizeGeminiAttendanceCandidate(
   const hasExplicitTimeOut = Boolean(candidate.explicitTimeOut.trim());
   const explicitTimeIn = parseCandidateTime(candidate.explicitTimeIn, "time in", issues);
   const explicitTimeOut = parseCandidateTime(candidate.explicitTimeOut, "time out", issues);
-  const punches = candidate.punches
-    .map((punch) => parseCandidateTime(punch, "punch", issues))
-    .filter((punch): punch is ParsedAttendanceTime => punch !== undefined)
-    .sort((left, right) => left.minutes - right.minutes);
+  const punches = parseCandidatePunches(candidate.punches, issues);
 
   const timeIn = explicitTimeIn?.formatted ?? (hasExplicitTimeIn ? undefined : punches[0]?.formatted);
   const timeOut =
@@ -128,6 +128,48 @@ function parseCandidateTime(
   }
 
   return parsedTime;
+}
+
+function parseCandidatePunches(
+  values: readonly string[],
+  issues: AttendanceImportIssue[],
+): ParsedAttendanceTime[] {
+  const punches: ParsedAttendanceTime[] = [];
+
+  for (const value of values) {
+    const directPunch = parseAttendanceTime(value);
+
+    if (directPunch) {
+      punches.push(directPunch);
+      continue;
+    }
+
+    const normalizedValue = value.trim();
+
+    if (!normalizedValue) {
+      continue;
+    }
+
+    const tokens = [...normalizedValue.matchAll(PUNCH_TIME_TOKEN)].map(
+      (match) => match[0],
+    );
+    const remainder = normalizedValue.replace(PUNCH_TIME_TOKEN, "");
+
+    if (tokens.length >= 2 && PUNCH_TOKEN_SEPARATORS.test(remainder)) {
+      for (const token of tokens) {
+        const parsedToken = parseAttendanceTime(token);
+
+        if (parsedToken) {
+          punches.push(parsedToken);
+        }
+      }
+      continue;
+    }
+
+    parseCandidateTime(value, "punch", issues);
+  }
+
+  return punches;
 }
 
 function normalizeStatus(
