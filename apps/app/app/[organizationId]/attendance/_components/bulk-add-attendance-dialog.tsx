@@ -101,7 +101,7 @@ function formatHHmmTo12h(hhmm: string | undefined): string {
 }
 
 const CSV_TEMPLATE =
-  "Employee,Date,Time In,Time Out,Status,Notes\n\"Jane Doe\",2025-01-15,9:00 AM,5:00 PM,present,\n\"John Smith\",2025-01-15,8:30 AM,5:30 PM,present,Left early\n";
+  "Employee Name,Date,Time In,Time Out,Status,Notes\n\"Jane Doe\",2025-01-15,9:00 AM,5:00 PM,present,\n\"John Smith\",2025-01-15,8:30 AM,5:30 PM,present,Left early\n";
 
 type ManualAttendanceStatus = Exclude<AttendanceImportStatus, "half-day">;
 

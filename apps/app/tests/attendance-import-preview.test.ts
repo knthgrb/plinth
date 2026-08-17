@@ -71,9 +71,18 @@ const holidayFixture = {
   updatedAt: 1_704_067_200_000,
 } satisfies AttendanceImportHoliday;
 
-const duplicateEmployeeIdFixture = {
+const secondEmployeeFixture = {
   ...employeeFixture,
-  _id: "employee-duplicate-id" as Id<"employees">,
+  _id: "employee-second" as Id<"employees">,
+  personalInfo: {
+    ...employeeFixture.personalInfo,
+    firstName: "Grace",
+    lastName: "Hopper",
+  },
+  employment: {
+    ...employeeFixture.employment,
+    employeeId: "EMP-002",
+  },
 } satisfies AttendanceImportEmployee;
 
 const duplicateNameFixture = {
@@ -85,23 +94,14 @@ const duplicateNameFixture = {
   },
 } satisfies AttendanceImportEmployee;
 
-const crossFieldCollisionEmployee = {
-  ...employeeFixture,
-  _id: "employee-cross-field" as Id<"employees">,
-  personalInfo: {
-    ...employeeFixture.personalInfo,
-    firstName: "John",
-    lastName: "Smith",
-  },
-  employment: {
-    ...employeeFixture.employment,
-    employeeId: "Jane Doe",
-  },
-} satisfies AttendanceImportEmployee;
-
 const invalidScheduleEmployee = {
   ...employeeFixture,
   _id: "employee-invalid-schedule" as Id<"employees">,
+  personalInfo: {
+    ...employeeFixture.personalInfo,
+    firstName: "Katherine",
+    lastName: "Johnson",
+  },
   employment: {
     ...employeeFixture.employment,
     employeeId: "EMP-003",
@@ -118,7 +118,7 @@ const invalidScheduleEmployee = {
 const validCandidate: NormalizedAttendanceCandidate = {
   sourceSheet: "August Attendance",
   sourceRow: 8,
-  employeeKey: "EMP-001",
+  employeeKey: "Jane Doe",
   date: "2026-08-17",
   timeIn: "8:15 AM",
   timeOut: "5:45 PM",
@@ -321,7 +321,7 @@ describe("attendance import preview mapping", () => {
   it("never preserves include or overwrite decisions for a rebuilt invalid row", () => {
     const [invalidRow] = applyAttendanceImportConflicts(
       buildAttendanceImportPreview(
-        [{ ...validCandidate, employeeKey: "Unknown" }],
+        [{ ...validCandidate, employeeKey: "Unknown Person" }],
         [employeeFixture],
         [],
       ),
@@ -348,8 +348,8 @@ describe("attendance import preview mapping", () => {
     expect(invalidState.decisions[identity]).toBeUndefined();
 
     const [resolvedAsDifferentEmployee] = buildAttendanceImportPreview(
-      [{ ...validCandidate, employeeKey: "EMP-002" }],
-      [employeeFixture, duplicateNameFixture],
+      [{ ...validCandidate, employeeKey: "Grace Hopper" }],
+      [employeeFixture, secondEmployeeFixture],
       [],
     );
     const resolvedState = reconcileAttendanceImportPreviewState(
@@ -389,7 +389,7 @@ describe("attendance import preview mapping", () => {
   it("does not migrate an include decision when employee or date resolution changes", () => {
     const [original] = buildAttendanceImportPreview(
       [validCandidate],
-      [employeeFixture, duplicateNameFixture],
+      [employeeFixture, secondEmployeeFixture],
       [],
     );
     const [identity] = getAttendanceImportRowIdentities([original]);
@@ -401,8 +401,8 @@ describe("attendance import preview mapping", () => {
       },
     };
     const [differentEmployee] = buildAttendanceImportPreview(
-      [{ ...validCandidate, employeeKey: "EMP-002" }],
-      [employeeFixture, duplicateNameFixture],
+      [{ ...validCandidate, employeeKey: "Grace Hopper" }],
+      [employeeFixture, secondEmployeeFixture],
       [],
     );
     const employeeChanged = reconcileAttendanceImportPreviewState(
@@ -429,7 +429,7 @@ describe("attendance import preview mapping", () => {
 
   it("keeps valid rows importable while flagging invalid rows", () => {
     const rows = buildAttendanceImportPreview(
-      [validCandidate, { ...validCandidate, employeeKey: "Unknown" }],
+      [validCandidate, { ...validCandidate, employeeKey: "Unknown Person" }],
       [employeeFixture],
       [],
     );
@@ -446,32 +446,32 @@ describe("attendance import preview mapping", () => {
     });
   });
 
-  it("matches normalized employee IDs and both supported name orders", () => {
-    expect(
-      findAttendanceEmployee("  emp-001 ", [employeeFixture]),
-    ).toBe(employeeFixture);
+  it("matches both supported name orders and rejects employee IDs", () => {
+    expect(findAttendanceEmployee("  emp-001 ", [employeeFixture])).toBeNull();
     expect(
       findAttendanceEmployee("  JANE   DOE ", [employeeFixture]),
     ).toBe(employeeFixture);
     expect(
       findAttendanceEmployee("doe, jane", [employeeFixture]),
     ).toBe(employeeFixture);
-  });
+    const [matchedByReversedName] = buildAttendanceImportPreview(
+      [{ ...validCandidate, employeeKey: "doe, jane" }],
+      [employeeFixture],
+      [],
+    );
+    expect(matchedByReversedName.employeeName).toBe("Jane Doe");
 
-  it("rejects duplicate normalized employee IDs as ambiguous", () => {
-    const employees = [employeeFixture, duplicateEmployeeIdFixture];
-    const [row] = buildAttendanceImportPreview(
-      [validCandidate],
-      employees,
+    const rows = buildAttendanceImportPreview(
+      [
+        { ...validCandidate, employeeKey: "" },
+        { ...validCandidate, employeeKey: "8" },
+        { ...validCandidate, employeeKey: "EMP-001" },
+      ],
+      [employeeFixture],
       [],
     );
 
-    expect(findAttendanceEmployee("EMP-001", employees)).toBeNull();
-    expect(row).toMatchObject({
-      employeeId: null,
-      error: "Employee match is ambiguous",
-      includeInImport: false,
-    });
+    expect(rows).toEqual([]);
   });
 
   it("rejects duplicate normalized names as ambiguous", () => {
@@ -480,22 +480,6 @@ describe("attendance import preview mapping", () => {
     const [row] = buildAttendanceImportPreview([candidate], employees, []);
 
     expect(findAttendanceEmployee("jane doe", employees)).toBeNull();
-    expect(row).toMatchObject({
-      employeeId: null,
-      error: "Employee match is ambiguous",
-      includeInImport: false,
-    });
-  });
-
-  it("rejects a key that matches one employee ID and another employee name", () => {
-    const employees = [employeeFixture, crossFieldCollisionEmployee];
-    const [row] = buildAttendanceImportPreview(
-      [{ ...validCandidate, employeeKey: "Jane Doe" }],
-      employees,
-      [],
-    );
-
-    expect(findAttendanceEmployee("Jane Doe", employees)).toBeNull();
     expect(row).toMatchObject({
       employeeId: null,
       error: "Employee match is ambiguous",
@@ -527,8 +511,8 @@ describe("attendance import preview mapping", () => {
   it("falls back to default times for missing or non-canonical workday schedules", () => {
     const rows = buildAttendanceImportPreview(
       [
-        { ...validCandidate, employeeKey: "EMP-003", date: "2026-08-17" },
-        { ...validCandidate, employeeKey: "EMP-003", date: "2026-08-18" },
+        { ...validCandidate, employeeKey: "Katherine Johnson", date: "2026-08-17" },
+        { ...validCandidate, employeeKey: "Katherine Johnson", date: "2026-08-18" },
       ],
       [invalidScheduleEmployee],
       [],
@@ -543,7 +527,7 @@ describe("attendance import preview mapping", () => {
     expect(rows[1]).toMatchObject({ scheduleIn: "09:00", scheduleOut: "18:00" });
   });
 
-  it("excludes scheduled rest days by default without marking the row invalid", () => {
+  it("keeps punched rest days excluded by default without marking them invalid", () => {
     const [row] = buildAttendanceImportPreview(
       [{ ...validCandidate, date: "2026-08-22" }],
       [employeeFixture],
@@ -555,6 +539,25 @@ describe("attendance import preview mapping", () => {
       isRestDay: true,
       includeInImport: false,
     });
+  });
+
+  it("omits scheduled rest days with no time in or time out", () => {
+    const rows = buildAttendanceImportPreview(
+      [
+        {
+          ...validCandidate,
+          date: "2026-08-22",
+          timeIn: undefined,
+          timeOut: undefined,
+          status: "present",
+          issues: [],
+        },
+      ],
+      [employeeFixture],
+      [],
+    );
+
+    expect(rows).toEqual([]);
   });
 
   it("allows no_work only for an applicable non-working holiday", () => {
@@ -693,7 +696,7 @@ describe("attendance import preview mapping", () => {
     );
 
     expect(row).toMatchObject({
-      employeeName: "EMP-001",
+      employeeName: "Jane Doe",
       dateTs: 0,
       dateLabel: "—",
       actualOut: "17:45",

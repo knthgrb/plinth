@@ -1,3 +1,4 @@
+import { hasEmployeeName } from "@/lib/attendance-import/employee-name";
 import { normalizeGeminiAttendanceCandidate } from "@/lib/attendance-import/time";
 import type { NormalizedAttendanceCandidate } from "@/lib/attendance-import/types";
 import type {
@@ -6,7 +7,7 @@ import type {
 } from "@/lib/attendance-import/workbook";
 
 const TEMPLATE_HEADERS = [
-  "employee",
+  "employee name",
   "date",
   "time in",
   "time out",
@@ -24,27 +25,32 @@ export function parseAttendanceTemplateWorkbook(
     return null;
   }
 
-  return sheet.rows.slice(1).map((row) =>
-    normalizeGeminiAttendanceCandidate({
-      sourceSheet: sheet.name,
-      sourceRow: row.rowNumber,
-      employeeKey: cellText(row.cells[0]),
-      date: cellText(row.cells[1]),
-      explicitTimeIn: cellText(row.cells[2]),
-      explicitTimeOut: cellText(row.cells[3]),
-      punches: [],
-      status: cellText(row.cells[4]),
-      notes: cellText(row.cells[5]),
-      extractionIssues: [],
-    }),
-  );
+  return sheet.rows
+    .slice(1)
+    .filter((row) => hasEmployeeName(cellText(row.cells[0])))
+    .map((row) =>
+      normalizeGeminiAttendanceCandidate({
+        sourceSheet: sheet.name,
+        sourceRow: row.rowNumber,
+        employeeKey: cellText(row.cells[0]),
+        date: cellText(row.cells[1]),
+        explicitTimeIn: cellText(row.cells[2]),
+        explicitTimeOut: cellText(row.cells[3]),
+        punches: [],
+        status: cellText(row.cells[4]),
+        notes: cellText(row.cells[5]),
+        extractionIssues: [],
+      }),
+    );
 }
 
 function matchesTemplateHeaders(cells: readonly WorkbookCell[]): boolean {
   return (
     cells.length === TEMPLATE_HEADERS.length &&
-    TEMPLATE_HEADERS.every(
-      (expectedHeader, index) => normalizeHeader(cells[index]) === expectedHeader,
+    ["employee", TEMPLATE_HEADERS[0]].includes(normalizeHeader(cells[0])) &&
+    TEMPLATE_HEADERS.slice(1).every(
+      (expectedHeader, index) =>
+        normalizeHeader(cells[index + 1]) === expectedHeader,
     )
   );
 }

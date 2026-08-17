@@ -9,6 +9,7 @@ import {
   holidayMatchesDate,
   isEmployeeRestDay,
 } from "@/lib/payroll-calculations";
+import { hasEmployeeName } from "@/lib/attendance-import/employee-name";
 import { parseAttendanceTime } from "@/lib/attendance-import/time";
 import type {
   AttendanceImportIssue,
@@ -69,7 +70,10 @@ export function buildAttendanceImportPreview(
   employees: readonly AttendanceImportEmployee[],
   holidays: readonly AttendanceImportHoliday[],
 ): AttendanceImportPreviewRow[] {
-  return candidates.map((candidate) => buildPreviewRow(candidate, employees, holidays));
+  return candidates
+    .filter((candidate) => hasEmployeeName(candidate.employeeKey))
+    .map((candidate) => buildPreviewRow(candidate, employees, holidays))
+    .filter(shouldIncludePreviewRow);
 }
 
 export function buildAttendanceImportPreviewWhenReady(
@@ -253,13 +257,8 @@ function resolveAttendanceEmployee(
     const lastName = normalizeEmployeeKey(employee.personalInfo.lastName);
     const firstLast = `${firstName} ${lastName}`.trim();
     const lastFirst = `${lastName}, ${firstName}`.trim();
-    const employeeId = normalizeEmployeeKey(employee.employment.employeeId);
 
-    if (
-      normalizedKey === employeeId ||
-      normalizedKey === firstLast ||
-      normalizedKey === lastFirst
-    ) {
+    if (normalizedKey === firstLast || normalizedKey === lastFirst) {
       matchingEmployees.set(employee._id, employee);
     }
   }
@@ -340,7 +339,9 @@ function buildPreviewRow(
     sourceSheet: candidate.sourceSheet,
     sourceRow: candidate.sourceRow,
     employeeId: employee?._id ?? null,
-    employeeName: candidate.employeeKey || "—",
+    employeeName: employee
+      ? `${employee.personalInfo.firstName} ${employee.personalInfo.lastName}`.trim()
+      : candidate.employeeKey || "—",
     sourceDate: candidate.date,
     dateTs,
     dateLabel,
@@ -356,6 +357,10 @@ function buildPreviewRow(
     overwriteExisting: false,
     isRestDay,
   };
+}
+
+function shouldIncludePreviewRow(row: AttendanceImportPreviewRow): boolean {
+  return !row.isRestDay || Boolean(row.actualIn || row.actualOut);
 }
 
 function normalizeEmployeeKey(value: string): string {

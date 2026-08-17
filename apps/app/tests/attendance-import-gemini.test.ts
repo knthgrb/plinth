@@ -11,7 +11,7 @@ import type { WorkbookData } from "@/lib/attendance-import/workbook";
 const validCandidate = {
   sourceSheet: "Manila",
   sourceRow: 2,
-  employeeKey: "EMP-001",
+  employeeKey: "Ada Lovelace",
   date: "2026-08-13",
   explicitTimeIn: "8:30 AM",
   explicitTimeOut: "5:15 PM",
@@ -27,7 +27,7 @@ const twoSheetWorkbook: WorkbookData = {
       name: "Manila",
       rows: [
         { rowNumber: 1, cells: ["Employee", "Time In", "Time Out"] },
-        { rowNumber: 2, cells: ["EMP-001", "8:30 AM", "5:15 PM"] },
+        { rowNumber: 2, cells: ["Ada Lovelace", "8:30 AM", "5:15 PM"] },
       ],
     },
     {
@@ -189,6 +189,12 @@ describe("Gemini attendance extraction", () => {
     expect(serializedBody).toContain("split adjacent HH:mm values");
     expect(serializedBody).toContain("first punch in workbook order as Time In");
     expect(serializedBody).toContain("Do not return employee/date groups with no punches");
+    expect(serializedBody).toContain(
+      "Return the employee name exactly as written in the workbook",
+    );
+    expect(serializedBody).toContain(
+      "Never use a row number, ordinal, or employee ID as the employee name",
+    );
     expect(serializedBody).toContain("BEGIN_UNTRUSTED_WORKBOOK_DATA");
     expect(serializedBody).toContain("END_UNTRUSTED_WORKBOOK_DATA");
     expect(serializedBody).toContain("Manila");
@@ -198,7 +204,7 @@ describe("Gemini attendance extraction", () => {
     );
   });
 
-  it("normalizes valid candidates and keeps incomplete candidates for review", async () => {
+  it("normalizes named candidates and drops candidates without a name", async () => {
     const incompleteCandidate = {
       sourceSheet: "Cebu",
       sourceRow: 7,
@@ -220,33 +226,20 @@ describe("Gemini attendance extraction", () => {
       fetchImpl,
     });
 
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
-      employeeKey: "EMP-001",
+      employeeKey: "Ada Lovelace",
       timeIn: "8:30 AM",
       timeOut: "5:15 PM",
       issues: [],
     });
-    expect(result[1]).toMatchObject({
-      sourceSheet: "Cebu",
-      sourceRow: 7,
-      employeeKey: "",
-      timeIn: "8:00 AM",
-      timeOut: undefined,
-      notes: "Badge number unreadable",
-    });
-    expect(result[1].issues.map((issue) => issue.code)).toEqual([
-      "missing_employee",
-      "missing_time_out",
-      "extraction_issue",
-    ]);
   });
 
   it("omits AI candidates that contain no explicit times or punches", async () => {
     const emptyCandidate = {
       sourceSheet: "Exception Stat.",
       sourceRow: 6,
-      employeeKey: "EMP-001",
+      employeeKey: "Ada Lovelace",
       date: "2026-08-14",
       explicitTimeIn: "",
       explicitTimeOut: "",
@@ -265,11 +258,11 @@ describe("Gemini attendance extraction", () => {
     });
 
     expect(result).toHaveLength(1);
-    expect(result[0]?.employeeKey).toBe("EMP-001");
+    expect(result[0]?.employeeKey).toBe("Ada Lovelace");
     expect(result[0]?.date).toBe("2026-08-13");
   });
 
-  it("normalizes a biometric cell containing adjacent 24-hour punches", async () => {
+  it("drops biometric candidates whose employee value is only a row number", async () => {
     const fetchImpl = vi.fn(async (): Promise<Response> =>
       successfulResponse([
         {
@@ -290,14 +283,7 @@ describe("Gemini attendance extraction", () => {
       fetchImpl,
     });
 
-    expect(result[0]).toMatchObject({
-      sourceSheet: "Att.log report",
-      sourceRow: 18,
-      employeeKey: "8",
-      timeIn: "9:15 AM",
-      timeOut: "11:12 PM",
-      issues: [],
-    });
+    expect(result).toEqual([]);
   });
 
   it.each([
@@ -389,7 +375,7 @@ describe("Gemini attendance extraction", () => {
     });
 
     expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ employeeKey: "EMP-001" });
+    expect(result[0]).toMatchObject({ employeeKey: "Ada Lovelace" });
   });
 
   it("rejects unknown candidate properties", async () => {

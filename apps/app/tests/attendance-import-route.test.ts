@@ -42,7 +42,7 @@ vi.mock("@/lib/attendance-import/gemini", async (importOriginal) => {
 
 const ORGANIZATION_ID = "k57c6m9n2p4q7r8s3t5v6w9x2y4z7a8b";
 const validCsvFile = new File(
-  ["Employee,Date,Time In,Time Out\nAda,2026-08-13,9:00 AM,5:00 PM"],
+  ["Employee Name,Date,Time In,Time Out\nAda Lovelace,2026-08-13,9:00 AM,5:00 PM"],
   "attendance.csv",
   { type: "text/csv" },
 );
@@ -58,7 +58,7 @@ const workbook: WorkbookData = {
 };
 const templateHeader = {
   rowNumber: 1,
-  cells: ["Employee", "Date", "Time In", "Time Out", "Status", "Notes"],
+  cells: ["Employee Name", "Date", "Time In", "Time Out", "Status", "Notes"],
 };
 const templateWorkbook: WorkbookData = {
   sheets: [
@@ -68,7 +68,7 @@ const templateWorkbook: WorkbookData = {
         templateHeader,
         {
           rowNumber: 7,
-          cells: ["EMP-008", "2026-08-03", "09:15", "23:12", "", "Closing"],
+          cells: ["Ada Lovelace", "2026-08-03", "09:15", "23:12", "", "Closing"],
         },
       ],
     },
@@ -318,7 +318,7 @@ describe("POST /api/attendance/import/transform", () => {
         {
           sourceSheet: "CSV",
           sourceRow: 7,
-          employeeKey: "EMP-008",
+          employeeKey: "Ada Lovelace",
           date: "2026-08-03",
           timeIn: "9:15 AM",
           timeOut: "11:12 PM",
@@ -340,7 +340,7 @@ describe("POST /api/attendance/import/transform", () => {
             templateHeader,
             {
               rowNumber: 9,
-              cells: ["EMP-009", "2026-02-29", "09:15", "", "present", ""],
+              cells: ["Grace Hopper", "2026-02-29", "09:15", "", "present", ""],
             },
           ],
         },
@@ -361,7 +361,7 @@ describe("POST /api/attendance/import/transform", () => {
       candidates: [
         expect.objectContaining({
           sourceRow: 9,
-          employeeKey: "EMP-009",
+          employeeKey: "Grace Hopper",
           timeIn: "9:15 AM",
           issues: [
             { code: "invalid_date", message: "Date must be a valid ISO date." },

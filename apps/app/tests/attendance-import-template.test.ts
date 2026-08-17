@@ -18,7 +18,7 @@ function workbookWithRows(rows: WorkbookData["sheets"][number]["rows"]): Workboo
 
 const templateHeader = {
   rowNumber: 1,
-  cells: ["Employee", "Date", "Time In", "Time Out", "Status", "Notes"],
+  cells: ["Employee Name", "Date", "Time In", "Time Out", "Status", "Notes"],
 };
 
 describe("attendance template parsing", () => {
@@ -27,7 +27,7 @@ describe("attendance template parsing", () => {
       templateHeader,
       {
         rowNumber: 2,
-        cells: ["EMP-001", "2026-08-17", "09:15", "23:12", "", "Night close"],
+        cells: ["Ada Lovelace", "2026-08-17", "09:15", "23:12", "", "Night close"],
       },
     ]);
 
@@ -35,7 +35,7 @@ describe("attendance template parsing", () => {
       {
         sourceSheet: "CSV",
         sourceRow: 2,
-        employeeKey: "EMP-001",
+        employeeKey: "Ada Lovelace",
         date: "2026-08-17",
         timeIn: "9:15 AM",
         timeOut: "11:12 PM",
@@ -51,7 +51,7 @@ describe("attendance template parsing", () => {
       {
         rowNumber: 1,
         cells: [
-          "\uFEFF employee ",
+          "\uFEFF employee name ",
           " DATE ",
           " time in ",
           " TIME OUT ",
@@ -61,17 +61,46 @@ describe("attendance template parsing", () => {
       },
       {
         rowNumber: 4,
-        cells: ["EMP-002", "2026-08-18", "8:30 AM", "5:30 PM", "present", null],
+        cells: ["Grace Hopper", "2026-08-18", "8:30 AM", "5:30 PM", "present", null],
       },
     ]);
 
     expect(parseAttendanceTemplateWorkbook(workbook)?.[0]).toMatchObject({
       sourceRow: 4,
-      employeeKey: "EMP-002",
+      employeeKey: "Grace Hopper",
       timeIn: "8:30 AM",
       timeOut: "5:30 PM",
       notes: "",
     });
+  });
+
+  it("keeps the previous Employee header compatible", () => {
+    const workbook = workbookWithRows([
+      {
+        ...templateHeader,
+        cells: ["Employee", "Date", "Time In", "Time Out", "Status", "Notes"],
+      },
+      {
+        rowNumber: 2,
+        cells: ["Ada Lovelace", "2026-08-17", "09:00", "18:00", "", ""],
+      },
+    ]);
+
+    expect(parseAttendanceTemplateWorkbook(workbook)?.[0]?.employeeKey).toBe(
+      "Ada Lovelace",
+    );
+  });
+
+  it("drops template rows whose employee value is only a number", () => {
+    const workbook = workbookWithRows([
+      templateHeader,
+      {
+        rowNumber: 2,
+        cells: ["8", "2026-08-17", "09:00", "18:00", "", ""],
+      },
+    ]);
+
+    expect(parseAttendanceTemplateWorkbook(workbook)).toEqual([]);
   });
 
   it("returns null for CSV layouts that do not match the template", () => {
@@ -94,7 +123,7 @@ describe("attendance template parsing", () => {
       templateHeader,
       {
         rowNumber: 8,
-        cells: ["EMP-003", "2026-02-29", "09:00", "", "present", ""],
+        cells: ["Katherine Johnson", "2026-02-29", "09:00", "", "present", ""],
       },
     ]);
 
@@ -103,7 +132,7 @@ describe("attendance template parsing", () => {
     expect(result).not.toBeNull();
     expect(result?.[0]).toMatchObject({
       sourceRow: 8,
-      employeeKey: "EMP-003",
+      employeeKey: "Katherine Johnson",
       date: "2026-02-29",
       timeIn: "9:00 AM",
       timeOut: undefined,

@@ -19,9 +19,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 10204,
+      "totalMatches": 10206,
       "fileCount": 290,
-      "fingerprint": "e2ac10629b38c945449a6079baf27b3733e23cef1b3feeaff7aa345b242ee083",
+      "fingerprint": "a9f21195e6b7a7e26986718c56c8441be0d91abb65e8ac58b41d675c34797832",
       "symbols": [
         {
           "symbol": "accrualRate",
@@ -135,7 +135,7 @@
         },
         {
           "symbol": "employeeId",
-          "matches": 1495,
+          "matches": 1493,
           "files": 127
         },
         {
@@ -280,8 +280,8 @@
         },
         {
           "symbol": "name",
-          "matches": 1141,
-          "files": 162
+          "matches": 1145,
+          "files": 163
         },
         {
           "symbol": "notes",

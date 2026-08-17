@@ -18,7 +18,7 @@ import type { NormalizedAttendanceCandidate } from "@/lib/attendance-import/type
 
 const organizationId = "k57c6m9n2p4q7r8s3t5v6w9x2y4z7a8b";
 const validCsvFile = new File(
-  ["Employee,Date\nAda,2026-08-13"],
+  ["Employee Name,Date\nAda Lovelace,2026-08-13"],
   "attendance.csv",
   { type: "text/csv" },
 );
@@ -48,7 +48,7 @@ const invalidCandidate: NormalizedAttendanceCandidate = {
 };
 
 describe("attendance import client", () => {
-  it("renders the supported file guidance and Gemini processing state", () => {
+  it("renders the supported file guidance and generic processing state", () => {
     const markup = renderToStaticMarkup(
       createElement(AttendanceImportFileControls, {
         isTransforming: true,
@@ -64,7 +64,11 @@ describe("attendance import client", () => {
     expect(markup).toContain(
       "Only Excel (.xls, .xlsx, .xlsm) and CSV (.csv) files are supported.",
     );
-    expect(markup).toContain("Processing with Gemini…");
+    expect(markup).toContain(
+      "Employee Name is required and must match an employee in the app.",
+    );
+    expect(markup).toContain("Processing…");
+    expect(markup).not.toContain("Gemini");
   });
 
   it("disables upload while employee and holiday lookups are loading", () => {

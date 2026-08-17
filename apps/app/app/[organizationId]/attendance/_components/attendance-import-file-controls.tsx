@@ -47,6 +47,7 @@ export function AttendanceImportFileControls({
         <p>
           Only Excel (.xls, .xlsx, .xlsm) and CSV (.csv) files are supported.
         </p>
+        <p>Employee Name is required and must match an employee in the app.</p>
       </div>
       {!lookupsReady && (
         <p className="text-xs text-gray-500">
@@ -56,7 +57,7 @@ export function AttendanceImportFileControls({
       {isTransforming && (
         <p className="flex items-center gap-2 text-sm text-gray-600">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Processing with Gemini…
+          Processing…
         </p>
       )}
       {isCheckingConflicts && (
