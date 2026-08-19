@@ -32,19 +32,6 @@ const updateOrganizationWithLegacyEmail = makeFunctionReference<
   { success: true }
 >("organizations:updateOrganization");
 
-type OrganizationEmailCleanupResult = {
-  continueCursor: string;
-  isDone: boolean;
-  scannedCount: number;
-  removedCount: number;
-};
-
-const clearLegacyOrganizationEmails = makeFunctionReference<
-  "mutation",
-  { cursor?: string | null; numItems?: number },
-  OrganizationEmailCleanupResult
->("maintenance:clearLegacyOrganizationEmails");
-
 describe("organization email removal", () => {
   it("rejects the obsolete email field when creating an organization", async () => {
     const t = convexTest(schema, modules);
@@ -102,52 +89,17 @@ describe("organization email removal", () => {
     expect(organization).not.toHaveProperty("email");
   });
 
-  it("removes legacy organization emails in bounded batches", async () => {
+  it("rejects the obsolete email field at the database boundary", async () => {
     const t = convexTest(schema, modules);
-    await t.run(async (ctx) => {
-      await ctx.db.insert("organizations", {
-        name: "Legacy One",
-        email: "first-owner@example.com",
-        createdAt: 1,
-        updatedAt: 1,
-      });
-      await ctx.db.insert("organizations", {
-        name: "Already Clean",
-        createdAt: 1,
-        updatedAt: 1,
-      });
-      await ctx.db.insert("organizations", {
-        name: "Legacy Two",
-        email: "second-owner@example.com",
-        createdAt: 1,
-        updatedAt: 1,
-      });
-    });
+    const legacyOrganization = {
+      name: "Invalid Legacy Organization",
+      email: "former-owner@example.com",
+      createdAt: 1,
+      updatedAt: 1,
+    };
 
-    let cursor: string | null = null;
-    let scannedCount = 0;
-    let removedCount = 0;
-    do {
-      const result: OrganizationEmailCleanupResult = await t.mutation(
-        clearLegacyOrganizationEmails,
-        {
-          cursor,
-          numItems: 1,
-        },
-      );
-      scannedCount += result.scannedCount;
-      removedCount += result.removedCount;
-      cursor = result.isDone ? null : result.continueCursor;
-      if (result.isDone) break;
-    } while (cursor);
-
-    expect(scannedCount).toBe(3);
-    expect(removedCount).toBe(2);
-    const organizations = await t.run((ctx) =>
-      ctx.db.query("organizations").collect(),
-    );
-    expect(
-      organizations.every((organization) => organization.email === undefined),
-    ).toBe(true);
+    await expect(
+      t.run((ctx) => ctx.db.insert("organizations", legacyOrganization)),
+    ).rejects.toThrow(/email/i);
   });
 });
