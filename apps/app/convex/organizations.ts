@@ -550,7 +550,6 @@ export const createOrganization = mutation({
     name: v.string(),
     address: v.optional(v.string()),
     phone: v.optional(v.string()),
-    email: v.optional(v.string()),
     taxId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -562,7 +561,6 @@ export const createOrganization = mutation({
       name: args.name,
       address: args.address,
       phone: args.phone,
-      email: args.email,
       taxId: args.taxId,
       status: "active",
       createdAt: now,
@@ -598,7 +596,6 @@ export const updateOrganization = mutation({
     name: v.optional(v.string()),
     address: v.optional(v.string()),
     phone: v.optional(v.string()),
-    email: v.optional(v.string()),
     taxId: v.optional(v.string()),
     firstPayDate: v.optional(v.number()),
     secondPayDate: v.optional(v.number()),
@@ -625,7 +622,6 @@ export const updateOrganization = mutation({
     if (args.name !== undefined) updates.name = args.name;
     if (args.address !== undefined) updates.address = args.address;
     if (args.phone !== undefined) updates.phone = args.phone;
-    if (args.email !== undefined) updates.email = args.email;
     if (args.taxId !== undefined) updates.taxId = args.taxId;
     await ctx.db.patch(args.organizationId, updates);
     if (

@@ -39,7 +39,6 @@ export class OrganizationsService {
     name: string;
     address?: string;
     phone?: string;
-    email?: string;
     taxId?: string;
   }) {
     const convex = await getAuthedConvexClient();
@@ -52,7 +51,6 @@ export class OrganizationsService {
       name?: string;
       address?: string;
       phone?: string;
-      email?: string;
       taxId?: string;
     }
   ) {

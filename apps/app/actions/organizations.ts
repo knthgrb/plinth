@@ -28,7 +28,6 @@ export async function createOrganization(data: {
   name: string;
   address?: string;
   phone?: string;
-  email?: string;
   taxId?: string;
 }) {
   return OrganizationsService.createOrganization(data);
@@ -40,7 +39,6 @@ export async function updateOrganization(
     name?: string;
     address?: string;
     phone?: string;
-    email?: string;
     taxId?: string;
   }
 ) {

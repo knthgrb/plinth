@@ -39,3 +39,17 @@ export function openInNewTab(url: string) {
 export function getDocumentTitleFromFileName(fileName: string): string {
   return fileName.trim();
 }
+
+export type DocumentCardAction = "preview" | "download" | "edit" | "delete";
+
+export function getDocumentCardActions(input: {
+  attachmentCount: number;
+  canWrite: boolean;
+  fileOnly: boolean;
+}): DocumentCardAction[] {
+  const actions: DocumentCardAction[] = ["preview"];
+  if (input.attachmentCount > 0) actions.push("download");
+  if (input.canWrite && !input.fileOnly) actions.push("edit");
+  if (input.canWrite) actions.push("delete");
+  return actions;
+}

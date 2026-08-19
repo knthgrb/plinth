@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { getDocumentTitleFromFileName } from "../lib/document-utils";
+import {
+  getDocumentCardActions,
+  getDocumentTitleFromFileName,
+} from "../lib/document-utils";
 
 function readSource(relativePath: string): string {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");
@@ -51,5 +54,29 @@ describe("document visibility scopes", () => {
   it("uses the complete filename as an uploaded document title", () => {
     expect(getDocumentTitleFromFileName("Garbo, Kenneth - Resume (1).pdf"))
       .toBe("Garbo, Kenneth - Resume (1).pdf");
+  });
+
+  it("keeps the correct actions when documents are displayed as cards", () => {
+    expect(
+      getDocumentCardActions({
+        attachmentCount: 1,
+        canWrite: true,
+        fileOnly: true,
+      }),
+    ).toEqual(["preview", "download", "delete"]);
+    expect(
+      getDocumentCardActions({
+        attachmentCount: 1,
+        canWrite: false,
+        fileOnly: true,
+      }),
+    ).toEqual(["preview", "download"]);
+    expect(
+      getDocumentCardActions({
+        attachmentCount: 0,
+        canWrite: true,
+        fileOnly: false,
+      }),
+    ).toEqual(["preview", "edit", "delete"]);
   });
 });

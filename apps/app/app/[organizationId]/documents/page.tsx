@@ -9,14 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -31,8 +23,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Plus,
   FileText,
@@ -44,6 +43,8 @@ import {
   Search,
   Eye,
   Info,
+  MoreVertical,
+  Paperclip,
 } from "lucide-react";
 import { format } from "date-fns";
 import { useRouter } from "next/navigation";
@@ -54,6 +55,7 @@ import { uploadFileToStorage } from "@/lib/storage-upload";
 import { createDocument } from "@/actions/documents";
 import { useToast } from "@/components/ui/use-toast";
 import {
+  getDocumentCardActions,
   getDocumentTitleFromFileName,
   isFileOnlyDocument,
   openInNewTab,
@@ -635,13 +637,11 @@ export default function DocumentsPage() {
 
   return (
     <MainLayout>
-      <div className="p-8">
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Documents</h1>
-          </div>
+      <div className="p-4 sm:p-6 lg:p-8">
+        <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <h1 className="text-3xl font-bold text-gray-900">Documents</h1>
           {canWriteDocuments && (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button
                 variant="secondary"
                 onClick={() => setIsUploadDialogOpen(true)}
@@ -657,214 +657,192 @@ export default function DocumentsPage() {
           )}
         </div>
 
-        <Card className="mb-4">
-          <CardContent className="pt-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Search Documents</Label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <Input
-                    placeholder="Search by title or category..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10"
-                  />
+        <div className="mb-5 flex flex-col gap-3 rounded-xl border bg-white p-3 shadow-sm sm:flex-row sm:items-center">
+          <div className="relative min-w-0 flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <Input
+              aria-label="Search documents"
+              placeholder="Search documents"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              className="h-10 pl-10"
+            />
+          </div>
+          <Select value={selectedType} onValueChange={setSelectedType}>
+            <SelectTrigger
+              aria-label="Filter documents by type"
+              className="h-10 w-full sm:w-48"
+            >
+              <SelectValue placeholder="All types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All types</SelectItem>
+              <SelectItem value="personal">Personal</SelectItem>
+              <SelectItem value="employment">Employment</SelectItem>
+              <SelectItem value="contract">Contract</SelectItem>
+              <SelectItem value="certificate">Certificate</SelectItem>
+              <SelectItem value="leave_form">Leave form</SelectItem>
+              <SelectItem value="other">Other</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="whitespace-nowrap px-1 text-sm text-gray-500">
+            {documents === undefined ? "Loading…" : `${filteredDocuments?.length ?? 0} item${filteredDocuments?.length === 1 ? "" : "s"}`}
+          </p>
+        </div>
+
+        {documents === undefined ? (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, index) => (
+              <div
+                key={`document-card-skeleton-${index}`}
+                className="overflow-hidden rounded-xl border bg-white"
+              >
+                <div className="aspect-[16/9] animate-pulse bg-gray-100" />
+                <div className="space-y-3 p-4">
+                  <div className="h-4 w-4/5 animate-pulse rounded bg-gray-200" />
+                  <div className="h-3 w-2/5 animate-pulse rounded bg-gray-100" />
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label>Filter by Type</Label>
-                <Select value={selectedType} onValueChange={setSelectedType}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="All Types" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Types</SelectItem>
-                    <SelectItem value="personal">Personal</SelectItem>
-                    <SelectItem value="employment">Employment</SelectItem>
-                    <SelectItem value="contract">Contract</SelectItem>
-                    <SelectItem value="certificate">Certificate</SelectItem>
-                    <SelectItem value="leave_form">Leave Form</SelectItem>
-                    <SelectItem value="other">Other</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            ))}
+          </div>
+        ) : filteredDocuments?.length === 0 ? (
+          <div className="rounded-xl border border-dashed py-16 text-center text-gray-500">
+            <FileText className="mx-auto mb-4 h-12 w-12 text-gray-300" />
+            <p>
+              {documents.length === 0
+                ? canWriteDocuments
+                  ? "No documents yet. Create your first document!"
+                  : "No documents are available."
+                : "No documents match your search criteria."}
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {filteredDocuments?.map((doc) => {
+              const fileOnly = isFileOnly(doc);
+              const attachments = doc.attachments ?? [];
+              const cardActions = getDocumentCardActions({
+                attachmentCount: attachments.length,
+                canWrite: canWriteDocuments,
+                fileOnly,
+              });
 
-        <Card>
-          <CardHeader>
-            <CardTitle>
-              Documents (
-              {documents === undefined ? "…" : filteredDocuments?.length || 0})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {documents === undefined ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Title</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Files</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead>Last Updated</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {Array.from({ length: 8 }).map((_, i) => (
-                    <TableRow key={`doc-sk-${i}`}>
-                      {Array.from({ length: 7 }).map((__, j) => (
-                        <TableCell key={j}>
-                          <div className="h-4 w-full max-w-[7rem] rounded bg-gray-200 animate-pulse" />
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            ) : filteredDocuments?.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                <FileText className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-                <p>
-                  {documents?.length === 0
-                    ? canWriteDocuments
-                      ? "No documents yet. Create your first document!"
-                      : "No documents are available."
-                    : "No documents match your search criteria."}
-                </p>
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Title</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Files</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead>Last Updated</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredDocuments?.map((doc) => {
-                    const fileOnly = isFileOnly(doc);
-                    return (
-                      <TableRow
-                        key={doc._id}
-                        className="cursor-pointer hover:bg-gray-50"
-                        onClick={() => handlePreview(doc)}
+              return (
+                <article
+                  key={doc._id}
+                  className="group overflow-hidden rounded-xl border bg-white transition duration-200 hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-md"
+                >
+                  <button
+                    type="button"
+                    onClick={() => handlePreview(doc)}
+                    className="relative flex aspect-[16/9] w-full items-center justify-center border-b bg-gray-50 text-left transition-colors hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-purple"
+                    aria-label={`Preview ${doc.title}`}
+                  >
+                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+                      <FileText className="h-8 w-8 text-brand-purple" />
+                    </div>
+                    <Badge
+                      variant="secondary"
+                      className="absolute left-3 top-3 capitalize"
+                    >
+                      {formatDocumentType(doc.type)}
+                    </Badge>
+                    {fileOnly ? (
+                      <Badge
+                        variant="outline"
+                        className="absolute right-3 top-3 bg-white"
                       >
-                        <TableCell className="font-medium">
-                          <div className="flex items-center gap-2">
-                            {fileOnly && (
-                              <FileText className="h-4 w-4 text-gray-400" />
-                            )}
-                            {doc.title}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="secondary" className="capitalize">
-                              {formatDocumentType(doc.type)}
-                            </Badge>
-                            {fileOnly && (
-                              <Badge variant="outline" className="text-xs">
-                                File
-                              </Badge>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>{doc.category || "-"}</TableCell>
-                        <TableCell>
-                          {doc.attachments && doc.attachments.length > 0 ? (
-                            <div className="flex items-center gap-2">
-                              <Badge variant="outline">
-                                {doc.attachments.length} file
-                                {doc.attachments.length > 1 ? "s" : ""}
-                              </Badge>
-                              <div className="flex gap-1">
-                                {doc.attachments.map(
-                                  (fileId, idx) => (
-                                    <Button
-                                      key={idx}
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() =>
-                                        handleDownloadFile(doc._id, fileId)
-                                      }
-                                      className="h-6 px-2"
-                                      title="Download file"
-                                    >
-                                      <Download className="h-3 w-3" />
-                                    </Button>
-                                  )
-                                )}
-                              </div>
-                            </div>
-                          ) : (
-                            "-"
-                          )}
-                        </TableCell>
-                        <TableCell className="text-sm text-gray-500">
-                          {format(new Date(doc.createdAt), "MMM dd, yyyy")}
-                        </TableCell>
-                        <TableCell>
-                          {format(new Date(doc.updatedAt), "MMM dd, yyyy")}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handlePreview(doc);
-                              }}
-                              title="Preview"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                            {canWriteDocuments && !fileOnly && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleEdit(doc);
-                                }}
-                                title="Edit"
+                        File
+                      </Badge>
+                    ) : null}
+                  </button>
+
+                  <div className="p-4">
+                    <div className="flex items-start gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handlePreview(doc)}
+                        className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-purple"
+                      >
+                        <span className="line-clamp-2 break-words text-sm font-semibold text-gray-900">
+                          {doc.title}
+                        </span>
+                      </button>
+
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="-mr-2 -mt-2 h-8 w-8 shrink-0 p-0"
+                            aria-label={`Actions for ${doc.title}`}
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {cardActions.includes("preview") ? (
+                            <DropdownMenuItem onClick={() => handlePreview(doc)}>
+                              <Eye className="mr-2 h-4 w-4" /> Preview
+                            </DropdownMenuItem>
+                          ) : null}
+                          {cardActions.includes("download")
+                            ? attachments.map((fileId, index) => (
+                                <DropdownMenuItem
+                                  key={fileId}
+                                  onClick={() =>
+                                    handleDownloadFile(doc._id, fileId)
+                                  }
+                                >
+                                  <Download className="mr-2 h-4 w-4" />
+                                  Download
+                                  {attachments.length > 1
+                                    ? ` file ${index + 1}`
+                                    : " file"}
+                                </DropdownMenuItem>
+                              ))
+                            : null}
+                          {cardActions.includes("edit") ? (
+                            <DropdownMenuItem onClick={() => handleEdit(doc)}>
+                              <Edit className="mr-2 h-4 w-4" /> Edit
+                            </DropdownMenuItem>
+                          ) : null}
+                          {cardActions.includes("delete") ? (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={() => handleDelete(doc._id)}
+                                className="text-red-600 focus:text-red-600"
                               >
-                                <Edit className="h-4 w-4" />
-                              </Button>
-                            )}
-                            {canWriteDocuments && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDelete(doc._id);
-                                }}
-                                title="Delete"
-                              >
-                                <Trash2 className="h-4 w-4 text-red-600" />
-                              </Button>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+                                <Trash2 className="mr-2 h-4 w-4" /> Delete
+                              </DropdownMenuItem>
+                            </>
+                          ) : null}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+
+                    <div className="mt-3 flex min-h-5 items-center justify-between gap-3 text-xs text-gray-500">
+                      <span className="min-w-0 truncate">
+                        {doc.category || "No category"}
+                      </span>
+                      {attachments.length > 0 ? (
+                        <span className="flex shrink-0 items-center gap-1">
+                          <Paperclip className="h-3.5 w-3.5" />
+                          {attachments.length}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 text-xs text-gray-400">
+                      Updated {format(new Date(doc.updatedAt), "MMM d, yyyy")}
+                    </p>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
 
         {/* Direct File Upload Dialog */}
         <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
