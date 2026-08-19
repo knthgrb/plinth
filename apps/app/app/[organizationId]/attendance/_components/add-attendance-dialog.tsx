@@ -44,23 +44,28 @@ import {
   parseYmdToAttendanceDateMs,
   sameManilaCalendarDay,
 } from "@/lib/manila-date";
+import { resolveAttendanceEmployeeOnDialogOpen } from "@/lib/attendance-dialog-state";
 
 interface AddAttendanceDialogProps {
   employees: Doc<"employees">[] | undefined;
   currentOrganizationId: string | null;
+  viewedEmployeeId?: string;
   onSuccess?: () => void;
 }
 
 export function AddAttendanceDialog({
   employees,
   currentOrganizationId,
+  viewedEmployeeId,
   onSuccess,
 }: AddAttendanceDialogProps) {
   const { toast } = useToast();
   const [selectedDate, setSelectedDate] = useState(
     format(new Date(), "yyyy-MM-dd"),
   );
-  const [selectedEmployee, setSelectedEmployee] = useState("");
+  const [selectedEmployee, setSelectedEmployee] = useState(() =>
+    resolveAttendanceEmployeeOnDialogOpen(viewedEmployeeId),
+  );
   const [timeIn, setTimeIn] = useState("");
   const [timeOut, setTimeOut] = useState("");
   const [overtime, setOvertime] = useState("");
@@ -387,9 +392,18 @@ export function AddAttendanceDialog({
     }
   };
 
+  const handleDialogOpenChange = (open: boolean) => {
+    setIsDialogOpen(open);
+    if (open) {
+      setSelectedEmployee(
+        resolveAttendanceEmployeeOnDialogOpen(viewedEmployeeId),
+      );
+    }
+  };
+
   return (
     <>
-    <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+    <Dialog open={isDialogOpen} onOpenChange={handleDialogOpenChange}>
       <DialogTrigger asChild>
         <Button>
           <Plus className="mr-2 h-4 w-4" />
@@ -429,6 +443,7 @@ export function AddAttendanceDialog({
                     value={selectedEmployee}
                     onValueChange={setSelectedEmployee}
                     disabled={isSubmitting}
+                    includeInactive
                   />
                 </div>
               </div>

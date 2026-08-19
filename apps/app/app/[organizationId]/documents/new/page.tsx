@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,18 +22,40 @@ import { createDocument } from "@/actions/documents";
 import { TiptapEditor } from "@/components/tiptap-editor";
 import { useToast } from "@/components/ui/use-toast";
 import { getOrganizationPath } from "@/utils/organization-routing";
+import { useEmployeeView } from "@/hooks/employee-view-context";
+import type { Id } from "@/convex/_generated/dataModel";
+
+type DocumentType =
+  | "personal"
+  | "employment"
+  | "contract"
+  | "certificate"
+  | "leave_form"
+  | "other";
 
 export default function NewDocumentPage() {
   const router = useRouter();
   const { currentOrganizationId } = useOrganization();
+  const { isEmployeeExperienceUI } = useEmployeeView();
   const { toast } = useToast();
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState({
     title: "",
-    type: "other" as const,
+    type: "other" as DocumentType,
     category: "",
     content: JSON.stringify({ type: "doc", content: [] }),
   });
+  const currentUser = useQuery(
+    api.organizations.getCurrentUser,
+    currentOrganizationId
+      ? { organizationId: currentOrganizationId as Id<"organizations"> }
+      : "skip",
+  );
+  const canManageDocuments =
+    !isEmployeeExperienceUI &&
+    ["owner", "admin", "hr"].includes(
+      (currentUser?.role ?? "").toLowerCase(),
+    );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,6 +78,7 @@ export default function NewDocumentPage() {
         content: formData.content,
         type: formData.type,
         category: formData.category || undefined,
+        visibilityScope: "admins_only",
       });
 
       toast({
@@ -62,17 +87,49 @@ export default function NewDocumentPage() {
       });
 
       router.push(getOrganizationPath(currentOrganizationId, "/documents"));
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error creating document:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to create document",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to create document",
         variant: "destructive",
       });
     } finally {
       setIsSaving(false);
     }
   };
+
+  if (
+    isEmployeeExperienceUI ||
+    (currentUser !== undefined && !canManageDocuments)
+  ) {
+    return (
+      <MainLayout>
+        <div className="flex min-h-[60vh] items-center justify-center p-8">
+          <div className="text-center">
+            <h1 className="text-xl font-semibold">Document management unavailable</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Employee view can read shared documents but cannot create or edit them.
+            </p>
+            <Button
+              variant="outline"
+              className="mt-4"
+              onClick={() =>
+                router.push(
+                  getOrganizationPath(currentOrganizationId, "/documents"),
+                )
+              }
+            >
+              Back to Documents
+            </Button>
+          </div>
+        </div>
+      </MainLayout>
+    );
+  }
 
   return (
     <MainLayout>
@@ -129,7 +186,7 @@ export default function NewDocumentPage() {
                       <Label htmlFor="type">Type <span className="text-red-500">*</span></Label>
                       <Select
                         value={formData.type}
-                        onValueChange={(value: any) =>
+                        onValueChange={(value: DocumentType) =>
                           setFormData({ ...formData, type: value })
                         }
                       >

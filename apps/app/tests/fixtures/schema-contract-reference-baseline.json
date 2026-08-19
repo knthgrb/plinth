@@ -19,9 +19,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 10206,
-      "fileCount": 290,
-      "fingerprint": "a9f21195e6b7a7e26986718c56c8441be0d91abb65e8ac58b41d675c34797832",
+      "totalMatches": 10380,
+      "fileCount": 293,
+      "fingerprint": "73084bb1fb5f008cb5eb422d15b317a1ae6c9c41f70511b3f9473034a77a1d31",
       "symbols": [
         {
           "symbol": "accrualRate",
@@ -110,7 +110,7 @@
         },
         {
           "symbol": "deductions",
-          "matches": 295,
+          "matches": 311,
           "files": 26
         },
         {
@@ -130,13 +130,13 @@
         },
         {
           "symbol": "editHistory",
-          "matches": 8,
+          "matches": 3,
           "files": 2
         },
         {
           "symbol": "employeeId",
-          "matches": 1493,
-          "files": 127
+          "matches": 1545,
+          "files": 128
         },
         {
           "symbol": "enableAnniversaryLeave",
@@ -145,8 +145,8 @@
         },
         {
           "symbol": "endDate",
-          "matches": 167,
-          "files": 35
+          "matches": 163,
+          "files": 34
         },
         {
           "symbol": "evaluationColumns",
@@ -175,13 +175,13 @@
         },
         {
           "symbol": "history",
-          "matches": 84,
-          "files": 29
+          "matches": 83,
+          "files": 30
         },
         {
           "symbol": "incentives",
-          "matches": 218,
-          "files": 16
+          "matches": 228,
+          "files": 18
         },
         {
           "symbol": "interviewSchedules",
@@ -280,8 +280,8 @@
         },
         {
           "symbol": "name",
-          "matches": 1145,
-          "files": 163
+          "matches": 1168,
+          "files": 165
         },
         {
           "symbol": "notes",
@@ -300,8 +300,8 @@
         },
         {
           "symbol": "organizationId",
-          "matches": 2202,
-          "files": 180
+          "matches": 2214,
+          "files": 181
         },
         {
           "symbol": "paidLeaveRequiresRegularization",
@@ -341,7 +341,7 @@
         {
           "symbol": "readBy",
           "matches": 10,
-          "files": 4
+          "files": 5
         },
         {
           "symbol": "receipts",
@@ -395,8 +395,8 @@
         },
         {
           "symbol": "role",
-          "matches": 469,
-          "files": 89
+          "matches": 480,
+          "files": 92
         },
         {
           "symbol": "salaryPaymentFrequency",
@@ -415,7 +415,7 @@
         },
         {
           "symbol": "sharedWith",
-          "matches": 17,
+          "matches": 18,
           "files": 4
         },
         {
@@ -430,13 +430,13 @@
         },
         {
           "symbol": "startDate",
-          "matches": 214,
-          "files": 41
+          "matches": 210,
+          "files": 40
         },
         {
           "symbol": "status",
-          "matches": 1099,
-          "files": 118
+          "matches": 1147,
+          "files": 119
         },
         {
           "symbol": "supportingDocuments",
@@ -450,12 +450,12 @@
         },
         {
           "symbol": "visibleDepartments",
-          "matches": 16,
+          "matches": 23,
           "files": 4
         },
         {
           "symbol": "visibleEmployeeIds",
-          "matches": 19,
+          "matches": 27,
           "files": 4
         }
       ]

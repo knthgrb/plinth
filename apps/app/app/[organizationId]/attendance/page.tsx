@@ -807,6 +807,11 @@ export default function AttendancePage() {
                   <AddAttendanceDialog
                     employees={attendanceEmployees}
                     currentOrganizationId={currentOrganizationId}
+                    viewedEmployeeId={
+                      idForTable && idForTable !== "__create__"
+                        ? idForTable
+                        : undefined
+                    }
                   />
                 </Suspense>
               </div>

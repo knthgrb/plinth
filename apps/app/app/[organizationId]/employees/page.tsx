@@ -219,21 +219,19 @@ export default function EmployeesPage() {
       : "skip",
   );
 
-  const employeesInOrganization: Record<string, boolean> | undefined =
-    useQuery(
-      api.employees.checkEmployeesInOrganization,
-      currentOrganizationId && employees && employees.length > 0
-        ? {
-            organizationId: currentOrganizationId,
-            employeeIds: employees.map((employee) => employee._id),
-          }
-        : "skip",
-    );
+  const employeesInOrganization: Record<string, boolean> | undefined = useQuery(
+    api.employees.checkEmployeesInOrganization,
+    currentOrganizationId && employees && employees.length > 0
+      ? {
+          organizationId: currentOrganizationId,
+          employeeIds: employees.map((employee) => employee._id),
+        }
+      : "skip",
+  );
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [accountMode, setAccountMode] = useState<
-    EmployeeAccountAccess["kind"]
-  >("employee_only");
+  const [accountMode, setAccountMode] =
+    useState<EmployeeAccountAccess["kind"]>("employee_only");
   const [selectedMemberId, setSelectedMemberId] = useState("");
   const [invitationEmail, setInvitationEmail] = useState("");
   const [isBulkAddOpen, setIsBulkAddOpen] = useState(false);
@@ -881,11 +879,9 @@ export default function EmployeesPage() {
                                 value={invitationEmail}
                                 onChange={(event) => {
                                   setInvitationEmail(event.target.value);
-                                  setAddFormValue(
-                                    "email",
-                                    event.target.value,
-                                    { shouldValidate: true },
-                                  );
+                                  setAddFormValue("email", event.target.value, {
+                                    shouldValidate: true,
+                                  });
                                 }}
                                 placeholder="employee@example.com"
                               />
@@ -1100,10 +1096,6 @@ export default function EmployeesPage() {
                                 />
                               )}
                             />
-                            <p className="text-xs text-gray-500">
-                              Optional. Affects leave proration when enabled in
-                              Leave settings.
-                            </p>
                           </div>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

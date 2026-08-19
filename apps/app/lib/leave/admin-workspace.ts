@@ -24,6 +24,17 @@ export function getLeaveAdminTabs(role: OrganizationRole): LeaveAdminTab[] {
     : [];
 }
 
+export function shouldShowEmployeeLeaveWorkspace(input: {
+  role: OrganizationRole | undefined;
+  isEmployeeExperienceUI: boolean;
+}): boolean {
+  return (
+    input.isEmployeeExperienceUI ||
+    input.role === "employee" ||
+    input.role === "manager"
+  );
+}
+
 export interface AdminApprovalRow {
   id: string;
   status: "pending" | "cancellation_requested";

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_EVALUATION_EMPLOYMENT_STATUS_FILTER,
   filterEvaluationEmployees,
   paginateEvaluationEmployees,
   type EvaluationEmployeeListItem,
@@ -12,6 +13,7 @@ const rows: EvaluationEmployeeListItem[] = [
     employeeCode: "EMP-001",
     position: "Analyst",
     department: "Operations",
+    employmentStatus: "active",
     nextEvaluation: { status: "scheduled", scheduledFor: Date.UTC(2026, 7, 10) },
   },
   {
@@ -20,6 +22,7 @@ const rows: EvaluationEmployeeListItem[] = [
     employeeCode: "EMP-002",
     position: "Designer",
     department: "Product",
+    employmentStatus: "resigned",
     nextEvaluation: { status: "scheduled", scheduledFor: Date.UTC(2026, 7, 20) },
   },
   {
@@ -28,6 +31,7 @@ const rows: EvaluationEmployeeListItem[] = [
     employeeCode: "EMP-003",
     position: "Engineer",
     department: "Product",
+    employmentStatus: "terminated",
     nextEvaluation: null,
   },
 ];
@@ -40,6 +44,7 @@ describe("evaluation workspace employee list", () => {
       filterEvaluationEmployees(rows, {
         search: "emp-002",
         department: "Product",
+        employmentStatus: "all",
         timing: "due_soon",
         now,
       }).map((row) => row.id),
@@ -48,10 +53,45 @@ describe("evaluation workspace employee list", () => {
       filterEvaluationEmployees(rows, {
         search: "engineer",
         department: "all",
+        employmentStatus: "all",
         timing: "not_scheduled",
         now,
       }).map((row) => row.id),
     ).toEqual(["employee-3"]);
+  });
+
+  it("defaults the employee-status view to active while retaining separated history", () => {
+    const baseFilters = {
+      search: "",
+      department: "all",
+      timing: "all" as const,
+      now: Date.UTC(2026, 7, 14),
+    };
+
+    expect(
+      filterEvaluationEmployees(rows, {
+        ...baseFilters,
+        employmentStatus: DEFAULT_EVALUATION_EMPLOYMENT_STATUS_FILTER,
+      }).map((row) => row.id),
+    ).toEqual(["employee-1"]);
+    expect(
+      filterEvaluationEmployees(rows, {
+        ...baseFilters,
+        employmentStatus: "resigned",
+      }).map((row) => row.id),
+    ).toEqual(["employee-2"]);
+    expect(
+      filterEvaluationEmployees(rows, {
+        ...baseFilters,
+        employmentStatus: "terminated",
+      }).map((row) => row.id),
+    ).toEqual(["employee-3"]);
+    expect(
+      filterEvaluationEmployees(rows, {
+        ...baseFilters,
+        employmentStatus: "all",
+      }).map((row) => row.id),
+    ).toEqual(["employee-1", "employee-2", "employee-3"]);
   });
 
   it("paginates the filtered list and clamps stale page numbers", () => {

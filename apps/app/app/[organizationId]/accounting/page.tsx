@@ -1,10 +1,18 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import {
+  Fragment,
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+} from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { api } from "@/convex/_generated/api";
-import { Id } from "@/convex/_generated/dataModel";
+import type { Id } from "@/convex/_generated/dataModel";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -48,6 +56,8 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { useOrganization } from "@/hooks/organization-context";
 import { getOrganizationPath } from "@/utils/organization-routing";
@@ -62,10 +72,12 @@ import { uploadFileToStorage } from "@/lib/storage-upload";
 import { useToast } from "@/components/ui/use-toast";
 import { getStatusBadgeClass, getStatusBadgeStyle } from "@/utils/colors";
 import {
-  DashboardOverviewHeader,
   DashboardMetricCard,
-  type DateRangeOption,
 } from "@/components/dashboard";
+import {
+  groupPayrollCostItems,
+  isPayrollGeneratedCostItem,
+} from "@/lib/accounting/payroll-cost-groups";
 
 const REQUIRED_CATEGORIES = [
   {
@@ -99,29 +111,27 @@ const ACCEPTED_ATTACHMENT_EXTENSIONS = [
   ".xlsx",
   ".csv",
 ];
-const PAYROLL_GENERATED_COST_ITEMS = [
-  { type: "payroll", prefix: "Payroll - " },
-  { type: "sss", prefix: "SSS - " },
-  { type: "pagibig", prefix: "Pag-IBIG - " },
-  { type: "philhealth", prefix: "PhilHealth - " },
-  { type: "tax", prefix: "Tax Employee Deductions - " },
-] as const;
-type PayrollGeneratedCostType =
-  (typeof PAYROLL_GENERATED_COST_ITEMS)[number]["type"];
-
-function getPayrollGeneratedCostInfo(name?: string | null) {
-  if (!name) return null;
-  return (
-    PAYROLL_GENERATED_COST_ITEMS.find((item) => name.startsWith(item.prefix)) ??
-    null
-  );
-}
-
-function getPayrollGeneratedPeriodLabel(name?: string | null) {
-  const info = getPayrollGeneratedCostInfo(name);
-  if (!info || !name) return null;
-  return name.slice(info.prefix.length);
-}
+type AccountingCostItem = FunctionReturnType<
+  typeof api.accounting.getCostItems
+>[number];
+type PayrollRun = FunctionReturnType<typeof api.payroll.getPayrollRuns>[number];
+type PayrollBreakdownRow = {
+  employeeId: Id<"employees">;
+  employeeName: string;
+  grossPay?: number;
+  nonTaxableAllowance?: number;
+  totalIncentives?: number;
+  totalDeductions?: number;
+  incentiveItems?: Array<{ name: string; amount: number; type?: string }>;
+  deductionItems?: Array<{ name: string; amount: number; type?: string }>;
+  netPay?: number;
+};
+type ContributionBreakdownRow = {
+  employeeId: Id<"employees">;
+  employeeName: string;
+  employeeAmount?: number;
+  companyAmount?: number;
+};
 
 function formatCurrency(value: number | null | undefined) {
   return `₱${Number(value ?? 0).toLocaleString("en-US", {
@@ -130,23 +140,8 @@ function formatCurrency(value: number | null | undefined) {
   })}`;
 }
 
-function formatPayrollRunDatePeriod(run: any) {
-  if (!run?.cutoffStart || !run?.cutoffEnd) return "Payroll run";
-
-  const startDate = new Date(run.cutoffStart);
-  const endDate = new Date(run.cutoffEnd);
-  return `${startDate.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  })} - ${endDate.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })}`;
-}
-
-function formatPayrollRunPeriod(run: any) {
-  return run?.period ? String(run.period) : formatPayrollRunDatePeriod(run);
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
 export default function AccountingPage() {
@@ -175,7 +170,9 @@ export default function AccountingPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [isItemDialogOpen, setIsItemDialogOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<any>(null);
+  const [editingItem, setEditingItem] = useState<AccountingCostItem | null>(
+    null,
+  );
   const [selectedCategoryName, setSelectedCategoryName] = useState<
     string | null
   >(null);
@@ -188,7 +185,8 @@ export default function AccountingPage() {
   const [deleteItemId, setDeleteItemId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [breakdownDialogOpen, setBreakdownDialogOpen] = useState(false);
-  const [selectedBreakdownItem, setSelectedBreakdownItem] = useState<any>(null);
+  const [selectedBreakdownItem, setSelectedBreakdownItem] =
+    useState<AccountingCostItem | null>(null);
   const [detailAttachmentUrls, setDetailAttachmentUrls] = useState<
     { url: string; id: string }[]
   >([]);
@@ -197,9 +195,11 @@ export default function AccountingPage() {
   >({});
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [categoryPage, setCategoryPage] = useState<Record<string, number>>({});
-  const [dateRange, setDateRange] = useState<DateRangeOption>("7");
   const [repairingPayrollAccounting, setRepairingPayrollAccounting] =
     useState(false);
+  const [expandedPayrollCostGroup, setExpandedPayrollCostGroup] = useState<
+    string | null
+  >(null);
 
   const [itemFormData, setItemFormData] = useState({
     name: "",
@@ -225,7 +225,10 @@ export default function AccountingPage() {
       user.role === "owner");
 
   const categories = REQUIRED_CATEGORIES;
-  const costItems = costItemsFromQuery ?? [];
+  const costItems = useMemo(
+    () => costItemsFromQuery ?? [],
+    [costItemsFromQuery],
+  );
   const loading = costItemsFromQuery === undefined;
   const payrollRunsLoading = payrollRuns === undefined;
   const dataLoading = user === undefined || loading;
@@ -241,7 +244,7 @@ export default function AccountingPage() {
   }, [user, hasAccess, router, currentOrganizationId]);
 
   const itemsByCategoryName = useMemo(() => {
-    const map = new Map<string, any[]>();
+    const map = new Map<string, AccountingCostItem[]>();
     for (const item of costItems) {
       const name = item.categoryName ?? "Employee Related Cost";
       if (!map.has(name)) map.set(name, []);
@@ -251,7 +254,12 @@ export default function AccountingPage() {
   }, [costItems]);
 
   const getItemsForCategory = useCallback(
-    (categoryName: string) => itemsByCategoryName.get(categoryName) ?? [],
+    (categoryName: string) => {
+      const items = itemsByCategoryName.get(categoryName) ?? [];
+      return categoryName === "Employee Related Cost"
+        ? items.filter((item) => !isPayrollGeneratedCostItem(item))
+        : items;
+    },
     [itemsByCategoryName],
   );
 
@@ -295,7 +303,7 @@ export default function AccountingPage() {
   }, [categories, itemsByCategoryName]);
 
   const handleOpenItemDialog = useCallback(
-    (categoryName?: string, item?: any) => {
+    (categoryName?: string, item?: AccountingCostItem) => {
       if (item) {
         setEditingItem(item);
         setItemFormData({
@@ -345,7 +353,7 @@ export default function AccountingPage() {
       }
       setIsItemDialogOpen(true);
     },
-    [],
+    [currentOrganizationId],
   );
 
   const handleCloseItemDialog = () => {
@@ -504,10 +512,10 @@ export default function AccountingPage() {
       }
 
       handleCloseItemDialog();
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to save expense",
+        description: getErrorMessage(error, "Failed to save expense"),
         variant: "destructive",
       });
     } finally {
@@ -523,10 +531,10 @@ export default function AccountingPage() {
         title: "Success",
         description: "Expense deleted successfully",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to delete expense",
+        description: getErrorMessage(error, "Failed to delete expense"),
         variant: "destructive",
       });
     }
@@ -547,10 +555,13 @@ export default function AccountingPage() {
         title: "Payroll accounting repaired",
         description: `${result.repairedRuns} run(s), ${result.created} created, ${result.updated} updated, ${result.deleted} removed.`,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to repair payroll accounting",
+        description: getErrorMessage(
+          error,
+          "Failed to repair payroll accounting",
+        ),
         variant: "destructive",
       });
     } finally {
@@ -580,7 +591,7 @@ export default function AccountingPage() {
     return /\.(png|jpe?g|gif|webp|bmp|svg)(\?|$)/i.test(value);
   };
 
-  const openDetailsDialog = async (item: any) => {
+  const openDetailsDialog = async (item: AccountingCostItem) => {
     setSelectedBreakdownItem(item);
     setBreakdownDialogOpen(true);
     setDetailImageLoadErrors({});
@@ -599,122 +610,34 @@ export default function AccountingPage() {
     setDetailAttachmentUrls([]);
   };
 
-  const payrollReconciliationRows = useMemo(() => {
-    type Row = {
-      key: string;
-      period: string;
-      runStatus?: string;
-      runType?: string;
-      missing: boolean;
-      amounts: Record<PayrollGeneratedCostType, number>;
-      paid: Record<PayrollGeneratedCostType, number>;
-      updatedAt: number;
-    };
-
-    const emptyAmounts = (): Record<PayrollGeneratedCostType, number> => ({
-      payroll: 0,
-      sss: 0,
-      pagibig: 0,
-      philhealth: 0,
-      tax: 0,
-    });
-    const groups = new Map<string, Row>();
-    const periodToKey = new Map<string, string>();
-
-    for (const item of costItems) {
-      const info = getPayrollGeneratedCostInfo(item.name);
-      if (!info) continue;
-
-      const period = getPayrollGeneratedPeriodLabel(item.name) ?? item.name;
-      const key = item.payrollRunId
-        ? `run:${String(item.payrollRunId)}`
-        : `period:${period}`;
-      if (!groups.has(key)) {
-        groups.set(key, {
-          key,
-          period,
-          missing: false,
-          amounts: emptyAmounts(),
-          paid: emptyAmounts(),
-          updatedAt: item.updatedAt ?? item.createdAt ?? 0,
-        });
-        periodToKey.set(period, key);
-      }
-
-      const row = groups.get(key)!;
-      row.amounts[info.type] += item.amount ?? 0;
-      row.paid[info.type] += item.amountPaid ?? 0;
-      row.updatedAt = Math.max(row.updatedAt, item.updatedAt ?? item.createdAt ?? 0);
-    }
-
-    for (const run of payrollRuns ?? []) {
-      if (!["finalized", "paid"].includes(run.status)) continue;
-
-      const period = formatPayrollRunPeriod(run);
-      const runKey = `run:${String(run._id)}`;
-      const periodCandidates = Array.from(
-        new Set([period, formatPayrollRunDatePeriod(run), run.period].filter(Boolean)),
-      );
-      const periodKey = periodCandidates
-        .map((candidate) => periodToKey.get(String(candidate)))
-        .find(Boolean);
-      const existing =
-        groups.get(runKey) ?? (periodKey ? groups.get(periodKey) : undefined);
-
-      if (existing) {
-        existing.runStatus = run.status;
-        existing.runType = run.runType ?? "regular";
-        continue;
-      }
-
-      groups.set(runKey, {
-        key: runKey,
-        period,
-        runStatus: run.status,
-        runType: run.runType ?? "regular",
-        missing: true,
-        amounts: emptyAmounts(),
-        paid: emptyAmounts(),
-        updatedAt: run.updatedAt ?? run.createdAt ?? 0,
-      });
-    }
-
-    return Array.from(groups.values())
-      .map((row) => {
-        const total =
-          row.amounts.payroll +
-          row.amounts.sss +
-          row.amounts.pagibig +
-          row.amounts.philhealth +
-          row.amounts.tax;
-        const paid =
-          row.paid.payroll +
-          row.paid.sss +
-          row.paid.pagibig +
-          row.paid.philhealth +
-          row.paid.tax;
-        const remaining = Math.max(0, total - paid);
-        const status = row.missing
-          ? "missing"
-          : remaining <= 0
-            ? "paid"
-            : paid > 0
-              ? "partial"
-              : "pending";
-
-        return {
-          ...row,
-          total,
-          paidTotal: paid,
-          remaining,
-          status,
-        };
-      })
-      .sort((left, right) => right.updatedAt - left.updatedAt);
-  }, [costItems, payrollRuns]);
-
-  const isPayrollGeneratedCostItem = (item: any) =>
-    Boolean(getPayrollGeneratedCostInfo(item.name));
+  const payrollCostGroups = useMemo(
+    () =>
+      groupPayrollCostItems(
+        costItems.map((item) => ({
+          id: String(item._id),
+          payrollRunId: item.payrollRunId
+            ? String(item.payrollRunId)
+            : undefined,
+          sourceType: item.sourceType,
+          name: item.name,
+          amount: item.amount,
+          amountPaid: item.amountPaid,
+          status: item.status,
+          updatedAt: item.updatedAt,
+          createdAt: item.createdAt,
+          source: item,
+        })),
+        (payrollRuns ?? []).map((run: PayrollRun) => ({
+          id: String(run._id),
+          status: run.status,
+          runType: run.runType ?? "regular",
+          period: run.period,
+          updatedAt: run.updatedAt,
+          createdAt: run.createdAt,
+        })),
+      ),
+    [costItems, payrollRuns],
+  );
 
   const isEditingLockedCostItem =
     editingItem && isPayrollGeneratedCostItem(editingItem);
@@ -746,54 +669,14 @@ export default function AccountingPage() {
     <>
       <MainLayout>
         <div className="p-4 sm:p-6 lg:p-8">
-          <DashboardOverviewHeader
-            title="Your overview"
-            dateRange={dateRange}
-            onDateRangeChange={setDateRange}
-            compareLabel="Previous period"
-            actions={
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleRepairPayrollAccounting}
-                  disabled={
-                    repairingPayrollAccounting ||
-                    !currentOrganizationId ||
-                    reconciliationLoading
-                  }
-                  className="h-9"
-                >
-                  <FileText className="mr-2 h-4 w-4" />
-                  Repair payroll accounting
-                  {payrollAccountingDrift?.driftCount ? (
-                    <span className="ml-2 rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
-                      {payrollAccountingDrift.driftCount}
-                    </span>
-                  ) : null}
-                </Button>
-                <span className="text-sm text-[rgb(133,133,133)]">Rows per page</span>
-                <Select
-                  value={String(pageSize)}
-                  onValueChange={(v) => {
-                    setPageSize(Number(v));
-                    setCategoryPage({});
-                  }}
-                >
-                  <SelectTrigger className="h-9 w-[72px] border-[rgb(230,230,230)] bg-white">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PAGE_SIZE_OPTIONS.map((n) => (
-                      <SelectItem key={n} value={String(n)}>
-                        {n}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            }
-          />
+          <header>
+            <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl">
+              Accounting
+            </h1>
+            <p className="mt-1 text-sm text-[rgb(105,105,105)]">
+              Track payroll-generated costs and operational expenses.
+            </p>
+          </header>
 
           {/* Summary metric cards */}
           <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -829,7 +712,7 @@ export default function AccountingPage() {
                           })}
                         </>
                       }
-                      secondary={`₱${paid.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} paid · ₱${remaining.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} remaining · ${getItemsForCategory(category.name).length} expenses`}
+                      secondary={`₱${paid.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} paid · ₱${remaining.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} remaining`}
                       moreDetailsHref="#expenses"
                       moreDetailsLabel="View expenses"
                     />
@@ -837,22 +720,47 @@ export default function AccountingPage() {
                 })}
           </div>
 
-          {(reconciliationLoading || payrollReconciliationRows.length > 0) && (
+          {(reconciliationLoading || payrollCostGroups.length > 0) && (
             <div className="mt-6 rounded-lg border border-[rgb(230,230,230)] bg-white">
-              <div className="flex flex-col gap-1 border-b border-[rgb(230,230,230)] px-4 py-3 sm:px-6">
-                <h2 className="text-base font-semibold text-[rgb(64,64,64)]">
-                  Payroll reconciliation
-                </h2>
-                <p className="text-sm text-[rgb(133,133,133)]">
-                  Generated accounting records grouped by payroll period.
-                </p>
+              <div className="flex flex-col gap-3 border-b border-[rgb(230,230,230)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                <div>
+                  <h2 className="text-base font-semibold text-[rgb(64,64,64)]">
+                    Payroll costs
+                  </h2>
+                  <p className="mt-1 max-w-3xl text-sm text-[rgb(105,105,105)]">
+                    One record per payroll run. Expand a run to review and
+                    manage net pay, statutory contributions, and withholding
+                    tax separately.
+                  </p>
+                </div>
+                {payrollAccountingDrift?.driftCount ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleRepairPayrollAccounting}
+                    disabled={
+                      repairingPayrollAccounting ||
+                      !currentOrganizationId ||
+                      reconciliationLoading
+                    }
+                    className="shrink-0 border-red-200 text-red-700 sm:self-center"
+                  >
+                    <FileText className="mr-2 h-4 w-4" />
+                    {repairingPayrollAccounting
+                      ? "Repairing records..."
+                      : "Repair payroll accounting"}
+                    <span className="ml-2 rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
+                      {payrollAccountingDrift.driftCount}
+                    </span>
+                  </Button>
+                ) : null}
               </div>
               {reconciliationLoading ? (
                 <div className="overflow-x-auto p-4 sm:p-6">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        {Array.from({ length: 10 }).map((_, index) => (
+                        {Array.from({ length: 6 }).map((_, index) => (
                           <TableHead key={index}>
                             <div className="h-4 w-20 animate-pulse rounded bg-[rgb(245,245,245)]" />
                           </TableHead>
@@ -862,7 +770,7 @@ export default function AccountingPage() {
                     <TableBody>
                       {Array.from({ length: 3 }).map((_, rowIndex) => (
                         <TableRow key={rowIndex}>
-                          {Array.from({ length: 10 }).map((__, cellIndex) => (
+                          {Array.from({ length: 6 }).map((__, cellIndex) => (
                             <TableCell key={cellIndex}>
                               <div className="h-4 w-full max-w-[96px] animate-pulse rounded bg-[rgb(245,245,245)]" />
                             </TableCell>
@@ -878,69 +786,165 @@ export default function AccountingPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Payroll Period</TableHead>
-                        <TableHead className="text-right">Net Pay</TableHead>
-                        <TableHead className="text-right">SSS</TableHead>
-                        <TableHead className="text-right">Pag-IBIG</TableHead>
-                        <TableHead className="text-right">PhilHealth</TableHead>
-                        <TableHead className="text-right">Tax</TableHead>
                         <TableHead className="text-right">Total</TableHead>
                         <TableHead className="text-right">Paid</TableHead>
                         <TableHead className="text-right">Remaining</TableHead>
                         <TableHead>Status</TableHead>
+                        <TableHead className="w-12">
+                          <span className="sr-only">Details</span>
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {payrollReconciliationRows.map((row) => (
-                        <TableRow key={row.key}>
-                          <TableCell className="font-medium">
-                            <div>{row.period}</div>
-                            {row.runType && row.runType !== "regular" ? (
-                              <div className="text-xs text-[rgb(133,133,133)]">
-                                {String(row.runType).replace("_", " ")}
-                              </div>
+                      {payrollCostGroups.map((group) => {
+                        const expanded = expandedPayrollCostGroup === group.key;
+                        return (
+                          <Fragment key={group.key}>
+                            <TableRow>
+                              <TableCell className="font-medium">
+                                <div>{group.period}</div>
+                                <div className="mt-1 text-xs capitalize text-[rgb(133,133,133)]">
+                                  {String(group.runType ?? "regular").replaceAll(
+                                    "_",
+                                    " ",
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right font-semibold">
+                                {formatCurrency(group.total)}
+                              </TableCell>
+                              <TableCell className="text-right text-green-700">
+                                {formatCurrency(group.paidTotal)}
+                              </TableCell>
+                              <TableCell className="text-right text-orange-700">
+                                {formatCurrency(group.remaining)}
+                              </TableCell>
+                              <TableCell>
+                                {group.status === "missing" ? (
+                                  <Badge className="border border-red-200 bg-red-50 text-red-700 hover:bg-red-50">
+                                    Missing records
+                                  </Badge>
+                                ) : (
+                                  <Badge
+                                    className={getStatusBadgeClass(group.status)}
+                                    style={getStatusBadgeStyle(group.status)}
+                                  >
+                                    {group.status.charAt(0).toUpperCase() +
+                                      group.status.slice(1)}
+                                  </Badge>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-expanded={expanded}
+                                  aria-label={
+                                    expanded
+                                      ? "Collapse payroll cost details"
+                                      : "Expand payroll cost details"
+                                  }
+                                  onClick={() =>
+                                    setExpandedPayrollCostGroup(
+                                      expanded ? null : group.key,
+                                    )
+                                  }
+                                >
+                                  {expanded ? (
+                                    <ChevronUp className="h-4 w-4" />
+                                  ) : (
+                                    <ChevronDown className="h-4 w-4" />
+                                  )}
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                            {expanded ? (
+                              <TableRow className="bg-muted/20 hover:bg-muted/20">
+                                <TableCell colSpan={6} className="p-0">
+                                  {group.components.length === 0 ? (
+                                    <div className="px-6 py-5 text-sm text-red-700">
+                                      This finalized run has no matching accounting
+                                      records. Use Repair payroll accounting above.
+                                    </div>
+                                  ) : (
+                                    <div className="divide-y border-t">
+                                      {group.components.map((component) => {
+                                        const item = component.item.source;
+                                        const remaining = Math.max(
+                                          0,
+                                          (item.amount ?? 0) -
+                                            (item.amountPaid ?? 0),
+                                        );
+                                        return (
+                                          <div
+                                            key={component.item.id}
+                                            className="grid gap-3 px-6 py-4 sm:grid-cols-[minmax(180px,1fr)_repeat(3,minmax(100px,auto))_auto] sm:items-center"
+                                          >
+                                            <div>
+                                              <p className="font-medium">
+                                                {component.label}
+                                              </p>
+                                              <p className="text-xs text-muted-foreground">
+                                                Paid or remitted separately
+                                              </p>
+                                            </div>
+                                            <div className="text-sm sm:text-right">
+                                              <span className="mr-2 text-muted-foreground sm:hidden">
+                                                Amount
+                                              </span>
+                                              {formatCurrency(item.amount)}
+                                            </div>
+                                            <div className="text-sm text-green-700 sm:text-right">
+                                              <span className="mr-2 text-muted-foreground sm:hidden">
+                                                Paid
+                                              </span>
+                                              {formatCurrency(item.amountPaid)}
+                                            </div>
+                                            <div className="text-sm text-orange-700 sm:text-right">
+                                              <span className="mr-2 text-muted-foreground sm:hidden">
+                                                Remaining
+                                              </span>
+                                              {formatCurrency(remaining)}
+                                            </div>
+                                            <div className="flex justify-end gap-1">
+                                              {item.breakdown ? (
+                                                <Button
+                                                  variant="ghost"
+                                                  size="icon"
+                                                  onClick={() =>
+                                                    void openDetailsDialog(item)
+                                                  }
+                                                  aria-label={`View ${component.label} breakdown`}
+                                                >
+                                                  <Eye className="h-4 w-4" />
+                                                </Button>
+                                              ) : null}
+                                              <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                onClick={() =>
+                                                  handleOpenItemDialog(
+                                                    "Employee Related Cost",
+                                                    item,
+                                                  )
+                                                }
+                                                aria-label={`Update ${component.label} payment`}
+                                              >
+                                                <Edit className="h-4 w-4" />
+                                              </Button>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </TableCell>
+                              </TableRow>
                             ) : null}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatCurrency(row.amounts.payroll)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatCurrency(row.amounts.sss)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatCurrency(row.amounts.pagibig)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatCurrency(row.amounts.philhealth)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatCurrency(row.amounts.tax)}
-                          </TableCell>
-                          <TableCell className="text-right font-semibold">
-                            {formatCurrency(row.total)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatCurrency(row.paidTotal)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatCurrency(row.remaining)}
-                          </TableCell>
-                          <TableCell>
-                            {row.status === "missing" ? (
-                              <Badge className="border border-red-200 bg-red-50 text-red-700 hover:bg-red-50">
-                                Missing records
-                              </Badge>
-                            ) : (
-                              <Badge
-                                className={getStatusBadgeClass(row.status)}
-                                style={getStatusBadgeStyle(row.status)}
-                              >
-                                {row.status.charAt(0).toUpperCase() +
-                                  row.status.slice(1)}
-                              </Badge>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                          </Fragment>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>
@@ -950,6 +954,45 @@ export default function AccountingPage() {
 
           {/* Expense Categories */}
           <div id="expenses" className="mt-6 space-y-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">
+                  Expense records
+                </h2>
+                <p className="mt-1 text-sm text-[rgb(105,105,105)]">
+                  Review manually recorded employee and operational expenses.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Label
+                  htmlFor="accounting-page-size"
+                  className="whitespace-nowrap text-sm font-normal text-[rgb(105,105,105)]"
+                >
+                  Rows per page
+                </Label>
+                <Select
+                  value={String(pageSize)}
+                  onValueChange={(value) => {
+                    setPageSize(Number(value));
+                    setCategoryPage({});
+                  }}
+                >
+                  <SelectTrigger
+                    id="accounting-page-size"
+                    className="h-9 w-[76px] border-[rgb(230,230,230)] bg-white"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PAGE_SIZE_OPTIONS.map((option) => (
+                      <SelectItem key={option} value={String(option)}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             {categories.map((category) => {
               const allCategoryItems = getItemsForCategory(category.name);
               const categoryItems = getPaginatedItems(category.name);
@@ -963,11 +1006,15 @@ export default function AccountingPage() {
                     <div className="flex items-center justify-between">
                       <div>
                         <CardTitle className="text-xl">
-                          {category.name}
+                          {category.name === "Employee Related Cost"
+                            ? "Other employee costs"
+                            : category.name}
                         </CardTitle>
                         {category.description && (
                           <p className="text-sm text-gray-600 mt-1">
-                            {category.description}
+                            {category.name === "Employee Related Cost"
+                              ? "Manual employee costs outside payroll runs"
+                              : category.description}
                           </p>
                         )}
                       </div>
@@ -1014,7 +1061,11 @@ export default function AccountingPage() {
                     ) : allCategoryItems.length === 0 ? (
                       <div className="text-center py-8 text-gray-500">
                         <AlertCircle className="mx-auto h-12 w-12 text-gray-400 mb-2" />
-                        <p>No expenses yet. Add your first expense above.</p>
+                        <p>
+                          {category.name === "Employee Related Cost"
+                            ? "No other employee costs recorded."
+                            : "No expenses yet. Add your first expense above."}
+                        </p>
                       </div>
                     ) : (
                       <>
@@ -1266,10 +1317,11 @@ export default function AccountingPage() {
                     <Label htmlFor="frequency">Frequency <span className="text-red-500">*</span></Label>
                     <Select
                       value={itemFormData.frequency}
-                      onValueChange={(value: any) =>
+                      onValueChange={(value) =>
                         setItemFormData({
                           ...itemFormData,
-                          frequency: value,
+                          frequency:
+                            value as AccountingCostItem["frequency"],
                         })
                       }
                     >
@@ -1571,41 +1623,42 @@ export default function AccountingPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {selectedBreakdownItem.breakdown.rows.map((row: any) => (
+                {(
+                  selectedBreakdownItem.breakdown
+                    .rows as PayrollBreakdownRow[]
+                ).map((row) => (
                   <TableRow key={row.employeeId}>
                     <TableCell>
                       <div className="space-y-1">
                         <div>{row.employeeName}</div>
-                        {Array.isArray(row.incentiveItems) &&
-                          row.incentiveItems.length > 0 && (
-                            <div className="text-xs text-gray-500">
-                              Incentives:{" "}
-                              {row.incentiveItems
-                                .map(
-                                  (item: any) =>
-                                    `${item.name} (₱${(item.amount ?? 0).toLocaleString("en-US", {
-                                      minimumFractionDigits: 2,
-                                      maximumFractionDigits: 2,
-                                    })})`,
-                                )
-                                .join(", ")}
-                            </div>
-                          )}
-                        {Array.isArray(row.deductionItems) &&
-                          row.deductionItems.length > 0 && (
-                            <div className="text-xs text-gray-500">
-                              Deductions:{" "}
-                              {row.deductionItems
-                                .map(
-                                  (item: any) =>
-                                    `${item.name} (₱${(item.amount ?? 0).toLocaleString("en-US", {
-                                      minimumFractionDigits: 2,
-                                      maximumFractionDigits: 2,
-                                    })})`,
-                                )
-                                .join(", ")}
-                            </div>
-                          )}
+                        {row.incentiveItems?.length ? (
+                          <div className="text-xs text-gray-500">
+                            Incentives:{" "}
+                            {row.incentiveItems
+                              .map(
+                                (item) =>
+                                  `${item.name} (₱${(item.amount ?? 0).toLocaleString("en-US", {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })})`,
+                              )
+                              .join(", ")}
+                          </div>
+                        ) : null}
+                        {row.deductionItems?.length ? (
+                          <div className="text-xs text-gray-500">
+                            Deductions:{" "}
+                            {row.deductionItems
+                              .map(
+                                (item) =>
+                                  `${item.name} (₱${(item.amount ?? 0).toLocaleString("en-US", {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })})`,
+                              )
+                              .join(", ")}
+                          </div>
+                        ) : null}
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
@@ -1666,7 +1719,10 @@ export default function AccountingPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {selectedBreakdownItem.breakdown.rows.map((row: any) => (
+                {(
+                  selectedBreakdownItem.breakdown
+                    .rows as ContributionBreakdownRow[]
+                ).map((row) => (
                   <TableRow key={row.employeeId}>
                     <TableCell>{row.employeeName}</TableCell>
                     <TableCell className="text-right">

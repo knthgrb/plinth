@@ -77,6 +77,7 @@ describe("alumni document access", () => {
       });
       const alumniDocumentId = await ctx.db.insert("documents", {
         organizationId,
+        employeeId,
         createdBy: userId,
         title: "Certificate of Employment",
         content: "{}",

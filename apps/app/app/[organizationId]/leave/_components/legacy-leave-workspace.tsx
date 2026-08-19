@@ -17,10 +17,14 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Plus } from "lucide-react";
+import { CalendarPlus, Loader2 } from "lucide-react";
 import { getEmployeeLeaveCredits } from "@/actions/leave";
 import { useOrganization } from "@/hooks/organization-context";
 import { useEmployeeView } from "@/hooks/employee-view-context";
+import {
+  shouldShowEmployeeLeaveWorkspace,
+  type OrganizationRole,
+} from "@/lib/leave/admin-workspace";
 import { LeaveColumnManagementModal } from "./leave-column-management-modal";
 import { EmployeeSelfCreditsContent } from "./employee-self-credits-content";
 
@@ -153,7 +157,8 @@ export function LegacyLeaveWorkspace() {
     api.organizations.getCurrentUser,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
   );
-  const { effectiveSelfEmployeeId } = useEmployeeView();
+  const { effectiveSelfEmployeeId, isEmployeeExperienceUI } =
+    useEmployeeView();
   const employees = useQuery(
     api.employees.getEmployees,
     currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
@@ -169,13 +174,16 @@ export function LegacyLeaveWorkspace() {
 
   const isAdminOrHr =
     (user?.role === "owner" || user?.role === "admin" || user?.role === "hr");
-  const isEmployee = !isAdminOrHr;
+  const showEmployeeWorkspace = shouldShowEmployeeLeaveWorkspace({
+    role: user?.role as OrganizationRole | undefined,
+    isEmployeeExperienceUI,
+  });
   const userEmployeeId =
     effectiveSelfEmployeeId ??
     user?.employeeId ??
     currentOrganization?.employeeId ??
     "";
-  const canRequestLeave = isEmployee || (isAdminOrHr && userEmployeeId);
+  const canRequestLeave = showEmployeeWorkspace || (isAdminOrHr && userEmployeeId);
   const tabParam = searchParams?.get("tab");
   const activeEmployeeTab = EMPLOYEE_TABS.includes(
     tabParam as (typeof EMPLOYEE_TABS)[number],
@@ -514,7 +522,7 @@ export function LegacyLeaveWorkspace() {
   ]);
 
   // Employee View (or HR/Admin who are employees)
-  if (canRequestLeave && !isAdminOrHr) {
+  if (canRequestLeave && showEmployeeWorkspace) {
     return (
       <MainLayout>
         <div className="p-8">
@@ -545,11 +553,11 @@ export function LegacyLeaveWorkspace() {
                 }}
               />
               <Button
-                size="icon"
-                className="h-10 w-10 rounded-lg bg-brand-purple hover:bg-brand-purple-hover text-white shrink-0"
+                className="rounded-lg bg-brand-purple text-white hover:bg-brand-purple-hover"
                 onClick={() => setIsDialogOpen(true)}
               >
-                <Plus className="h-5 w-5" />
+                <CalendarPlus className="mr-2 h-4 w-4" />
+                Request leave
               </Button>
             </Suspense>
           </div>
@@ -649,11 +657,11 @@ export function LegacyLeaveWorkspace() {
                 }}
               />
               <Button
-                size="icon"
-                className="h-10 w-10 rounded-lg bg-brand-purple hover:bg-brand-purple-hover text-white shrink-0"
+                className="rounded-lg bg-brand-purple text-white hover:bg-brand-purple-hover"
                 onClick={() => setIsDialogOpen(true)}
               >
-                <Plus className="h-5 w-5" />
+                <CalendarPlus className="mr-2 h-4 w-4" />
+                Request leave
               </Button>
             </Suspense>
           )}

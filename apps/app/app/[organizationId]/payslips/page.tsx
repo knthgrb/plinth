@@ -1,11 +1,10 @@
 "use client";
 
 import { Suspense, useState, useMemo, useEffect, useRef } from "react";
-import { useQuery, useMutation, useAction } from "convex/react";
+import { useQuery, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import {
   Receipt,
   Download,
@@ -13,16 +12,15 @@ import {
   EyeOff,
   FileText,
   MessageSquare,
-  Filter,
   Lock,
   KeyRound,
   Loader2,
 } from "lucide-react";
-import { format, startOfMonth, endOfMonth, parse } from "date-fns";
+import { format } from "date-fns";
 import { useRouter } from "next/navigation";
 import { useOrganization } from "@/hooks/organization-context";
 import { useEmployeeView } from "@/hooks/employee-view-context";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -61,6 +59,7 @@ import {
 import { usePayslipIdFromUrl } from "@/hooks/use-payslip-id-from-url";
 import { userFacingPayslipLoadError } from "@/lib/payslip-load-errors";
 import { sendPayslipPinResetEmail } from "@/actions/payslip-pin-reset";
+import { filterPayslipsByMonth } from "@/lib/employee-payslip-history";
 
 function formatPesoAmounts(n: number | undefined | null): string {
   return (n ?? 0).toLocaleString("en-US", {
@@ -73,6 +72,15 @@ function maskPesoNumberPart(formatted: string): string {
   return formatted.replace(/[0-9]/g, "*");
 }
 
+type EmployeePayslip = Omit<
+  Doc<"payslips">,
+  "deductions" | "grossPay" | "netPay"
+> & {
+  deductions: Array<{ name: string; amount: number; type: string }>;
+  grossPay: number;
+  netPay: number;
+};
+
 function PayslipsPageContent() {
   const { toast } = useToast();
   const router = useRouter();
@@ -81,7 +89,7 @@ function PayslipsPageContent() {
   const { employeeViewActive, canUseEmployeeView } = useEmployeeView();
 
   const payslipAccess = useQuery(
-    (api as any).organizations.getEmployeeIdForPayslips,
+    api.organizations.getEmployeeIdForPayslips,
     currentOrganizationId
       ? {
           organizationId: currentOrganizationId as Id<"organizations">,
@@ -94,12 +102,17 @@ function PayslipsPageContent() {
   const employeeId = payslipAccess?.employeeId ?? null;
   const requiresPin = payslipAccess?.requiresPin ?? false;
 
-  const user = useQuery((api as any).organizations.getCurrentUser, {
-    organizationId: currentOrganizationId || undefined,
-  });
+  const user = useQuery(
+    api.organizations.getCurrentUser,
+    currentOrganizationId
+      ? { organizationId: currentOrganizationId as Id<"organizations"> }
+      : "skip",
+  );
   const organization = useQuery(
-    (api as any).organizations.getOrganization,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    api.organizations.getOrganization,
+    currentOrganizationId
+      ? { organizationId: currentOrganizationId as Id<"organizations"> }
+      : "skip",
   );
   const [pinVerified, setPinVerified] = useState(false);
   const [pinValue, setPinValue] = useState("");
@@ -111,18 +124,19 @@ function PayslipsPageContent() {
   const [isSettingPin, setIsSettingPin] = useState(false);
   const [isSendingResetEmail, setIsSendingResetEmail] = useState(false);
 
-  const verifyPayslipPin = useAction((api as any).payslipPin.verifyPayslipPin);
-  const setPayslipPin = useAction((api as any).payslipPin.setPayslipPin);
+  const verifyPayslipPin = useAction(api.payslipPin.verifyPayslipPin);
+  const setPayslipPin = useAction(api.payslipPin.setPayslipPin);
 
-  const [selectedPayslip, setSelectedPayslip] = useState<any>(null);
+  const [selectedPayslip, setSelectedPayslip] =
+    useState<EmployeePayslip | null>(null);
   const [isViewOpen, setIsViewOpen] = useState(false);
-  const [payslipDetails, setPayslipDetails] = useState<any>(null);
+  const [payslipDetails, setPayslipDetails] =
+    useState<EmployeePayslip | null>(null);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
   const [isCommentOpen, setIsCommentOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [isSendingComment, setIsSendingComment] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<string>("");
-  const [selectedCutoff, setSelectedCutoff] = useState<string>("");
   const [downloadingPayslipId, setDownloadingPayslipId] = useState<
     string | null
   >(null);
@@ -141,21 +155,20 @@ function PayslipsPageContent() {
 
   // Radix Select disallows empty-string item values. We use sentinel values and map them to "" state.
   const ALL_MONTHS_VALUE = "__all_months__";
-  const ALL_CUTOFFS_VALUE = "__all_cutoffs__";
 
   const payslips = useQuery(
-    (api as any).payroll.getEmployeePayslips,
+    api.payroll.getEmployeePayslips,
     employeeId ? { employeeId } : "skip",
-  );
+  ) as EmployeePayslip[] | undefined;
 
   // Get employee details
   const employee = useQuery(
-    (api as any).employees.getEmployee,
+    api.employees.getEmployee,
     employeeId ? { employeeId } : "skip",
   );
 
   const appealRecipient = useQuery(
-    (api as any).chat.getPayrollAppealRecipient,
+    api.chat.getPayrollAppealRecipient,
     currentOrganizationId
       ? {
           organizationId: currentOrganizationId as Id<"organizations">,
@@ -164,41 +177,16 @@ function PayslipsPageContent() {
       : "skip",
   );
 
-  // Filter payslips by month and cutoff
+  // Filter payslips by month
   const filteredPayslips = useMemo(() => {
-    if (!payslips) return [];
+    return filterPayslipsByMonth(payslips ?? [], selectedMonth);
+  }, [payslips, selectedMonth]);
 
-    let filtered = [...payslips];
-
-    // Filter by month
-    if (selectedMonth) {
-      const [year, month] = selectedMonth.split("-");
-      const monthStart = startOfMonth(
-        new Date(parseInt(year), parseInt(month) - 1),
-      );
-      const monthEnd = endOfMonth(monthStart);
-
-      filtered = filtered.filter((payslip: any) => {
-        const payslipDate = new Date(payslip.createdAt);
-        return payslipDate >= monthStart && payslipDate <= monthEnd;
-      });
-    }
-
-    // Filter by cutoff period (extract from period string)
-    if (selectedCutoff) {
-      filtered = filtered.filter((payslip: any) => {
-        return payslip.period?.includes(selectedCutoff) || false;
-      });
-    }
-
-    return filtered;
-  }, [payslips, selectedMonth, selectedCutoff]);
-
-  // Get unique months and cutoff periods for filters
+  // Get unique months for the filter
   const availableMonths = useMemo(() => {
     if (!payslips) return [];
     const months = new Set<string>();
-    payslips.forEach((payslip: any) => {
+    payslips.forEach((payslip) => {
       const date = new Date(payslip.createdAt);
       months.add(
         `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`,
@@ -207,24 +195,9 @@ function PayslipsPageContent() {
     return Array.from(months).sort().reverse();
   }, [payslips]);
 
-  const availableCutoffs = useMemo(() => {
-    if (!payslips) return [];
-    const cutoffs = new Set<string>();
-    payslips.forEach((payslip: any) => {
-      if (payslip.period) {
-        // Extract cutoff info from period string (e.g., "12/3/2025 to 12/10/2025")
-        const match = payslip.period.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
-        if (match) {
-          cutoffs.add(payslip.period);
-        }
-      }
-    });
-    return Array.from(cutoffs).sort().reverse();
-  }, [payslips]);
-
   const selectedPayslipPeriodTitle =
-    selectedPayslip?.cutoffStart != null && selectedPayslip?.cutoffEnd != null
-      ? `${formatManilaShortMonthDay(selectedPayslip.cutoffStart)} to ${formatManilaShortDate(selectedPayslip.cutoffEnd)}`
+    selectedPayslip?.periodStart != null && selectedPayslip?.periodEnd != null
+      ? `${formatManilaShortMonthDay(selectedPayslip.periodStart)} to ${formatManilaShortDate(selectedPayslip.periodEnd)}`
       : selectedPayslip?.period;
 
   const toggleRowAmountVisibility = (payslipId: string) => {
@@ -237,7 +210,7 @@ function PayslipsPageContent() {
     });
   };
 
-  const handleViewPayslip = async (payslip: any) => {
+  const handleViewPayslip = async (payslip: EmployeePayslip) => {
     setSelectedPayslip(payslip);
     setIsViewOpen(true);
     setIsLoadingDetails(true);
@@ -324,7 +297,7 @@ function PayslipsPageContent() {
     toast,
   ]);
 
-  const handleOpenComment = (payslip: any) => {
+  const handleOpenComment = (payslip: EmployeePayslip) => {
     setSelectedPayslip(payslip);
     setIsCommentOpen(true);
     setCommentText("");
@@ -407,12 +380,14 @@ function PayslipsPageContent() {
       setIsCommentOpen(false);
       setCommentText("");
       setSelectedPayslip(null);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error sending comment:", error);
       toast({
         title: "Error",
         description:
-          error.message || "Failed to send comment. Please try again.",
+          error instanceof Error
+            ? error.message
+            : "Failed to send comment. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -438,8 +413,10 @@ function PayslipsPageContent() {
       } else {
         setPinError("Incorrect PIN. Please try again.");
       }
-    } catch (e: any) {
-      setPinError(e.message || "Verification failed");
+    } catch (error: unknown) {
+      setPinError(
+        error instanceof Error ? error.message : "Verification failed",
+      );
     } finally {
       setIsVerifyingPin(false);
     }
@@ -472,10 +449,11 @@ function PayslipsPageContent() {
       setIsSetPinOpen(false);
       setPinToSet("");
       setPinConfirm("");
-    } catch (e: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: e.message || "Failed to set PIN",
+        description:
+          error instanceof Error ? error.message : "Failed to set PIN",
         variant: "destructive",
       });
     } finally {
@@ -627,62 +605,35 @@ function PayslipsPageContent() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle>Payslip History</CardTitle>
-              <div className="flex gap-4 items-center">
-                <div className="flex items-center gap-2">
-                  <Filter className="h-4 w-4 text-gray-500" />
-                  <Label htmlFor="month-filter" className="text-sm">
-                    Month:
-                  </Label>
-                  <Select
-                    value={selectedMonth ? selectedMonth : undefined}
-                    onValueChange={(v) =>
-                      setSelectedMonth(v === ALL_MONTHS_VALUE ? "" : v)
-                    }
-                  >
-                    <SelectTrigger id="month-filter" className="w-40">
-                      <SelectValue placeholder="All months" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL_MONTHS_VALUE}>All months</SelectItem>
-                      {availableMonths.map((month) => {
-                        const [year, monthNum] = month.split("-");
-                        const date = new Date(
-                          parseInt(year),
-                          parseInt(monthNum) - 1,
-                        );
-                        return (
-                          <SelectItem key={month} value={month}>
-                            {format(date, "MMMM yyyy")}
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="cutoff-filter" className="text-sm">
-                    Cutoff:
-                  </Label>
-                  <Select
-                    value={selectedCutoff ? selectedCutoff : undefined}
-                    onValueChange={(v) =>
-                      setSelectedCutoff(v === ALL_CUTOFFS_VALUE ? "" : v)
-                    }
-                  >
-                    <SelectTrigger id="cutoff-filter" className="w-48">
-                      <SelectValue placeholder="All cutoffs" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL_CUTOFFS_VALUE}>All cutoffs</SelectItem>
-                      {availableCutoffs.map((cutoff) => (
-                        <SelectItem key={cutoff} value={cutoff}>
-                          {cutoff}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
+              <Select
+                value={selectedMonth ? selectedMonth : undefined}
+                onValueChange={(value) =>
+                  setSelectedMonth(value === ALL_MONTHS_VALUE ? "" : value)
+                }
+              >
+                <SelectTrigger
+                  id="month-filter"
+                  aria-label="Filter payslips by month"
+                  className="w-40"
+                >
+                  <SelectValue placeholder="All months" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_MONTHS_VALUE}>All months</SelectItem>
+                  {availableMonths.map((month) => {
+                    const [year, monthNum] = month.split("-");
+                    const date = new Date(
+                      parseInt(year),
+                      parseInt(monthNum) - 1,
+                    );
+                    return (
+                      <SelectItem key={month} value={month}>
+                        {format(date, "MMMM yyyy")}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
             </div>
           </CardHeader>
           <CardContent>
@@ -711,7 +662,7 @@ function PayslipsPageContent() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredPayslips?.map((payslip: any) => {
+                  {filteredPayslips.map((payslip) => {
                     const rowId = String(payslip._id);
                     const showAmounts = revealedAmountRowIds.has(rowId);
                     const grossStr = formatPesoAmounts(payslip.grossPay);
@@ -819,8 +770,8 @@ function PayslipsPageContent() {
                   payslip={payslipDetails}
                   employee={employee}
                   organization={organization}
-                  cutoffStart={selectedPayslip?.cutoffStart}
-                  cutoffEnd={selectedPayslip?.cutoffEnd}
+                  cutoffStart={selectedPayslip?.periodStart}
+                  cutoffEnd={selectedPayslip?.periodEnd}
                 />
                 <DialogFooter className="flex flex-row flex-wrap gap-2 sm:justify-end sm:space-x-0">
                   <Button
@@ -845,7 +796,7 @@ function PayslipsPageContent() {
                     variant="outline"
                     onClick={() => {
                       setIsViewOpen(false);
-                      handleOpenComment(selectedPayslip);
+                      if (selectedPayslip) handleOpenComment(selectedPayslip);
                     }}
                   >
                     <MessageSquare className="h-4 w-4 mr-2" />

@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertFinalSettlementEditable,
+  assertFinalSettlementTransition,
+  buildSeparationKey,
   buildFinalSettlementPayrollDeductions,
   computeFinalSettlementSummary,
   createDefaultFinalSettlementChecklist,
+  createLoanPayoffsFromEmployeeDeductions,
   isFinalSettlementReadyForPayroll,
+  validateFinalTaxReview,
 } from "../utils/final-settlement";
 
 describe("final settlement helpers", () => {
@@ -26,6 +31,96 @@ describe("final settlement helpers", () => {
         })),
       }),
     ).toBe(true);
+  });
+
+  it("only allows an unlinked ready settlement to enter payroll", () => {
+    const clearanceItems = createDefaultFinalSettlementChecklist(1).map(
+      (item) => ({ ...item, status: "completed" as const }),
+    );
+
+    expect(
+      isFinalSettlementReadyForPayroll({
+        status: "payroll_generated",
+        clearanceItems,
+      }),
+    ).toBe(false);
+    expect(
+      isFinalSettlementReadyForPayroll({
+        status: "released",
+        clearanceItems,
+      }),
+    ).toBe(false);
+    expect(
+      isFinalSettlementReadyForPayroll({
+        status: "ready_for_payroll",
+        clearanceItems,
+        payrollRunId: "run-1",
+      }),
+    ).toBe(false);
+  });
+
+  it("requires a verified positive payoff for approved loans", () => {
+    const clearanceItems = createDefaultFinalSettlementChecklist(1).map(
+      (item) => ({ ...item, status: "completed" as const }),
+    );
+
+    expect(
+      isFinalSettlementReadyForPayroll({
+        status: "ready_for_payroll",
+        clearanceItems,
+        loanPayoffs: [
+          {
+            id: "loan-1",
+            name: "Salary loan",
+            payoffAmount: 0,
+            rule: "deduct_full_balance",
+            status: "approved",
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("does not assume a recurring loan deduction is its outstanding balance", () => {
+    const [payoff] = createLoanPayoffsFromEmployeeDeductions([
+      {
+        id: "loan-1",
+        name: "Salary loan",
+        type: "loan",
+        amount: 1_500,
+        frequency: "per-cutoff",
+        isActive: true,
+      },
+    ]);
+
+    expect(payoff).toMatchObject({
+      scheduledAmount: 1_500,
+      payoffAmount: 0,
+      rule: "deduct_full_balance",
+      status: "pending",
+    });
+  });
+
+  it("binds settlement identity to the employee separation event", () => {
+    expect(buildSeparationKey("employee-1", "resigned", 123_456)).toBe(
+      "employee-1:resigned:123456",
+    );
+    expect(buildSeparationKey("employee-1", "terminated", 123_456)).not.toBe(
+      buildSeparationKey("employee-1", "resigned", 123_456),
+    );
+  });
+
+  it("locks generated settlements and rejects invalid lifecycle transitions", () => {
+    expect(() => assertFinalSettlementEditable("payroll_generated")).toThrow(
+      "cannot be edited",
+    );
+    expect(() => assertFinalSettlementEditable("ready_for_payroll")).not.toThrow();
+    expect(() =>
+      assertFinalSettlementTransition("released", "ready_for_payroll"),
+    ).toThrow("cannot transition");
+    expect(() =>
+      assertFinalSettlementTransition("in_review", "ready_for_payroll"),
+    ).not.toThrow();
   });
 
   it("builds approved loan payoff and custom deduction payroll lines", () => {
@@ -107,6 +202,28 @@ describe("final settlement helpers", () => {
     expect(summary.clearance.completedRequired).toBe(1);
     expect(summary.clearance.required).toBe(2);
     expect(summary.totalSettlementDeductions).toBe(2500);
-    expect(summary.readyForRelease).toBe(true);
+    expect(summary.readyForRelease).toBe(false);
+  });
+
+  it("requires a reason when HR overrides the calculated final tax", () => {
+    expect(() =>
+      validateFinalTaxReview({
+        calculatedAdjustment: 6_500,
+        appliedAdjustment: 5_000,
+      }),
+    ).toThrow("override reason");
+
+    expect(
+      validateFinalTaxReview({
+        calculatedAdjustment: 6_500,
+        appliedAdjustment: 5_000,
+        overrideReason: "Confirmed against the employee's previous BIR 2316.",
+      }),
+    ).toEqual({
+      calculatedAdjustment: 6_500,
+      appliedAdjustment: 5_000,
+      variance: -1_500,
+      overrideReason: "Confirmed against the employee's previous BIR 2316.",
+    });
   });
 });

@@ -23,30 +23,61 @@ import { TiptapEditor } from "@/components/tiptap-editor";
 import { useToast } from "@/components/ui/use-toast";
 import { getOrganizationPath } from "@/utils/organization-routing";
 import { isFileOnlyDocument } from "@/lib/document-utils";
+import { useEmployeeView } from "@/hooks/employee-view-context";
+import type { Id } from "@/convex/_generated/dataModel";
+
+type DocumentType =
+  | "personal"
+  | "employment"
+  | "contract"
+  | "certificate"
+  | "leave_form"
+  | "other";
 
 export default function EditDocumentPage() {
   const router = useRouter();
   const params = useParams();
   const documentId = params.id as string;
   const { currentOrganizationId } = useOrganization();
+  const { isEmployeeExperienceUI } = useEmployeeView();
   const { toast } = useToast();
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [formData, setFormData] = useState({
     title: "",
-    type: "other" as const,
+    type: "other" as DocumentType,
     category: "",
     content: JSON.stringify({ type: "doc", content: [] }),
   });
 
   const document = useQuery(
-    (api as any).documents.getDocument,
-    documentId ? { documentId: documentId as any } : "skip"
+    api.documents.getDocument,
+    documentId
+      ? {
+          documentId: documentId as Id<"documents">,
+          employeeExperienceMode: isEmployeeExperienceUI,
+        }
+      : "skip",
   );
+  const currentUser = useQuery(
+    api.organizations.getCurrentUser,
+    currentOrganizationId
+      ? { organizationId: currentOrganizationId as Id<"organizations"> }
+      : "skip",
+  );
+  const canManageDocuments =
+    !isEmployeeExperienceUI &&
+    ["owner", "admin", "hr"].includes(
+      (currentUser?.role ?? "").toLowerCase(),
+    );
 
   useEffect(() => {
+    if (document === null) {
+      setIsLoading(false);
+      return;
+    }
     if (document) {
-      if (isFileOnlyDocument(document as any)) {
+      if (isFileOnlyDocument(document)) {
         setIsLoading(false);
         toast({
           title: "Not editable",
@@ -90,7 +121,7 @@ export default function EditDocumentPage() {
         title: formData.title,
         content: formData.content,
         type: formData.type,
-        category: formData.category || undefined,
+        category: formData.category.trim(),
       });
 
       toast({
@@ -99,17 +130,52 @@ export default function EditDocumentPage() {
       });
 
       router.push(getOrganizationPath(currentOrganizationId, "/documents"));
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error updating document:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to update document",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to update document",
         variant: "destructive",
       });
     } finally {
       setIsSaving(false);
     }
   };
+
+  if (
+    isEmployeeExperienceUI ||
+    (currentUser !== undefined && !canManageDocuments)
+  ) {
+    return (
+      <MainLayout>
+        <div className="flex min-h-[60vh] items-center justify-center p-8">
+          <div className="text-center">
+            <h1 className="text-xl font-semibold">
+              Document management unavailable
+            </h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Employee view can read shared documents but cannot create or edit
+              them.
+            </p>
+            <Button
+              variant="outline"
+              className="mt-4"
+              onClick={() =>
+                router.push(
+                  getOrganizationPath(currentOrganizationId, "/documents"),
+                )
+              }
+            >
+              Back to Documents
+            </Button>
+          </div>
+        </div>
+      </MainLayout>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -199,7 +265,7 @@ export default function EditDocumentPage() {
                       <Label htmlFor="type">Type <span className="text-red-500">*</span></Label>
                       <Select
                         value={formData.type}
-                        onValueChange={(value: any) =>
+                        onValueChange={(value: DocumentType) =>
                           setFormData({ ...formData, type: value })
                         }
                       >

@@ -11,6 +11,7 @@ export type EvaluationEmployeeListItem = {
   employeeCode: string;
   position: string;
   department: string;
+  employmentStatus: EvaluationEmploymentStatus;
   nextEvaluation: {
     status: EvaluationStatus;
     scheduledFor: number;
@@ -23,9 +24,22 @@ export type EvaluationTimingFilter =
   | EvaluationTiming
   | "not_scheduled";
 
+export type EvaluationEmploymentStatus =
+  | "active"
+  | "resigned"
+  | "terminated";
+
+export type EvaluationEmploymentStatusFilter =
+  | "all"
+  | EvaluationEmploymentStatus;
+
+export const DEFAULT_EVALUATION_EMPLOYMENT_STATUS_FILTER: EvaluationEmploymentStatusFilter =
+  "active";
+
 export type EvaluationEmployeeFilters = {
   search: string;
   department: string;
+  employmentStatus: EvaluationEmploymentStatusFilter;
   timing: EvaluationTimingFilter;
   now: number;
 };
@@ -43,6 +57,9 @@ export function filterEvaluationEmployees<T extends EvaluationEmployeeListItem>(
       );
     const matchesDepartment =
       filters.department === "all" || row.department === filters.department;
+    const matchesEmploymentStatus =
+      filters.employmentStatus === "all" ||
+      row.employmentStatus === filters.employmentStatus;
     let matchesTiming = filters.timing === "all";
 
     if (filters.timing === "not_scheduled") {
@@ -59,7 +76,12 @@ export function filterEvaluationEmployees<T extends EvaluationEmployeeListItem>(
         ) === filters.timing;
     }
 
-    return matchesSearch && matchesDepartment && matchesTiming;
+    return (
+      matchesSearch &&
+      matchesDepartment &&
+      matchesEmploymentStatus &&
+      matchesTiming
+    );
   });
 }
 

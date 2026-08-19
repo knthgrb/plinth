@@ -3,16 +3,22 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import {
+  assertFinalSettlementEditable,
+  assertFinalSettlementTransition,
+  buildSeparationKey,
   buildFinalSettlementPayrollDeductions,
   computeFinalSettlementSummary,
   createDefaultFinalSettlementChecklist,
   createLoanPayoffsFromEmployeeDeductions,
   isFinalSettlementReadyForPayroll,
+  validateFinalTaxReview,
   type FinalSettlementCustomDeduction,
   type FinalSettlementLoanPayoff,
+  type FinalSettlementStatus,
 } from "@/utils/final-settlement";
 import { loadEffectiveEmployee } from "./leaveEmployeeCompatibility";
 import { prepareEmployeeLeaveForFinalSettlement } from "./leaveConversions";
+import { decryptPayslipRowFromDb } from "./payslipCrypto";
 
 const clearanceStatusValidator = v.union(
   v.literal("pending"),
@@ -70,10 +76,73 @@ async function getSettlementForWrite(ctx: any, settlementId: any) {
   return { settlement, userRecord };
 }
 
-async function findSettlementByEmployee(ctx: any, employeeId: any) {
-  return await (ctx.db.query("finalSettlements") as any)
-    .withIndex("by_employee", (q: any) => q.eq("employeeId", employeeId))
+async function findSettlementBySeparation(
+  ctx: QueryCtx | MutationCtx,
+  employeeId: Id<"employees">,
+  separationKey: string,
+) {
+  const indexed = await ctx.db
+    .query("finalSettlements")
+    .withIndex("by_employee_separation_key", (query) =>
+      query.eq("employeeId", employeeId).eq("separationKey", separationKey),
+    )
     .first();
+  if (indexed) return indexed;
+
+  const legacyRows = await ctx.db
+    .query("finalSettlements")
+    .withIndex("by_employee", (query) => query.eq("employeeId", employeeId))
+    .collect();
+  return (
+    legacyRows.find((settlement) => {
+      if (settlement.separationKey || !settlement.separationType) return false;
+      const date = settlement.lastWorkingDay ?? settlement.separationDate;
+      return (
+        typeof date === "number" &&
+        buildSeparationKey(
+          String(employeeId),
+          settlement.separationType,
+          date,
+        ) === separationKey
+      );
+    }) ?? null
+  );
+}
+
+async function findSeparationEvent(
+  ctx: QueryCtx | MutationCtx,
+  employeeId: Id<"employees">,
+  separationType: "resigned" | "terminated",
+  separationDate: number,
+) {
+  const events = await ctx.db
+    .query("employeeLifecycleEvents")
+    .withIndex("by_employee_effective_at", (query) =>
+      query.eq("employeeId", employeeId).eq("effectiveAt", separationDate),
+    )
+    .collect();
+  return events.find((event) => event.type === separationType) ?? null;
+}
+
+function statusAfterSettlementEdit(
+  status: FinalSettlementStatus,
+): FinalSettlementStatus {
+  return status === "ready_for_payroll" ? "in_review" : status;
+}
+
+function assertSettlementHasGeneratedPayroll(
+  settlement: Doc<"finalSettlements">,
+): number {
+  if (
+    settlement.status !== "payroll_generated" ||
+    !settlement.payrollRunId ||
+    !settlement.payslipId
+  ) {
+    throw new Error(
+      "Generate the final-pay payroll draft before completing tax or BIR review.",
+    );
+  }
+  return settlement.calculationVersion ?? 0;
 }
 
 function employeeDisplayName(employee: any): string {
@@ -149,7 +218,10 @@ async function enrichSettlement(ctx: any, settlement: any) {
   const payrollRun = settlement.payrollRunId
     ? await ctx.db.get(settlement.payrollRunId)
     : null;
-  const payslip = settlement.payslipId ? await ctx.db.get(settlement.payslipId) : null;
+  const rawPayslip = settlement.payslipId
+    ? await ctx.db.get(settlement.payslipId)
+    : null;
+  const payslip = decryptPayslipRowFromDb(rawPayslip);
 
   return {
     ...settlement,
@@ -188,14 +260,37 @@ export const getFinalSettlements = query({
         loadEffectiveEmployee(ctx, employee),
       ),
     );
-    const settlementEmployeeIds = new Set(
-      settlements.map((settlement: any) => String(settlement.employeeId)),
+    const settlementKeys = new Set(
+      settlements.flatMap((settlement: Doc<"finalSettlements">) => {
+        if (settlement.separationKey) return [settlement.separationKey];
+        const date = settlement.lastWorkingDay ?? settlement.separationDate;
+        return settlement.separationType && typeof date === "number"
+          ? [
+              buildSeparationKey(
+                String(settlement.employeeId),
+                settlement.separationType,
+                date,
+              ),
+            ]
+          : [];
+      }),
     );
     const separatedEmployees = employees
       .filter(
         (employee: any) =>
           isSeparatedEmployee(employee) &&
-          !settlementEmployeeIds.has(String(employee._id)),
+          typeof (
+            employee.employment.lastWorkingDay ??
+            employee.employment.separationDate
+          ) === "number" &&
+          !settlementKeys.has(
+            buildSeparationKey(
+              String(employee._id),
+              employee.employment.status,
+              employee.employment.lastWorkingDay ??
+                employee.employment.separationDate,
+            ),
+          ),
       )
       .map((employee: any) => ({
         _id: employee._id,
@@ -236,23 +331,43 @@ export const prepareFinalSettlement = mutation({
       throw new Error("Final settlement can only be prepared for resigned or terminated employees");
     }
 
-    const existing = await findSettlementByEmployee(ctx, args.employeeId);
+    const separationType =
+      employee.employment.status === "terminated" ? "terminated" : "resigned";
+    const separationDate =
+      employee.employment.lastWorkingDay ?? employee.employment.separationDate;
+    if (typeof separationDate !== "number") {
+      throw new Error(
+        "A last working day or separation date is required before preparing final settlement.",
+      );
+    }
+    const separationKey = buildSeparationKey(
+      String(args.employeeId),
+      separationType,
+      separationDate,
+    );
+    const separationEvent = await findSeparationEvent(
+      ctx,
+      args.employeeId,
+      separationType,
+      separationDate,
+    );
+    const existing = await findSettlementBySeparation(
+      ctx,
+      args.employeeId,
+      separationKey,
+    );
     if (existing) {
       await prepareEmployeeLeaveForFinalSettlement(ctx, {
         organizationId: args.organizationId,
         employeeId: args.employeeId,
         separationDate:
-          employee.employment.separationDate ??
-          employee.employment.lastWorkingDay ??
-          Date.now(),
+          separationDate,
         actorId: userRecord._id,
       });
       return existing._id;
     }
 
     const now = Date.now();
-    const separationType =
-      employee.employment.status === "terminated" ? "terminated" : "resigned";
     const clearanceItems = createDefaultFinalSettlementChecklist(now).map(
       (item) => ({
         id: item.id,
@@ -266,6 +381,8 @@ export const prepareFinalSettlement = mutation({
     const settlementId = await ctx.db.insert("finalSettlements", {
       organizationId: args.organizationId,
       employeeId: args.employeeId,
+      separationEventId: separationEvent?._id,
+      separationKey,
       status: "in_review",
       separationType,
       separationDate: employee.employment.separationDate,
@@ -280,6 +397,7 @@ export const prepareFinalSettlement = mutation({
       finalTaxRelease: {
         status: "pending",
       },
+      calculationVersion: 0,
       createdBy: userRecord._id,
       createdAt: now,
       updatedAt: now,
@@ -298,9 +416,7 @@ export const prepareFinalSettlement = mutation({
       organizationId: args.organizationId,
       employeeId: args.employeeId,
       separationDate:
-        employee.employment.separationDate ??
-        employee.employment.lastWorkingDay ??
-        now,
+        separationDate,
       actorId: userRecord._id,
     });
 
@@ -320,6 +436,7 @@ export const updateClearanceItem = mutation({
       ctx,
       args.settlementId,
     );
+    assertFinalSettlementEditable(settlement.status);
     const now = Date.now();
     const clearanceItems = settlement.clearanceItems.map((item: any) => {
       if (item.id !== args.itemId) return item;
@@ -347,15 +464,20 @@ export const updateClearanceItem = mutation({
 
     await ctx.db.patch(args.settlementId, {
       clearanceItems,
+      status: statusAfterSettlementEdit(settlement.status),
       updatedAt: now,
     });
 
     const employee = (await ctx.db.get(settlement.employeeId)) as any;
-    if (employee && allResolved) {
+    if (employee) {
       await ctx.db.patch(settlement.employeeId, {
         employment: {
           ...employee.employment,
-          clearanceStatus: hasWaived ? "waived" : "cleared",
+          clearanceStatus: allResolved
+            ? hasWaived
+              ? "waived"
+              : "cleared"
+            : "pending",
         },
         updatedAt: now,
       });
@@ -381,10 +503,18 @@ export const upsertLoanPayoff = mutation({
   },
   handler: async (ctx, args) => {
     const { settlement } = await getSettlementForWrite(ctx, args.settlementId);
+    assertFinalSettlementEditable(settlement.status);
     const now = Date.now();
     const fallbackId = nextLineId("loan", now, settlement.loanPayoffs.length);
     const nextLine = normalizeLoanPayoff(args.loanPayoff, fallbackId);
     if (!nextLine.name) throw new Error("Loan payoff name is required");
+    if (
+      nextLine.status === "approved" &&
+      nextLine.rule !== "waive" &&
+      nextLine.payoffAmount <= 0
+    ) {
+      throw new Error("Enter a verified positive loan payoff amount before approval.");
+    }
 
     const existingIndex = settlement.loanPayoffs.findIndex(
       (line: any) => line.id === nextLine.id,
@@ -398,6 +528,7 @@ export const upsertLoanPayoff = mutation({
 
     await ctx.db.patch(args.settlementId, {
       loanPayoffs,
+      status: statusAfterSettlementEdit(settlement.status),
       updatedAt: now,
     });
 
@@ -412,10 +543,12 @@ export const removeLoanPayoff = mutation({
   },
   handler: async (ctx, args) => {
     const { settlement } = await getSettlementForWrite(ctx, args.settlementId);
+    assertFinalSettlementEditable(settlement.status);
     await ctx.db.patch(args.settlementId, {
       loanPayoffs: settlement.loanPayoffs.filter(
         (line: any) => line.id !== args.loanPayoffId,
       ),
+      status: statusAfterSettlementEdit(settlement.status),
       updatedAt: Date.now(),
     });
     return { success: true };
@@ -436,6 +569,7 @@ export const upsertCustomDeduction = mutation({
   },
   handler: async (ctx, args) => {
     const { settlement } = await getSettlementForWrite(ctx, args.settlementId);
+    assertFinalSettlementEditable(settlement.status);
     const now = Date.now();
     const fallbackId = nextLineId(
       "deduction",
@@ -457,6 +591,7 @@ export const upsertCustomDeduction = mutation({
 
     await ctx.db.patch(args.settlementId, {
       customDeductions,
+      status: statusAfterSettlementEdit(settlement.status),
       updatedAt: now,
     });
 
@@ -471,10 +606,12 @@ export const removeCustomDeduction = mutation({
   },
   handler: async (ctx, args) => {
     const { settlement } = await getSettlementForWrite(ctx, args.settlementId);
+    assertFinalSettlementEditable(settlement.status);
     await ctx.db.patch(args.settlementId, {
       customDeductions: settlement.customDeductions.filter(
         (line: any) => line.id !== args.deductionId,
       ),
+      status: statusAfterSettlementEdit(settlement.status),
       updatedAt: Date.now(),
     });
     return { success: true };
@@ -487,6 +624,7 @@ export const markFinalSettlementReadyForPayroll = mutation({
   },
   handler: async (ctx, args) => {
     const { settlement } = await getSettlementForWrite(ctx, args.settlementId);
+    assertFinalSettlementTransition(settlement.status, "ready_for_payroll");
     const candidate = { ...settlement, status: "ready_for_payroll" as const };
     if (!isFinalSettlementReadyForPayroll(candidate)) {
       throw new Error(
@@ -521,10 +659,12 @@ export const markBir2316DataReady = mutation({
   },
   handler: async (ctx, args) => {
     const { settlement } = await getSettlementForWrite(ctx, args.settlementId);
+    const calculationVersion = assertSettlementHasGeneratedPayroll(settlement);
     await ctx.db.patch(args.settlementId, {
       bir2316: {
         ...settlement.bir2316,
         status: "data_ready",
+        calculationVersion,
         notes: args.notes?.trim() || settlement.bir2316.notes,
       },
       updatedAt: Date.now(),
@@ -544,11 +684,29 @@ export const markBir2316Released = mutation({
       ctx,
       args.settlementId,
     );
+    if (
+      settlement.status !== "payroll_generated" &&
+      settlement.status !== "released"
+    ) {
+      throw new Error("BIR 2316 can only be released after payroll generation.");
+    }
+    if (
+      settlement.bir2316.status !== "data_ready" &&
+      settlement.bir2316.status !== "document_generated" &&
+      settlement.bir2316.status !== "released"
+    ) {
+      throw new Error("Prepare BIR 2316 data before releasing the document.");
+    }
+    const documentId = args.documentId ?? settlement.bir2316.documentId;
+    if (!documentId) {
+      throw new Error("Attach the generated BIR 2316 document before release.");
+    }
     await ctx.db.patch(args.settlementId, {
       bir2316: {
         ...settlement.bir2316,
         status: "released",
-        documentId: args.documentId ?? settlement.bir2316.documentId,
+        documentId,
+        calculationVersion: settlement.calculationVersion ?? 0,
         releasedAt: Date.now(),
         releasedBy: userRecord._id,
         notes: args.notes?.trim() || settlement.bir2316.notes,
@@ -562,6 +720,7 @@ export const markBir2316Released = mutation({
 export const markFinalTaxReviewed = mutation({
   args: {
     settlementId: v.id("finalSettlements"),
+    overrideReason: v.optional(v.string()),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -569,12 +728,43 @@ export const markFinalTaxReviewed = mutation({
       ctx,
       args.settlementId,
     );
+    const calculationVersion = assertSettlementHasGeneratedPayroll(settlement);
+    if (!settlement.payslipId) {
+      throw new Error("Generate the final-pay payroll draft before reviewing tax.");
+    }
+    const rawPayslip = await ctx.db.get(settlement.payslipId);
+    const payslip = decryptPayslipRowFromDb(rawPayslip);
+    if (!payslip) throw new Error("The linked final-pay payslip was not found.");
+    const withholdingTax = (payslip.deductions ?? [])
+      .filter((line: { name?: string }) =>
+        (line.name ?? "").toLowerCase().includes("withholding tax"),
+      )
+      .reduce(
+        (sum: number, line: { amount?: number }) => sum + Number(line.amount ?? 0),
+        0,
+      );
+    const withholdingTaxRefund = (payslip.incentives ?? [])
+      .filter((line: { name?: string }) =>
+        (line.name ?? "").toLowerCase().includes("withholding tax refund"),
+      )
+      .reduce(
+        (sum: number, line: { amount?: number }) => sum + Number(line.amount ?? 0),
+        0,
+      );
+    const review = validateFinalTaxReview({
+      calculatedAdjustment:
+        settlement.finalTaxRelease.calculatedAdjustment ?? 0,
+      appliedAdjustment: withholdingTax - withholdingTaxRefund,
+      overrideReason: args.overrideReason,
+    });
     await ctx.db.patch(args.settlementId, {
       finalTaxRelease: {
         ...settlement.finalTaxRelease,
+        ...review,
         status: "reviewed",
         reviewedBy: userRecord._id,
         reviewedAt: Date.now(),
+        calculationVersion,
         notes: args.notes?.trim() || settlement.finalTaxRelease.notes,
       },
       updatedAt: Date.now(),

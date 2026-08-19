@@ -1492,6 +1492,7 @@ export function BulkAddAttendanceDialog({
                     value={bulkSelectedEmployee}
                     onValueChange={setBulkSelectedEmployee}
                     disabled={isSubmittingBulk}
+                    includeInactive
                   />
                 </div>
                 <div className="space-y-1.5 min-w-0">

@@ -30,6 +30,27 @@ export interface LeaveSettingsViewModel {
   archivedPolicies: LeavePolicySummary[];
 }
 
+interface CompleteLeaveMigrationInput {
+  runBatch: () => Promise<{ nextCursor?: string }>;
+  activate: () => Promise<void>;
+}
+
+const MAX_LEAVE_MIGRATION_BATCHES = 10_000;
+
+export async function completeLeaveMigration(
+  input: CompleteLeaveMigrationInput,
+): Promise<void> {
+  for (let batch = 0; batch < MAX_LEAVE_MIGRATION_BATCHES; batch += 1) {
+    const result = await input.runBatch();
+    if (result.nextCursor === undefined) {
+      await input.activate();
+      return;
+    }
+  }
+
+  throw new Error("Leave migration exceeded the supported batch limit");
+}
+
 export function buildLeaveSettingsViewModel(input: {
   settings: LeaveSettingsSummary | null;
   policies: readonly LeavePolicySummary[];

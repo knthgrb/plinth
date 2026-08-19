@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   computeSupplementalWithholdingTaxForSpecialBenefit,
+  splitPrivateLeaveConversionBenefit,
   splitTrainNinetyThousandBenefit,
 } from "@/lib/ph-special-benefits";
 
@@ -27,5 +28,35 @@ describe("Philippine special benefit tax handling", () => {
     });
 
     expect(tax).toBe(10_000);
+  });
+
+  it("exempts up to ten private-employee vacation leave days before the shared cap", () => {
+    expect(
+      splitPrivateLeaveConversionBenefit({
+        amount: 15_000,
+        convertedVacationDays: 15,
+        dailyRate: 1_000,
+        ytdOtherBenefits: 88_000,
+      }),
+    ).toEqual({
+      deMinimisExempt: 10_000,
+      otherBenefitsExempt: 2_000,
+      taxable: 3_000,
+    });
+  });
+
+  it("does not consume the shared benefit cap with de minimis leave conversion", () => {
+    expect(
+      splitPrivateLeaveConversionBenefit({
+        amount: 8_000,
+        convertedVacationDays: 8,
+        dailyRate: 1_000,
+        ytdOtherBenefits: 90_000,
+      }),
+    ).toEqual({
+      deMinimisExempt: 8_000,
+      otherBenefitsExempt: 0,
+      taxable: 0,
+    });
   });
 });

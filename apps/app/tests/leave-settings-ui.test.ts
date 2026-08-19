@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLeaveSettingsViewModel,
+  completeLeaveMigration,
   validatePolicyVersionDraft,
 } from "../lib/leave/client-state";
 
@@ -71,5 +72,26 @@ describe("leave settings UI state", () => {
         reason: "Annual policy update",
       }),
     ).toEqual({ valid: true });
+  });
+
+  it("finishes every migration batch before activating leave settings", async () => {
+    const events: string[] = [];
+    const batches = [
+      { nextCursor: "migration:balances" },
+      { nextCursor: "audit:requests" },
+      {},
+    ];
+
+    await completeLeaveMigration({
+      runBatch: async () => {
+        events.push("batch");
+        return batches.shift() ?? {};
+      },
+      activate: async () => {
+        events.push("activate");
+      },
+    });
+
+    expect(events).toEqual(["batch", "batch", "batch", "activate"]);
   });
 });

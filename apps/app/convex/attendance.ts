@@ -59,6 +59,30 @@ function getManilaDateParts(ts: number) {
   const d = new Date(ts + MANILA_OFFSET_MS);
   return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate() };
 }
+
+function assertAttendanceIsWithinEmployment(
+  employee: Doc<"employees">,
+  attendanceDate: number,
+): void {
+  if (employee.employment.status === "active") {
+    return;
+  }
+
+  const separationDate =
+    employee.employment.separationDate ??
+    employee.employment.lastWorkingDay ??
+    employee.updatedAt;
+
+  if (
+    normalizeAttendanceDateMs(attendanceDate) >
+    normalizeAttendanceDateMs(separationDate)
+  ) {
+    throw new Error(
+      "Attendance cannot be recorded after the employee's separation date",
+    );
+  }
+}
+
 /** Returns the full matching holiday entry for a date, or null. */
 function getMatchingHolidayEntryForDate(
   dateTs: number,
@@ -795,6 +819,7 @@ export const createAttendance = mutation({
     if (!employee || employee.organizationId !== args.organizationId) {
       throw new Error("Employee does not belong to this organization");
     }
+    assertAttendanceIsWithinEmployment(employee, normalizedDate);
     const writeAuthorization = await authorizeAttendanceWrite(
       ctx,
       userRecord,
@@ -1607,6 +1632,17 @@ export const bulkCreateAttendance = mutation({
     const normalizedDates = args.entries.map((entry) =>
       normalizeAttendanceDateMs(entry.date),
     );
+    normalizedDates.forEach((date, index) => {
+      if (idempotentAttendance[index]) {
+        return;
+      }
+
+      const employee = employeesById.get(args.entries[index].employeeId);
+      if (!employee) {
+        throw new Error("Employee was not loaded for attendance validation");
+      }
+      assertAttendanceIsWithinEmployment(employee, date);
+    });
     const writeAuthorizations = await Promise.all(
       normalizedDates.map((date, index) =>
         idempotentAttendance[index]

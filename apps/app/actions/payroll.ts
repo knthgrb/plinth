@@ -8,6 +8,7 @@ export async function createPayrollRun(data: {
   cutoffStart: number;
   cutoffEnd: number;
   employeeIds: string[];
+  runType?: "regular" | "final_pay";
   deductionsEnabled?: boolean;
   nightDiffPercent?: number;
   manualDeductions?: Array<{

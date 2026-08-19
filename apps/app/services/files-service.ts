@@ -32,12 +32,14 @@ export class FilesService {
     organizationId: string,
     documentId: string,
     storageId: string,
+    employeeExperienceMode = false,
   ): Promise<string> {
     const convex = await getAuthedConvexClient();
     const url = await convex.query(api.documents.getDocumentAttachmentUrl, {
       organizationId: organizationId as Id<"organizations">,
       documentId: documentId as Id<"documents">,
       storageId: storageId as Id<"_storage">,
+      employeeExperienceMode,
     });
     if (!url) throw new Error("File is unavailable");
     return url;

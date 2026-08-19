@@ -276,10 +276,10 @@
     },
     {
       "name": "finalSettlements",
-      "fieldCount": 48,
-      "fieldsSha256": "3c2ce871b6d00eeca80d385e36240be9150c70361b365f6844b78d18105456a0",
-      "indexCount": 4,
-      "indexesSha256": "174b1d3ca3856faf2c97d5c31c026968fd67466326125a9afa89259b32fc0657"
+      "fieldCount": 60,
+      "fieldsSha256": "cc8dbe4625bf032090b39ca23921db73907b31fd607f821da0ac00615c5f5bb1",
+      "indexCount": 5,
+      "indexesSha256": "2be523e6fa6cfaf42918cc1aa59bbbc69da0201468f39ae478617e51a6984a12"
     },
     {
       "name": "holidays",

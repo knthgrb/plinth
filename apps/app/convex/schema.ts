@@ -1685,6 +1685,8 @@ export default defineSchema({
   finalSettlements: defineTable({
     organizationId: v.id("organizations"),
     employeeId: v.id("employees"),
+    separationEventId: v.optional(v.id("employeeLifecycleEvents")),
+    separationKey: v.optional(v.string()),
     status: v.union(
       v.literal("draft"),
       v.literal("in_review"),
@@ -1767,6 +1769,7 @@ export default defineSchema({
       generatedAt: v.optional(v.number()),
       releasedAt: v.optional(v.number()),
       releasedBy: v.optional(v.id("users")),
+      calculationVersion: v.optional(v.number()),
       notes: v.optional(v.string()),
     }),
     finalTaxRelease: v.object({
@@ -1779,8 +1782,17 @@ export default defineSchema({
       reviewedAt: v.optional(v.number()),
       releasedBy: v.optional(v.id("users")),
       releasedAt: v.optional(v.number()),
+      calculationVersion: v.optional(v.number()),
+      annualTaxableIncome: v.optional(v.number()),
+      annualTaxDue: v.optional(v.number()),
+      taxAlreadyWithheld: v.optional(v.number()),
+      calculatedAdjustment: v.optional(v.number()),
+      appliedAdjustment: v.optional(v.number()),
+      variance: v.optional(v.number()),
+      overrideReason: v.optional(v.string()),
       notes: v.optional(v.string()),
     }),
+    calculationVersion: v.optional(v.number()),
     createdBy: v.id("users"),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -1788,6 +1800,7 @@ export default defineSchema({
     .index("by_organization", ["organizationId"])
     .index("by_organization_status", ["organizationId", "status"])
     .index("by_employee", ["employeeId"])
+    .index("by_employee_separation_key", ["employeeId", "separationKey"])
     .index("by_payroll_run", ["payrollRunId"]),
 
   // Payslips table

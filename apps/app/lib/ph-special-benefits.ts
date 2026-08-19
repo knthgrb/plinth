@@ -21,6 +21,36 @@ export function splitTrainNinetyThousandBenefit(
   };
 }
 
+export function splitPrivateLeaveConversionBenefit(args: {
+  amount: number;
+  convertedVacationDays: number;
+  dailyRate: number;
+  ytdOtherBenefits: number;
+}): {
+  deMinimisExempt: number;
+  otherBenefitsExempt: number;
+  taxable: number;
+} {
+  const amount = Math.max(0, round2(args.amount));
+  const deMinimisExempt = round2(
+    Math.min(
+      amount,
+      Math.min(10, Math.max(0, args.convertedVacationDays)) *
+        Math.max(0, args.dailyRate),
+    ),
+  );
+  const otherBenefit = round2(amount - deMinimisExempt);
+  const split = splitTrainNinetyThousandBenefit(
+    otherBenefit,
+    args.ytdOtherBenefits,
+  );
+  return {
+    deMinimisExempt,
+    otherBenefitsExempt: split.exempt,
+    taxable: split.taxable,
+  };
+}
+
 export function computeSupplementalWithholdingTaxForSpecialBenefit(args: {
   ytdTaxableGross: number;
   ytdMandatoryContributions: number;

@@ -328,12 +328,16 @@ export function PayrollRunsTable({
                                     : `Send corrected payslips (${pendingCorrectionByRunId[String(run._id)]?.uniquePayslips ?? 0})`}
                                 </DropdownMenuItem>
                               )}
-                            <DropdownMenuItem
-                              onClick={() => onStatusChange(run, "finalized")}
-                            >
-                              <Undo2 className="h-4 w-4 mr-2" />
-                              Revert to Finalized
-                            </DropdownMenuItem>
+                            {run.runType !== "final_pay" && (
+                              <DropdownMenuItem
+                                onClick={() =>
+                                  onStatusChange(run, "finalized")
+                                }
+                              >
+                                <Undo2 className="h-4 w-4 mr-2" />
+                                Revert to Finalized
+                              </DropdownMenuItem>
+                            )}
                           </>
                         )}
                         <DropdownMenuSeparator />

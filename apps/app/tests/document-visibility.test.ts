@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { getDocumentTitleFromFileName } from "../lib/document-utils";
 
 function readSource(relativePath: string): string {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");
@@ -33,15 +34,22 @@ describe("document visibility scopes", () => {
     );
   });
 
-  it("lets uploaded documents choose a visibility scope", () => {
+  it("keeps file upload single-file and management-only", () => {
     const pageSource = readSource("../app/[organizationId]/documents/page.tsx");
 
-    expect(pageSource).toContain("visibilityScope");
-    expect(pageSource).toContain("Visibility");
-    expect(pageSource).toContain("Admins only");
-    expect(pageSource).toContain("All employees");
-    expect(pageSource).toContain("Payroll-visible");
-    expect(pageSource).toContain("Alumni-visible");
+    expect(pageSource).toContain("Upload File");
+    expect(pageSource).not.toContain("Upload Files");
+    expect(pageSource).not.toContain("multiple");
+    expect(pageSource).not.toContain("Document location");
+    expect(pageSource).not.toContain("Employee access");
+    expect(pageSource).not.toContain("Enter file title");
+    expect(pageSource).toContain('visibilityScope: "admins_only"');
     expect(pageSource).toContain("canWriteDocuments");
+    expect(pageSource).toContain("No documents are available.");
+  });
+
+  it("uses the complete filename as an uploaded document title", () => {
+    expect(getDocumentTitleFromFileName("Garbo, Kenneth - Resume (1).pdf"))
+      .toBe("Garbo, Kenneth - Resume (1).pdf");
   });
 });

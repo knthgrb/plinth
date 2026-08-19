@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -39,9 +40,9 @@ import {
   MinusCircle,
   Plus,
   RotateCcw,
-  ShieldCheck,
 } from "lucide-react";
 import { format } from "date-fns";
+import { createPayrollRun } from "@/actions/payroll";
 
 type FinalSettlementsTabProps = {
   organizationId: string;
@@ -62,6 +63,28 @@ function formatCurrency(amount: number | undefined): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+type FinalTaxPayslipLine = {
+  name?: string;
+  amount?: number;
+};
+
+function getAppliedFinalTaxAdjustment(payslip: {
+  deductions?: FinalTaxPayslipLine[];
+  incentives?: FinalTaxPayslipLine[];
+} | null | undefined): number {
+  const tax = (payslip?.deductions ?? [])
+    .filter((line) =>
+      (line.name ?? "").toLowerCase().includes("withholding tax"),
+    )
+    .reduce((sum, line) => sum + Number(line.amount ?? 0), 0);
+  const refund = (payslip?.incentives ?? [])
+    .filter((line) =>
+      (line.name ?? "").toLowerCase().includes("withholding tax refund"),
+    )
+    .reduce((sum, line) => sum + Number(line.amount ?? 0), 0);
+  return Math.round((tax - refund + Number.EPSILON) * 100) / 100;
 }
 
 function employeeName(employee: any): string {
@@ -116,6 +139,9 @@ export function FinalSettlementsTab({
   const [customAmount, setCustomAmount] = useState("");
   const [customType, setCustomType] =
     useState<CustomDeductionType>("company_property");
+  const [finalPayCutoffStart, setFinalPayCutoffStart] = useState("");
+  const [finalPayCutoffEnd, setFinalPayCutoffEnd] = useState("");
+  const [finalTaxOverrideReason, setFinalTaxOverrideReason] = useState("");
 
   const settlementData = useQuery(
     finalSettlementsApi.getFinalSettlements,
@@ -138,9 +164,6 @@ export function FinalSettlementsTab({
   const markBir2316DataReady = useMutation(
     finalSettlementsApi.markBir2316DataReady,
   );
-  const markBir2316Released = useMutation(
-    finalSettlementsApi.markBir2316Released,
-  );
   const markFinalTaxReviewed = useMutation(
     finalSettlementsApi.markFinalTaxReviewed,
   );
@@ -156,10 +179,19 @@ export function FinalSettlementsTab({
         : null,
     [selectedSettlementId, settlements],
   );
+  const settlementEditable =
+    activeSettlement?.status === "draft" ||
+    activeSettlement?.status === "in_review" ||
+    activeSettlement?.status === "ready_for_payroll";
+  const settlementHasGeneratedPayroll =
+    activeSettlement?.status === "payroll_generated";
 
   useEffect(() => {
     if (!activeSettlement) {
       setLoanAmountDrafts({});
+      setFinalPayCutoffStart("");
+      setFinalPayCutoffEnd("");
+      setFinalTaxOverrideReason("");
       return;
     }
     setLoanAmountDrafts(
@@ -170,7 +202,27 @@ export function FinalSettlementsTab({
         ]),
       ),
     );
+    const separationTimestamp =
+      activeSettlement.lastWorkingDay ?? activeSettlement.separationDate;
+    if (typeof separationTimestamp === "number") {
+      const separation = new Date(separationTimestamp);
+      const cutoffStart = new Date(separationTimestamp);
+      cutoffStart.setDate(separation.getDate() <= 15 ? 1 : 16);
+      setFinalPayCutoffStart(format(cutoffStart, "yyyy-MM-dd"));
+      setFinalPayCutoffEnd(format(separation, "yyyy-MM-dd"));
+    }
+    setFinalTaxOverrideReason(
+      activeSettlement.finalTaxRelease?.overrideReason ?? "",
+    );
   }, [activeSettlement?._id, activeSettlement?.updatedAt]);
+
+  const calculatedFinalTaxAdjustment =
+    activeSettlement?.finalTaxRelease?.calculatedAdjustment ?? 0;
+  const appliedFinalTaxAdjustment = getAppliedFinalTaxAdjustment(
+    activeSettlement?.payslip,
+  );
+  const finalTaxHasOverride =
+    calculatedFinalTaxAdjustment !== appliedFinalTaxAdjustment;
 
   async function runAction(key: string, action: () => Promise<unknown>) {
     setBusyKey(key);
@@ -218,6 +270,63 @@ export function FinalSettlementsTab({
       setCustomAmount("");
       setCustomType("company_property");
     });
+  }
+
+  async function generateFinalPay() {
+    if (!activeSettlement) return;
+    if (!finalPayCutoffStart || !finalPayCutoffEnd) {
+      toast({
+        title: "Missing cutoff dates",
+        description: "Select the final-pay cutoff start and end dates.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const cutoffStart = Date.parse(`${finalPayCutoffStart}T00:00:00+08:00`);
+    const cutoffEnd = Date.parse(`${finalPayCutoffEnd}T00:00:00+08:00`);
+    if (!Number.isFinite(cutoffStart) || !Number.isFinite(cutoffEnd)) {
+      toast({
+        title: "Invalid cutoff dates",
+        description: "Enter valid final-pay cutoff dates.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (cutoffStart > cutoffEnd) {
+      toast({
+        title: "Invalid cutoff range",
+        description: "Cutoff start must be on or before cutoff end.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setBusyKey("generate-final-pay");
+    try {
+      await createPayrollRun({
+        organizationId,
+        cutoffStart,
+        cutoffEnd,
+        employeeIds: [String(activeSettlement.employeeId)],
+        runType: "final_pay",
+      });
+      await onLoadPayrollRuns();
+      setSelectedSettlementId(null);
+      toast({
+        title: "Final pay draft generated",
+        description: "Open the payroll run to review the calculated final pay.",
+        variant: "success",
+      });
+    } catch (error: unknown) {
+      toast({
+        title: "Could not generate final pay",
+        description:
+          error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setBusyKey(null);
+    }
   }
 
   const loading = settlementData === undefined;
@@ -465,7 +574,10 @@ export function FinalSettlementsTab({
                             <Button
                               size="icon"
                               variant="outline"
-                              disabled={busyKey === `clear:${item.id}`}
+                              disabled={
+                                !settlementEditable ||
+                                busyKey === `clear:${item.id}`
+                              }
                               title="Complete"
                               onClick={() =>
                                 void runAction(`clear:${item.id}`, () =>
@@ -482,7 +594,10 @@ export function FinalSettlementsTab({
                             <Button
                               size="icon"
                               variant="outline"
-                              disabled={busyKey === `waive:${item.id}`}
+                              disabled={
+                                !settlementEditable ||
+                                busyKey === `waive:${item.id}`
+                              }
                               title="Waive"
                               onClick={() =>
                                 void runAction(`waive:${item.id}`, () =>
@@ -499,7 +614,10 @@ export function FinalSettlementsTab({
                             <Button
                               size="icon"
                               variant="ghost"
-                              disabled={busyKey === `reset:${item.id}`}
+                              disabled={
+                                !settlementEditable ||
+                                busyKey === `reset:${item.id}`
+                              }
                               title="Reset"
                               onClick={() =>
                                 void runAction(`reset:${item.id}`, () =>
@@ -536,7 +654,8 @@ export function FinalSettlementsTab({
                               <div>
                                 <div className="font-medium">{loan.name}</div>
                                 <div className="text-xs text-muted-foreground">
-                                  Scheduled {formatCurrency(loan.scheduledAmount)}
+                                  Recurring deduction {formatCurrency(loan.scheduledAmount)};
+                                  enter the verified outstanding balance below
                                 </div>
                               </div>
                               <Badge
@@ -551,7 +670,9 @@ export function FinalSettlementsTab({
                                 type="number"
                                 min="0"
                                 step="0.01"
+                                placeholder="Verified balance"
                                 value={loanAmountDrafts[loan.id] ?? ""}
+                                disabled={!settlementEditable}
                                 onChange={(event) =>
                                   setLoanAmountDrafts((prev) => ({
                                     ...prev,
@@ -561,6 +682,7 @@ export function FinalSettlementsTab({
                               />
                               <Select
                                 value={loan.rule}
+                                disabled={!settlementEditable}
                                 onValueChange={(rule) =>
                                   void runAction(`loan-rule:${loan.id}`, () =>
                                     upsertLoanPayoff({
@@ -586,7 +708,7 @@ export function FinalSettlementsTab({
                                     Scheduled amount
                                   </SelectItem>
                                   <SelectItem value="deduct_full_balance">
-                                    Full balance
+                                    Verified full balance
                                   </SelectItem>
                                   <SelectItem value="custom_amount">
                                     Custom amount
@@ -597,7 +719,11 @@ export function FinalSettlementsTab({
                               <Button
                                 size="sm"
                                 variant="outline"
-                                disabled={busyKey === `loan:${loan.id}`}
+                                disabled={
+                                  !settlementEditable ||
+                                  busyKey === `loan:${loan.id}` ||
+                                  Number(loanAmountDrafts[loan.id] ?? 0) <= 0
+                                }
                                 onClick={() =>
                                   void runAction(`loan:${loan.id}`, () =>
                                     upsertLoanPayoff({
@@ -620,7 +746,10 @@ export function FinalSettlementsTab({
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                disabled={busyKey === `loan-waive:${loan.id}`}
+                                disabled={
+                                  !settlementEditable ||
+                                  busyKey === `loan-waive:${loan.id}`
+                                }
                                 onClick={() =>
                                   void runAction(`loan-waive:${loan.id}`, () =>
                                     upsertLoanPayoff({
@@ -673,7 +802,10 @@ export function FinalSettlementsTab({
                               size="sm"
                               variant="ghost"
                               className="justify-self-start text-red-600"
-                              disabled={busyKey === `custom:${deduction.id}`}
+                              disabled={
+                                !settlementEditable ||
+                                busyKey === `custom:${deduction.id}`
+                              }
                               onClick={() =>
                                 void runAction(`custom:${deduction.id}`, () =>
                                   removeCustomDeduction({
@@ -691,6 +823,7 @@ export function FinalSettlementsTab({
                       <div className="grid gap-2">
                         <Input
                           value={customName}
+                          disabled={!settlementEditable}
                           placeholder="Deduction name"
                           onChange={(event) => setCustomName(event.target.value)}
                         />
@@ -700,6 +833,7 @@ export function FinalSettlementsTab({
                             min="0"
                             step="0.01"
                             value={customAmount}
+                            disabled={!settlementEditable}
                             placeholder="Amount"
                             onChange={(event) =>
                               setCustomAmount(event.target.value)
@@ -707,6 +841,7 @@ export function FinalSettlementsTab({
                           />
                           <Select
                             value={customType}
+                            disabled={!settlementEditable}
                             onValueChange={(value) =>
                               setCustomType(value as CustomDeductionType)
                             }
@@ -732,7 +867,9 @@ export function FinalSettlementsTab({
                         <Button
                           type="button"
                           variant="outline"
-                          disabled={busyKey === "custom:add"}
+                          disabled={
+                            !settlementEditable || busyKey === "custom:add"
+                          }
                           onClick={() => void addCustomDeduction()}
                         >
                           {busyKey === "custom:add" ? (
@@ -761,7 +898,10 @@ export function FinalSettlementsTab({
                         <Button
                           size="sm"
                           variant="outline"
-                          disabled={busyKey === "bir:data"}
+                          disabled={
+                            !settlementHasGeneratedPayroll ||
+                            busyKey === "bir:data"
+                          }
                           onClick={() =>
                             void runAction("bir:data", () =>
                               markBir2316DataReady({
@@ -772,21 +912,6 @@ export function FinalSettlementsTab({
                         >
                           <FileCheck2 className="mr-2 h-4 w-4" />
                           Data ready
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busyKey === "bir:release"}
-                          onClick={() =>
-                            void runAction("bir:release", () =>
-                              markBir2316Released({
-                                settlementId: activeSettlement._id,
-                              }),
-                            )
-                          }
-                        >
-                          <ShieldCheck className="mr-2 h-4 w-4" />
-                          Released
                         </Button>
                       </div>
                     </div>
@@ -805,14 +930,64 @@ export function FinalSettlementsTab({
                       >
                         {statusLabel(activeSettlement.finalTaxRelease?.status)}
                       </Badge>
+                      {settlementHasGeneratedPayroll && (
+                        <div className="grid gap-3 text-sm sm:grid-cols-2">
+                          <div className="rounded-md bg-gray-50 p-3">
+                            <div className="text-muted-foreground">
+                              Calculated annual adjustment
+                            </div>
+                            <div className="mt-1 font-medium">
+                              {formatCurrency(calculatedFinalTaxAdjustment)}
+                            </div>
+                          </div>
+                          <div className="rounded-md bg-gray-50 p-3">
+                            <div className="text-muted-foreground">
+                              Applied on final payslip
+                            </div>
+                            <div className="mt-1 font-medium">
+                              {formatCurrency(appliedFinalTaxAdjustment)}
+                            </div>
+                          </div>
+                          <div className="sm:col-span-2 text-xs text-muted-foreground">
+                            Positive amounts are withholding tax deductions;
+                            negative amounts are tax refunds. HR can edit the tax
+                            line in the linked draft payslip before review.
+                          </div>
+                        </div>
+                      )}
+                      {settlementHasGeneratedPayroll && finalTaxHasOverride && (
+                        <div className="space-y-2">
+                          <label
+                            htmlFor="final-tax-override-reason"
+                            className="text-sm font-medium"
+                          >
+                            Override reason
+                          </label>
+                          <Textarea
+                            id="final-tax-override-reason"
+                            value={finalTaxOverrideReason}
+                            onChange={(event) =>
+                              setFinalTaxOverrideReason(event.target.value)
+                            }
+                            placeholder="Explain why the applied tax differs from the annualized calculation."
+                          />
+                        </div>
+                      )}
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={busyKey === "tax:review"}
+                        disabled={
+                          !settlementHasGeneratedPayroll ||
+                          (finalTaxHasOverride &&
+                            !finalTaxOverrideReason.trim()) ||
+                          busyKey === "tax:review"
+                        }
                         onClick={() =>
                           void runAction("tax:review", () =>
                             markFinalTaxReviewed({
                               settlementId: activeSettlement._id,
+                              overrideReason:
+                                finalTaxOverrideReason.trim() || undefined,
                             }),
                           )
                         }
@@ -826,6 +1001,22 @@ export function FinalSettlementsTab({
               </div>
 
               <DialogFooter className="gap-2 sm:gap-0">
+                {activeSettlement.status === "ready_for_payroll" && (
+                  <div className="mr-auto grid w-full gap-2 sm:w-auto sm:grid-cols-2">
+                    <Input
+                      type="date"
+                      aria-label="Final pay cutoff start"
+                      value={finalPayCutoffStart}
+                      onChange={(event) => setFinalPayCutoffStart(event.target.value)}
+                    />
+                    <Input
+                      type="date"
+                      aria-label="Final pay cutoff end"
+                      value={finalPayCutoffEnd}
+                      onChange={(event) => setFinalPayCutoffEnd(event.target.value)}
+                    />
+                  </div>
+                )}
                 <Button
                   type="button"
                   variant="outline"
@@ -833,24 +1024,41 @@ export function FinalSettlementsTab({
                 >
                   Close
                 </Button>
-                <Button
-                  type="button"
-                  disabled={busyKey === "ready"}
-                  onClick={() =>
-                    void runAction("ready", () =>
-                      markFinalSettlementReadyForPayroll({
-                        settlementId: activeSettlement._id,
-                      }),
-                    )
-                  }
-                >
-                  {busyKey === "ready" ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <ClipboardCheck className="mr-2 h-4 w-4" />
-                  )}
-                  Mark ready for payroll
-                </Button>
+                {(activeSettlement.status === "draft" ||
+                  activeSettlement.status === "in_review") && (
+                  <Button
+                    type="button"
+                    disabled={busyKey === "ready"}
+                    onClick={() =>
+                      void runAction("ready", () =>
+                        markFinalSettlementReadyForPayroll({
+                          settlementId: activeSettlement._id,
+                        }),
+                      )
+                    }
+                  >
+                    {busyKey === "ready" ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <ClipboardCheck className="mr-2 h-4 w-4" />
+                    )}
+                    Mark ready for payroll
+                  </Button>
+                )}
+                {activeSettlement.status === "ready_for_payroll" && (
+                  <Button
+                    type="button"
+                    disabled={busyKey === "generate-final-pay"}
+                    onClick={() => void generateFinalPay()}
+                  >
+                    {busyKey === "generate-final-pay" ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Banknote className="mr-2 h-4 w-4" />
+                    )}
+                    Generate final pay
+                  </Button>
+                )}
               </DialogFooter>
             </>
           )}

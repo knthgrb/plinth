@@ -35,3 +35,7 @@ export function openInNewTab(url: string) {
   a.click();
   document.body.removeChild(a);
 }
+
+export function getDocumentTitleFromFileName(fileName: string): string {
+  return fileName.trim();
+}

@@ -32,24 +32,22 @@ export class DocumentsService {
     visibleEmployeeIds?: string[];
   }) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).documents.createDocument,
-      {
-        ...data,
-        organizationId: data.organizationId as Id<"organizations">,
-        employeeId: data.employeeId as Id<"employees"> | undefined,
-        attachments: data.attachments as Id<"_storage">[] | undefined,
-        sharedWith: data.sharedWith as Id<"users">[] | undefined,
-        visibleEmployeeIds: data.visibleEmployeeIds as
-          | Id<"employees">[]
-          | undefined,
-      }
-    );
+    return await convex.mutation(api.documents.createDocument, {
+      ...data,
+      organizationId: data.organizationId as Id<"organizations">,
+      employeeId: data.employeeId as Id<"employees"> | undefined,
+      attachments: data.attachments as Id<"_storage">[] | undefined,
+      sharedWith: data.sharedWith as Id<"users">[] | undefined,
+      visibleEmployeeIds: data.visibleEmployeeIds as
+        | Id<"employees">[]
+        | undefined,
+    });
   }
 
   static async updateDocument(
     documentId: string,
     data: {
+      employeeId?: string | null;
       title?: string;
       content?: string;
       type?:
@@ -69,27 +67,22 @@ export class DocumentsService {
     }
   ) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).documents.updateDocument,
-      {
-        documentId: documentId as Id<"documents">,
-        ...data,
-        attachments: data.attachments as Id<"_storage">[] | undefined,
-        sharedWith: data.sharedWith as Id<"users">[] | undefined,
-        visibleEmployeeIds: data.visibleEmployeeIds as
-          | Id<"employees">[]
-          | undefined,
-      }
-    );
+    return await convex.mutation(api.documents.updateDocument, {
+      documentId: documentId as Id<"documents">,
+      ...data,
+      employeeId: data.employeeId as Id<"employees"> | null | undefined,
+      attachments: data.attachments as Id<"_storage">[] | undefined,
+      sharedWith: data.sharedWith as Id<"users">[] | undefined,
+      visibleEmployeeIds: data.visibleEmployeeIds as
+        | Id<"employees">[]
+        | undefined,
+    });
   }
 
   static async deleteDocument(documentId: string) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).documents.deleteDocument,
-      {
-        documentId: documentId as Id<"documents">,
-      }
-    );
+    return await convex.mutation(api.documents.deleteDocument, {
+      documentId: documentId as Id<"documents">,
+    });
   }
 }

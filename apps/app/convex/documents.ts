@@ -88,6 +88,60 @@ function assertDocumentWriteAccess(userRecord: DocumentUserRecord) {
   if (!canUseFullOrganizationAccess(userRecord.accessStatus)) {
     throw new Error("Document write access is not available for past organizations");
   }
+  if (!canViewAdminScopedDocuments(userRecord.role)) {
+    throw new Error("Not authorized to manage documents");
+  }
+}
+
+async function assertDocumentAudienceConfiguration(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  configuration: {
+    employeeId?: Id<"employees">;
+    visibilityScope?: DocumentVisibilityScope;
+    visibleDepartments?: string[];
+    visibleEmployeeIds?: Id<"employees">[];
+  },
+) {
+  const { employeeId, visibilityScope } = configuration;
+
+  if (employeeId) {
+    const employee = await ctx.db.get(employeeId);
+    if (!employee || employee.organizationId !== organizationId) {
+      throw new Error("Employee document owner was not found");
+    }
+    if (
+      visibilityScope &&
+      !["admins_only", "specific_employee", "alumni_visible"].includes(
+        visibilityScope,
+      )
+    ) {
+      throw new Error("Employee-file documents use employee access settings");
+    }
+  } else if (visibilityScope === "alumni_visible") {
+    throw new Error("Employee document owner is required for alumni access");
+  }
+
+  if (
+    !employeeId &&
+    visibilityScope === "specific_employee" &&
+    !configuration.visibleEmployeeIds?.length
+  ) {
+    throw new Error("Select an employee audience");
+  }
+  if (
+    visibilityScope === "department" &&
+    !configuration.visibleDepartments?.some((department) => department.trim())
+  ) {
+    throw new Error("Select a department audience");
+  }
+
+  for (const visibleEmployeeId of configuration.visibleEmployeeIds ?? []) {
+    const employee = await ctx.db.get(visibleEmployeeId);
+    if (!employee || employee.organizationId !== organizationId) {
+      throw new Error("Document audience employee was not found");
+    }
+  }
 }
 
 function idsInclude(ids: unknown[] | undefined, id: unknown) {
@@ -118,19 +172,40 @@ function canViewDocument(
   doc: EffectiveDocument,
   userRecord: DocumentUserRecord,
   userEmployee: Doc<"employees"> | null,
+  employeeExperienceMode: boolean,
 ) {
   const scope = doc.visibilityScope ?? resolveDocumentVisibilityScope(doc);
+  const ownsEmployeeFile =
+    !!doc.employeeId &&
+    !!userEmployee &&
+    String(doc.employeeId) === String(userEmployee._id);
 
   if (!canUseFullOrganizationAccess(userRecord.accessStatus)) {
     return (
       scope === "alumni_visible" &&
-      canUseAlumniPayslipAccess(userRecord.accessStatus)
+      canUseAlumniPayslipAccess(userRecord.accessStatus) &&
+      ownsEmployeeFile
     );
   }
 
+  if (employeeExperienceMode) {
+    if (!userEmployee) return false;
+    if (doc.employeeId) {
+      return (
+        ownsEmployeeFile &&
+        (scope === "specific_employee" || scope === "alumni_visible")
+      );
+    }
+    return false;
+  }
+
+  if (!doc.employeeId) {
+    return canViewAdminScopedDocuments(userRecord.role);
+  }
   if (canViewAllDocumentsInOrg(userRecord.role)) return true;
   if (String(doc.createdBy) === String(userRecord._id)) return true;
   if (idsInclude(doc.sharedWith, userRecord._id)) return true;
+  if (userRecord.role === "hr" && doc.employeeId) return true;
 
   if (scope === "admins_only") {
     return canViewAdminScopedDocuments(userRecord.role);
@@ -148,7 +223,7 @@ function canViewDocument(
   }
 
   if (scope === "alumni_visible") {
-    return canUseAlumniPayslipAccess(userRecord.accessStatus);
+    return ownsEmployeeFile;
   }
 
   if (scope === "department") {
@@ -196,6 +271,7 @@ function isUploadedFileOnlyRecord(doc: {
 export const getDocuments = query({
   args: {
     organizationId: v.id("organizations"),
+    employeeExperienceMode: v.optional(v.boolean()),
     type: v.optional(
       v.union(
         v.literal("personal"),
@@ -227,8 +303,15 @@ export const getDocuments = query({
         ctx,
         userRecord,
       );
+      const employeeExperienceMode =
+        userRecord.role === "employee" || args.employeeExperienceMode === true;
       documents = documents.filter((doc) =>
-        canViewDocument(doc, userRecord, userEmployee),
+        canViewDocument(
+          doc,
+          userRecord,
+          userEmployee,
+          employeeExperienceMode,
+        ),
       );
 
       if (args.type) {
@@ -246,6 +329,7 @@ export const getDocuments = query({
 export const getDocument = query({
   args: {
     documentId: v.id("documents"),
+    employeeExperienceMode: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     return runOrgQuery(async () => {
@@ -262,7 +346,16 @@ export const getDocument = query({
         userRecord,
       );
       const effectiveDocument = await loadEffectiveDocument(ctx, document);
-      if (!canViewDocument(effectiveDocument, userRecord, userEmployee)) {
+      const employeeExperienceMode =
+        userRecord.role === "employee" || args.employeeExperienceMode === true;
+      if (
+        !canViewDocument(
+          effectiveDocument,
+          userRecord,
+          userEmployee,
+          employeeExperienceMode,
+        )
+      ) {
         throw new Error("Not authorized to view this document");
       }
 
@@ -276,6 +369,7 @@ export const getDocumentAttachmentUrl = query({
     organizationId: v.id("organizations"),
     documentId: v.id("documents"),
     storageId: v.id("_storage"),
+    employeeExperienceMode: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const document = await ctx.db.get(args.documentId);
@@ -289,7 +383,16 @@ export const getDocumentAttachmentUrl = query({
       userRecord,
     );
     const effectiveDocument = await loadEffectiveDocument(ctx, document);
-    if (!canViewDocument(effectiveDocument, userRecord, userEmployee)) {
+    const employeeExperienceMode =
+      userRecord.role === "employee" || args.employeeExperienceMode === true;
+    if (
+      !canViewDocument(
+        effectiveDocument,
+        userRecord,
+        userEmployee,
+        employeeExperienceMode,
+      )
+    ) {
       throw new Error("Not authorized to view this document");
     }
     if (
@@ -330,6 +433,20 @@ export const createDocument = mutation({
   handler: async (ctx, args) => {
     const userRecord = await getDocumentWriteUser(ctx, args.organizationId);
     assertDocumentWriteAccess(userRecord);
+    const isOrganizationDocument = !args.employeeId;
+    const visibilityScope = isOrganizationDocument
+      ? "admins_only"
+      : args.visibilityScope;
+    await assertDocumentAudienceConfiguration(ctx, args.organizationId, {
+      employeeId: args.employeeId,
+      visibilityScope,
+      visibleDepartments: isOrganizationDocument
+        ? []
+        : args.visibleDepartments,
+      visibleEmployeeIds: isOrganizationDocument
+        ? []
+        : args.visibleEmployeeIds,
+    });
 
     const now = Date.now();
     const documentId = await ctx.db.insert("documents", {
@@ -340,8 +457,8 @@ export const createDocument = mutation({
       content: args.content,
       type: args.type,
       category: args.category,
-      isShared: args.isShared || false,
-      visibilityScope: args.visibilityScope,
+      isShared: isOrganizationDocument ? false : args.isShared || false,
+      visibilityScope,
       contentVersion: 1,
       createdAt: now,
       updatedAt: now,
@@ -353,9 +470,13 @@ export const createDocument = mutation({
       document,
       {
         attachments: args.attachments ?? [],
-        sharedWith: args.sharedWith ?? [],
-        visibleDepartments: args.visibleDepartments ?? [],
-        visibleEmployeeIds: args.visibleEmployeeIds ?? [],
+        sharedWith: isOrganizationDocument ? [] : args.sharedWith ?? [],
+        visibleDepartments: isOrganizationDocument
+          ? []
+          : args.visibleDepartments ?? [],
+        visibleEmployeeIds: isOrganizationDocument
+          ? []
+          : args.visibleEmployeeIds ?? [],
       },
       now,
     );
@@ -368,6 +489,7 @@ export const createDocument = mutation({
 export const updateDocument = mutation({
   args: {
     documentId: v.id("documents"),
+    employeeId: v.optional(v.union(v.id("employees"), v.null())),
     title: v.optional(v.string()),
     content: v.optional(v.string()),
     type: v.optional(
@@ -395,13 +517,6 @@ export const updateDocument = mutation({
     const userRecord = await getDocumentWriteUser(ctx, document.organizationId);
     assertDocumentWriteAccess(userRecord);
 
-    const canMutate =
-      canViewAllDocumentsInOrg(userRecord.role) ||
-      document.createdBy === userRecord._id;
-    if (!canMutate) {
-      throw new Error("Not authorized to update this document");
-    }
-
     const effectiveDocument = await loadEffectiveDocument(ctx, document);
     if (isUploadedFileOnlyRecord(effectiveDocument)) {
       throw new Error(
@@ -409,14 +524,41 @@ export const updateDocument = mutation({
       );
     }
 
+    const employeeId =
+      args.employeeId === undefined
+        ? document.employeeId
+        : args.employeeId ?? undefined;
+    const isOrganizationDocument = !employeeId;
+    const visibilityScope = isOrganizationDocument
+      ? "admins_only"
+      : args.visibilityScope ?? resolveDocumentVisibilityScope(effectiveDocument);
+    await assertDocumentAudienceConfiguration(ctx, document.organizationId, {
+      employeeId,
+      visibilityScope,
+      visibleDepartments: isOrganizationDocument
+        ? []
+        : args.visibleDepartments ?? effectiveDocument.visibleDepartments,
+      visibleEmployeeIds: isOrganizationDocument
+        ? []
+        : args.visibleEmployeeIds ?? effectiveDocument.visibleEmployeeIds,
+    });
+
     const now = Date.now();
     const updates: Partial<Doc<"documents">> = { updatedAt: now };
+    if (args.employeeId !== undefined) {
+      updates.employeeId = args.employeeId ?? undefined;
+    }
     if (args.title !== undefined) updates.title = args.title;
     if (args.type !== undefined) updates.type = args.type;
     if (args.category !== undefined) updates.category = args.category;
-    if (args.isShared !== undefined) updates.isShared = args.isShared;
-    if (args.visibilityScope !== undefined) {
-      updates.visibilityScope = args.visibilityScope;
+    if (isOrganizationDocument) {
+      updates.isShared = false;
+      updates.visibilityScope = "admins_only";
+    } else {
+      if (args.isShared !== undefined) updates.isShared = args.isShared;
+      if (args.visibilityScope !== undefined) {
+        updates.visibilityScope = args.visibilityScope;
+      }
     }
 
     if (args.content !== undefined && args.content !== document.content) {
@@ -439,11 +581,17 @@ export const updateDocument = mutation({
       document,
       {
         attachments: args.attachments ?? effectiveDocument.attachments,
-        sharedWith: args.sharedWith ?? effectiveDocument.sharedWith,
+        sharedWith: isOrganizationDocument
+          ? []
+          : args.sharedWith ?? effectiveDocument.sharedWith,
         visibleDepartments:
-          args.visibleDepartments ?? effectiveDocument.visibleDepartments,
+          isOrganizationDocument
+            ? []
+            : args.visibleDepartments ?? effectiveDocument.visibleDepartments,
         visibleEmployeeIds:
-          args.visibleEmployeeIds ?? effectiveDocument.visibleEmployeeIds,
+          isOrganizationDocument
+            ? []
+            : args.visibleEmployeeIds ?? effectiveDocument.visibleEmployeeIds,
       },
       now,
     );
@@ -463,13 +611,6 @@ export const deleteDocument = mutation({
 
     const userRecord = await getDocumentWriteUser(ctx, document.organizationId);
     assertDocumentWriteAccess(userRecord);
-
-    const canMutate =
-      canViewAllDocumentsInOrg(userRecord.role) ||
-      document.createdBy === userRecord._id;
-    if (!canMutate) {
-      throw new Error("Not authorized to delete this document");
-    }
 
     const versionRows = await ctx.db
       .query("documentVersions")

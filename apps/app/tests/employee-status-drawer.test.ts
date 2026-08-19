@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { employeeFormSchema } from "../app/[organizationId]/employees/_components/employee-form-validation";
 
 function readAppFile(path: string): string {
   return readFileSync(new URL(path, import.meta.url), "utf8");
@@ -28,15 +29,28 @@ describe("employee status editing", () => {
     expect(drawerSource).toContain("status: data.status as");
   });
 
-  it("exposes offboarding fields in the details drawer edit form", () => {
-    const drawerSource = readAppFile(
-      "../app/[organizationId]/employees/_components/employee-detail-modal.tsx",
-    );
+  it("keeps offboarding fields outside the employee details form contract", () => {
+    const parsed = employeeFormSchema.parse({
+      firstName: "Avery",
+      lastName: "Santos",
+      email: "avery@example.com",
+      position: "Analyst",
+      department: "Operations",
+      employmentType: "regular",
+      status: "active",
+      hireDate: "2025-01-01",
+      basicSalary: "30000",
+      salaryType: "monthly",
+      separationDate: "2026-08-01",
+      separationReason: "Resigned",
+      finalPayStatus: "paid",
+      clearanceStatus: "cleared",
+    });
 
-    expect(drawerSource).toContain('name="separationDate"');
-    expect(drawerSource).toContain('name="finalPayStatus"');
-    expect(drawerSource).toContain('name="clearanceStatus"');
-    expect(drawerSource).toContain("nextEmployment.separationDate");
+    expect(parsed).not.toHaveProperty("separationDate");
+    expect(parsed).not.toHaveProperty("separationReason");
+    expect(parsed).not.toHaveProperty("finalPayStatus");
+    expect(parsed).not.toHaveProperty("clearanceStatus");
   });
 
   it("does not expose shortcut status actions in the employees table menu", () => {

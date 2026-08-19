@@ -6,7 +6,7 @@ import {
   CalendarCheck2,
   Clock3,
   FileClock,
-  Plus,
+  CalendarPlus,
   ShieldCheck,
   WalletCards,
 } from "lucide-react";
@@ -156,7 +156,7 @@ export function EmployeeLeaveDashboard(props: {
           </p>
         </div>
         <Button onClick={() => setDrawerOpen(true)} className="sm:self-end">
-          <Plus className="mr-2 h-4 w-4" /> Request leave
+          <CalendarPlus className="mr-2 h-4 w-4" /> Request leave
         </Button>
       </div>
 

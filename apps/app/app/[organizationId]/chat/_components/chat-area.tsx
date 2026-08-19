@@ -69,6 +69,7 @@ import {
   directConversationTitle,
   messageSenderLabelInDirect,
 } from "@/lib/chat-thread-display";
+import { getIncomingMessageIdsToAcknowledge } from "@/lib/chat-read-state";
 import type {
   ChatConversation,
   ChatMessage,
@@ -219,17 +220,14 @@ export function ChatArea({
 
   useEffect(() => {
     if (!conversationId || !currentUserId || allMessages.length === 0) return;
-    const unreadIds = allMessages
-      .filter(
-        (message) =>
-          message.senderId !== currentUserId &&
-          !message.readBy.includes(currentUserId as Id<"users">),
-      )
-      .map((message) => message._id);
-    if (unreadIds.length === 0) return;
+    const messageIds = getIncomingMessageIdsToAcknowledge(
+      allMessages,
+      currentUserId,
+    );
+    if (messageIds.length === 0) return;
     void markMessagesAsRead({
       conversationId: conversationId as Id<"conversations">,
-      messageIds: unreadIds,
+      messageIds,
     });
   }, [allMessages, conversationId, currentUserId, markMessagesAsRead]);
 

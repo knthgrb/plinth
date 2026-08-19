@@ -14,11 +14,13 @@ export async function getDocumentAttachmentUrl(
   organizationId: string,
   documentId: string,
   storageId: string,
+  employeeExperienceMode = false,
 ): Promise<string> {
   return FilesService.getDocumentAttachmentUrl(
     organizationId,
     documentId,
     storageId,
+    employeeExperienceMode,
   );
 }
 

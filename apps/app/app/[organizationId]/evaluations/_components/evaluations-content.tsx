@@ -40,12 +40,17 @@ import type {
   EvaluationWorkspaceEmployee,
 } from "@/lib/evaluations/types";
 import {
+  DEFAULT_EVALUATION_EMPLOYMENT_STATUS_FILTER,
   filterEvaluationEmployees,
   paginateEvaluationEmployees,
+  type EvaluationEmploymentStatusFilter,
   type EvaluationEmployeeListItem,
   type EvaluationTimingFilter,
 } from "@/lib/evaluations/view";
-import { getEvaluationTiming, type EvaluationTiming } from "@/lib/evaluations/workflow";
+import {
+  getEvaluationTiming,
+  type EvaluationTiming,
+} from "@/lib/evaluations/workflow";
 import {
   EvaluationEditorDialog,
   type EvaluationEditorMode,
@@ -75,9 +80,12 @@ const timingLabels: Record<EvaluationTiming, string> = {
 
 function timingBadgeClass(timing: EvaluationTiming): string {
   if (timing === "overdue") return "border-red-200 bg-red-50 text-red-700";
-  if (timing === "due_soon") return "border-amber-200 bg-amber-50 text-amber-700";
-  if (timing === "completed") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (timing === "cancelled") return "border-gray-200 bg-gray-100 text-gray-600";
+  if (timing === "due_soon")
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  if (timing === "completed")
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (timing === "cancelled")
+    return "border-gray-200 bg-gray-100 text-gray-600";
   return "border-indigo-200 bg-indigo-50 text-indigo-700";
 }
 
@@ -111,6 +119,10 @@ export function EvaluationsContent() {
   const [search, setSearch] = useState("");
   const [referenceNow] = useState(Date.now);
   const [department, setDepartment] = useState("all");
+  const [employmentStatus, setEmploymentStatus] =
+    useState<EvaluationEmploymentStatusFilter>(
+      DEFAULT_EVALUATION_EMPLOYMENT_STATUS_FILTER,
+    );
   const [timing, setTiming] = useState<EvaluationTimingFilter>("all");
   const [page, setPage] = useState(1);
   const [historyEmployee, setHistoryEmployee] =
@@ -128,6 +140,7 @@ export function EvaluationsContent() {
         employeeCode: row.employee.employeeCode,
         position: row.employee.position,
         department: row.employee.department,
+        employmentStatus: row.employee.employmentStatus,
         nextEvaluation: row.nextEvaluation
           ? {
               status: row.nextEvaluation.status,
@@ -151,10 +164,11 @@ export function EvaluationsContent() {
       filterEvaluationEmployees(employeeRows, {
         search,
         department,
+        employmentStatus,
         timing,
         now: referenceNow,
       }),
-    [department, employeeRows, referenceNow, search, timing],
+    [department, employeeRows, employmentStatus, referenceNow, search, timing],
   );
   const pagination = useMemo(
     () => paginateEvaluationEmployees(filteredRows, page, PAGE_SIZE),
@@ -179,7 +193,11 @@ export function EvaluationsContent() {
   };
 
   if (!currentOrganizationId) {
-    return <MainLayout><div className="p-8">No organization selected.</div></MainLayout>;
+    return (
+      <MainLayout>
+        <div className="p-8">No organization selected.</div>
+      </MainLayout>
+    );
   }
 
   if (user !== undefined && !canManageEvaluations) {
@@ -187,7 +205,9 @@ export function EvaluationsContent() {
       <MainLayout>
         <div className="mx-auto max-w-xl p-8 text-center">
           <ShieldCheck className="mx-auto h-10 w-10 text-[rgb(130,130,130)]" />
-          <h1 className="mt-4 text-xl font-semibold">Private evaluation records</h1>
+          <h1 className="mt-4 text-xl font-semibold">
+            Private evaluation records
+          </h1>
           <p className="mt-2 text-sm text-[rgb(110,110,110)]">
             Evaluations are available only to Owner, Admin, and HR roles.
           </p>
@@ -203,14 +223,12 @@ export function EvaluationsContent() {
       <div className="space-y-5 p-3 sm:p-4 md:p-6 lg:p-8">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl">Evaluations</h1>
-              <Badge variant="outline" className="border-[#DDD8FF] bg-[#F7F5FF] text-[#584EC7]">
-                <ShieldCheck className="mr-1 h-3 w-3" /> Private
-              </Badge>
-            </div>
+            <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl">
+              Evaluations
+            </h1>
             <p className="mt-1 text-sm text-[rgb(105,105,105)]">
-              Schedule employee-specific reviews, track due dates, and retain locked records.
+              Schedule employee-specific reviews, track due dates, and retain
+              locked records.
             </p>
           </div>
           <Button onClick={() => openSchedule()}>
@@ -244,8 +262,12 @@ export function EvaluationsContent() {
             <Card key={item.label}>
               <CardContent className="flex items-center justify-between p-4">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[rgb(120,120,120)]">{item.label}</p>
-                  <p className="mt-1 text-2xl font-bold text-[rgb(48,48,48)]">{isLoading ? "—" : item.value}</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[rgb(120,120,120)]">
+                    {item.label}
+                  </p>
+                  <p className="mt-1 text-2xl font-bold text-[rgb(48,48,48)]">
+                    {isLoading ? "—" : item.value}
+                  </p>
                 </div>
                 <div className="rounded-xl bg-brand-purple/10 p-2.5 text-brand-purple">
                   <item.icon className="h-5 w-5" />
@@ -277,10 +299,35 @@ export function EvaluationsContent() {
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="w-full sm:w-48"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full sm:w-48">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All departments</SelectItem>
-                  {departments.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+                  {departments.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {item}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={employmentStatus}
+                onValueChange={(value) => {
+                  setEmploymentStatus(
+                    value as EvaluationEmploymentStatusFilter,
+                  );
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active employees</SelectItem>
+                  <SelectItem value="all">All employees</SelectItem>
+                  <SelectItem value="resigned">Resigned</SelectItem>
+                  <SelectItem value="terminated">Terminated</SelectItem>
                 </SelectContent>
               </Select>
               <Select
@@ -290,13 +337,19 @@ export function EvaluationsContent() {
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="w-full sm:w-44"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full sm:w-44">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="all">
+                    All evaluation statuses
+                  </SelectItem>
                   <SelectItem value="overdue">Overdue</SelectItem>
                   <SelectItem value="due_soon">Due soon</SelectItem>
                   <SelectItem value="scheduled">Scheduled later</SelectItem>
-                  <SelectItem value="completed">Has completed records</SelectItem>
+                  <SelectItem value="completed">
+                    Has completed records
+                  </SelectItem>
                   <SelectItem value="not_scheduled">Not scheduled</SelectItem>
                 </SelectContent>
               </Select>
@@ -322,21 +375,38 @@ export function EvaluationsContent() {
                   ? Array.from({ length: 8 }, (_, index) => (
                       <TableRow key={index}>
                         {Array.from({ length: 8 }, (_, cell) => (
-                          <TableCell key={cell}><div className="h-4 w-24 animate-pulse rounded bg-[rgb(235,235,235)]" /></TableCell>
+                          <TableCell key={cell}>
+                            <div className="h-4 w-24 animate-pulse rounded bg-[rgb(235,235,235)]" />
+                          </TableCell>
                         ))}
                       </TableRow>
                     ))
                   : pagination.items.map((row) => {
                       const next = row.source.nextEvaluation;
                       const timingValue = next
-                        ? getEvaluationTiming(next.status, next.scheduledFor, referenceNow)
+                        ? getEvaluationTiming(
+                            next.status,
+                            next.scheduledFor,
+                            referenceNow,
+                          )
                         : null;
                       return (
-                        <TableRow key={row.id} className="hover:bg-[rgb(250,250,250)]">
+                        <TableRow
+                          key={row.id}
+                          className="hover:bg-[rgb(250,250,250)]"
+                        >
                           <TableCell>
-                            <button type="button" className="text-left" onClick={() => setHistoryEmployee(row.source)}>
-                              <span className="block font-semibold text-[rgb(48,48,48)]">{row.name}</span>
-                              <span className="text-xs text-[rgb(120,120,120)]">{row.employeeCode}</span>
+                            <button
+                              type="button"
+                              className="text-left"
+                              onClick={() => setHistoryEmployee(row.source)}
+                            >
+                              <span className="block font-semibold text-[rgb(48,48,48)]">
+                                {row.name}
+                              </span>
+                              <span className="text-xs text-[rgb(120,120,120)]">
+                                {row.employeeCode}
+                              </span>
                             </button>
                           </TableCell>
                           <TableCell>{row.position}</TableCell>
@@ -344,26 +414,61 @@ export function EvaluationsContent() {
                           <TableCell>{cadenceLabel(row.source)}</TableCell>
                           <TableCell>
                             {row.source.lastCompleted?.completedAt
-                              ? format(new Date(row.source.lastCompleted.completedAt), "MMM d, yyyy")
+                              ? format(
+                                  new Date(
+                                    row.source.lastCompleted.completedAt,
+                                  ),
+                                  "MMM d, yyyy",
+                                )
                               : "—"}
                           </TableCell>
-                          <TableCell>{next ? format(new Date(next.scheduledFor), "MMM d, yyyy") : "—"}</TableCell>
+                          <TableCell>
+                            {next
+                              ? format(
+                                  new Date(next.scheduledFor),
+                                  "MMM d, yyyy",
+                                )
+                              : "—"}
+                          </TableCell>
                           <TableCell>
                             {timingValue ? (
-                              <Badge variant="outline" className={timingBadgeClass(timingValue)}>{timingLabels[timingValue]}</Badge>
+                              <Badge
+                                variant="outline"
+                                className={timingBadgeClass(timingValue)}
+                              >
+                                {timingLabels[timingValue]}
+                              </Badge>
                             ) : (
                               <Badge variant="secondary">Not scheduled</Badge>
                             )}
                           </TableCell>
                           <TableCell>
                             <div className="flex justify-end gap-2">
-                              <Button type="button" variant="outline" size="sm" onClick={() => setHistoryEmployee(row.source)}>
-                                <History className="mr-1.5 h-3.5 w-3.5" /> History
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setHistoryEmployee(row.source)}
+                              >
+                                <History className="mr-1.5 h-3.5 w-3.5" />{" "}
+                                History
                               </Button>
                               {next ? (
-                                <Button type="button" size="sm" onClick={() => openExisting("complete", next)}>Complete</Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => openExisting("complete", next)}
+                                >
+                                  Complete
+                                </Button>
                               ) : (
-                                <Button type="button" size="sm" onClick={() => openSchedule(row.id)}>Schedule</Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => openSchedule(row.id)}
+                                >
+                                  Schedule
+                                </Button>
                               )}
                             </div>
                           </TableCell>
@@ -371,7 +476,14 @@ export function EvaluationsContent() {
                       );
                     })}
                 {!isLoading && pagination.items.length === 0 ? (
-                  <TableRow><TableCell colSpan={8} className="py-10 text-center text-[rgb(110,110,110)]">No employees match these filters.</TableCell></TableRow>
+                  <TableRow>
+                    <TableCell
+                      colSpan={8}
+                      className="py-10 text-center text-[rgb(110,110,110)]"
+                    >
+                      No employees match these filters.
+                    </TableCell>
+                  </TableRow>
                 ) : null}
               </TableBody>
             </Table>
@@ -380,12 +492,30 @@ export function EvaluationsContent() {
           {!isLoading ? (
             <div className="flex flex-col items-center justify-between gap-3 border-t border-[#E6E6E6] px-4 py-3 text-sm text-[rgb(100,100,100)] sm:flex-row">
               <span>
-                Showing {pagination.totalItems === 0 ? 0 : pagination.startIndex + 1}–{pagination.endIndex} of {pagination.totalItems} employees
+                Showing{" "}
+                {pagination.totalItems === 0 ? 0 : pagination.startIndex + 1}–
+                {pagination.endIndex} of {pagination.totalItems} employees
               </span>
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" disabled={pagination.page <= 1} onClick={() => setPage(pagination.page - 1)}>Previous</Button>
-                <span className="min-w-24 text-center">Page {pagination.page} of {pagination.totalPages}</span>
-                <Button variant="outline" size="sm" disabled={pagination.page >= pagination.totalPages} onClick={() => setPage(pagination.page + 1)}>Next</Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pagination.page <= 1}
+                  onClick={() => setPage(pagination.page - 1)}
+                >
+                  Previous
+                </Button>
+                <span className="min-w-24 text-center">
+                  Page {pagination.page} of {pagination.totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pagination.page >= pagination.totalPages}
+                  onClick={() => setPage(pagination.page + 1)}
+                >
+                  Next
+                </Button>
               </div>
             </div>
           ) : null}
@@ -396,7 +526,9 @@ export function EvaluationsContent() {
         <>
           <EvaluationHistoryDialog
             open={historyEmployee !== null}
-            onOpenChange={(open) => { if (!open) setHistoryEmployee(null); }}
+            onOpenChange={(open) => {
+              if (!open) setHistoryEmployee(null);
+            }}
             employeeRow={historyEmployee}
             evaluations={workspace.evaluations}
             onSchedule={openSchedule}
@@ -405,7 +537,9 @@ export function EvaluationsContent() {
           />
           <EvaluationEditorDialog
             open={editor.open}
-            onOpenChange={(open) => setEditor((current) => ({ ...current, open }))}
+            onOpenChange={(open) =>
+              setEditor((current) => ({ ...current, open }))
+            }
             mode={editor.mode}
             organizationId={currentOrganizationId}
             workspace={workspace}

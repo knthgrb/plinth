@@ -36,6 +36,7 @@ export async function createDocument(data: {
 export async function updateDocument(
   documentId: string,
   data: {
+    employeeId?: string | null;
     title?: string;
     content?: string;
     type?:

@@ -53,16 +53,15 @@ import { getDocumentAttachmentUrl } from "@/actions/files";
 import { uploadFileToStorage } from "@/lib/storage-upload";
 import { createDocument } from "@/actions/documents";
 import { useToast } from "@/components/ui/use-toast";
-import { isFileOnlyDocument, openInNewTab } from "@/lib/document-utils";
+import {
+  getDocumentTitleFromFileName,
+  isFileOnlyDocument,
+  openInNewTab,
+} from "@/lib/document-utils";
 import { canUseFullOrganizationAccess } from "@/utils/org-membership-lifecycle";
 import { TiptapViewer } from "@/components/tiptap-viewer";
 import type { Id } from "@/convex/_generated/dataModel";
-
-type DocumentVisibilityScope =
-  | "admins_only"
-  | "all_employees"
-  | "payroll_visible"
-  | "alumni_visible";
+import { useEmployeeView } from "@/hooks/employee-view-context";
 
 type DocumentType =
   | "personal"
@@ -72,6 +71,15 @@ type DocumentType =
   | "leave_form"
   | "other";
 
+type DirectUploadFile = {
+  id: string;
+  file: File;
+  category: string;
+  type: DocumentType;
+  storageId?: string;
+  uploading: boolean;
+};
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -79,16 +87,21 @@ function getErrorMessage(error: unknown): string {
 export default function DocumentsPage() {
   const router = useRouter();
   const { effectiveOrganizationId, currentOrganization } = useOrganization();
+  const { isEmployeeExperienceUI } = useEmployeeView();
   const { toast } = useToast();
+  const organizationRole = (currentOrganization?.role ?? "").toLowerCase();
   const canWriteDocuments =
     !!currentOrganization &&
-    canUseFullOrganizationAccess(currentOrganization.accessStatus);
+    canUseFullOrganizationAccess(currentOrganization.accessStatus) &&
+    !isEmployeeExperienceUI &&
+    ["owner", "admin", "hr"].includes(organizationRole);
 
   const documents = useQuery(
     api.documents.getDocuments,
     effectiveOrganizationId
       ? {
           organizationId: effectiveOrganizationId,
+          employeeExperienceMode: isEmployeeExperienceUI,
         }
       : "skip",
   );
@@ -147,16 +160,7 @@ export default function DocumentsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedType, setSelectedType] = useState<string>("all");
   const [directUploadFiles, setDirectUploadFiles] = useState<
-    Array<{
-      id: string;
-      file: File;
-      title: string;
-      category: string;
-      type: DocumentType;
-      storageId?: string;
-      uploading: boolean;
-      visibilityScope: DocumentVisibilityScope;
-    }>
+    DirectUploadFile[]
   >([]);
   const directUploadInputRef = useRef<HTMLInputElement>(null);
 
@@ -265,51 +269,26 @@ export default function DocumentsPage() {
 
   const handleFileSelect = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-
-    const fileArray = Array.from(files);
-    const validFiles: File[] = [];
-    const invalidFiles: Array<{ file: File; error: string }> = [];
-
-    // Validate each file
-    fileArray.forEach((file) => {
-      const validation = validateFile(file);
-      if (validation.valid) {
-        validFiles.push(file);
-      } else {
-        invalidFiles.push({ file, error: validation.error || "Invalid file" });
-      }
-    });
-
-    // Show errors for invalid files
-    invalidFiles.forEach(({ file, error }) => {
+    const file = files[0];
+    const validation = validateFile(file);
+    if (!validation.valid) {
       toast({
         title: "File Rejected",
-        description: `${file.name}: ${error}`,
+        description: `${file.name}: ${validation.error || "Invalid file"}`,
         variant: "destructive",
       });
-    });
-
-    if (validFiles.length === 0) {
       return;
     }
 
-    // Create file entries with detected type and default values
-    const filesWithMetadata = validFiles.map((file) => {
-      const fileName = file.name.replace(/\.[^/.]+$/, ""); // Remove extension for title
-      const detectedType = detectFileType(file);
-      return {
+    setDirectUploadFiles([
+      {
         id: `${Date.now()}-${Math.random()}`,
         file,
-        title: fileName || file.name,
         category: "",
-        type: detectedType,
+        type: detectFileType(file),
         uploading: false,
-        visibilityScope: "admins_only" as DocumentVisibilityScope,
-      };
-    });
-
-    // Add files to state
-    setDirectUploadFiles((prev) => [...prev, ...filesWithMetadata]);
+      },
+    ]);
   };
 
   const handleDirectFileUpload = async () => {
@@ -322,7 +301,7 @@ export default function DocumentsPage() {
 
     // Upload each file and create a document entry
     const uploadPromises = directUploadFiles.map(async (fileItem) => {
-      const { file, id, title, category, type, visibilityScope } = fileItem;
+      const { file, id, category, type } = fileItem;
       try {
         // Upload file
         const storageId = await uploadFileToStorage({
@@ -334,12 +313,12 @@ export default function DocumentsPage() {
         // Create document entry with file metadata
         await createDocument({
           organizationId: effectiveOrganizationId,
-          title: title || file.name,
+          title: getDocumentTitleFromFileName(file.name),
           content: JSON.stringify({ type: "doc", content: [] }),
           type: type,
           category: category || undefined,
           attachments: [storageId],
-          visibilityScope,
+          visibilityScope: "admins_only",
         });
 
         // Update state to mark as uploaded
@@ -424,6 +403,7 @@ export default function DocumentsPage() {
         effectiveOrganizationId,
         documentId,
         storageId,
+        isEmployeeExperienceUI,
       );
       openInNewTab(url);
     } catch {
@@ -452,6 +432,7 @@ export default function DocumentsPage() {
           effectiveOrganizationId,
           doc._id,
           doc.attachments[0],
+          isEmployeeExperienceUI,
         );
         setPreviewFileUrl(url);
 
@@ -661,16 +642,16 @@ export default function DocumentsPage() {
           </div>
           {canWriteDocuments && (
             <div className="flex gap-2">
-              <Button onClick={handleNew}>
-                <Plus className="mr-2 h-4 w-4" />
-                Create Document
-              </Button>
               <Button
                 variant="secondary"
                 onClick={() => setIsUploadDialogOpen(true)}
               >
                 <Upload className="mr-2 h-4 w-4" />
-                Upload Files
+                Upload File
+              </Button>
+              <Button onClick={handleNew}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Document
               </Button>
             </div>
           )}
@@ -750,7 +731,9 @@ export default function DocumentsPage() {
                 <FileText className="h-12 w-12 mx-auto mb-4 text-gray-400" />
                 <p>
                   {documents?.length === 0
-                    ? "No documents yet. Create your first document!"
+                    ? canWriteDocuments
+                      ? "No documents yet. Create your first document!"
+                      : "No documents are available."
                     : "No documents match your search criteria."}
                 </p>
               </div>
@@ -887,10 +870,9 @@ export default function DocumentsPage() {
         <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Upload Files</DialogTitle>
+              <DialogTitle>Upload File</DialogTitle>
               <DialogDescription>
-                Upload files directly to your document storage. Configure each
-                file&apos;s details before uploading.
+                Upload one file to your organization&apos;s document storage.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
@@ -926,7 +908,6 @@ export default function DocumentsPage() {
                 <input
                   ref={directUploadInputRef}
                   type="file"
-                  multiple
                   className="hidden"
                   onChange={(e) => handleFileSelect(e.target.files)}
                 />
@@ -939,10 +920,10 @@ export default function DocumentsPage() {
                       disabled={directUploadFiles.some((f) => f.uploading)}
                     >
                       <Upload className="mr-2 h-4 w-4" />
-                      Select Files
+                      Select File
                     </Button>
                     <p className="text-xs text-gray-500 mt-2">
-                      Click to select files or drag and drop
+                      Click to select a file
                     </p>
                   </div>
                 </div>
@@ -950,7 +931,7 @@ export default function DocumentsPage() {
 
               {directUploadFiles.length > 0 && (
                 <div className="space-y-4">
-                  <Label>Configure Files:</Label>
+                  <Label>Configure File:</Label>
                   <div className="space-y-4 max-h-96 overflow-y-auto">
                     {directUploadFiles.map((item) => (
                       <Card key={item.id} className="p-4">
@@ -997,27 +978,6 @@ export default function DocumentsPage() {
 
                           {!item.uploading && !item.storageId && (
                             <>
-                              <div className="space-y-2">
-                                <Label htmlFor={`title-${item.id}`}>
-                                  Title *
-                                </Label>
-                                <Input
-                                  id={`title-${item.id}`}
-                                  value={item.title}
-                                  onChange={(e) =>
-                                    setDirectUploadFiles((prev) =>
-                                      prev.map((file) =>
-                                        file.id === item.id
-                                          ? { ...file, title: e.target.value }
-                                          : file
-                                      )
-                                    )
-                                  }
-                                  placeholder="Enter file title"
-                                  required
-                                />
-                              </div>
-
                               <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                   <Label htmlFor={`type-${item.id}`}>
@@ -1084,47 +1044,6 @@ export default function DocumentsPage() {
                                   />
                                 </div>
                               </div>
-
-                              <div className="space-y-2">
-                                <Label htmlFor={`visibility-${item.id}`}>
-                                  Visibility
-                                </Label>
-                                <Select
-                                  value={item.visibilityScope}
-                                  onValueChange={(
-                                    value: DocumentVisibilityScope,
-                                  ) =>
-                                    setDirectUploadFiles((prev) =>
-                                      prev.map((file) =>
-                                        file.id === item.id
-                                          ? {
-                                              ...file,
-                                              visibilityScope: value,
-                                            }
-                                          : file,
-                                      ),
-                                    )
-                                  }
-                                >
-                                  <SelectTrigger id={`visibility-${item.id}`}>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="admins_only">
-                                      Admins only
-                                    </SelectItem>
-                                    <SelectItem value="all_employees">
-                                      All employees
-                                    </SelectItem>
-                                    <SelectItem value="payroll_visible">
-                                      Payroll-visible
-                                    </SelectItem>
-                                    <SelectItem value="alumni_visible">
-                                      Alumni-visible
-                                    </SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
                             </>
                           )}
                         </div>
@@ -1150,16 +1069,11 @@ export default function DocumentsPage() {
                 onClick={handleDirectFileUpload}
                 disabled={
                   directUploadFiles.length === 0 ||
-                  directUploadFiles.some((f) => f.uploading) ||
-                  directUploadFiles.some((f) => !f.title.trim())
+                  directUploadFiles.some((file) => file.uploading)
                 }
               >
                 <Upload className="mr-2 h-4 w-4" />
-                Upload{" "}
-                {directUploadFiles.length > 0
-                  ? `${directUploadFiles.length} `
-                  : ""}
-                File{directUploadFiles.length !== 1 ? "s" : ""}
+                Upload File
               </Button>
             </DialogFooter>
           </DialogContent>

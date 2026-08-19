@@ -132,7 +132,114 @@ function attendanceInput(
   };
 }
 
+async function separateEmployee(
+  t: ReturnType<typeof convexTest>,
+  employeeId: Id<"employees">,
+  status: "resigned" | "terminated",
+  separationDate: number,
+) {
+  await t.run(async (ctx) => {
+    const employee = await ctx.db.get(employeeId);
+    if (!employee) {
+      throw new Error("Employee fixture not found");
+    }
+
+    await ctx.db.patch(employeeId, {
+      employment: {
+        ...employee.employment,
+        status,
+        separationDate,
+      },
+      updatedAt: separationDate,
+    });
+  });
+}
+
 describe("attendance payroll locking", () => {
+  it.each(["resigned", "terminated"] as const)(
+    "allows %s employee attendance backfill through the separation date",
+    async (status) => {
+      const { t, actor, organizationId, employeeId } = await setup("owner");
+      const separationDate = Date.UTC(2026, 7, 10);
+      await separateEmployee(t, employeeId, status, separationDate);
+
+      await expect(
+        actor.mutation(
+          api.attendance.createAttendance,
+          attendanceInput(organizationId, employeeId, separationDate),
+        ),
+      ).resolves.toBeTruthy();
+    },
+  );
+
+  it.each(["resigned", "terminated"] as const)(
+    "rejects %s employee attendance after the separation date",
+    async (status) => {
+      const { t, actor, organizationId, employeeId } = await setup("owner");
+      await separateEmployee(
+        t,
+        employeeId,
+        status,
+        Date.UTC(2026, 7, 10),
+      );
+
+      await expect(
+        actor.mutation(
+          api.attendance.createAttendance,
+          attendanceInput(
+            organizationId,
+            employeeId,
+            Date.UTC(2026, 7, 11),
+          ),
+        ),
+      ).rejects.toThrow("after the employee's separation date");
+    },
+  );
+
+  it.each(["resigned", "terminated"] as const)(
+    "allows bulk attendance backfill for a %s employee through the separation date",
+    async (status) => {
+      const { t, actor, organizationId, employeeId } = await setup("owner");
+      const separationDate = Date.UTC(2026, 7, 10);
+      await separateEmployee(t, employeeId, status, separationDate);
+
+      await expect(
+        actor.mutation(api.attendance.bulkCreateAttendance, {
+          entries: [
+            attendanceInput(
+              organizationId,
+              employeeId,
+              Date.UTC(2026, 7, 9),
+            ),
+            attendanceInput(organizationId, employeeId, separationDate),
+          ],
+        }),
+      ).resolves.toHaveLength(2);
+    },
+  );
+
+  it("rejects a bulk attendance batch after an employee's separation date", async () => {
+    const { t, actor, organizationId, employeeId } = await setup("owner");
+    await separateEmployee(
+      t,
+      employeeId,
+      "resigned",
+      Date.UTC(2026, 7, 10),
+    );
+
+    await expect(
+      actor.mutation(api.attendance.bulkCreateAttendance, {
+        entries: [
+          attendanceInput(
+            organizationId,
+            employeeId,
+            Date.UTC(2026, 7, 11),
+          ),
+        ],
+      }),
+    ).rejects.toThrow("after the employee's separation date");
+  });
+
   it("blocks HR from changing attendance inside a finalized payroll period", async () => {
     const { actor, organizationId, employeeId } = await setup("hr");
 

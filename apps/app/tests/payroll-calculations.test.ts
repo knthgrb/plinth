@@ -1593,4 +1593,42 @@ describe("payroll calculations", () => {
     expect(result.basicPay).toBeGreaterThan(0);
     expect(result.daysWorked).toBe(1);
   });
+
+  it("stops monthly payroll at the employee separation date", () => {
+    const cutoffStart = localDate(2026, 7, 1);
+    const cutoffEnd = localDate(2026, 7, 15);
+    const separationDate = localDate(2026, 7, 10);
+    const workedDates = [3, 4, 5, 6, 7, 10].map((day) =>
+      localDate(2026, 7, day),
+    );
+
+    const result = calculate({
+      employee: createEmployee({
+        employment: {
+          employeeId: "E-1",
+          position: "Staff",
+          department: "Ops",
+          employmentType: "regular",
+          hireDate: localDate(2020, 0, 1),
+          separationDate,
+          lastWorkingDay: separationDate,
+          status: "resigned",
+        },
+      }),
+      attendance: workedDates.map((date) => ({
+        date,
+        status: "present",
+        actualIn: "09:00",
+        actualOut: "18:00",
+        scheduleIn: "09:00",
+        scheduleOut: "18:00",
+      })),
+      cutoffStart,
+      cutoffEnd,
+    });
+
+    expect(result.absences).toBe(0);
+    expect(result.employmentProrationRatio).toBeCloseTo(0.6, 5);
+    expect(result.basicPay).toBeCloseTo(7_200, 2);
+  });
 });

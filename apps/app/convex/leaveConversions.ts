@@ -633,6 +633,21 @@ export async function getFinalSettlementLeaveConversionAmount(
   ctx: DatabaseContext,
   employeeId: Id<"employees">,
 ): Promise<number> {
+  const details = await getFinalSettlementLeaveConversionDetails(
+    ctx,
+    employeeId,
+  );
+  return details.leaveConversionAmount;
+}
+
+export async function getFinalSettlementLeaveConversionDetails(
+  ctx: DatabaseContext,
+  employeeId: Id<"employees">,
+): Promise<{
+  leaveConversionAmount: number;
+  convertibleDays: number;
+  deMinimisDailyRate: number;
+}> {
   const approved = await ctx.db
     .query("leaveConversionRequests")
     .withIndex("by_employee_status", (builder) =>
@@ -642,16 +657,40 @@ export async function getFinalSettlementLeaveConversionAmount(
   if (approved.length > MAX_CONVERSION_ROWS) {
     throw new Error("Final settlement leave conversion limit exceeded");
   }
-  return roundCurrency(
-    approved
-      .filter(
-        (request) =>
-          request.finalSettlementId !== undefined &&
-          (request.paymentStatus === "ready" ||
-            request.paymentStatus === "processing"),
-      )
-      .reduce((total, request) => total + (request.payableAmount ?? 0), 0),
+  const payable = approved.filter(
+    (request) =>
+      request.finalSettlementId !== undefined &&
+      (request.paymentStatus === "ready" ||
+        request.paymentStatus === "processing"),
   );
+  const leaveConversionAmount = roundCurrency(
+    payable.reduce((total, request) => total + (request.payableAmount ?? 0), 0),
+  );
+  const convertibleDays = roundCurrency(
+    payable.reduce((total, request) => total + request.requestedDays, 0),
+  );
+  let remainingDeMinimisDays = 10;
+  let deMinimisAmount = 0;
+  for (const request of [...payable].sort(
+    (left, right) => left.createdAt - right.createdAt,
+  )) {
+    if (remainingDeMinimisDays <= 0) break;
+    const days = Math.min(remainingDeMinimisDays, request.requestedDays);
+    const dailyRate =
+      request.dailyRateSnapshot ??
+      (request.requestedDays > 0
+        ? (request.payableAmount ?? 0) / request.requestedDays
+        : 0);
+    deMinimisAmount += days * dailyRate;
+    remainingDeMinimisDays -= days;
+  }
+  const deMinimisDays = Math.min(10, convertibleDays);
+  return {
+    leaveConversionAmount,
+    convertibleDays,
+    deMinimisDailyRate:
+      deMinimisDays > 0 ? roundCurrency(deMinimisAmount / deMinimisDays) : 0,
+  };
 }
 
 export async function linkApprovedLeaveConversionsToPayrollRun(

@@ -76,8 +76,43 @@ export type FinalSettlementReleaseTracking = {
   reviewedAt?: number;
   releasedBy?: unknown;
   releasedAt?: number;
+  calculationVersion?: number;
+  annualTaxableIncome?: number;
+  annualTaxDue?: number;
+  taxAlreadyWithheld?: number;
+  calculatedAdjustment?: number;
+  appliedAdjustment?: number;
+  variance?: number;
+  overrideReason?: string;
   notes?: string;
 };
+
+export function validateFinalTaxReview(args: {
+  calculatedAdjustment: number;
+  appliedAdjustment: number;
+  overrideReason?: string;
+}): {
+  calculatedAdjustment: number;
+  appliedAdjustment: number;
+  variance: number;
+  overrideReason?: string;
+} {
+  const calculatedAdjustment = roundCurrency(args.calculatedAdjustment);
+  const appliedAdjustment = roundCurrency(args.appliedAdjustment);
+  const variance = roundCurrency(appliedAdjustment - calculatedAdjustment);
+  const overrideReason = args.overrideReason?.trim() || undefined;
+  if (variance !== 0 && !overrideReason) {
+    throw new Error(
+      "A final tax override reason is required when the applied amount differs from the calculated amount.",
+    );
+  }
+  return {
+    calculatedAdjustment,
+    appliedAdjustment,
+    variance,
+    overrideReason,
+  };
+}
 
 export type FinalSettlementBir2316Tracking = {
   status: FinalSettlementBir2316Status;
@@ -90,6 +125,8 @@ export type FinalSettlementBir2316Tracking = {
 
 export type FinalSettlementLike = {
   status: FinalSettlementStatus;
+  payrollRunId?: unknown;
+  payslipId?: unknown;
   clearanceItems?: FinalSettlementClearanceItem[];
   loanPayoffs?: FinalSettlementLoanPayoff[];
   customDeductions?: FinalSettlementCustomDeduction[];
@@ -151,23 +188,61 @@ export function createLoanPayoffsFromEmployeeDeductions(
       deductionId: deduction.id,
       name: deduction.name,
       scheduledAmount: roundCurrency(deduction.amount),
-      payoffAmount: roundCurrency(deduction.amount),
-      rule: "deduct_scheduled_amount",
+      payoffAmount: 0,
+      rule: "deduct_full_balance",
       status: "pending",
     }));
 }
 
-export function isFinalSettlementReadyForPayroll(
-  settlement: Pick<FinalSettlementLike, "status" | "clearanceItems" | "loanPayoffs">,
-): boolean {
-  if (
-    settlement.status !== "ready_for_payroll" &&
-    settlement.status !== "payroll_generated" &&
-    settlement.status !== "released"
-  ) {
-    return false;
-  }
+export function buildSeparationKey(
+  employeeId: string,
+  separationType: "resigned" | "terminated",
+  separationDate: number,
+): string {
+  return `${employeeId}:${separationType}:${Math.trunc(separationDate)}`;
+}
 
+const EDITABLE_SETTLEMENT_STATUSES: ReadonlySet<FinalSettlementStatus> = new Set([
+  "draft",
+  "in_review",
+  "ready_for_payroll",
+]);
+
+export function assertFinalSettlementEditable(
+  status: FinalSettlementStatus,
+): void {
+  if (!EDITABLE_SETTLEMENT_STATUSES.has(status)) {
+    throw new Error(`Final settlement in ${status} status cannot be edited.`);
+  }
+}
+
+const ALLOWED_SETTLEMENT_TRANSITIONS: Record<
+  FinalSettlementStatus,
+  ReadonlySet<FinalSettlementStatus>
+> = {
+  draft: new Set(["in_review", "void"]),
+  in_review: new Set(["ready_for_payroll", "void"]),
+  ready_for_payroll: new Set(["in_review", "payroll_generated", "void"]),
+  payroll_generated: new Set(["ready_for_payroll", "released", "void"]),
+  released: new Set(),
+  void: new Set(),
+};
+
+export function assertFinalSettlementTransition(
+  currentStatus: FinalSettlementStatus,
+  nextStatus: FinalSettlementStatus,
+): void {
+  if (currentStatus === nextStatus) return;
+  if (!ALLOWED_SETTLEMENT_TRANSITIONS[currentStatus].has(nextStatus)) {
+    throw new Error(
+      `Final settlement cannot transition from ${currentStatus} to ${nextStatus}.`,
+    );
+  }
+}
+
+export function isFinalSettlementClearanceAndLoansResolved(
+  settlement: Pick<FinalSettlementLike, "clearanceItems" | "loanPayoffs">,
+): boolean {
   const requiredClearance = (settlement.clearanceItems ?? []).filter(
     (item) => item.required,
   );
@@ -175,10 +250,28 @@ export function isFinalSettlementReadyForPayroll(
     (item) => item.status === "completed" || item.status === "waived",
   );
   const loansResolved = (settlement.loanPayoffs ?? []).every(
-    (loan) => loan.status === "approved" || loan.status === "waived",
+    (loan) =>
+      loan.status === "waived" ||
+      (loan.status === "approved" &&
+        loan.rule !== "waive" &&
+        roundCurrency(loan.payoffAmount) > 0),
   );
 
   return clearanceDone && loansResolved;
+}
+
+export function isFinalSettlementReadyForPayroll(
+  settlement: Pick<
+    FinalSettlementLike,
+    "status" | "payrollRunId" | "payslipId" | "clearanceItems" | "loanPayoffs"
+  >,
+): boolean {
+  if (settlement.status !== "ready_for_payroll") {
+    return false;
+  }
+  if (settlement.payrollRunId || settlement.payslipId) return false;
+
+  return isFinalSettlementClearanceAndLoansResolved(settlement);
 }
 
 export function buildFinalSettlementPayrollDeductions(
@@ -248,6 +341,7 @@ export function computeFinalSettlementSummary(settlement: FinalSettlementLike) {
     readyForRelease:
       (settlement.status === "payroll_generated" ||
         settlement.status === "released") &&
+      isFinalSettlementClearanceAndLoansResolved(settlement) &&
       birReady &&
       finalTaxReady,
   };

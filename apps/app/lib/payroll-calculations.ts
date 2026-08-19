@@ -46,10 +46,9 @@ export type PayrollBaseResult = {
   basicPay: number;
   /**
    * Ratio of days the employee was actually in the company during this cutoff.
-   * 1.0 = employed the full cutoff. < 1.0 = hired mid-cutoff (or left mid-cutoff
-   * once we add termination handling). Callers can multiply monthly-preloaded
-   * amounts (e.g. non-taxable allowance) by this to keep them consistent with
-   * the pro-rated basic pay.
+   * 1.0 = employed the full cutoff. < 1.0 = hired or separated mid-cutoff.
+   * Callers can multiply monthly-preloaded amounts (e.g. non-taxable allowance)
+   * by this to keep them consistent with the pro-rated basic pay.
    */
   employmentProrationRatio: number;
   daysWorked: number;
@@ -1265,15 +1264,27 @@ export function calculatePayrollBaseFromRecords(args: {
   const hireDateDay =
     hireDateDayRaw > cutoffEndDay ? cutoffStartDay : hireDateDayRaw;
   const effectiveStartDay = Math.max(cutoffStartDay, hireDateDay);
+  const employmentEndRaw =
+    typeof employee?.employment?.lastWorkingDay === "number"
+      ? employee.employment.lastWorkingDay
+      : typeof employee?.employment?.separationDate === "number"
+        ? employee.employment.separationDate
+        : null;
+  const employmentEndDay =
+    employmentEndRaw == null
+      ? cutoffEndDay
+      : toLocalDayTimestamp(employmentEndRaw);
+  const effectiveEndDay = Math.min(cutoffEndDay, employmentEndDay);
   const hiredMidCutoff = effectiveStartDay > cutoffStartDay;
+  const separatedMidCutoff = effectiveEndDay < cutoffEndDay;
   const dailyizedFirstCutoff = salaryType === "monthly" && hiredMidCutoff;
 
   // Include any record that has work on at least one calendar day in the period (so overnight shifts that extend into the period are never missed).
   // Records strictly before the hire date are ignored — those days never belonged to this employee.
   const periodAttendance = attendance.filter((record: any) => {
     const recordDay = toLocalDayTimestamp(record.date);
-    if (recordDay < effectiveStartDay) return false;
-    if (recordDay >= cutoffStartDay && recordDay <= cutoffEndDay) return true;
+    if (recordDay < effectiveStartDay || recordDay > effectiveEndDay) return false;
+    if (recordDay >= cutoffStartDay && recordDay <= effectiveEndDay) return true;
     if (record.actualIn && record.actualOut) {
       const segs = getSegmentsByManilaDay(
         record.date,
@@ -1285,7 +1296,7 @@ export function calculatePayrollBaseFromRecords(args: {
         return (
           dayTs >= effectiveStartDay &&
           dayTs >= cutoffStartDay &&
-          dayTs <= cutoffEndDay
+          dayTs <= effectiveEndDay
         );
       });
       if (anySegmentInPeriod) return true;
@@ -1306,7 +1317,7 @@ export function calculatePayrollBaseFromRecords(args: {
   const approvedLeaves = leaveRequests.filter(
     (leave: any) =>
       leave.status === "approved" &&
-      leave.startDate <= cutoffEnd &&
+      leave.startDate <= effectiveEndDay &&
       leave.endDate >= cutoffStart,
   );
 
@@ -1431,7 +1442,7 @@ export function calculatePayrollBaseFromRecords(args: {
   // absences for days they weren't even employed (see screenshot: April 6 hire in
   // a Mar 26–Apr 10 cutoff showed ₱10,000 basic with ₱13,793 absence deduction).
   let employmentProrationRatio = 1;
-  if (hiredMidCutoff) {
+  if (hiredMidCutoff || separatedMidCutoff) {
     let totalWorkingDays = 0;
     let employedWorkingDays = 0;
     const cursor = new Date(cutoffStartDay);
@@ -1440,7 +1451,7 @@ export function calculatePayrollBaseFromRecords(args: {
       const dayTs = cursor.getTime();
       if (!isRestDay(dayTs, employee.schedule)) {
         totalWorkingDays += 1;
-        if (dayTs >= effectiveStartDay) {
+        if (dayTs >= effectiveStartDay && dayTs <= effectiveEndDay) {
           employedWorkingDays += 1;
         }
       }
@@ -1816,7 +1827,7 @@ export function calculatePayrollBaseFromRecords(args: {
   // Start the "missing attendance = absent" walk at the employment window so
   // pre-hire calendar days are never counted as absences.
   const currentDate = new Date(effectiveStartDay);
-  const lastDate = new Date(toLocalDayTimestamp(cutoffEnd));
+  const lastDate = new Date(effectiveEndDay);
 
   while (currentDate <= lastDate) {
     const dateTs = currentDate.getTime();

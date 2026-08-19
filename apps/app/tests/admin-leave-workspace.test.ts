@@ -9,6 +9,7 @@ import {
   getLeaveWorkspaceMode,
   normalizeApprovalColumns,
   resolveAuthenticatedReviewer,
+  shouldShowEmployeeLeaveWorkspace,
 } from "../lib/leave/admin-workspace";
 
 describe("administrative leave workspace", () => {
@@ -26,6 +27,27 @@ describe("administrative leave workspace", () => {
     ]);
     expect(getLeaveAdminTabs("manager")).toEqual([]);
     expect(getLeaveAdminTabs("employee")).toEqual([]);
+  });
+
+  it("shows employee leave content for an owner using employee view", () => {
+    expect(
+      shouldShowEmployeeLeaveWorkspace({
+        role: "owner",
+        isEmployeeExperienceUI: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowEmployeeLeaveWorkspace({
+        role: "owner",
+        isEmployeeExperienceUI: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowEmployeeLeaveWorkspace({
+        role: "manager",
+        isEmployeeExperienceUI: false,
+      }),
+    ).toBe(true);
   });
 
   it("separates decision, cancellation, evidence, and conflict queues", () => {

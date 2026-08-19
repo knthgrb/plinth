@@ -9,11 +9,13 @@ import { api } from "@/convex/_generated/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/use-toast";
 import { useOrganization } from "@/hooks/organization-context";
 import { useSettingsModal } from "@/hooks/settings-modal-context";
 import {
   buildLeaveSettingsViewModel,
+  completeLeaveMigration,
   type LeaveSettingsSector,
 } from "@/lib/leave/client-state";
 import { getOrganizationPath } from "@/utils/organization-routing";
@@ -111,6 +113,9 @@ export function LeaveTypesSettingsContent() {
   const activateMigration = useMutation(
     api.leaveMigration.activateOrganizationLeaveEngine,
   );
+  const runMigrationBatch = useMutation(
+    api.leaveMigration.runOrganizationLeaveMigrationBatch,
+  );
   const [sector, setSector] = useState<LeaveSettingsSector>("private");
   const [isSaving, setIsSaving] = useState(false);
   const [selectedPolicy, setSelectedPolicy] = useState<ConfiguredPolicy>();
@@ -156,9 +161,18 @@ export function LeaveTypesSettingsContent() {
     setIsSaving(true);
     try {
       if (configuration?.settings) {
-        await activateMigration({
-          organizationId: currentOrganizationId,
-          employmentSector: sector,
+        await completeLeaveMigration({
+          runBatch: () =>
+            runMigrationBatch({
+              organizationId: currentOrganizationId,
+              batchSize: 100,
+            }),
+          activate: async () => {
+            await activateMigration({
+              organizationId: currentOrganizationId,
+              employmentSector: sector,
+            });
+          },
         });
       } else {
         await configureSector({
@@ -186,8 +200,8 @@ export function LeaveTypesSettingsContent() {
   if (!currentOrganizationId || configuration === undefined) {
     return (
       <Card>
-        <CardContent className="p-6 text-sm text-muted-foreground">
-          Loading leave policy settings…
+        <CardContent className="flex min-h-48 items-center justify-center p-6">
+          <Spinner size="lg" />
         </CardContent>
       </Card>
     );

@@ -18,6 +18,7 @@ import { useOrganization } from "@/hooks/organization-context";
 import {
   getLeaveAdminTabs,
   getLeaveWorkspaceMode,
+  shouldShowEmployeeLeaveWorkspace,
   type LeaveAdminTab,
   type OrganizationRole,
 } from "@/lib/leave/admin-workspace";
@@ -59,8 +60,10 @@ export default function LeavePage() {
     user?.employeeId ??
     currentOrganization?.employeeId ??
     null;
-  const showEmployeeWorkspace =
-    isEmployeeExperienceUI || role === "employee" || role === "manager";
+  const showEmployeeWorkspace = shouldShowEmployeeLeaveWorkspace({
+    role,
+    isEmployeeExperienceUI,
+  });
 
   if (
     !currentOrganizationId ||
