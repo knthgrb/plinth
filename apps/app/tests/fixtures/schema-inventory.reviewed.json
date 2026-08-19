@@ -542,8 +542,8 @@
     },
     {
       "name": "organizations",
-      "fieldCount": 9,
-      "fieldsSha256": "e0c2383c867abf00223ea61a63ba476db13d40a136381ad1bc3d26377e724835",
+      "fieldCount": 10,
+      "fieldsSha256": "cc30c75a0e1c89eb6d77f07ab0110699247ec2b605148e650ad134e51a7a75b0",
       "indexCount": 1,
       "indexesSha256": "d38f033b2b89986a3a7fc4ba9c11039d187f563304bfe287baabe0f0b824eb9e"
     },
