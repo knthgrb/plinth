@@ -7,7 +7,6 @@ export default defineSchema({
     name: v.string(),
     address: v.optional(v.string()),
     phone: v.optional(v.string()),
-    email: v.optional(v.string()),
     taxId: v.optional(v.string()),
     status: v.optional(v.union(v.literal("active"), v.literal("archived"))),
     archivedAt: v.optional(v.number()),

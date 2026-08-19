@@ -73,34 +73,3 @@ export const backfillNormalizedUserEmails = internalMutation({
     };
   },
 });
-
-/**
- * Phase 1 of removing the obsolete organizations.email field.
- * Run each returned cursor to completion before deleting the field from schema.ts.
- */
-export const clearLegacyOrganizationEmails = internalMutation({
-  args: {
-    cursor: v.optional(v.union(v.string(), v.null())),
-    numItems: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const page = await ctx.db.query("organizations").paginate({
-      cursor: args.cursor ?? null,
-      numItems: Math.max(1, Math.min(args.numItems ?? 100, 500)),
-    });
-    let removedCount = 0;
-    for (const organization of page.page) {
-      if (organization.email !== undefined) {
-        await ctx.db.patch(organization._id, { email: undefined });
-        removedCount += 1;
-      }
-    }
-
-    return {
-      continueCursor: page.continueCursor,
-      isDone: page.isDone,
-      scannedCount: page.page.length,
-      removedCount,
-    };
-  },
-});
