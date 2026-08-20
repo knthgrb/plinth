@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import type { LeaveBenefitEventType } from "../lib/leave/types";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
@@ -341,6 +342,29 @@ export const verifyLeaveBenefitEvent = mutation({
     if (!isLeaveAdministrator(membership.role)) {
       throw new Error("Owner, Admin, or HR approval is required");
     }
+    await requireSensitiveLeaveAccess(
+      ctx,
+      benefitEvent.organizationId,
+      benefitEvent.employeeId,
+    );
+    const linkedRequests = await ctx.db
+      .query("leaveRequests")
+      .withIndex("by_employee", (query) =>
+        query.eq("employeeId", benefitEvent.employeeId),
+      )
+      .filter((query) =>
+        query.and(
+          query.eq(query.field("organizationId"), benefitEvent.organizationId),
+          query.eq(query.field("benefitEventId"), benefitEvent._id),
+          query.eq(query.field("status"), "pending"),
+        ),
+      )
+      .take(2);
+    if (linkedRequests.length > 0) {
+      throw new Error(
+        "Review the linked leave request to verify or reject this event atomically",
+      );
+    }
     const now = Date.now();
     await ctx.db.patch(benefitEvent._id, {
       verificationStatus: args.decision,
@@ -349,6 +373,49 @@ export const verifyLeaveBenefitEvent = mutation({
       updatedAt: now,
     });
     return { verificationStatus: args.decision };
+  },
+});
+
+export const getMyVerifiedLeaveBenefitEvents = query({
+  args: {
+    organizationId: v.id("organizations"),
+    employeeId: v.id("employees"),
+  },
+  handler: async (ctx, args) => {
+    await requireLeaveSelfService(ctx, args.organizationId, args.employeeId);
+    await requireEmployeeInOrganization(ctx, args.organizationId, args.employeeId);
+    const events = await ctx.db
+      .query("leaveBenefitEvents")
+      .withIndex("by_organization_qualifying_date", (query) =>
+        query.eq("organizationId", args.organizationId),
+      )
+      .order("desc")
+      .filter((query) =>
+        query.and(
+          query.eq(query.field("employeeId"), args.employeeId),
+          query.eq(query.field("verificationStatus"), "verified"),
+        ),
+      )
+      .take(101);
+    if (events.length > 100) {
+      throw new Error("Leave benefit event history exceeds the supported limit");
+    }
+    const reusableEvents: Array<{
+      benefitEventId: Id<"leaveBenefitEvents">;
+      eventType: LeaveBenefitEventType;
+      qualifyingDate: number;
+      benefitVariant?: string;
+    }> = [];
+    for (const event of events) {
+      if (event.eventType === "maternity_credit_allocation") continue;
+      reusableEvents.push({
+        benefitEventId: event._id,
+        eventType: event.eventType,
+        qualifyingDate: event.qualifyingDate,
+        benefitVariant: event.benefitVariant,
+      });
+    }
+    return reusableEvents;
   },
 });
 

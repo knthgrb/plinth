@@ -318,6 +318,11 @@ describe("leave qualifications", () => {
         benefitVariant: "live_birth",
       },
     );
+    await actor("owner").mutation(grantSensitiveLeaveAccess, {
+      organizationId,
+      membershipId: actors.hr.membershipId,
+      reason: "Review maternity benefit evidence",
+    });
     await expect(
       actor("hr").mutation(verifyLeaveBenefitEvent, {
         benefitEventId: maternityEventId,

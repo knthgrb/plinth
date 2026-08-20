@@ -83,6 +83,30 @@ describe("Philippine leave presets", () => {
     });
   });
 
+  it("models the optional maternity extension as a separate 30-day unpaid event policy", () => {
+    for (const preset of [
+      buildPrivateSectorPreset(),
+      buildGovernmentPreset(),
+    ]) {
+      const extension = preset.policies.find((policy) =>
+        policy.sourceKey.endsWith("maternity_unpaid_extension"),
+      );
+
+      expect(extension?.rules).toMatchObject({
+        accountBehavior: "non_credit",
+        payTreatment: "unpaid",
+        durationBasis: "calendar_days",
+        entitlementMethod: "event_based",
+        qualifyingEventRequired: true,
+        eventEntitlementRules: [
+          expect.objectContaining({ maximumUnits: 30 }),
+          expect.objectContaining({ maximumUnits: 30 }),
+        ],
+      });
+      expect(extension?.rules.requiredDocumentRules).toBeUndefined();
+    }
+  });
+
   it("records complete ISO source-effective dates", () => {
     const policies = [
       ...buildPrivateSectorPreset().policies,

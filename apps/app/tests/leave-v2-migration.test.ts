@@ -91,6 +91,7 @@ describe("leave v2 migration", () => {
         leaveTrackerMode: "general",
         proratedLeave: true,
         leaveAccrualFrequency: "monthly",
+        annualSil: 8,
         migrationVersion: 1,
         createdAt: 1,
         updatedAt: 1,
@@ -154,6 +155,12 @@ describe("leave v2 migration", () => {
       policies: await ctx.db
         .query("leavePolicies")
         .withIndex("by_organization", (q) =>
+          q.eq("organizationId", fixture.organizationId),
+        )
+        .collect(),
+      companyModels: await ctx.db
+        .query("leaveCompanyModelVersions")
+        .withIndex("by_organization_effective", (q) =>
           q.eq("organizationId", fixture.organizationId),
         )
         .collect(),
@@ -232,6 +239,18 @@ describe("leave v2 migration", () => {
           q.eq("organizationId", fixture.organizationId).eq("key", "leave-engine-v2"),
         )
         .unique(),
+      policies: await ctx.db
+        .query("leavePolicies")
+        .withIndex("by_organization", (q) =>
+          q.eq("organizationId", fixture.organizationId),
+        )
+        .collect(),
+      companyModels: await ctx.db
+        .query("leaveCompanyModelVersions")
+        .withIndex("by_organization_effective", (q) =>
+          q.eq("organizationId", fixture.organizationId),
+        )
+        .collect(),
     }));
     expect(activation.settings).toMatchObject({
       employmentSector: "private",
@@ -242,6 +261,32 @@ describe("leave v2 migration", () => {
     expect(activation.run).toMatchObject({
       employmentSector: "private",
       status: "active",
+    });
+    expect(activation.companyModels).toEqual([
+      expect.objectContaining({
+        version: 1,
+        mode: "pooled",
+        effectiveStart: persisted.snapshot?.cutoverCandidateAt,
+      }),
+    ]);
+    expect(activation.policies).toHaveLength(8);
+    expect(activation.policies).toContainEqual(
+      expect.objectContaining({
+        sourceKey: "private_maternity_unpaid_extension",
+        category: "statutory",
+      }),
+    );
+    const general = activation.policies.find(
+      (policy) => policy.sourceKey === "__plinth_general_leave__",
+    );
+    const statutorySil = activation.policies.find(
+      (policy) => policy.sourceKey === "private_sil",
+    );
+    expect(general).toBeDefined();
+    expect(statutorySil).toMatchObject({
+      category: "statutory",
+      complianceRole: "private_sil_minimum",
+      coveredByPolicyId: general?._id,
     });
   });
 

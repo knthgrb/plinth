@@ -1,4 +1,8 @@
 import type { Id } from "@/convex/_generated/dataModel";
+import type {
+  LeaveBenefitEventType,
+  LeaveEventEntitlementRule,
+} from "@/lib/leave/types";
 
 export type EmployeeLeaveRequestStatus =
   | "draft"
@@ -25,6 +29,9 @@ export interface EmployeeLeavePolicySummary {
   name: string;
   category: "statutory" | "company" | "unpaid";
   confidentiality: "standard" | "restricted";
+  sourceKey?: string;
+  qualifyingEventRequired?: boolean;
+  eventEntitlementRules?: LeaveEventEntitlementRule[];
 }
 
 export interface EmployeeLeaveDashboardData {
@@ -144,6 +151,10 @@ export interface EmployeeLeavePolicyOption {
   confidentiality: "standard" | "restricted";
   allowHalfDay: boolean;
   allowHourly: boolean;
+  sourceKey: string;
+  qualifyingEventRequired: boolean;
+  requiresVerifiedBenefitEvent?: boolean;
+  eventEntitlementRules: LeaveEventEntitlementRule[];
 }
 
 export interface LeavePreviewOccurrence {
@@ -192,6 +203,13 @@ export interface LeaveRequestDraft {
   attachments: LeaveDraftAttachment[];
   allowHalfDay: boolean;
   allowHourly: boolean;
+  qualifyingEventRequired: boolean;
+  benefitEventId?: string;
+  benefitEventDraft?: {
+    eventType: LeaveBenefitEventType;
+    qualifyingLocalDate: string;
+    benefitVariant?: string;
+  };
   preview: LeaveRequestPreview | null;
   previewFingerprint: string | null;
 }
@@ -229,6 +247,7 @@ export function createLeaveRequestDraft(input?: {
   endLocalDate?: string;
   allowHalfDay?: boolean;
   allowHourly?: boolean;
+  qualifyingEventRequired?: boolean;
 }): LeaveRequestDraft {
   return {
     policyId: input?.policyId ?? "",
@@ -239,6 +258,7 @@ export function createLeaveRequestDraft(input?: {
     attachments: [],
     allowHalfDay: input?.allowHalfDay ?? false,
     allowHourly: input?.allowHourly ?? false,
+    qualifyingEventRequired: input?.qualifyingEventRequired ?? false,
     preview: null,
     previewFingerprint: null,
   };
@@ -252,6 +272,8 @@ export function buildLeaveDraftFingerprint(
     | "endLocalDate"
     | "requestedDurationMode"
     | "requestedMinutes"
+    | "benefitEventId"
+    | "benefitEventDraft"
   >,
 ): string {
   return JSON.stringify({
@@ -263,7 +285,37 @@ export function buildLeaveDraftFingerprint(
       draft.requestedDurationMode === "hour"
         ? draft.requestedMinutes ?? null
         : null,
+    benefitEventDraft: draft.benefitEventDraft ?? null,
+    benefitEventId: draft.benefitEventId ?? null,
   });
+}
+
+export function setLeaveDraftBenefitEvent(
+  draft: LeaveRequestDraft,
+  benefitEventDraft:
+    | LeaveRequestDraft["benefitEventDraft"]
+    | undefined,
+): LeaveRequestDraft {
+  return {
+    ...draft,
+    benefitEventId: undefined,
+    benefitEventDraft,
+    preview: null,
+    previewFingerprint: null,
+  };
+}
+
+export function setLeaveDraftBenefitEventId(
+  draft: LeaveRequestDraft,
+  benefitEventId: string | undefined,
+): LeaveRequestDraft {
+  return {
+    ...draft,
+    benefitEventId,
+    benefitEventDraft: undefined,
+    preview: null,
+    previewFingerprint: null,
+  };
 }
 
 export function setLeaveDraftField(
@@ -291,6 +343,9 @@ export function canSubmitLeaveDraft(draft: LeaveRequestDraft): boolean {
     !draft.startLocalDate ||
     !draft.endLocalDate ||
     !draft.reason.trim() ||
+    (draft.qualifyingEventRequired &&
+      !draft.benefitEventId &&
+      !draft.benefitEventDraft) ||
     !draft.preview ||
     draft.previewFingerprint !== buildLeaveDraftFingerprint(draft)
   ) {

@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "convex/react";
 import {
   AlertTriangle,
   CalendarDays,
+  ExternalLink,
   FileCheck2,
   ShieldCheck,
 } from "lucide-react";
@@ -187,6 +188,43 @@ export function LeaveReviewDrawer(props: {
                 </dl>
               </div>
 
+              {context.benefitEvent ? (
+                <div className="rounded-xl border border-brand-purple/20 bg-brand-purple/5 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="flex items-center gap-2 text-sm font-medium">
+                      <ShieldCheck className="h-4 w-4 text-brand-purple" />
+                      Qualifying event
+                    </p>
+                    <Badge variant="outline" className="capitalize">
+                      {context.benefitEvent.verificationStatus}
+                    </Badge>
+                  </div>
+                  <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                      <dt className="text-muted-foreground">Event</dt>
+                      <dd className="capitalize">
+                        {context.benefitEvent.eventType.replaceAll("_", " ")}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Variant</dt>
+                      <dd className="capitalize">
+                        {context.benefitEvent.benefitVariant?.replaceAll(
+                          "_",
+                          " ",
+                        ) ?? "Standard entitlement"}
+                      </dd>
+                    </div>
+                  </dl>
+                  {context.benefitEvent.verificationStatus === "pending" ? (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Approving this request also records your verification of
+                      the qualifying event and supporting evidence.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
               <div className="rounded-xl border p-4">
                 <div className="flex items-center justify-between">
                   <p className="flex items-center gap-2 text-sm font-medium">
@@ -200,9 +238,32 @@ export function LeaveReviewDrawer(props: {
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
                   {context.supportingDocuments.length > 0
-                    ? "Submitted documents are attached to the private leave record."
+                    ? "Review the private supporting evidence before making a decision."
                     : "No supporting document was submitted."}
                 </p>
+                {context.supportingDocuments.length > 0 ? (
+                  <div className="mt-3 space-y-2">
+                    {context.supportingDocuments.map((document) => (
+                      <a
+                        key={document.storageId}
+                        href={document.url ?? undefined}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-disabled={document.url === null}
+                        className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${
+                          document.url
+                            ? "hover:border-brand-purple/50 hover:bg-brand-purple/5"
+                            : "pointer-events-none opacity-60"
+                        }`}
+                      >
+                        <span className="min-w-0 truncate">
+                          {document.fileName}
+                        </span>
+                        <ExternalLink className="h-4 w-4 shrink-0" />
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               <div className="rounded-xl border p-4">
@@ -295,7 +356,9 @@ export function LeaveReviewDrawer(props: {
               ? "Saving…"
               : props.selection?.status === "cancellation_requested"
                 ? "Approve cancellation"
-                : "Approve leave"}
+                : context?.benefitEvent?.verificationStatus === "pending"
+                  ? "Verify event and approve"
+                  : "Approve leave"}
           </Button>
         </SheetFooter>
       </SheetContent>

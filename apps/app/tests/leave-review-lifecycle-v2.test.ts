@@ -400,6 +400,23 @@ describe("leave V2 final review lifecycle", () => {
 
   it("paginates enriched balances and their append-only ledger for administrators", async () => {
     const fixture = await setupFixture();
+    await fixture.t.run((ctx) =>
+      ctx.db.insert("employeeLeaveBalances", {
+        organizationId: fixture.organizationId,
+        employeeId: fixture.employeeId,
+        year: 2026,
+        leaveTypeKey: "vacation",
+        total: 10,
+        used: 0,
+        balance: 10,
+        source: "employee_credits",
+        approvedDays: 0,
+        reconciliationStatus: "not_applicable",
+        migrationVersion: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
     await fixture.owner.mutation(adjustLeaveBalance, {
       balanceId: fixture.balanceId,
       amount: 1.5,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useConvex, useMutation } from "convex/react";
+import { useConvex, useMutation, useQuery } from "convex/react";
 import {
   CalendarDays,
   Check,
@@ -35,11 +35,14 @@ import {
   createLeaveRequestDraft,
   getAllowedDurationModes,
   getEmployeePolicyLabel,
+  setLeaveDraftBenefitEvent,
+  setLeaveDraftBenefitEventId,
   setLeaveDraftField,
   type EmployeeLeavePolicyOption,
   type LeaveDurationMode,
   type LeaveRequestPreview,
 } from "@/lib/leave/employee-workspace";
+import type { LeaveBenefitEventType } from "@/lib/leave/types";
 
 function parseStorageId(responseText: string): string {
   try {
@@ -54,6 +57,41 @@ function parseStorageId(responseText: string): string {
 }
 
 const steps = ["Policy", "Duration", "Preview", "Evidence", "Confirm"] as const;
+
+const benefitEventLabels: Record<LeaveBenefitEventType, string> = {
+  maternity: "Live childbirth",
+  miscarriage: "Miscarriage",
+  emergency_termination_of_pregnancy: "Emergency termination of pregnancy",
+  spouse_delivery: "Spouse delivery",
+  surgery: "Surgery",
+  adoption: "Adoption",
+  calamity: "Calamity",
+  other_protected: "Other protected event",
+};
+
+function availableBenefitEventTypes(
+  policy: EmployeeLeavePolicyOption | undefined,
+): LeaveBenefitEventType[] {
+  const configured = [
+    ...new Set(
+      (policy?.eventEntitlementRules ?? []).map((rule) => rule.eventType),
+    ),
+  ];
+  if (configured.length > 0) return configured;
+  const sourceKey = policy?.sourceKey ?? "";
+  if (sourceKey.includes("maternity")) {
+    return [
+      "maternity",
+      "miscarriage",
+      "emergency_termination_of_pregnancy",
+    ];
+  }
+  if (sourceKey.includes("paternity")) return ["spouse_delivery"];
+  if (sourceKey.includes("women")) return ["surgery"];
+  if (sourceKey.includes("adoption")) return ["adoption"];
+  if (sourceKey.includes("emergency")) return ["calamity"];
+  return ["other_protected"];
+}
 
 function payTreatmentLabel(value: LeaveRequestPreview["policy"]["payTreatment"]): string {
   const labels: Record<LeaveRequestPreview["policy"]["payTreatment"], string> = {
@@ -75,10 +113,21 @@ export function LeaveRequestDrawer(props: {
 }) {
   const convex = useConvex();
   const submitRequest = useMutation(api.leave.createLeaveRequestV2);
+  const verifiedEvents = useQuery(
+    api.leaveQualifications.getMyVerifiedLeaveBenefitEvents,
+    props.open
+      ? { organizationId: props.organizationId, employeeId: props.employeeId }
+      : "skip",
+  );
   const { toast } = useToast();
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState(() =>
-    createLeaveRequestDraft({ policyId: props.policies[0]?.policyId }),
+    createLeaveRequestDraft({
+      policyId: props.policies[0]?.policyId,
+      allowHalfDay: props.policies[0]?.allowHalfDay,
+      allowHourly: props.policies[0]?.allowHourly,
+      qualifyingEventRequired: props.policies[0]?.qualifyingEventRequired,
+    }),
   );
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -103,6 +152,7 @@ export function LeaveRequestDrawer(props: {
         policyId: firstPolicy?.policyId,
         allowHalfDay: firstPolicy?.allowHalfDay,
         allowHourly: firstPolicy?.allowHourly,
+        qualifyingEventRequired: firstPolicy?.qualifyingEventRequired,
       }),
     );
     setUploadingDocumentType(undefined);
@@ -121,6 +171,9 @@ export function LeaveRequestDrawer(props: {
       requestedMinutes: undefined,
       allowHalfDay: policy?.allowHalfDay ?? false,
       allowHourly: policy?.allowHourly ?? false,
+      qualifyingEventRequired: policy?.qualifyingEventRequired ?? false,
+      benefitEventId: undefined,
+      benefitEventDraft: undefined,
     }));
   };
 
@@ -146,6 +199,10 @@ export function LeaveRequestDrawer(props: {
           draft.requestedDurationMode === "hour"
             ? draft.requestedMinutes
             : undefined,
+        benefitEventDraft: draft.benefitEventDraft,
+        benefitEventId: draft.benefitEventId as
+          | Id<"leaveBenefitEvents">
+          | undefined,
       });
       const normalized: LeaveRequestPreview = {
         ...result,
@@ -222,6 +279,10 @@ export function LeaveRequestDrawer(props: {
           draft.requestedDurationMode === "hour"
             ? draft.requestedMinutes
             : undefined,
+        benefitEventDraft: draft.benefitEventDraft,
+        benefitEventId: draft.benefitEventId as
+          | Id<"leaveBenefitEvents">
+          | undefined,
         reason: draft.reason.trim(),
         attachments: draft.attachments.map((attachment) => ({
           storageObjectId:
@@ -286,8 +347,159 @@ export function LeaveRequestDrawer(props: {
     }
 
     if (step === 1) {
+      const eventTypes = availableBenefitEventTypes(selectedPolicy);
+      const requiresVerifiedEvent =
+        selectedPolicy?.requiresVerifiedBenefitEvent === true;
+      const reusableEvents =
+        verifiedEvents?.filter((event) =>
+          eventTypes.includes(event.eventType),
+        ) ?? [];
       return (
         <div className="space-y-5">
+          {selectedPolicy?.qualifyingEventRequired ? (
+            <div className="space-y-4 rounded-xl border bg-muted/20 p-4">
+              <div>
+                <h3 className="font-medium">Qualifying event</h3>
+                <p className="text-sm text-muted-foreground">
+                  HR will verify this private event and its evidence before
+                  approving the leave.
+                </p>
+              </div>
+              {reusableEvents.length > 0 ? (
+                <div className="space-y-2">
+                  <Label htmlFor="leave-existing-event">Event record</Label>
+                  <Select
+                    value={
+                      draft.benefitEventId ??
+                      (requiresVerifiedEvent ? "" : "new")
+                    }
+                    onValueChange={(value) =>
+                      setDraft((current) =>
+                        value === "new"
+                          ? setLeaveDraftBenefitEventId(current, undefined)
+                          : setLeaveDraftBenefitEventId(current, value),
+                      )
+                    }
+                  >
+                    <SelectTrigger id="leave-existing-event">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {!requiresVerifiedEvent ? (
+                        <SelectItem value="new">Record a new event</SelectItem>
+                      ) : null}
+                      {reusableEvents.map((event) => (
+                        <SelectItem
+                          key={event.benefitEventId}
+                          value={event.benefitEventId}
+                        >
+                          {benefitEventLabels[event.eventType]} · {new Intl.DateTimeFormat("en-PH", { dateStyle: "medium", timeZone: "Asia/Manila" }).format(event.qualifyingDate)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : requiresVerifiedEvent ? (
+                <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                  Complete and verify the main maternity leave event before
+                  filing its optional unpaid extension.
+                </p>
+              ) : null}
+              {!draft.benefitEventId && !requiresVerifiedEvent ? (
+                <>
+              <div className="space-y-2">
+                <Label htmlFor="leave-event-type">Event type</Label>
+                <Select
+                  value={draft.benefitEventDraft?.eventType ?? ""}
+                  onValueChange={(value: LeaveBenefitEventType) =>
+                    setDraft((current) =>
+                      setLeaveDraftBenefitEvent(current, {
+                        eventType: value,
+                        qualifyingLocalDate:
+                          current.benefitEventDraft?.qualifyingLocalDate ?? "",
+                        ...(value === "maternity"
+                          ? { benefitVariant: "live_birth" }
+                          : {}),
+                      }),
+                    )
+                  }
+                >
+                  <SelectTrigger id="leave-event-type">
+                    <SelectValue placeholder="Select the qualifying event" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {eventTypes.map((eventType) => (
+                      <SelectItem key={eventType} value={eventType}>
+                        {benefitEventLabels[eventType]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {draft.benefitEventDraft?.eventType === "maternity" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="leave-maternity-variant">
+                    Maternity entitlement
+                  </Label>
+                  <Select
+                    value={
+                      draft.benefitEventDraft.benefitVariant ?? "live_birth"
+                    }
+                    onValueChange={(benefitVariant) =>
+                      setDraft((current) =>
+                        current.benefitEventDraft
+                          ? setLeaveDraftBenefitEvent(current, {
+                              ...current.benefitEventDraft,
+                              benefitVariant,
+                            })
+                          : current,
+                      )
+                    }
+                  >
+                    <SelectTrigger id="leave-maternity-variant">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="live_birth">
+                        Live childbirth · up to 105 days
+                      </SelectItem>
+                      <SelectItem value="live_birth_solo_parent">
+                        Live childbirth, qualified solo parent · up to 120 days
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+              <div className="space-y-2">
+                <Label htmlFor="leave-qualifying-date">
+                  Expected or actual event date
+                </Label>
+                <Input
+                  id="leave-qualifying-date"
+                  type="date"
+                  value={draft.benefitEventDraft?.qualifyingLocalDate ?? ""}
+                  disabled={!draft.benefitEventDraft}
+                  onChange={(event) =>
+                    setDraft((current) =>
+                      current.benefitEventDraft
+                        ? setLeaveDraftBenefitEvent(current, {
+                            ...current.benefitEventDraft,
+                            qualifyingLocalDate: event.target.value,
+                          })
+                        : current,
+                    )
+                  }
+                />
+              </div>
+                </>
+              ) : draft.benefitEventId ? (
+                <p className="rounded-lg bg-background p-3 text-sm text-muted-foreground">
+                  The verified event will be reused. The policy limit is still
+                  checked against prior requests for that event.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="leave-start-date">Start date</Label>
@@ -621,7 +833,10 @@ export function LeaveRequestDrawer(props: {
                 !draft.startLocalDate ||
                 !draft.endLocalDate ||
                 (draft.requestedDurationMode === "hour" &&
-                  (!draft.requestedMinutes || draft.requestedMinutes <= 0))
+                  (!draft.requestedMinutes || draft.requestedMinutes <= 0)) ||
+                (draft.qualifyingEventRequired &&
+                  (!draft.benefitEventDraft?.eventType ||
+                    !draft.benefitEventDraft.qualifyingLocalDate))
               }
             >
               {isPreviewing ? "Calculating…" : "Preview request"}

@@ -1,5 +1,5 @@
 {
-  "tableCount": 103,
+  "tableCount": 104,
   "tables": [
     {
       "name": "accountingCostItems",
@@ -366,6 +366,13 @@
       "indexesSha256": "8affeb75e45a4ecf9211d59b2ac3e8ec126b5df519f50c5a8a41b0c11d795b2f"
     },
     {
+      "name": "leaveCompanyModelVersions",
+      "fieldCount": 7,
+      "fieldsSha256": "57c9259fae898d8426a2db878e9e9a12e0a9dc278fdb75964af99543a30fa2e7",
+      "indexCount": 2,
+      "indexesSha256": "54dbbce67e8c77f3701ee91b4547de0f9505ae318d46d37758e6e5a95684a756"
+    },
+    {
       "name": "leaveConversionRequests",
       "fieldCount": 19,
       "fieldsSha256": "d3490bca74d709e00e42fdc0fce5c3e92e04bbf7d5cbcaefc5785dda40da605d",
@@ -402,15 +409,15 @@
     },
     {
       "name": "leavePolicies",
-      "fieldCount": 13,
-      "fieldsSha256": "fbafbeb8e08789a483a0af1ac6498a5f9d2e111ffa14dd164c4e926cfc50a4ca",
+      "fieldCount": 14,
+      "fieldsSha256": "4bd63ea79b99055703c96ea8c9a3c73d2ee993825f79e34db18c6c427766f38f",
       "indexCount": 3,
       "indexesSha256": "87278be3bede4781a01f2b896f0343d0b30ee4b6f69b4706f2963fdd1a33c643"
     },
     {
       "name": "leavePolicyVersions",
-      "fieldCount": 37,
-      "fieldsSha256": "96261e1d267edc6c0389adf456ace3c00a09715684385fbd0b9a9151629bd045",
+      "fieldCount": 40,
+      "fieldsSha256": "7e8d7b992ccbe6b85ddb24b91ab12196d58f3f1559192f3e90a5fcc060721a2c",
       "indexCount": 3,
       "indexesSha256": "ee04290be3e955ea802fc4a11e41b66dcf2e0127da018bffedc9061dfba925b6"
     },
@@ -563,8 +570,8 @@
     },
     {
       "name": "organizationLeaveSettings",
-      "fieldCount": 33,
-      "fieldsSha256": "25abe5ae94ab98ebab9017d2843f3d6e73b26e5e6fdf996edda4c052adbaa8a6",
+      "fieldCount": 35,
+      "fieldsSha256": "89edbcc294ab0c3052cd2c596d84466b60f69514cec5c445b66992220916f548",
       "indexCount": 1,
       "indexesSha256": "9bda648969a09302a44b3f6881b1871ca1563577161a8df1ce12d5a6d53359f9"
     },

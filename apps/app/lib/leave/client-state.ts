@@ -1,4 +1,17 @@
 export type LeaveSettingsSector = "private" | "government";
+export type CompanyPolicyQuickStart =
+  | "vacation"
+  | "sick"
+  | "anniversary"
+  | "custom";
+
+export interface CompanyPolicyQuickStartDraft {
+  name: string;
+  entitlementMethod: "annual" | "anniversary";
+  annualUnits: number;
+  eligibilityBasis: "hire_date" | "regularization_date";
+  completedServiceMonths: number;
+}
 export type LeaveSettingsMigrationState =
   | "pending"
   | "awaiting_sector_confirmation"
@@ -10,6 +23,7 @@ export interface LeaveSettingsSummary {
   migrationState?: LeaveSettingsMigrationState;
   employmentSector?: LeaveSettingsSector;
   leaveTrackerMode?: "general" | "by_type";
+  companyLeaveDefaultMode?: "pooled" | "by_type";
 }
 
 export interface LeavePolicySummary {
@@ -24,6 +38,7 @@ export interface LeaveSettingsViewModel {
   setupTitle: string;
   sector?: LeaveSettingsSector;
   companyModes: Array<"pooled" | "by_type">;
+  companyLeaveDefaultMode?: "pooled" | "by_type";
   requiredAccountLabels: string[];
   statutoryPolicies: LeavePolicySummary[];
   companyPolicies: LeavePolicySummary[];
@@ -36,6 +51,32 @@ interface CompleteLeaveMigrationInput {
 }
 
 const MAX_LEAVE_MIGRATION_BATCHES = 10_000;
+
+export function buildCompanyPolicyQuickStart(
+  kind: CompanyPolicyQuickStart,
+): CompanyPolicyQuickStartDraft {
+  if (kind === "anniversary") {
+    return {
+      name: "Anniversary Leave",
+      entitlementMethod: "anniversary",
+      annualUnits: 15,
+      eligibilityBasis: "hire_date",
+      completedServiceMonths: 12,
+    };
+  }
+  return {
+    name:
+      kind === "vacation"
+        ? "Vacation Leave"
+        : kind === "sick"
+          ? "Sick Leave"
+          : "",
+    entitlementMethod: "annual",
+    annualUnits: 5,
+    eligibilityBasis: "hire_date",
+    completedServiceMonths: 0,
+  };
+}
 
 export async function completeLeaveMigration(
   input: CompleteLeaveMigrationInput,
@@ -75,6 +116,13 @@ export function buildLeaveSettingsViewModel(input: {
           : "Leave policy settings",
     sector,
     companyModes: sector === "private" ? ["pooled", "by_type"] : [],
+    companyLeaveDefaultMode:
+      sector === undefined
+        ? undefined
+        : input.settings?.companyLeaveDefaultMode ??
+          (sector === "government" || input.settings?.leaveTrackerMode === "by_type"
+            ? "by_type"
+            : "pooled"),
     requiredAccountLabels:
       sector === "government" ? ["Vacation Leave", "Sick Leave"] : [],
     statutoryPolicies: activePolicies.filter(

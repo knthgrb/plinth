@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCompanyPolicyQuickStart,
   buildLeaveSettingsViewModel,
   completeLeaveMigration,
   validatePolicyVersionDraft,
@@ -43,10 +44,14 @@ describe("leave settings UI state", () => {
           migrationState: "active",
           employmentSector: "private",
           leaveTrackerMode: "general",
+          companyLeaveDefaultMode: "by_type",
         },
         policies: [],
-      }).companyModes,
-    ).toEqual(["pooled", "by_type"]);
+      }),
+    ).toMatchObject({
+      companyModes: ["pooled", "by_type"],
+      companyLeaveDefaultMode: "by_type",
+    });
     expect(
       buildLeaveSettingsViewModel({
         settings: {
@@ -57,6 +62,29 @@ describe("leave settings UI state", () => {
         policies: [],
       }).requiredAccountLabels,
     ).toEqual(["Vacation Leave", "Sick Leave"]);
+  });
+
+  it("derives a safe company policy default for existing organizations", () => {
+    expect(
+      buildLeaveSettingsViewModel({
+        settings: {
+          migrationState: "active",
+          employmentSector: "private",
+          leaveTrackerMode: "general",
+        },
+        policies: [],
+      }).companyLeaveDefaultMode,
+    ).toBe("pooled");
+    expect(
+      buildLeaveSettingsViewModel({
+        settings: {
+          migrationState: "active",
+          employmentSector: "private",
+          leaveTrackerMode: "by_type",
+        },
+        policies: [],
+      }).companyLeaveDefaultMode,
+    ).toBe("by_type");
   });
 
   it("requires an effective date and a meaningful reason before saving", () => {
@@ -72,6 +100,30 @@ describe("leave settings UI state", () => {
         reason: "Annual policy update",
       }),
     ).toEqual({ valid: true });
+  });
+
+  it("provides explicit vacation, sick, anniversary, and custom policy starts", () => {
+    expect(buildCompanyPolicyQuickStart("vacation")).toMatchObject({
+      name: "Vacation Leave",
+      entitlementMethod: "annual",
+      annualUnits: 5,
+    });
+    expect(buildCompanyPolicyQuickStart("sick")).toMatchObject({
+      name: "Sick Leave",
+      entitlementMethod: "annual",
+      annualUnits: 5,
+    });
+    expect(buildCompanyPolicyQuickStart("anniversary")).toEqual({
+      name: "Anniversary Leave",
+      entitlementMethod: "anniversary",
+      annualUnits: 15,
+      eligibilityBasis: "hire_date",
+      completedServiceMonths: 12,
+    });
+    expect(buildCompanyPolicyQuickStart("custom")).toMatchObject({
+      name: "",
+      entitlementMethod: "annual",
+    });
   });
 
   it("finishes every migration batch before activating leave settings", async () => {

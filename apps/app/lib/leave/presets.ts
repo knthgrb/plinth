@@ -70,6 +70,48 @@ export function buildPrivateSectorPreset(): LeavePreset {
         "statutory_benefit_supported",
         sources.maternity,
         "2019-03-11",
+        {
+          eventEntitlementRules: [
+            {
+              eventType: "maternity",
+              benefitVariant: "live_birth",
+              maximumUnits: 105,
+            },
+            {
+              eventType: "maternity",
+              benefitVariant: "live_birth_solo_parent",
+              maximumUnits: 120,
+            },
+            { eventType: "miscarriage", maximumUnits: 60 },
+            {
+              eventType: "emergency_termination_of_pregnancy",
+              maximumUnits: 60,
+            },
+          ],
+        },
+      ),
+      eventPolicy(
+        "private_maternity_unpaid_extension",
+        "Maternity Leave – Unpaid Extension",
+        "calendar_days",
+        "unpaid",
+        sources.maternity,
+        "2019-03-11",
+        {
+          requiresEvidence: false,
+          eventEntitlementRules: [
+            {
+              eventType: "maternity",
+              benefitVariant: "live_birth",
+              maximumUnits: 30,
+            },
+            {
+              eventType: "maternity",
+              benefitVariant: "live_birth_solo_parent",
+              maximumUnits: 30,
+            },
+          ],
+        },
       ),
       eventPolicy(
         "private_paternity",
@@ -78,6 +120,11 @@ export function buildPrivateSectorPreset(): LeavePreset {
         "statutory_paid",
         sources.paternity,
         "1996-07-15",
+        {
+          eventEntitlementRules: [
+            { eventType: "spouse_delivery", maximumUnits: 7 },
+          ],
+        },
       ),
       policy(
         "private_solo_parent",
@@ -100,6 +147,11 @@ export function buildPrivateSectorPreset(): LeavePreset {
         "statutory_paid",
         sources.vawc,
         "2004-03-08",
+        {
+          eventEntitlementRules: [
+            { eventType: "other_protected", maximumUnits: 10 },
+          ],
+        },
       ),
       eventPolicy(
         "private_special_leave_women",
@@ -110,6 +162,9 @@ export function buildPrivateSectorPreset(): LeavePreset {
         "2009-08-14",
         {
           eligibility: { basis: "hire_date", completedServiceMonths: 6 },
+          eventEntitlementRules: [
+            { eventType: "surgery", maximumUnits: 60 },
+          ],
         },
       ),
     ],
@@ -155,6 +210,48 @@ export function buildGovernmentPreset(): LeavePreset {
         "government_paid",
         sources.governmentFamilyLeave,
         "2021-01-07",
+        {
+          eventEntitlementRules: [
+            {
+              eventType: "maternity",
+              benefitVariant: "live_birth",
+              maximumUnits: 105,
+            },
+            {
+              eventType: "maternity",
+              benefitVariant: "live_birth_solo_parent",
+              maximumUnits: 120,
+            },
+            { eventType: "miscarriage", maximumUnits: 60 },
+            {
+              eventType: "emergency_termination_of_pregnancy",
+              maximumUnits: 60,
+            },
+          ],
+        },
+      ),
+      eventPolicy(
+        "government_maternity_unpaid_extension",
+        "Maternity Leave – Unpaid Extension",
+        "calendar_days",
+        "unpaid",
+        sources.governmentFamilyLeave,
+        "2021-01-07",
+        {
+          requiresEvidence: false,
+          eventEntitlementRules: [
+            {
+              eventType: "maternity",
+              benefitVariant: "live_birth",
+              maximumUnits: 30,
+            },
+            {
+              eventType: "maternity",
+              benefitVariant: "live_birth_solo_parent",
+              maximumUnits: 30,
+            },
+          ],
+        },
       ),
       eventPolicy(
         "government_paternity",
@@ -163,6 +260,11 @@ export function buildGovernmentPreset(): LeavePreset {
         "government_paid",
         sources.governmentFamilyLeave,
         "2021-01-07",
+        {
+          eventEntitlementRules: [
+            { eventType: "spouse_delivery", maximumUnits: 7 },
+          ],
+        },
       ),
       policy(
         "government_solo_parent",
@@ -185,6 +287,11 @@ export function buildGovernmentPreset(): LeavePreset {
         "government_paid",
         sources.vawc,
         "2004-03-08",
+        {
+          eventEntitlementRules: [
+            { eventType: "other_protected", maximumUnits: 10 },
+          ],
+        },
       ),
       eventPolicy(
         "government_special_leave_women",
@@ -195,6 +302,9 @@ export function buildGovernmentPreset(): LeavePreset {
         "2009-08-14",
         {
           eligibility: { basis: "hire_date", completedServiceMonths: 6 },
+          eventEntitlementRules: [
+            { eventType: "surgery", maximumUnits: 60 },
+          ],
         },
       ),
       eventPolicy(
@@ -286,6 +396,8 @@ function eventPolicy(
     maximumUnitsPerEvent?: number;
     maximumUnitsPerYear?: number;
     eventUseWindowDays?: number;
+    eventEntitlementRules?: LeavePolicyRules["eventEntitlementRules"];
+    requiresEvidence?: boolean;
   } = {},
 ): LeavePresetPolicy {
   return policy(
@@ -308,6 +420,17 @@ function eventPolicy(
       maximumUnitsPerEvent: options.maximumUnitsPerEvent,
       maximumUnitsPerYear: options.maximumUnitsPerYear,
       eventUseWindowDays: options.eventUseWindowDays,
+      eventEntitlementRules: options.eventEntitlementRules,
+      ...(options.requiresEvidence === false
+        ? {}
+        : {
+            requiredDocumentRules: [
+              {
+                documentType: "qualifying_event_evidence",
+                requiredBefore: "submission",
+              },
+            ],
+          }),
     },
     sourceUrl,
     sourceEffectiveDate,

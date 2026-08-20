@@ -126,9 +126,6 @@ export default function LeavePage() {
     <MainLayout>
       <div className="space-y-6 p-4 sm:p-6 lg:p-8">
         <div>
-          <p className="text-sm font-medium text-brand-purple">
-            Leave operations
-          </p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-[rgb(64,64,64)]">
             Leave administration
           </h1>
@@ -173,7 +170,9 @@ export default function LeavePage() {
           <TabsContent value="conversions" className="mt-5">
             <div className="space-y-5">
               <LeaveConversionQueue organizationId={currentOrganizationId} />
-              <LeaveBenefitReconciliation organizationId={currentOrganizationId} />
+              <LeaveBenefitReconciliation
+                organizationId={currentOrganizationId}
+              />
             </div>
           </TabsContent>
           <TabsContent value="calendar" className="mt-5">

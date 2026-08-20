@@ -1,8 +1,11 @@
 import { makeFunctionReference, type FunctionReference } from "convex/server";
 import { v } from "convex/values";
+import { calculateEntitlement } from "../lib/leave/policy-engine";
+import type { LeavePolicyRules } from "../lib/leave/types";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import { appendLedgerEntry, getOrCreateBalanceProjection } from "./leaveLedger";
+import { isStatutoryPolicyCoveredAt } from "./leaveStatutoryCoverage";
 
 const MANILA_OFFSET_MILLISECONDS = 8 * 60 * 60 * 1_000;
 const DEFAULT_ORGANIZATION_PAGE_SIZE = 10;
@@ -43,6 +46,11 @@ interface ManilaCalendarDate {
 interface ServiceWindow {
   start: number;
   end?: number;
+}
+
+interface PostingCounts {
+  postedCount: number;
+  replayedCount: number;
 }
 
 type OrganizationBatchArgs = {
@@ -160,6 +168,7 @@ export async function materializeEmployeeAccruals(
   let replayedCount = 0;
 
   for (const policy of policies) {
+    if (await isStatutoryPolicyCoveredAt(ctx, policy, args.asOf)) continue;
     const versions = await ctx.db
       .query("leavePolicyVersions")
       .withIndex("by_policy_effective", (query) =>
@@ -245,6 +254,18 @@ export async function materializeEmployeeAccruals(
       if (existing) replayedCount += 1;
       else postedCount += 1;
     }
+
+    const scheduled = await materializeScheduledPolicyGrants(ctx, {
+      organizationId: args.organizationId,
+      employee,
+      policy,
+      versions,
+      serviceWindows,
+      asOf: args.asOf,
+      year: asOfDate.year,
+    });
+    postedCount += scheduled.postedCount;
+    replayedCount += scheduled.replayedCount;
   }
 
   return { postedCount, replayedCount };
@@ -555,6 +576,400 @@ function getEffectiveMonthlyVersion(
   );
 }
 
+async function materializeScheduledPolicyGrants(
+  ctx: AccrualContext,
+  args: {
+    organizationId: Id<"organizations">;
+    employee: Doc<"employees">;
+    policy: Doc<"leavePolicies">;
+    versions: readonly Doc<"leavePolicyVersions">[];
+    serviceWindows: readonly ServiceWindow[];
+    asOf: number;
+    year: number;
+  },
+): Promise<PostingCounts> {
+  const periodStart = toManilaMidnight({
+    year: args.year,
+    monthIndex: 0,
+    day: 1,
+  });
+  const periodEnd = toManilaMidnight({
+    year: args.year,
+    monthIndex: 11,
+    day: 31,
+  });
+  const version = getEffectiveScheduledVersion(
+    args.versions,
+    periodStart,
+    periodEnd,
+    args.asOf,
+  );
+  if (!version) return { postedCount: 0, replayedCount: 0 };
+
+  if (version.entitlementMethod === "anniversary") {
+    return materializeAnniversaryGrant(ctx, {
+      ...args,
+      version,
+      periodStart,
+      periodEnd,
+    });
+  }
+
+  const eligibility = getScheduledEligibility(
+    args.employee,
+    version,
+    args.serviceWindows,
+    periodStart,
+    periodEnd,
+  );
+  if (!eligibility) return { postedCount: 0, replayedCount: 0 };
+  const grantStart = Math.max(
+    periodStart,
+    version.effectiveStart,
+    eligibility.eligibleFrom,
+  );
+  const entitlement = calculateEntitlement({
+    rules: policyVersionRules(version),
+    hireDate: eligibility.serviceWindow.start,
+    regularizationDate:
+      args.employee.employment.regularizationDate ?? undefined,
+    periodStart: Math.max(periodStart, version.effectiveStart),
+    periodEnd,
+    asOf: args.asOf,
+  });
+  if (entitlement <= 0) return { postedCount: 0, replayedCount: 0 };
+
+  if (version.entitlementMethod === "annual") {
+    if (!isGrantDue(grantStart, periodEnd, args.asOf, eligibility.serviceWindow)) {
+      return { postedCount: 0, replayedCount: 0 };
+    }
+    return postScheduledGrant(ctx, {
+      ...args,
+      version,
+      periodStart,
+      periodEnd,
+      effectiveDate: grantStart,
+      amount: entitlement,
+      installment: "annual",
+      reason: `Annual grant for ${args.policy.name}`,
+    });
+  }
+
+  const firstHalfEnd = toManilaMidnight({
+    year: args.year,
+    monthIndex: 5,
+    day: 30,
+  });
+  const secondHalfStart = toManilaMidnight({
+    year: args.year,
+    monthIndex: 6,
+    day: 1,
+  });
+  const installments: Array<{
+    key: "first_half" | "second_half";
+    dueAt: number;
+    amount: number;
+  }> = [];
+  const firstAmount = roundUnits(entitlement / 2, version.roundingIncrement);
+  if (grantStart <= firstHalfEnd) {
+    installments.push({
+      key: "first_half",
+      dueAt: grantStart,
+      amount: Math.min(firstAmount, entitlement),
+    });
+    installments.push({
+      key: "second_half",
+      dueAt: Math.max(secondHalfStart, grantStart),
+      amount: Math.max(0, entitlement - Math.min(firstAmount, entitlement)),
+    });
+  } else {
+    installments.push({
+      key: "second_half",
+      dueAt: grantStart,
+      amount: entitlement,
+    });
+  }
+
+  const counts: PostingCounts = { postedCount: 0, replayedCount: 0 };
+  for (const installment of installments) {
+    if (
+      installment.amount <= 0 ||
+      !isGrantDue(
+        installment.dueAt,
+        periodEnd,
+        args.asOf,
+        eligibility.serviceWindow,
+      )
+    ) {
+      continue;
+    }
+    const posted = await postScheduledGrant(ctx, {
+      ...args,
+      version,
+      periodStart,
+      periodEnd,
+      effectiveDate: installment.dueAt,
+      amount: installment.amount,
+      installment: installment.key,
+      reason: `Semiannual grant for ${args.policy.name}`,
+    });
+    counts.postedCount += posted.postedCount;
+    counts.replayedCount += posted.replayedCount;
+  }
+  return counts;
+}
+
+async function materializeAnniversaryGrant(
+  ctx: AccrualContext,
+  args: {
+    organizationId: Id<"organizations">;
+    employee: Doc<"employees">;
+    policy: Doc<"leavePolicies">;
+    version: Doc<"leavePolicyVersions">;
+    serviceWindows: readonly ServiceWindow[];
+    asOf: number;
+    year: number;
+    periodStart: number;
+    periodEnd: number;
+  },
+): Promise<PostingCounts> {
+  for (const serviceWindow of args.serviceWindows) {
+    const serviceBase = getEligibilityBase(args.employee, args.version, serviceWindow);
+    if (serviceBase === undefined) continue;
+    const baseDate = getManilaCalendarDate(serviceBase);
+    const anniversary = toManilaMidnight({
+      year: args.year,
+      monthIndex: baseDate.monthIndex,
+      day: Math.min(baseDate.day, daysInMonth(args.year, baseDate.monthIndex)),
+    });
+    const eligibleFrom = addManilaCalendarMonths(
+      serviceBase,
+      Math.max(12, args.version.completedServiceMonths),
+    );
+    const effectiveDate = Math.max(
+      args.periodStart,
+      args.version.effectiveStart,
+      anniversary,
+      eligibleFrom,
+    );
+    if (
+      !isGrantDue(effectiveDate, args.periodEnd, args.asOf, serviceWindow)
+    ) {
+      continue;
+    }
+    const amount = Math.min(
+      completedServiceYears(serviceBase, effectiveDate),
+      args.version.annualUnits ?? 0,
+    );
+    if (amount <= 0) continue;
+    return postScheduledGrant(ctx, {
+      ...args,
+      effectiveDate,
+      amount: roundUnits(amount, args.version.roundingIncrement),
+      installment: "anniversary",
+      reason: `Service-anniversary grant for ${args.policy.name}`,
+    });
+  }
+  return { postedCount: 0, replayedCount: 0 };
+}
+
+async function postScheduledGrant(
+  ctx: AccrualContext,
+  args: {
+    organizationId: Id<"organizations">;
+    employee: Doc<"employees">;
+    policy: Doc<"leavePolicies">;
+    version: Doc<"leavePolicyVersions">;
+    asOf: number;
+    year: number;
+    periodStart: number;
+    periodEnd: number;
+    effectiveDate: number;
+    amount: number;
+    installment: string;
+    reason: string;
+  },
+): Promise<PostingCounts> {
+  const idempotencyKey = [
+    "entitlement",
+    args.employee._id,
+    args.policy._id,
+    args.year,
+    args.installment,
+  ].join(":");
+  const existing = await ctx.db
+    .query("leaveLedgerEntries")
+    .withIndex("by_organization_idempotency_key", (query) =>
+      query
+        .eq("organizationId", args.organizationId)
+        .eq("idempotencyKey", idempotencyKey),
+    )
+    .unique();
+  if (existing) return { postedCount: 0, replayedCount: 1 };
+
+  const balance = await getOrCreateBalanceProjection(ctx, {
+    organizationId: args.organizationId,
+    employeeId: args.employee._id,
+    policyId: args.policy._id,
+    policyVersionId: args.version._id,
+    poolKey: args.version.poolKey,
+    periodStart: args.periodStart,
+    periodEnd: args.periodEnd,
+    year: args.year,
+    leaveTypeKey: args.version.poolKey ?? args.policy.sourceKey,
+    total: 0,
+    used: 0,
+    balance: 0,
+    source: "employee_credits",
+    approvedDays: 0,
+    reconciliationStatus: "matching",
+    migrationVersion: 2,
+    createdAt: args.asOf,
+    updatedAt: args.asOf,
+  });
+  await appendLedgerEntry(ctx, {
+    organizationId: args.organizationId,
+    employeeId: args.employee._id,
+    balanceId: balance._id,
+    policyVersionId: args.version._id,
+    effectiveDate: args.effectiveDate,
+    kind: "grant",
+    amount: args.amount,
+    unit: "day",
+    reason: args.reason,
+    idempotencyKey,
+    createdAt: args.asOf,
+  });
+  return { postedCount: 1, replayedCount: 0 };
+}
+
+function getEffectiveScheduledVersion(
+  versions: readonly Doc<"leavePolicyVersions">[],
+  periodStart: number,
+  periodEnd: number,
+  asOf: number,
+): Doc<"leavePolicyVersions"> | undefined {
+  const effectiveThrough = Math.min(asOf, periodEnd);
+  return versions.findLast(
+    (version) =>
+      (version.entitlementMethod === "annual" ||
+        version.entitlementMethod === "semi_annual" ||
+        version.entitlementMethod === "anniversary") &&
+      version.accountBehavior !== "non_credit" &&
+      version.effectiveStart <= effectiveThrough &&
+      (version.effectiveEnd === undefined || version.effectiveEnd >= periodStart),
+  );
+}
+
+function getScheduledEligibility(
+  employee: Doc<"employees">,
+  version: Doc<"leavePolicyVersions">,
+  windows: readonly ServiceWindow[],
+  periodStart: number,
+  periodEnd: number,
+): { serviceWindow: ServiceWindow; eligibleFrom: number } | undefined {
+  for (const serviceWindow of windows) {
+    if (
+      serviceWindow.start > periodEnd ||
+      (serviceWindow.end !== undefined && serviceWindow.end < periodStart)
+    ) {
+      continue;
+    }
+    const eligibilityBase = getEligibilityBase(employee, version, serviceWindow);
+    if (eligibilityBase === undefined) continue;
+    const eligibleFrom = addManilaCalendarMonths(
+      eligibilityBase,
+      version.completedServiceMonths,
+    );
+    const grantStart = Math.max(periodStart, version.effectiveStart, eligibleFrom);
+    if (isWithinServiceWindow(serviceWindow, grantStart)) {
+      return { serviceWindow, eligibleFrom };
+    }
+  }
+  return undefined;
+}
+
+function getEligibilityBase(
+  employee: Doc<"employees">,
+  version: Doc<"leavePolicyVersions">,
+  serviceWindow: ServiceWindow,
+): number | undefined {
+  if (version.eligibilityBasis === "hire_date") return serviceWindow.start;
+  if (version.eligibilityBasis === "regularization_date") {
+    return employee.employment.regularizationDate ?? undefined;
+  }
+  return undefined;
+}
+
+function isGrantDue(
+  effectiveDate: number,
+  periodEnd: number,
+  asOf: number,
+  serviceWindow: ServiceWindow,
+): boolean {
+  return (
+    effectiveDate <= periodEnd &&
+    effectiveDate <= asOf &&
+    isWithinServiceWindow(serviceWindow, effectiveDate)
+  );
+}
+
+function isWithinServiceWindow(window: ServiceWindow, timestamp: number): boolean {
+  return (
+    window.start <= timestamp &&
+    (window.end === undefined || window.end >= timestamp)
+  );
+}
+
+function completedServiceYears(serviceBase: number, asOf: number): number {
+  const base = getManilaCalendarDate(serviceBase);
+  const current = getManilaCalendarDate(asOf);
+  let years = current.year - base.year;
+  if (
+    current.monthIndex < base.monthIndex ||
+    (current.monthIndex === base.monthIndex && current.day < base.day)
+  ) {
+    years -= 1;
+  }
+  return Math.max(0, years);
+}
+
+function policyVersionRules(
+  version: Doc<"leavePolicyVersions">,
+): LeavePolicyRules {
+  return {
+    accountBehavior: version.accountBehavior,
+    ...(version.poolKey !== undefined ? { poolKey: version.poolKey } : {}),
+    payTreatment: version.payTreatment,
+    durationBasis: version.durationBasis,
+    entitlementMethod: version.entitlementMethod,
+    annualUnits: version.annualUnits,
+    eligibility: {
+      basis: version.eligibilityBasis,
+      completedServiceMonths: version.completedServiceMonths,
+    },
+    prorationMethod: version.prorationMethod,
+    roundingIncrement: supportedRoundingIncrement(version.roundingIncrement),
+    carryover: {
+      mode: version.carryoverMode,
+      ...(version.carryoverCap !== undefined
+        ? { capUnits: version.carryoverCap }
+        : {}),
+    },
+    conversion: {
+      allowed: version.conversionAllowed,
+      ...(version.maxConvertibleUnits !== undefined
+        ? { maxUnits: version.maxConvertibleUnits }
+        : {}),
+    },
+  };
+}
+
+function supportedRoundingIncrement(value: number): 0.25 | 0.5 | 1 {
+  if (value === 0.25 || value === 0.5 || value === 1) return value;
+  throw new Error("Leave policy rounding increment is unsupported");
+}
+
 function getMonthlyAccrualAmount(
   version: Doc<"leavePolicyVersions">,
   completedMonth: number,
@@ -820,6 +1235,7 @@ async function resolveBalancePolicy(
     policyVersion: Doc<"leavePolicyVersions">;
   }> = [];
   for (const policy of policies) {
+    if (await isStatutoryPolicyCoveredAt(ctx, policy, periodEnd)) continue;
     const versions = await ctx.db
       .query("leavePolicyVersions")
       .withIndex("by_policy_effective", (query) =>

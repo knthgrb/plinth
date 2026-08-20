@@ -50,6 +50,19 @@ type CreateRequestArgs = {
   requestedMinutes?: number;
   reason: string;
   benefitEventId?: Id<"leaveBenefitEvents">;
+  benefitEventDraft?: {
+    eventType:
+      | "maternity"
+      | "miscarriage"
+      | "emergency_termination_of_pregnancy"
+      | "spouse_delivery"
+      | "surgery"
+      | "adoption"
+      | "calamity"
+      | "other_protected";
+    qualifyingLocalDate: string;
+    benefitVariant?: string;
+  };
   attachments?: Array<{
     storageObjectId: Id<"storageObjects">;
     documentType: string;
@@ -73,6 +86,11 @@ const createWithPayOverride = makeFunctionReference<
   CreateRequestArgs & { payTreatment: "unpaid" },
   { leaveRequestId: Id<"leaveRequests">; chargeableDuration: number }
 >("leave:createLeaveRequestV2");
+const approveLeaveRequestV2 = makeFunctionReference<
+  "mutation",
+  { leaveRequestId: Id<"leaveRequests">; decisionReason?: string },
+  { status: "approved" }
+>("leave:approveLeaveRequestV2");
 
 const getMyLeaveDashboard = makeFunctionReference<
   "query",
@@ -262,6 +280,23 @@ async function setupFixture() {
       carryoverMode: "none",
       conversionAllowed: false,
       qualifyingEventRequired: true,
+      eventEntitlementRules: [
+        {
+          eventType: "maternity",
+          benefitVariant: "live_birth",
+          maximumUnits: 105,
+        },
+        {
+          eventType: "maternity",
+          benefitVariant: "live_birth_solo_parent",
+          maximumUnits: 120,
+        },
+        { eventType: "miscarriage", maximumUnits: 60 },
+        {
+          eventType: "emergency_termination_of_pregnancy",
+          maximumUnits: 60,
+        },
+      ],
       createdBy: approverUserId,
       createdAt: 1,
       changeReason: "Test maternity policy",
@@ -645,8 +680,124 @@ describe("leave request V2 lifecycle", () => {
     ).rejects.toThrow("qualifying-event limit");
   });
 
+  it("creates a pending maternity event with the request and verifies it during HR approval", async () => {
+    const fixture = await setupFixture();
+    const hr = fixture.t.withIdentity({ email: "leave-v2-hr@example.com" });
+    await fixture.t.run(async (ctx) => {
+      const membership = await ctx.db
+        .query("userOrganizations")
+        .withIndex("by_user_organization", (query) =>
+          query
+            .eq("userId", fixture.approverUserId)
+            .eq("organizationId", fixture.organizationId),
+        )
+        .unique();
+      if (!membership) throw new Error("HR membership missing");
+      await ctx.db.insert("leaveSensitiveAccessGrants", {
+        organizationId: fixture.organizationId,
+        membershipId: membership._id,
+        grantedBy: fixture.approverUserId,
+        isActive: true,
+        grantedAt: 1,
+      });
+    });
+    const requestArgs: CreateRequestArgs = {
+      organizationId: fixture.organizationId,
+      employeeId: fixture.employeeId,
+      policyId: fixture.maternityPolicyId,
+      startLocalDate: "2026-10-01",
+      endLocalDate: "2027-01-13",
+      requestedDurationMode: "day",
+      reason: "Maternity leave",
+      benefitEventDraft: {
+        eventType: "maternity",
+        qualifyingLocalDate: "2026-10-01",
+        benefitVariant: "live_birth",
+      },
+    };
+
+    const previewArgs = {
+      organizationId: requestArgs.organizationId,
+      employeeId: requestArgs.employeeId,
+      policyId: requestArgs.policyId,
+      startLocalDate: requestArgs.startLocalDate,
+      endLocalDate: requestArgs.endLocalDate,
+      requestedDurationMode: requestArgs.requestedDurationMode,
+      benefitEventDraft: requestArgs.benefitEventDraft,
+    };
+    const preview = await fixture.actor.query(previewLeaveRequestV2, previewArgs);
+    expect(preview.chargeableDuration).toBe(105);
+    await expect(
+      fixture.actor.query(previewLeaveRequestV2, {
+        ...previewArgs,
+        endLocalDate: "2027-01-14",
+      }),
+    ).rejects.toThrow("105-day statutory maximum");
+
+    const created = await fixture.actor.mutation(
+      createLeaveRequestV2,
+      requestArgs,
+    );
+    const submitted = await fixture.t.run(async (ctx) => {
+      const request = await ctx.db.get(created.leaveRequestId);
+      const event = request?.benefitEventId
+        ? await ctx.db.get(request.benefitEventId)
+        : null;
+      return { request, event };
+    });
+    expect(submitted.request).toMatchObject({
+      status: "pending",
+      benefitEventId: submitted.event?._id,
+    });
+    expect(submitted.event).toMatchObject({
+      eventType: "maternity",
+      benefitVariant: "live_birth",
+      verificationStatus: "pending",
+    });
+
+    await expect(
+      hr.mutation(approveLeaveRequestV2, {
+        leaveRequestId: created.leaveRequestId,
+        decisionReason: "Qualifying event and evidence verified",
+      }),
+    ).resolves.toEqual({ status: "approved" });
+    const approved = await fixture.t.run(async (ctx) => ({
+      request: await ctx.db.get(created.leaveRequestId),
+      event: submitted.event ? await ctx.db.get(submitted.event._id) : null,
+      reconciliation: await ctx.db
+        .query("leaveBenefitPayrollReconciliations")
+        .withIndex("by_request", (query) =>
+          query.eq("leaveRequestId", created.leaveRequestId),
+        )
+        .unique(),
+    }));
+    expect(approved.request?.status).toBe("approved");
+    expect(approved.event).toMatchObject({
+      verificationStatus: "verified",
+      verifiedBy: fixture.approverUserId,
+    });
+    expect(approved.reconciliation).toMatchObject({ status: "pending" });
+  });
+
   it("returns the employee dashboard and a bounded request page", async () => {
     const fixture = await setupFixture();
+    await fixture.t.run((ctx) =>
+      ctx.db.insert("employeeLeaveBalances", {
+        organizationId: fixture.organizationId,
+        employeeId: fixture.employeeId,
+        year: 2026,
+        leaveTypeKey: "legacy_vacation",
+        total: 99,
+        used: 0,
+        balance: 99,
+        source: "employee_credits",
+        approvedDays: 0,
+        reconciliationStatus: "not_applicable",
+        migrationVersion: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
     await fixture.actor.mutation(createLeaveRequestV2, {
       organizationId: fixture.organizationId,
       employeeId: fixture.employeeId,

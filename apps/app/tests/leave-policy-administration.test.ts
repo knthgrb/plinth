@@ -45,6 +45,51 @@ const configureLeaveSector = makeFunctionReference<
   },
   { createdPolicyCount: number }
 >("leavePolicies:configureLeaveSector");
+const scheduleCompanyLeaveModelChange = makeFunctionReference<
+  "mutation",
+  {
+    organizationId: Id<"organizations">;
+    mode: "pooled" | "by_type";
+    effectiveStart: number;
+    changeReason: string;
+  },
+  { mode: "pooled" | "by_type"; effectiveStart: number; version: number }
+>("leavePolicies:scheduleCompanyLeaveModelChange");
+const getCompanyLeaveModel = makeFunctionReference<
+  "query",
+  { organizationId: Id<"organizations">; asOf?: number },
+  {
+    effectiveMode: "pooled" | "by_type";
+    effectiveStart: number;
+    requiresNormalization: boolean;
+    scheduled?: {
+      mode: "pooled" | "by_type";
+      effectiveStart: number;
+      version: number;
+    };
+  }
+>("leavePolicies:getCompanyLeaveModel");
+const synchronizeStatutoryPolicies = makeFunctionReference<
+  "mutation",
+  { organizationId: Id<"organizations"> },
+  { createdPolicyCount: number; coveredPolicyCount: number }
+>("leavePolicies:synchronizeStatutoryPolicies");
+const configureAnniversaryLeave = makeFunctionReference<
+  "mutation",
+  {
+    organizationId: Id<"organizations">;
+    enabled: boolean;
+    maximumDays: number;
+    serviceDateBasis: "hire_date" | "regularization_date";
+    effectiveStart: number;
+    changeReason: string;
+  },
+  {
+    enabled: boolean;
+    policyId?: Id<"leavePolicies">;
+    policyVersionId?: Id<"leavePolicyVersions">;
+  }
+>("leavePolicies:configureAnniversaryLeave");
 const createLeavePolicyVersion = makeFunctionReference<
   "mutation",
   {
@@ -149,6 +194,428 @@ const moreGenerousPrivateSil: LeavePolicyRules = {
 };
 
 describe("leave policy administration", () => {
+  it("defaults private organizations to pooled company leave and government organizations to by-type", async () => {
+    const privateOrganization = await setupOrganization();
+    await privateOrganization.actor.mutation(configureLeaveSector, {
+      organizationId: privateOrganization.organizationId,
+      employmentSector: "private",
+      effectiveStart: 100,
+      changeReason: "Initial private setup",
+    });
+    const privateConfiguration = await privateOrganization.actor.query(
+      getLeaveConfiguration,
+      { organizationId: privateOrganization.organizationId },
+    );
+
+    const governmentOrganization = await setupOrganization();
+    await governmentOrganization.actor.mutation(configureLeaveSector, {
+      organizationId: governmentOrganization.organizationId,
+      employmentSector: "government",
+      effectiveStart: 100,
+      changeReason: "Initial government setup",
+    });
+    const governmentConfiguration = await governmentOrganization.actor.query(
+      getLeaveConfiguration,
+      { organizationId: governmentOrganization.organizationId },
+    );
+
+    expect(privateConfiguration.settings).toMatchObject({
+      companyLeaveDefaultMode: "pooled",
+    });
+    expect(governmentConfiguration.settings).toMatchObject({
+      companyLeaveDefaultMode: "by_type",
+    });
+  });
+
+  it("schedules one authoritative company model without rewriting historical policy versions", async () => {
+    const owner = await setupOrganization();
+    await owner.actor.mutation(configureLeaveSector, {
+      organizationId: owner.organizationId,
+      employmentSector: "private",
+      effectiveStart: manilaDate(2039, 1, 1),
+      changeReason: "Initial setup",
+    });
+    const pooledRules: LeavePolicyRules = {
+      accountBehavior: "shared_pool",
+      poolKey: "company_leave",
+      payTreatment: "company_paid",
+      durationBasis: "scheduled_work",
+      entitlementMethod: "annual",
+      annualUnits: 15,
+      eligibility: { basis: "hire_date", completedServiceMonths: 0 },
+      prorationMethod: "none",
+      roundingIncrement: 1,
+      carryover: { mode: "none" },
+      conversion: { allowed: false },
+    };
+    const created = await owner.actor.mutation(createCompanyLeavePolicy, {
+      organizationId: owner.organizationId,
+      name: "General Leave",
+      sourceKey: "company_general_leave",
+      effectiveStart: manilaDate(2039, 1, 1),
+      changeReason: "Create shared annual pool",
+      rules: pooledRules,
+    });
+
+    await expect(
+      owner.actor.mutation(scheduleCompanyLeaveModelChange, {
+        organizationId: owner.organizationId,
+        mode: "by_type",
+        effectiveStart: manilaDate(2040, 1, 1),
+        changeReason: "Use separate balances next policy year",
+      }),
+    ).resolves.toEqual({
+      mode: "by_type",
+      effectiveStart: manilaDate(2040, 1, 1),
+      version: 2,
+    });
+    const beforeTransition = await owner.actor.query(getCompanyLeaveModel, {
+      organizationId: owner.organizationId,
+      asOf: manilaDate(2039, 12, 31),
+    });
+    const afterTransition = await owner.actor.query(getCompanyLeaveModel, {
+      organizationId: owner.organizationId,
+      asOf: manilaDate(2040, 1, 1),
+    });
+    const versions = await owner.t.run((ctx) =>
+      ctx.db
+        .query("leavePolicyVersions")
+        .withIndex("by_policy_effective", (query) =>
+          query.eq("leavePolicyId", created.leavePolicyId),
+        )
+        .collect(),
+    );
+
+    expect(beforeTransition).toMatchObject({
+      effectiveMode: "pooled",
+      scheduled: { mode: "by_type", effectiveStart: manilaDate(2040, 1, 1) },
+    });
+    expect(afterTransition).toMatchObject({
+      effectiveMode: "by_type",
+      effectiveStart: manilaDate(2040, 1, 1),
+    });
+    expect(versions).toHaveLength(2);
+    expect(versions[0]).toMatchObject({
+      accountBehavior: "shared_pool",
+      effectiveEnd: manilaDate(2040, 1, 1) - 1,
+    });
+    expect(versions[1]).toMatchObject({
+      accountBehavior: "individual_account",
+      effectiveStart: manilaDate(2040, 1, 1),
+    });
+
+    const manager = await setupOrganization("manager");
+    await expect(
+      manager.actor.mutation(scheduleCompanyLeaveModelChange, {
+        organizationId: manager.organizationId,
+        mode: "pooled",
+        effectiveStart: manilaDate(2040, 1, 1),
+        changeReason: "Unauthorized transition",
+      }),
+    ).rejects.toThrow("Owner, Admin, or HR access is required");
+  });
+
+  it("rejects company policy account behavior that conflicts with the effective model", async () => {
+    const { actor, organizationId } = await setupOrganization();
+    await actor.mutation(configureLeaveSector, {
+      organizationId,
+      employmentSector: "private",
+      effectiveStart: manilaDate(2039, 1, 1),
+      changeReason: "Initial pooled setup",
+    });
+
+    await expect(
+      actor.mutation(createCompanyLeavePolicy, {
+        organizationId,
+        name: "Vacation Leave",
+        sourceKey: "company_vacation",
+        effectiveStart: manilaDate(2039, 1, 1),
+        changeReason: "Conflicting separate balance",
+        rules: {
+          accountBehavior: "individual_account",
+          payTreatment: "company_paid",
+          durationBasis: "scheduled_work",
+          entitlementMethod: "annual",
+          annualUnits: 10,
+          eligibility: { basis: "hire_date", completedServiceMonths: 0 },
+          prorationMethod: "none",
+          roundingIncrement: 1,
+          carryover: { mode: "none" },
+          conversion: { allowed: false },
+        },
+      }),
+    ).rejects.toThrow("Shared-pool organizations require company policies to use the company leave pool");
+  });
+
+  it("detects and normalizes legacy mixed company policies without deleting history", async () => {
+    const { t, actor, organizationId } = await setupOrganization();
+    await actor.mutation(configureLeaveSector, {
+      organizationId,
+      employmentSector: "private",
+      effectiveStart: manilaDate(2039, 1, 1),
+      changeReason: "Initial pooled setup",
+    });
+    const legacy = await t.run(async (ctx) => {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_email", (query) =>
+          query.eq("email", "leave-policy-owner@example.com"),
+        )
+        .unique();
+      if (!user) throw new Error("Owner missing");
+      const policyId = await ctx.db.insert("leavePolicies", {
+        organizationId,
+        sourceKey: "company_legacy_sick",
+        name: "Legacy Sick Leave",
+        category: "company",
+        confidentiality: "standard",
+        state: "active",
+        createdBy: user._id,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const versionId = await ctx.db.insert("leavePolicyVersions", {
+        organizationId,
+        leavePolicyId: policyId,
+        version: 1,
+        effectiveStart: manilaDate(2039, 1, 1),
+        accountBehavior: "individual_account",
+        payTreatment: "company_paid",
+        durationBasis: "scheduled_work",
+        entitlementMethod: "annual",
+        annualUnits: 5,
+        eligibilityBasis: "hire_date",
+        completedServiceMonths: 0,
+        prorationMethod: "none",
+        roundingIncrement: 1,
+        carryoverMode: "none",
+        conversionAllowed: false,
+        createdBy: user._id,
+        createdAt: 1,
+        changeReason: "Legacy mixed model",
+      });
+      return { policyId, versionId };
+    });
+
+    await expect(
+      actor.query(getCompanyLeaveModel, {
+        organizationId,
+        asOf: manilaDate(2039, 6, 1),
+      }),
+    ).resolves.toMatchObject({
+      effectiveMode: "pooled",
+      requiresNormalization: true,
+    });
+    await actor.mutation(scheduleCompanyLeaveModelChange, {
+      organizationId,
+      mode: "pooled",
+      effectiveStart: manilaDate(2040, 1, 1),
+      changeReason: "Normalize historical mixed policies",
+    });
+    const versions = await t.run((ctx) =>
+      ctx.db
+        .query("leavePolicyVersions")
+        .withIndex("by_policy_effective", (query) =>
+          query.eq("leavePolicyId", legacy.policyId),
+        )
+        .collect(),
+    );
+    expect(versions).toEqual([
+      expect.objectContaining({
+        _id: legacy.versionId,
+        accountBehavior: "individual_account",
+        effectiveEnd: manilaDate(2040, 1, 1) - 1,
+      }),
+      expect.objectContaining({
+        accountBehavior: "shared_pool",
+        poolKey: "company_leave",
+        effectiveStart: manilaDate(2040, 1, 1),
+      }),
+    ]);
+  });
+
+  it("prevents multiple base entitlements from double-granting the shared pool", async () => {
+    const { actor, organizationId } = await setupOrganization();
+    await actor.mutation(configureLeaveSector, {
+      organizationId,
+      employmentSector: "private",
+      effectiveStart: manilaDate(2039, 1, 1),
+      changeReason: "Initial pooled setup",
+    });
+    const pooledRules: LeavePolicyRules = {
+      accountBehavior: "shared_pool",
+      poolKey: "company_leave",
+      payTreatment: "company_paid",
+      durationBasis: "scheduled_work",
+      entitlementMethod: "annual",
+      annualUnits: 15,
+      eligibility: { basis: "hire_date", completedServiceMonths: 0 },
+      prorationMethod: "none",
+      roundingIncrement: 1,
+      carryover: { mode: "none" },
+      conversion: { allowed: false },
+    };
+    await actor.mutation(createCompanyLeavePolicy, {
+      organizationId,
+      name: "General Leave",
+      sourceKey: "company_general_leave",
+      effectiveStart: manilaDate(2039, 1, 1),
+      changeReason: "Create base pool",
+      rules: pooledRules,
+    });
+
+    await expect(
+      actor.mutation(createCompanyLeavePolicy, {
+        organizationId,
+        name: "Sick Leave",
+        sourceKey: "company_sick",
+        effectiveStart: manilaDate(2039, 1, 1),
+        changeReason: "Accidental second entitlement",
+        rules: { ...pooledRules, annualUnits: 5 },
+      }),
+    ).rejects.toThrow(
+      "Shared annual pool can have only one base entitlement policy",
+    );
+  });
+
+  it("configures anniversary leave as pooled or by-type according to the effective company model", async () => {
+    const { actor, organizationId } = await setupOrganization();
+    await actor.mutation(configureLeaveSector, {
+      organizationId,
+      employmentSector: "private",
+      effectiveStart: manilaDate(2039, 1, 1),
+      changeReason: "Initial pooled setup",
+    });
+
+    const pooled = await actor.mutation(configureAnniversaryLeave, {
+      organizationId,
+      enabled: true,
+      maximumDays: 5,
+      serviceDateBasis: "hire_date",
+      effectiveStart: manilaDate(2039, 1, 1),
+      changeReason: "Add anniversary bonus",
+    });
+    await actor.mutation(scheduleCompanyLeaveModelChange, {
+      organizationId,
+      mode: "by_type",
+      effectiveStart: manilaDate(2040, 1, 1),
+      changeReason: "Use separate balances",
+    });
+    const configuration = await actor.query(getLeaveConfiguration, {
+      organizationId,
+    });
+    const anniversary = configuration.policies.find(
+      ({ policy }) => policy._id === pooled.policyId,
+    );
+
+    expect(configuration.settings).toMatchObject({
+      enableAnniversaryLeave: true,
+      anniversaryLeaveMaxDays: 5,
+      anniversaryLeaveServiceDateBasis: "hire_date",
+    });
+    expect(anniversary?.policy).toMatchObject({
+      sourceKey: "company_anniversary_leave",
+      name: "Anniversary Leave",
+      category: "company",
+    });
+    expect(anniversary?.versions).toEqual([
+      expect.objectContaining({
+        accountBehavior: "shared_pool",
+        poolKey: "company_leave",
+        entitlementMethod: "anniversary",
+        annualUnits: 5,
+        eligibilityBasis: "hire_date",
+        effectiveEnd: manilaDate(2040, 1, 1) - 1,
+      }),
+      expect.objectContaining({
+        accountBehavior: "individual_account",
+        entitlementMethod: "anniversary",
+        annualUnits: 5,
+        effectiveStart: manilaDate(2040, 1, 1),
+      }),
+    ]);
+    expect(anniversary?.versions[1]?.poolKey).toBeUndefined();
+  });
+
+  it("restores each prior by-type entitlement after a temporary shared-pool period", async () => {
+    const { actor, organizationId } = await setupOrganization();
+    await actor.mutation(configureLeaveSector, {
+      organizationId,
+      employmentSector: "private",
+      effectiveStart: manilaDate(2039, 1, 1),
+      changeReason: "Initial pooled setup",
+    });
+    await actor.mutation(scheduleCompanyLeaveModelChange, {
+      organizationId,
+      mode: "by_type",
+      effectiveStart: manilaDate(2040, 1, 1),
+      changeReason: "Start with separate balances",
+    });
+    const rules = (annualUnits: number): LeavePolicyRules => ({
+      accountBehavior: "individual_account",
+      payTreatment: "company_paid",
+      durationBasis: "scheduled_work",
+      entitlementMethod: "annual",
+      annualUnits,
+      eligibility: { basis: "hire_date", completedServiceMonths: 0 },
+      prorationMethod: "none",
+      roundingIncrement: 1,
+      carryover: { mode: "none" },
+      conversion: { allowed: false },
+    });
+    const vacation = await actor.mutation(createCompanyLeavePolicy, {
+      organizationId,
+      name: "Vacation Leave",
+      sourceKey: "company_vacation",
+      effectiveStart: manilaDate(2040, 1, 1),
+      changeReason: "Create vacation entitlement",
+      rules: rules(10),
+    });
+    const sick = await actor.mutation(createCompanyLeavePolicy, {
+      organizationId,
+      name: "Sick Leave",
+      sourceKey: "company_sick",
+      effectiveStart: manilaDate(2040, 1, 1),
+      changeReason: "Create sick entitlement",
+      rules: rules(5),
+    });
+    await actor.mutation(scheduleCompanyLeaveModelChange, {
+      organizationId,
+      mode: "pooled",
+      effectiveStart: manilaDate(2041, 1, 1),
+      changeReason: "Temporarily combine balances",
+    });
+    await actor.mutation(scheduleCompanyLeaveModelChange, {
+      organizationId,
+      mode: "by_type",
+      effectiveStart: manilaDate(2042, 1, 1),
+      changeReason: "Restore separate balances",
+    });
+
+    const configuration = await actor.query(getLeaveConfiguration, {
+      organizationId,
+    });
+    const vacationVersions = configuration.policies.find(
+      ({ policy }) => policy._id === vacation.leavePolicyId,
+    )?.versions;
+    const sickVersions = configuration.policies.find(
+      ({ policy }) => policy._id === sick.leavePolicyId,
+    )?.versions;
+
+    expect(vacationVersions?.at(-1)).toMatchObject({
+      accountBehavior: "individual_account",
+      entitlementMethod: "annual",
+      annualUnits: 10,
+      effectiveStart: manilaDate(2042, 1, 1),
+    });
+    expect(sickVersions?.at(-1)).toMatchObject({
+      accountBehavior: "individual_account",
+      entitlementMethod: "annual",
+      annualUnits: 5,
+      effectiveStart: manilaDate(2042, 1, 1),
+    });
+  });
+
   it("initializes a new private organization with the protected five-day SIL policy", async () => {
     const { t, actor, organizationId } = await setupOrganization();
 
@@ -195,6 +662,46 @@ describe("leave policy administration", () => {
         .unique(),
     );
     expect(persisted?._id).toBe(sil?.policy._id);
+  });
+
+  it("restores missing statutory presets idempotently without replacing existing versions", async () => {
+    const { t, actor, organizationId } = await setupOrganization();
+    await actor.mutation(configureLeaveSector, {
+      organizationId,
+      employmentSector: "private",
+      effectiveStart: 100,
+      changeReason: "Initial setup",
+    });
+    const before = await actor.query(getLeaveConfiguration, { organizationId });
+    const paternity = before.policies.find(
+      ({ policy }) => policy.sourceKey === "private_paternity",
+    );
+    if (!paternity) throw new Error("Paternity preset missing");
+    await t.run(async (ctx) => {
+      for (const version of paternity.versions) await ctx.db.delete(version._id);
+      await ctx.db.delete(paternity.policy._id);
+    });
+
+    await expect(
+      actor.mutation(synchronizeStatutoryPolicies, { organizationId }),
+    ).resolves.toMatchObject({ createdPolicyCount: 1 });
+    await expect(
+      actor.mutation(synchronizeStatutoryPolicies, { organizationId }),
+    ).resolves.toEqual({ createdPolicyCount: 0, coveredPolicyCount: 0 });
+
+    const after = await actor.query(getLeaveConfiguration, { organizationId });
+    expect(
+      after.policies.find(({ policy }) => policy.sourceKey === "private_sil")
+        ?.versions,
+    ).toEqual(
+      before.policies.find(({ policy }) => policy.sourceKey === "private_sil")
+        ?.versions,
+    );
+    expect(
+      after.policies.find(
+        ({ policy }) => policy.sourceKey === "private_paternity",
+      ),
+    ).toBeDefined();
   });
 
   it("initializes government vacation and sick leave as separate monthly accounts", async () => {
@@ -333,13 +840,19 @@ describe("leave policy administration", () => {
     ).rejects.toThrow("statutory annual entitlement");
   });
 
-  it("creates flexible pooled or by-type company leave without weakening statutory leave", async () => {
+  it("creates by-type company leave after the organization model changes", async () => {
     const { actor, organizationId } = await setupOrganization();
     await actor.mutation(configureLeaveSector, {
       organizationId,
       employmentSector: "private",
       effectiveStart: manilaDate(2026, 1, 1),
       changeReason: "Initial setup",
+    });
+    await actor.mutation(scheduleCompanyLeaveModelChange, {
+      organizationId,
+      mode: "by_type",
+      effectiveStart: manilaDate(2040, 1, 1),
+      changeReason: "Use separate leave balances",
     });
     const vacationRules: LeavePolicyRules = {
       accountBehavior: "individual_account",
@@ -357,7 +870,7 @@ describe("leave policy administration", () => {
       organizationId,
       name: "Vacation Leave",
       sourceKey: "company_vacation",
-      effectiveStart: manilaDate(2026, 2, 1),
+      effectiveStart: manilaDate(2040, 1, 1),
       changeReason: "Add separate vacation balance",
       rules: vacationRules,
     });
@@ -385,7 +898,7 @@ describe("leave policy administration", () => {
         organizationId,
         name: "Duplicate vacation",
         sourceKey: "company_vacation",
-        effectiveStart: manilaDate(2026, 3, 1),
+        effectiveStart: manilaDate(2040, 2, 1),
         changeReason: "Duplicate",
         rules: vacationRules,
       }),

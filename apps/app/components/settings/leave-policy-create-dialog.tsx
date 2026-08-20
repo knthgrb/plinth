@@ -17,25 +17,57 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import type { LeavePolicyRules } from "@/lib/leave/types";
-import { validatePolicyVersionDraft } from "@/lib/leave/client-state";
+import {
+  buildCompanyPolicyQuickStart,
+  type CompanyPolicyQuickStart,
+  validatePolicyVersionDraft,
+} from "@/lib/leave/client-state";
 
 export function LeavePolicyCreateDialog(props: {
   organizationId: Id<"organizations">;
+  companyModel: "pooled" | "by_type";
+  scheduledModel?: {
+    mode: "pooled" | "by_type";
+    effectiveStart: number;
+  };
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const { toast } = useToast();
   const createPolicy = useMutation(api.leavePolicies.createCompanyLeavePolicy);
   const [name, setName] = useState("");
-  const [mode, setMode] = useState<"pooled" | "by_type">("by_type");
+  const [quickStart, setQuickStart] = useState<CompanyPolicyQuickStart>("custom");
+  const [entitlementMethod, setEntitlementMethod] = useState<
+    "annual" | "anniversary"
+  >("annual");
+  const [eligibilityBasis, setEligibilityBasis] = useState<
+    "hire_date" | "regularization_date"
+  >("hire_date");
+  const [completedServiceMonths, setCompletedServiceMonths] = useState(0);
   const [annualUnits, setAnnualUnits] = useState("5");
   const [effectiveDate, setEffectiveDate] = useState("");
   const [reason, setReason] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
+  const selectQuickStart = (kind: CompanyPolicyQuickStart) => {
+    const draft = buildCompanyPolicyQuickStart(kind);
+    setQuickStart(kind);
+    setName(draft.name);
+    setEntitlementMethod(draft.entitlementMethod);
+    setAnnualUnits(String(draft.annualUnits));
+    setEligibilityBasis(draft.eligibilityBasis);
+    setCompletedServiceMonths(draft.completedServiceMonths);
+  };
+
   const save = async () => {
     const validation = validatePolicyVersionDraft({ effectiveDate, reason });
     const units = Number(annualUnits);
+    const effectiveStart = Date.parse(`${effectiveDate}T00:00:00+08:00`);
+    const mode =
+      props.scheduledModel &&
+      effectiveStart >= props.scheduledModel.effectiveStart
+        ? props.scheduledModel.mode
+        : props.companyModel;
     if (!name.trim() || !Number.isFinite(units) || units < 0 || !validation.valid) {
       toast({
         title: "Company policy is incomplete",
@@ -55,10 +87,11 @@ export function LeavePolicyCreateDialog(props: {
       ...(mode === "pooled" ? { poolKey: "company_leave" } : {}),
       payTreatment: "company_paid",
       durationBasis: "scheduled_work",
-      entitlementMethod: "annual",
+      entitlementMethod,
       annualUnits: units,
-      eligibility: { basis: "hire_date", completedServiceMonths: 0 },
-      prorationMethod: "calendar_months",
+      eligibility: { basis: eligibilityBasis, completedServiceMonths },
+      prorationMethod:
+        entitlementMethod === "anniversary" ? "none" : "calendar_months",
       roundingIncrement: 0.5,
       carryover: { mode: "none" },
       conversion: { allowed: false },
@@ -69,7 +102,7 @@ export function LeavePolicyCreateDialog(props: {
         organizationId: props.organizationId,
         name: name.trim(),
         sourceKey: name,
-        effectiveStart: Date.parse(`${effectiveDate}T00:00:00+08:00`),
+        effectiveStart,
         changeReason: reason.trim(),
         rules,
       });
@@ -92,10 +125,35 @@ export function LeavePolicyCreateDialog(props: {
         <DialogHeader>
           <DialogTitle>Add company leave policy</DialogTitle>
           <DialogDescription>
-            Create a separate balance or charge this policy to the shared annual pool.
+            The organization model automatically determines whether this policy
+            uses the shared pool or a separate balance.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>Start from</Label>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {([
+                ["vacation", "Vacation"],
+                ["sick", "Sick"],
+                ["custom", "Custom"],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={quickStart === value}
+                  onClick={() => selectQuickStart(value)}
+                  className={`rounded-lg border p-2 text-sm ${
+                    quickStart === value
+                      ? "border-brand-purple bg-brand-purple/5"
+                      : "hover:bg-muted/40"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="space-y-2">
             <Label htmlFor="new-policy-name">Policy name</Label>
             <Input
@@ -105,25 +163,25 @@ export function LeavePolicyCreateDialog(props: {
               placeholder="Vacation Leave"
             />
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            {(["by_type", "pooled"] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setMode(value)}
-                className={`rounded-lg border p-3 text-left text-sm ${
-                  mode === value ? "border-brand-purple bg-brand-purple/5" : ""
-                }`}
-              >
-                <span className="font-medium">
-                  {value === "by_type" ? "Separate balance" : "Shared annual pool"}
-                </span>
-              </button>
-            ))}
+          <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+            <span className="font-medium">
+              {props.companyModel === "pooled"
+                ? "Shared annual pool"
+                : "Separate balance by leave type"}
+            </span>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Account behavior follows the organization model effective on the
+              policy start date.
+            </p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="new-policy-units">Annual days</Label>
+              <p className="text-xs text-muted-foreground">
+                {entitlementMethod === "anniversary"
+                  ? "Maximum service-anniversary days granted in a policy year."
+                  : "Yearly entitlement before any configured proration."}
+              </p>
               <Input
                 id="new-policy-units"
                 type="number"
@@ -143,6 +201,35 @@ export function LeavePolicyCreateDialog(props: {
               />
             </div>
           </div>
+          {entitlementMethod === "anniversary" ? (
+            <div className="space-y-2">
+              <Label>Service anniversary starts from</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  ["hire_date", "Hire date"],
+                  ["regularization_date", "Regularization date"],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={eligibilityBasis === value}
+                    onClick={() => setEligibilityBasis(value)}
+                    className={`rounded-lg border p-3 text-left text-sm ${
+                      eligibilityBasis === value
+                        ? "border-brand-purple bg-brand-purple/5"
+                        : "hover:bg-muted/40"
+                    }`}
+                  >
+                    <span className="font-medium">{label}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                One day is granted per completed service year, beginning on the
+                first anniversary and capped by the annual days above.
+              </p>
+            </div>
+          ) : null}
           <div className="space-y-2">
             <Label htmlFor="new-policy-reason">Setup reason</Label>
             <Textarea

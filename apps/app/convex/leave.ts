@@ -64,6 +64,7 @@ import {
   prepareLeaveRequestV2,
   requireActiveLeaveEngineV2,
 } from "./leaveOccurrences";
+import { isStatutoryPolicyCoveredAt } from "./leaveStatutoryCoverage";
 
 const MAX_LEAVE_CONFLICT_CANDIDATES = 500;
 
@@ -343,6 +344,22 @@ const leaveRequestV2DraftArgs = {
   ),
   requestedMinutes: v.optional(v.number()),
   benefitEventId: v.optional(v.id("leaveBenefitEvents")),
+  benefitEventDraft: v.optional(
+    v.object({
+      eventType: v.union(
+        v.literal("maternity"),
+        v.literal("miscarriage"),
+        v.literal("emergency_termination_of_pregnancy"),
+        v.literal("spouse_delivery"),
+        v.literal("surgery"),
+        v.literal("adoption"),
+        v.literal("calamity"),
+        v.literal("other_protected"),
+      ),
+      qualifyingLocalDate: v.string(),
+      benefitVariant: v.optional(v.string()),
+    }),
+  ),
 };
 
 const leaveRequestAttachmentValidator = v.object({
@@ -1020,6 +1037,24 @@ export const createLeaveRequestV2 = mutation({
       policyVersion: prepared.policyVersion,
       chargeableDuration: prepared.chargeableDuration,
     });
+    const benefitEventId = prepared.benefitEvent
+      ? prepared.benefitEvent._id
+      : prepared.benefitEventDraft
+        ? await ctx.db.insert("leaveBenefitEvents", {
+            organizationId: args.organizationId,
+            employeeId: args.employeeId,
+            eventType: prepared.benefitEventDraft.eventType,
+            qualifyingDate: prepared.benefitEventDraft.qualifyingDate,
+            benefitVariant: prepared.benefitEventDraft.benefitVariant,
+            verificationStatus: "pending",
+            documentReferences: (args.attachments ?? []).map(
+              (attachment) => attachment.storageObjectId,
+            ),
+            createdBy: access.user._id,
+            createdAt: now,
+            updatedAt: now,
+          })
+        : undefined;
     const legacyType = legacyLeaveTypeForPolicy(prepared.policy);
     const leaveRequestId = await ctx.db.insert("leaveRequests", {
       organizationId: args.organizationId,
@@ -1033,7 +1068,7 @@ export const createLeaveRequestV2 = mutation({
       status: "pending",
       policyId: prepared.policy._id,
       policyVersionId: prepared.policyVersion._id,
-      benefitEventId: prepared.benefitEvent?._id,
+      benefitEventId,
       requestedStart: prepared.requestedStart,
       requestedEnd: prepared.requestedEnd,
       requestedDurationMode: args.requestedDurationMode,
@@ -1084,7 +1119,8 @@ export const createLeaveRequestV2 = mutation({
         startLocalDate: args.startLocalDate,
         endLocalDate: args.endLocalDate,
         requestedDurationMode: args.requestedDurationMode,
-        benefitEventId: prepared.benefitEvent?._id,
+        benefitEventId,
+        benefitEventCreated: prepared.benefitEventDraft !== null,
         evidenceDocumentTypes: (args.attachments ?? []).map((attachment) =>
           attachment.documentType.trim(),
         ),
@@ -1141,6 +1177,14 @@ export const getMyLeaveDashboard = query({
         .withIndex("by_employee_year_type", (builder) =>
           builder.eq("employeeId", employeeId).eq("year", year),
         )
+        .filter((builder) =>
+          builder.and(
+            builder.eq(builder.field("migrationVersion"), 2),
+            builder.neq(builder.field("periodStart"), undefined),
+            builder.neq(builder.field("periodEnd"), undefined),
+            builder.neq(builder.field("engineStatus"), undefined),
+          ),
+        )
         .take(101),
       ctx.db
         .query("leavePolicies")
@@ -1165,6 +1209,40 @@ export const getMyLeaveDashboard = query({
     ) {
       throw new Error("Leave dashboard exceeds the supported row limit");
     }
+    const policyCoverage = await Promise.all(
+      policies.map((policy) =>
+        isStatutoryPolicyCoveredAt(ctx, policy, Date.now()),
+      ),
+    );
+    const policyOptions = await Promise.all(
+      policies
+        .filter((_, index) => !policyCoverage[index])
+        .map(async (policy) => {
+          const version = await ctx.db
+            .query("leavePolicyVersions")
+            .withIndex("by_policy_effective", (builder) =>
+              builder
+                .eq("leavePolicyId", policy._id)
+                .lte("effectiveStart", Date.now()),
+            )
+            .order("desc")
+            .first();
+          if (!version || (version.effectiveEnd ?? Infinity) < Date.now()) {
+            return null;
+          }
+          return {
+            policyId: policy._id,
+            sourceKey: policy.sourceKey,
+            name: policy.name,
+            category: policy.category,
+            confidentiality: policy.confidentiality,
+            qualifyingEventRequired:
+              version.qualifyingEventRequired === true ||
+              version.eligibilityBasis === "event",
+            eventEntitlementRules: version.eventEntitlementRules ?? [],
+          };
+        }),
+    );
     return {
       employee: {
         employeeId,
@@ -1183,12 +1261,9 @@ export const getMyLeaveDashboard = query({
         reserved: balance.reserved ?? 0,
         available: balance.balance,
       })),
-      policies: policies.map((policy) => ({
-        policyId: policy._id,
-        name: policy.name,
-        category: policy.category,
-        confidentiality: policy.confidentiality,
-      })),
+      policies: policyOptions.filter(
+        (policy): policy is NonNullable<typeof policy> => policy !== null,
+      ),
       pendingRequestCount: pendingRequests.length,
     };
   },
@@ -1441,6 +1516,14 @@ export const getLeaveBalanceAdministration = query({
       .withIndex("by_organization_year", (query) =>
         query.eq("organizationId", args.organizationId).eq("year", args.year),
       )
+      .filter((query) =>
+        query.and(
+          query.eq(query.field("migrationVersion"), 2),
+          query.neq(query.field("periodStart"), undefined),
+          query.neq(query.field("periodEnd"), undefined),
+          query.neq(query.field("engineStatus"), undefined),
+        ),
+      )
       .order("desc")
       .paginate(args.paginationOpts);
     return {
@@ -1463,6 +1546,8 @@ export const getLeaveBalanceAdministration = query({
             employeeName: employeeName || "Employee",
             policyName: policy?.name ?? balance.leaveTypeKey,
             available: balance.balance,
+            isSeparated:
+              !employee || !canUseEmployeeSelfService(employee.employment.status),
             periodStart: balance.periodStart,
             periodEnd: balance.periodEnd,
             engineStatus: balance.engineStatus ?? "reconciliation_required",
@@ -1524,8 +1609,43 @@ export const getLeaveReviewContext = query({
     const balance = ledgerEntry
       ? await ctx.db.get(ledgerEntry.balanceId)
       : null;
+    const benefitEvent = request.benefitEventId
+      ? await ctx.db.get(request.benefitEventId)
+      : null;
+    if (
+      benefitEvent &&
+      (benefitEvent.organizationId !== request.organizationId ||
+        benefitEvent.employeeId !== request.employeeId)
+    ) {
+      throw new Error("Leave qualifying event does not match the request");
+    }
+    const attachmentStorageIds = await loadEffectiveLeaveAttachments(ctx, request);
+    const supportingDocuments = await Promise.all(
+      attachmentStorageIds.map(async (storageId, index) => {
+        const storageObject = await ctx.db
+          .query("storageObjects")
+          .withIndex("by_storage", (query) => query.eq("storageId", storageId))
+          .unique();
+        if (
+          !storageObject ||
+          storageObject.organizationId !== request.organizationId ||
+          storageObject.purpose !== "leave_attachment" ||
+          storageObject.state !== "active"
+        ) {
+          throw new Error("Leave evidence is no longer available");
+        }
+        return {
+          storageId,
+          fileName: storageObject.fileName ?? `Leave evidence ${index + 1}`,
+          contentType: storageObject.contentType,
+          size: storageObject.size,
+          url: await ctx.storage.getUrl(storageId),
+        };
+      }),
+    );
     return {
       request,
+      benefitEvent,
       occurrences: state.occurrences,
       balance: balance
         ? {
@@ -1535,7 +1655,7 @@ export const getLeaveReviewContext = query({
             used: balance.used,
           }
         : null,
-      supportingDocuments: await loadEffectiveLeaveAttachments(ctx, request),
+      supportingDocuments,
     };
   },
 });
@@ -1554,6 +1674,33 @@ export const approveLeaveRequestV2 = mutation({
       throw new Error("Leave request is no longer pending");
     }
     const now = Date.now();
+    if (request.benefitEventId) {
+      const benefitEvent = await ctx.db.get(request.benefitEventId);
+      if (
+        !benefitEvent ||
+        benefitEvent.organizationId !== request.organizationId ||
+        benefitEvent.employeeId !== request.employeeId ||
+        benefitEvent.verificationStatus === "rejected"
+      ) {
+        throw new Error("The qualifying event is not eligible for approval");
+      }
+      if (benefitEvent.verificationStatus === "pending") {
+        await ctx.db.patch(benefitEvent._id, {
+          verificationStatus: "verified",
+          verifiedBy: access.user._id,
+          verifiedAt: now,
+          updatedAt: now,
+        });
+        await ctx.db.insert("leaveRequestEvents", {
+          leaveRequestId: request._id,
+          organizationId: request.organizationId,
+          type: "document_verified",
+          actorId: access.user._id,
+          detailsJson: JSON.stringify({ benefitEventId: benefitEvent._id }),
+          createdAt: now,
+        });
+      }
+    }
     const state = await loadCanonicalRequestState(ctx, request._id);
     if (
       state.occurrences.some(
@@ -1647,6 +1794,22 @@ export const rejectLeaveRequestV2 = mutation({
       throw new Error("Leave request is no longer pending");
     }
     const now = Date.now();
+    if (request.benefitEventId) {
+      const benefitEvent = await ctx.db.get(request.benefitEventId);
+      if (
+        benefitEvent &&
+        benefitEvent.organizationId === request.organizationId &&
+        benefitEvent.employeeId === request.employeeId &&
+        benefitEvent.verificationStatus === "pending"
+      ) {
+        await ctx.db.patch(benefitEvent._id, {
+          verificationStatus: "rejected",
+          verifiedBy: access.user._id,
+          verifiedAt: now,
+          updatedAt: now,
+        });
+      }
+    }
     const state = await loadCanonicalRequestState(ctx, request._id);
     await releasePendingReservation(
       ctx,

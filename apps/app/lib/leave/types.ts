@@ -15,6 +15,22 @@ export type LeaveDurationBasis =
   | "calendar_days"
   | "event_defined";
 
+export type LeaveBenefitEventType =
+  | "maternity"
+  | "miscarriage"
+  | "emergency_termination_of_pregnancy"
+  | "spouse_delivery"
+  | "surgery"
+  | "adoption"
+  | "calamity"
+  | "other_protected";
+
+export interface LeaveEventEntitlementRule {
+  eventType: LeaveBenefitEventType;
+  benefitVariant?: string;
+  maximumUnits: number;
+}
+
 export type LeaveProrationMethod =
   | "none"
   | "calendar_months"
@@ -79,4 +95,10 @@ export interface LeavePolicyRules {
   maximumUnitsPerEvent?: number;
   maximumUnitsPerYear?: number;
   eventUseWindowDays?: number;
+  eventEntitlementRules?: LeaveEventEntitlementRule[];
+  requiredDocumentRules?: Array<{
+    documentType: string;
+    minimumDuration?: number;
+    requiredBefore: "submission" | "approval";
+  }>;
 }

@@ -10,6 +10,7 @@ import {
   getAllowedDurationModes,
   getEmployeePolicyLabel,
   getEmployeeRequestAction,
+  setLeaveDraftBenefitEvent,
   setLeaveDraftField,
   type LeaveRequestPreview,
 } from "../lib/leave/employee-workspace";
@@ -213,6 +214,45 @@ describe("guided leave request state", () => {
         confidentiality: "restricted",
       }),
     ).toBe("Protected leave");
+  });
+
+  it("requires a qualifying event in event-based request drafts and fingerprints it", () => {
+    const base = createLeaveRequestDraft({
+      policyId: "policy-maternity",
+      startLocalDate: "2026-10-01",
+      endLocalDate: "2027-01-13",
+      qualifyingEventRequired: true,
+    });
+    const withEvent = setLeaveDraftBenefitEvent(base, {
+      eventType: "maternity",
+      qualifyingLocalDate: "2026-10-01",
+      benefitVariant: "live_birth",
+    });
+    const maternityPreview: LeaveRequestPreview = {
+      ...preview,
+      chargeableDuration: 105,
+      availableBalance: null,
+      remainingBalance: null,
+      requiredDocuments: [],
+    };
+    const previewed = applyLeavePreview(
+      withEvent,
+      maternityPreview,
+      buildLeaveDraftFingerprint(withEvent),
+    );
+    const ready = setLeaveDraftField(
+      previewed,
+      "reason",
+      "Maternity leave",
+    );
+
+    expect(buildLeaveDraftFingerprint(base)).not.toBe(
+      buildLeaveDraftFingerprint(withEvent),
+    );
+    expect(canSubmitLeaveDraft({ ...ready, benefitEventDraft: undefined })).toBe(
+      false,
+    );
+    expect(canSubmitLeaveDraft(ready)).toBe(true);
   });
 });
 

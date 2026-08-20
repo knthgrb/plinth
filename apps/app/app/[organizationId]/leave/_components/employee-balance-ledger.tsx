@@ -6,6 +6,7 @@ import { BookOpenCheck, Plus, Search } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
 import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -26,6 +27,7 @@ export interface EmployeeBalanceOption {
   employeeName: string;
   policyName: string;
   available: number;
+  isSeparated: boolean;
   periodStart?: number;
   periodEnd?: number;
   engineStatus: "open" | "closed" | "reconciliation_required";
@@ -45,6 +47,9 @@ export function EmployeeBalanceLedger(props: {
     { initialNumItems: 24 },
   );
   const [search, setSearch] = useState("");
+  const [employmentScope, setEmploymentScope] = useState<
+    "current" | "separated" | "all"
+  >("current");
   const [selectedBalance, setSelectedBalance] =
     useState<EmployeeBalanceOption>();
   const [ledgerBalanceId, setLedgerBalanceId] =
@@ -65,9 +70,13 @@ export function EmployeeBalanceLedger(props: {
   const balances = balancesResult.results.filter((balance) => {
     const term = search.trim().toLowerCase();
     return (
-      !term ||
-      balance.employeeName.toLowerCase().includes(term) ||
-      balance.policyName.toLowerCase().includes(term)
+      (employmentScope === "all" ||
+        (employmentScope === "separated"
+          ? balance.isSeparated
+          : !balance.isSeparated)) &&
+      (!term ||
+        balance.employeeName.toLowerCase().includes(term) ||
+        balance.policyName.toLowerCase().includes(term))
     );
   });
 
@@ -114,14 +123,30 @@ export function EmployeeBalanceLedger(props: {
             Audited grants, reservations, usage, adjustments, conversions, and
             expirations.
           </p>
-          <div className="relative pt-2">
-            <Search className="absolute left-3 top-5 h-4 w-4 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search employee or policy"
-              className="pl-9"
-            />
+          <div className="grid gap-2 pt-2 sm:grid-cols-[minmax(0,1fr)_180px]">
+            <div className="relative">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search employee or policy"
+                className="pl-9"
+              />
+            </div>
+            <select
+              aria-label="Employment records"
+              value={employmentScope}
+              onChange={(event) =>
+                setEmploymentScope(
+                  event.target.value as "current" | "separated" | "all",
+                )
+              }
+              className="h-10 rounded-md border bg-background px-3 text-sm"
+            >
+              <option value="current">Current employees</option>
+              <option value="separated">Separated employees</option>
+              <option value="all">All historical records</option>
+            </select>
           </div>
         </CardHeader>
         <CardContent className="space-y-5 p-4">
@@ -132,7 +157,12 @@ export function EmployeeBalanceLedger(props: {
                   key={balance.balanceId}
                   className={`rounded-xl border p-4 text-left transition-colors hover:border-brand-purple/50 ${ledgerBalanceId === balance.balanceId ? "border-brand-purple bg-brand-purple/5" : ""}`}
                 >
-                  <p className="font-medium">{balance.employeeName}</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-medium">{balance.employeeName}</p>
+                    {balance.isSeparated ? (
+                      <Badge variant="secondary">Historical</Badge>
+                    ) : null}
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     {balance.policyName}
                   </p>
@@ -166,7 +196,9 @@ export function EmployeeBalanceLedger(props: {
             </div>
           ) : (
             <p className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
-              Canonical employee balances will appear here when loaded.
+              {employmentScope === "current"
+                ? "No current employee balances match this view. Separated employees remain available under historical records."
+                : "No employee balances match this view."}
             </p>
           )}
           {balancesResult.status === "CanLoadMore" ? (

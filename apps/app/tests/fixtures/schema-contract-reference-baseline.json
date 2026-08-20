@@ -19,14 +19,14 @@
       ]
     },
     "discovery": {
-      "totalMatches": 10832,
-      "fileCount": 306,
-      "fingerprint": "03852eb13b5d87e74e86ea14a7846ea99e819d7579a73c2f38798fea77653814",
+      "totalMatches": 10972,
+      "fileCount": 308,
+      "fingerprint": "23b76d7c6e540a45fef872bf5aff41ebe44e2d1c43bc177ec13e449cccff337f",
       "symbols": [
         {
           "symbol": "accrualRate",
-          "matches": 4,
-          "files": 3
+          "matches": 5,
+          "files": 4
         },
         {
           "symbol": "acknowledgedBy",
@@ -35,8 +35,8 @@
         },
         {
           "symbol": "anniversaryLeaveMaxDays",
-          "matches": 27,
-          "files": 8
+          "matches": 30,
+          "files": 10
         },
         {
           "symbol": "annualSil",
@@ -75,7 +75,7 @@
         },
         {
           "symbol": "attachments",
-          "matches": 152,
+          "matches": 153,
           "files": 28
         },
         {
@@ -135,13 +135,13 @@
         },
         {
           "symbol": "employeeId",
-          "matches": 1582,
+          "matches": 1595,
           "files": 133
         },
         {
           "symbol": "enableAnniversaryLeave",
-          "matches": 31,
-          "files": 9
+          "matches": 35,
+          "files": 11
         },
         {
           "symbol": "endDate",
@@ -175,8 +175,8 @@
         },
         {
           "symbol": "history",
-          "matches": 87,
-          "files": 33
+          "matches": 93,
+          "files": 36
         },
         {
           "symbol": "incentives",
@@ -235,7 +235,7 @@
         },
         {
           "symbol": "leaveTrackerMode",
-          "matches": 71,
+          "matches": 73,
           "files": 14
         },
         {
@@ -280,8 +280,8 @@
         },
         {
           "symbol": "name",
-          "matches": 1207,
-          "files": 173
+          "matches": 1220,
+          "files": 174
         },
         {
           "symbol": "notes",
@@ -300,8 +300,8 @@
         },
         {
           "symbol": "organizationId",
-          "matches": 2335,
-          "files": 186
+          "matches": 2407,
+          "files": 188
         },
         {
           "symbol": "paidLeaveRequiresRegularization",
@@ -395,7 +395,7 @@
         },
         {
           "symbol": "role",
-          "matches": 544,
+          "matches": 548,
           "files": 99
         },
         {
@@ -420,8 +420,8 @@
         },
         {
           "symbol": "sourceKey",
-          "matches": 105,
-          "files": 14
+          "matches": 121,
+          "files": 18
         },
         {
           "symbol": "specificEmployees",
@@ -435,12 +435,12 @@
         },
         {
           "symbol": "status",
-          "matches": 1255,
-          "files": 126
+          "matches": 1257,
+          "files": 127
         },
         {
           "symbol": "supportingDocuments",
-          "matches": 12,
+          "matches": 15,
           "files": 4
         },
         {

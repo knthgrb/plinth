@@ -11,6 +11,7 @@ import {
   GENERAL_LEAVE_MIGRATION_KEY,
   LEAVE_ENGINE_MIGRATION_VERSION,
 } from "./leaveMigrationPlanner";
+import { synchronizeOrganizationStatutoryPolicies } from "./leaveStatutorySync";
 
 export { planOrganizationLeaveMigration } from "./leaveMigrationPlanner";
 
@@ -1439,8 +1440,35 @@ export const activateOrganizationLeaveEngine = mutation({
     const settings = await loadLeaveSettings(ctx, args.organizationId);
     if (!settings) throw new Error("Organization leave settings are missing");
     const now = Date.now();
+    await synchronizeOrganizationStatutoryPolicies(ctx, {
+      organizationId: args.organizationId,
+      employmentSector: args.employmentSector,
+      effectiveStart: run.cutoverCandidateAt,
+      changeReason: "Synchronize statutory policies during leave migration",
+      userId: run.createdBy,
+      now,
+    });
+    const companyModels = await ctx.db
+      .query("leaveCompanyModelVersions")
+      .withIndex("by_organization_effective", (query) =>
+        query.eq("organizationId", args.organizationId),
+      )
+      .take(1);
+    if (companyModels.length === 0) {
+      await ctx.db.insert("leaveCompanyModelVersions", {
+        organizationId: args.organizationId,
+        version: 1,
+        mode: run.leaveTrackerMode === "general" ? "pooled" : "by_type",
+        effectiveStart: run.cutoverCandidateAt,
+        createdBy: run.createdBy,
+        changeReason: "Activate migrated company leave model",
+        createdAt: now,
+      });
+    }
     await ctx.db.patch(settings._id, {
       employmentSector: args.employmentSector,
+      companyLeaveDefaultMode:
+        run.leaveTrackerMode === "general" ? "pooled" : "by_type",
       migrationState: "active",
       activePolicyEngineVersion: LEAVE_ENGINE_MIGRATION_VERSION,
       policyEngineCutoverAt: run.cutoverCandidateAt,

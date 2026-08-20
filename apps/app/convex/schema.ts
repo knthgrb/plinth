@@ -750,8 +750,14 @@ export default defineSchema({
     leaveTrackerMode: v.optional(
       v.union(v.literal("general"), v.literal("by_type")),
     ),
+    companyLeaveDefaultMode: v.optional(
+      v.union(v.literal("pooled"), v.literal("by_type")),
+    ),
     enableAnniversaryLeave: v.optional(v.boolean()),
     anniversaryLeaveMaxDays: v.optional(v.number()),
+    anniversaryLeaveServiceDateBasis: v.optional(
+      v.union(v.literal("hire_date"), v.literal("regularization_date")),
+    ),
     maxConvertibleLeaveDays: v.optional(v.number()),
     annualSil: v.optional(v.number()),
     grantLeaveUponRegularization: v.optional(v.boolean()),
@@ -803,6 +809,18 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),
+
+  leaveCompanyModelVersions: defineTable({
+    organizationId: v.id("organizations"),
+    version: v.number(),
+    mode: v.union(v.literal("pooled"), v.literal("by_type")),
+    effectiveStart: v.number(),
+    createdBy: v.id("users"),
+    changeReason: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_organization_version", ["organizationId", "version"])
+    .index("by_organization_effective", ["organizationId", "effectiveStart"]),
 
   employeeLeaveBalances: defineTable({
     organizationId: v.id("organizations"),
@@ -2216,6 +2234,7 @@ export default defineSchema({
     confidentiality: v.union(v.literal("standard"), v.literal("restricted")),
     state: v.union(v.literal("active"), v.literal("archived")),
     complianceRole: v.optional(v.string()),
+    coveredByPolicyId: v.optional(v.id("leavePolicies")),
     createdBy: v.id("users"),
     archivedBy: v.optional(v.id("users")),
     archivedAt: v.optional(v.number()),
@@ -2435,6 +2454,24 @@ export default defineSchema({
     maximumUnitsPerEvent: v.optional(v.number()),
     maximumUnitsPerYear: v.optional(v.number()),
     eventUseWindowDays: v.optional(v.number()),
+    eventEntitlementRules: v.optional(
+      v.array(
+        v.object({
+          eventType: v.union(
+            v.literal("maternity"),
+            v.literal("miscarriage"),
+            v.literal("emergency_termination_of_pregnancy"),
+            v.literal("spouse_delivery"),
+            v.literal("surgery"),
+            v.literal("adoption"),
+            v.literal("calamity"),
+            v.literal("other_protected"),
+          ),
+          benefitVariant: v.optional(v.string()),
+          maximumUnits: v.number(),
+        }),
+      ),
+    ),
     sourceCitation: v.optional(v.string()),
     sourceEffectiveDate: v.optional(v.string()),
     createdBy: v.id("users"),

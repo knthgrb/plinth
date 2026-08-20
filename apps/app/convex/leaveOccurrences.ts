@@ -9,6 +9,7 @@ import {
   holidayAppliesToEmployee,
   holidayMatchesDate,
 } from "../lib/payroll-calculations";
+import { isStatutoryPolicyCoveredAt } from "./leaveStatutoryCoverage";
 
 const MANILA_OFFSET_MILLISECONDS = 8 * 60 * 60 * 1_000;
 const DAY_MILLISECONDS = 24 * 60 * 60 * 1_000;
@@ -22,6 +23,30 @@ const MAX_REQUEST_CALENDAR_DAYS = 366;
 type DatabaseContext = Pick<QueryCtx | MutationCtx, "db">;
 type DurationMode = "day" | "half_day" | "hour";
 
+export type LeaveBenefitEventDraftInput = {
+  eventType:
+    | "maternity"
+    | "miscarriage"
+    | "emergency_termination_of_pregnancy"
+    | "spouse_delivery"
+    | "surgery"
+    | "adoption"
+    | "calamity"
+    | "other_protected";
+  qualifyingLocalDate: string;
+  benefitVariant?: string;
+};
+
+export type NormalizedLeaveBenefitEventDraft = Omit<
+  LeaveBenefitEventDraftInput,
+  "qualifyingLocalDate"
+> & { qualifyingDate: number };
+
+type LeaveBenefitEventEntitlementSubject = {
+  eventType: Doc<"leaveBenefitEvents">["eventType"];
+  benefitVariant?: string;
+};
+
 export type LeaveRequestV2DraftArgs = {
   organizationId: Id<"organizations">;
   employeeId: Id<"employees">;
@@ -31,6 +56,7 @@ export type LeaveRequestV2DraftArgs = {
   requestedDurationMode: DurationMode;
   requestedMinutes?: number;
   benefitEventId?: Id<"leaveBenefitEvents">;
+  benefitEventDraft?: LeaveBenefitEventDraftInput;
 };
 
 export type LeaveOccurrencePreview = LeaveOccurrenceDraft & {
@@ -46,6 +72,7 @@ export type PreparedLeaveRequestV2 = {
   policyVersion: Doc<"leavePolicyVersions">;
   balance: Doc<"employeeLeaveBalances"> | null;
   benefitEvent: Doc<"leaveBenefitEvents"> | null;
+  benefitEventDraft: NormalizedLeaveBenefitEventDraft | null;
   requestedStart: number;
   requestedEnd: number;
   chargeableDuration: number;
@@ -92,6 +119,9 @@ export async function prepareLeaveRequestV2(
   ) {
     throw new Error("Active leave policy not found");
   }
+  if (await isStatutoryPolicyCoveredAt(ctx, policy, requestedStart)) {
+    throw new Error("Active leave policy not found");
+  }
   assertDurationPrecision(settings.requestPrecision, args);
 
   const policyVersion = await loadEffectivePolicyVersion(
@@ -101,12 +131,13 @@ export async function prepareLeaveRequestV2(
     requestedEnd,
   );
   assertCompletedService(employee, policyVersion, requestedStart);
-  const benefitEvent = await validateEligibility(
+  const eligibility = await validateEligibility(
     ctx,
     employee,
     policy,
     policyVersion,
     args.benefitEventId,
+    args.benefitEventDraft,
     requestedStart,
     requestedEnd,
   );
@@ -137,7 +168,8 @@ export async function prepareLeaveRequestV2(
     employee,
     policy,
     policyVersion,
-    benefitEvent,
+    eligibility.benefitEvent,
+    eligibility.benefitEventDraft,
     chargeableDuration,
     requestedStart,
     options.excludeLeaveRequestId,
@@ -165,7 +197,8 @@ export async function prepareLeaveRequestV2(
     policy,
     policyVersion,
     balance,
-    benefitEvent,
+    benefitEvent: eligibility.benefitEvent,
+    benefitEventDraft: eligibility.benefitEventDraft,
     requestedStart,
     requestedEnd,
     chargeableDuration,
@@ -462,9 +495,13 @@ async function validateEligibility(
   policy: Doc<"leavePolicies">,
   version: Doc<"leavePolicyVersions">,
   benefitEventId: Id<"leaveBenefitEvents"> | undefined,
+  benefitEventDraft: LeaveBenefitEventDraftInput | undefined,
   requestedStart: number,
   requestedEnd: number,
-): Promise<Doc<"leaveBenefitEvents"> | null> {
+): Promise<{
+  benefitEvent: Doc<"leaveBenefitEvents"> | null;
+  benefitEventDraft: NormalizedLeaveBenefitEventDraft | null;
+}> {
   if (version.eligibilityBasis === "regularization_date") {
     const regularizationDate = employee.employment.regularizationDate;
     if (regularizationDate == null || regularizationDate > requestedStart) {
@@ -498,12 +535,43 @@ async function validateEligibility(
   }
 
   if (!version.qualifyingEventRequired && version.eligibilityBasis !== "event") {
-    if (benefitEventId !== undefined) {
+    if (benefitEventId !== undefined || benefitEventDraft !== undefined) {
       throw new Error("This leave policy does not use a qualifying event");
     }
-    return null;
+    return { benefitEvent: null, benefitEventDraft: null };
   }
-  if (!benefitEventId) throw new Error("A verified qualifying event is required");
+  if (benefitEventId && benefitEventDraft) {
+    throw new Error("Choose an existing event or enter a new qualifying event");
+  }
+  if (
+    policy.sourceKey.includes("maternity_unpaid_extension") &&
+    benefitEventDraft
+  ) {
+    throw new Error(
+      "The unpaid maternity extension must use an already verified maternity event",
+    );
+  }
+  if (benefitEventDraft) {
+    if (!eventMatchesPolicy(policy.sourceKey, benefitEventDraft.eventType)) {
+      throw new Error("Qualifying event does not match the leave policy");
+    }
+    const qualifyingDate = localDateToManilaTimestamp(
+      benefitEventDraft.qualifyingLocalDate,
+    );
+    const normalized = {
+      eventType: benefitEventDraft.eventType,
+      qualifyingDate,
+      ...(benefitEventDraft.benefitVariant?.trim()
+        ? { benefitVariant: benefitEventDraft.benefitVariant.trim() }
+        : {}),
+    };
+    assertEventVariantSupported(version, normalized);
+    assertEventUseWindow(version, normalized.qualifyingDate, requestedStart);
+    return { benefitEvent: null, benefitEventDraft: normalized };
+  }
+  if (!benefitEventId) {
+    throw new Error("A verified qualifying event is required");
+  }
   const event = await ctx.db.get(benefitEventId);
   if (
     !event ||
@@ -514,15 +582,52 @@ async function validateEligibility(
   ) {
     throw new Error("A verified qualifying event is required");
   }
+  assertEventVariantSupported(version, event);
+  assertEventUseWindow(version, event.qualifyingDate, requestedStart);
+  return { benefitEvent: event, benefitEventDraft: null };
+}
+
+function assertEventUseWindow(
+  version: Doc<"leavePolicyVersions">,
+  qualifyingDate: number,
+  requestedStart: number,
+): void {
   if (
     version.eventUseWindowDays !== undefined &&
-    (requestedStart < event.qualifyingDate ||
+    (requestedStart < qualifyingDate ||
       requestedStart >
-        event.qualifyingDate + version.eventUseWindowDays * DAY_MILLISECONDS)
+        qualifyingDate + version.eventUseWindowDays * DAY_MILLISECONDS)
   ) {
     throw new Error("Leave request is outside the qualifying event window");
   }
-  return event;
+}
+
+function matchingEventEntitlement(
+  version: Doc<"leavePolicyVersions">,
+  event: LeaveBenefitEventEntitlementSubject,
+) {
+  const benefitVariant =
+    event.eventType === "maternity" && event.benefitVariant === undefined
+      ? "live_birth"
+      : event.benefitVariant;
+  return version.eventEntitlementRules?.find(
+    (rule) =>
+      rule.eventType === event.eventType &&
+      (rule.benefitVariant === undefined ||
+        rule.benefitVariant === benefitVariant),
+  );
+}
+
+function assertEventVariantSupported(
+  version: Doc<"leavePolicyVersions">,
+  event: LeaveBenefitEventEntitlementSubject,
+): void {
+  if (
+    version.eventEntitlementRules !== undefined &&
+    !matchingEventEntitlement(version, event)
+  ) {
+    throw new Error("Qualifying event variant is not supported by this policy");
+  }
 }
 
 function qualificationTypeForPolicy(sourceKey: string): string {
@@ -607,13 +712,19 @@ async function assertEventLimits(
   policy: Doc<"leavePolicies">,
   version: Doc<"leavePolicyVersions">,
   benefitEvent: Doc<"leaveBenefitEvents"> | null,
+  benefitEventDraft: NormalizedLeaveBenefitEventDraft | null,
   units: number,
   requestedStart: number,
   excludeLeaveRequestId: Id<"leaveRequests"> | undefined,
 ): Promise<void> {
+  const event = benefitEvent ?? benefitEventDraft;
+  const statutoryMaximum = event
+    ? matchingEventEntitlement(version, event)?.maximumUnits
+    : undefined;
   if (
     version.maximumUnitsPerEvent === undefined &&
-    version.maximumUnitsPerYear === undefined
+    version.maximumUnitsPerYear === undefined &&
+    statutoryMaximum === undefined
   ) return;
   const requests = await ctx.db
     .query("leaveRequests")
@@ -644,6 +755,11 @@ async function assertEventLimits(
     eventUsed + units > version.maximumUnitsPerEvent
   ) {
     throw new Error("Leave request exceeds the qualifying-event limit");
+  }
+  if (statutoryMaximum !== undefined && eventUsed + units > statutoryMaximum) {
+    throw new Error(
+      `Leave request exceeds the ${statutoryMaximum}-day statutory maximum for this event`,
+    );
   }
   if (version.maximumUnitsPerYear === undefined) return;
   const used = activeRequests

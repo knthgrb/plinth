@@ -115,26 +115,33 @@ async function seedPolicy(
   fixture: AccrualFixture,
   args: {
     sourceKey: string;
+    category?: "company" | "statutory";
     accountBehavior?: "individual_account" | "shared_pool" | "non_credit";
     poolKey?: string;
-    entitlementMethod?: "monthly" | "annual";
+    entitlementMethod?: "monthly" | "annual" | "semi_annual" | "anniversary";
     accrualRate?: number;
     annualUnits?: number;
+    effectiveStart?: number;
+    eligibilityBasis?: "hire_date" | "regularization_date";
+    completedServiceMonths?: number;
+    prorationMethod?: "none" | "calendar_months" | "actual_days" | "legacy_15th_day";
     carryoverMode?: "none" | "capped" | "unlimited";
     carryoverCap?: number;
     conversionAllowed?: boolean;
     maxConvertibleUnits?: number;
     complianceRole?: string;
+    coveredByPolicyId?: Id<"leavePolicies">;
   },
 ) {
   const policyId = await ctx.db.insert("leavePolicies", {
     organizationId: fixture.organizationId,
     sourceKey: args.sourceKey,
     name: args.sourceKey,
-    category: "statutory",
+    category: args.category ?? "statutory",
     confidentiality: "standard",
     state: "active",
     complianceRole: args.complianceRole,
+    coveredByPolicyId: args.coveredByPolicyId,
     createdBy: fixture.actorId,
     createdAt: 1,
     updatedAt: 1,
@@ -143,7 +150,7 @@ async function seedPolicy(
     organizationId: fixture.organizationId,
     leavePolicyId: policyId,
     version: 1,
-    effectiveStart: manilaDate(2026, 1, 1),
+    effectiveStart: args.effectiveStart ?? manilaDate(2026, 1, 1),
     accountBehavior: args.accountBehavior ?? "individual_account",
     poolKey: args.poolKey,
     payTreatment: "company_paid",
@@ -151,9 +158,9 @@ async function seedPolicy(
     entitlementMethod: args.entitlementMethod ?? "monthly",
     annualUnits: args.annualUnits ?? 12,
     accrualRate: args.accrualRate,
-    eligibilityBasis: "hire_date",
-    completedServiceMonths: 0,
-    prorationMethod: "none",
+    eligibilityBasis: args.eligibilityBasis ?? "hire_date",
+    completedServiceMonths: args.completedServiceMonths ?? 0,
+    prorationMethod: args.prorationMethod ?? "none",
     roundingIncrement: 0.25,
     carryoverMode: args.carryoverMode ?? "none",
     carryoverCap: args.carryoverCap,
@@ -341,6 +348,283 @@ describe("leave accrual", () => {
     expect(result.beforeMonthEnd.postedCount).toBe(0);
     expect(result.afterYear.postedCount).toBe(12);
     expect(result.entries.reduce((total, entry) => total + entry.amount, 0)).toBe(5);
+  });
+
+  it("posts one annual grant at eligibility and replays it idempotently", async () => {
+    const t = convexTest(schema, modules);
+    const result = await t.run(async (ctx) => {
+      const fixture = await seedAccrualFixture(ctx);
+      await seedPolicy(ctx, fixture, {
+        sourceKey: "company_annual",
+        entitlementMethod: "annual",
+        annualUnits: 12,
+      });
+
+      const first = await materializeEmployeeAccruals(ctx, {
+        organizationId: fixture.organizationId,
+        employeeId: fixture.employeeId,
+        asOf: manilaDate(2026, 1, 1),
+      });
+      const second = await materializeEmployeeAccruals(ctx, {
+        organizationId: fixture.organizationId,
+        employeeId: fixture.employeeId,
+        asOf: manilaDate(2026, 1, 2),
+      });
+      const entries = await ctx.db
+        .query("leaveLedgerEntries")
+        .withIndex("by_employee_effective", (query) =>
+          query.eq("employeeId", fixture.employeeId),
+        )
+        .collect();
+      return { first, second, entries };
+    });
+
+    expect(result.first).toMatchObject({ postedCount: 1, replayedCount: 0 });
+    expect(result.second).toMatchObject({ postedCount: 0, replayedCount: 1 });
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]).toMatchObject({
+      kind: "grant",
+      amount: 12,
+      effectiveDate: manilaDate(2026, 1, 1),
+    });
+  });
+
+  it("posts two bounded semiannual installments whose total equals annual units", async () => {
+    const t = convexTest(schema, modules);
+    const result = await t.run(async (ctx) => {
+      const fixture = await seedAccrualFixture(ctx);
+      await seedPolicy(ctx, fixture, {
+        sourceKey: "company_semiannual",
+        entitlementMethod: "semi_annual",
+        annualUnits: 9,
+      });
+
+      const firstHalf = await materializeEmployeeAccruals(ctx, {
+        organizationId: fixture.organizationId,
+        employeeId: fixture.employeeId,
+        asOf: manilaDate(2026, 1, 1),
+      });
+      const secondHalf = await materializeEmployeeAccruals(ctx, {
+        organizationId: fixture.organizationId,
+        employeeId: fixture.employeeId,
+        asOf: manilaDate(2026, 7, 1),
+      });
+      const replay = await materializeEmployeeAccruals(ctx, {
+        organizationId: fixture.organizationId,
+        employeeId: fixture.employeeId,
+        asOf: manilaDate(2026, 7, 2),
+      });
+      const entries = await ctx.db
+        .query("leaveLedgerEntries")
+        .withIndex("by_employee_effective", (query) =>
+          query.eq("employeeId", fixture.employeeId),
+        )
+        .collect();
+      return { firstHalf, secondHalf, replay, entries };
+    });
+
+    expect(result.firstHalf.postedCount).toBe(1);
+    expect(result.secondHalf).toMatchObject({ postedCount: 1, replayedCount: 1 });
+    expect(result.replay).toMatchObject({ postedCount: 0, replayedCount: 2 });
+    expect(result.entries.map(({ amount }) => amount)).toEqual([4.5, 4.5]);
+    expect(result.entries.reduce((total, entry) => total + entry.amount, 0)).toBe(9);
+  });
+
+  it("grants one day per completed service year on the anniversary up to the cap", async () => {
+    const t = convexTest(schema, modules);
+    const result = await t.run(async (ctx) => {
+      const fixture = await seedAccrualFixture(ctx, {
+        hireDate: manilaDate(2021, 6, 15),
+      });
+      await seedPolicy(ctx, fixture, {
+        sourceKey: "company_anniversary",
+        entitlementMethod: "anniversary",
+        annualUnits: 3,
+      });
+
+      const before = await materializeEmployeeAccruals(ctx, {
+        organizationId: fixture.organizationId,
+        employeeId: fixture.employeeId,
+        asOf: manilaDate(2026, 6, 14),
+      });
+      const onAnniversary = await materializeEmployeeAccruals(ctx, {
+        organizationId: fixture.organizationId,
+        employeeId: fixture.employeeId,
+        asOf: manilaDate(2026, 6, 15),
+      });
+      const replay = await materializeEmployeeAccruals(ctx, {
+        organizationId: fixture.organizationId,
+        employeeId: fixture.employeeId,
+        asOf: manilaDate(2026, 6, 16),
+      });
+      const entries = await ctx.db
+        .query("leaveLedgerEntries")
+        .withIndex("by_employee_effective", (query) =>
+          query.eq("employeeId", fixture.employeeId),
+        )
+        .collect();
+      return { before, onAnniversary, replay, entries };
+    });
+
+    expect(result.before.postedCount).toBe(0);
+    expect(result.onAnniversary).toMatchObject({ postedCount: 1, replayedCount: 0 });
+    expect(result.replay).toMatchObject({ postedCount: 0, replayedCount: 1 });
+    expect(result.entries[0]).toMatchObject({
+      kind: "grant",
+      amount: 3,
+      effectiveDate: manilaDate(2026, 6, 15),
+    });
+  });
+
+  it("does not add a statutory SIL grant when a company pool explicitly covers it", async () => {
+    const t = convexTest(schema, modules);
+    const result = await t.run(async (ctx) => {
+      const fixture = await seedAccrualFixture(ctx);
+      const companyPolicy = await seedPolicy(ctx, fixture, {
+        sourceKey: "__plinth_general_leave__",
+        category: "company",
+        accountBehavior: "shared_pool",
+        poolKey: "__plinth_general_leave__",
+        entitlementMethod: "annual",
+        annualUnits: 8,
+      });
+      await seedPolicy(ctx, fixture, {
+        sourceKey: "private_sil",
+        accountBehavior: "shared_pool",
+        poolKey: "company_leave",
+        entitlementMethod: "annual",
+        annualUnits: 5,
+        complianceRole: "private_sil_minimum",
+        coveredByPolicyId: companyPolicy.policyId,
+      });
+
+      await materializeEmployeeAccruals(ctx, {
+        organizationId: fixture.organizationId,
+        employeeId: fixture.employeeId,
+        asOf: manilaDate(2026, 1, 1),
+      });
+      const entries = await ctx.db
+        .query("leaveLedgerEntries")
+        .withIndex("by_employee_effective", (query) =>
+          query.eq("employeeId", fixture.employeeId),
+        )
+        .collect();
+      const balances = await ctx.db
+        .query("employeeLeaveBalances")
+        .withIndex("by_organization", (query) =>
+          query.eq("organizationId", fixture.organizationId),
+        )
+        .collect();
+      return { entries, balances };
+    });
+
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]).toMatchObject({ amount: 8, kind: "grant" });
+    expect(result.balances).toHaveLength(1);
+    expect(result.balances[0]).toMatchObject({ balance: 8, total: 8 });
+  });
+
+  it("does not double-grant SIL when a newly configured company pool meets the baseline", async () => {
+    const t = convexTest(schema, modules);
+    const entries = await t.run(async (ctx) => {
+      const fixture = await seedAccrualFixture(ctx);
+      await seedPolicy(ctx, fixture, {
+        sourceKey: "General Leave",
+        category: "company",
+        accountBehavior: "shared_pool",
+        poolKey: "company_leave",
+        entitlementMethod: "annual",
+        annualUnits: 15,
+      });
+      await seedPolicy(ctx, fixture, {
+        sourceKey: "private_sil",
+        accountBehavior: "shared_pool",
+        poolKey: "company_leave",
+        entitlementMethod: "annual",
+        annualUnits: 5,
+        completedServiceMonths: 12,
+        complianceRole: "private_sil_minimum",
+      });
+
+      await materializeEmployeeAccruals(ctx, {
+        organizationId: fixture.organizationId,
+        employeeId: fixture.employeeId,
+        asOf: manilaDate(2027, 1, 1),
+      });
+      return ctx.db
+        .query("leaveLedgerEntries")
+        .withIndex("by_employee_effective", (query) =>
+          query.eq("employeeId", fixture.employeeId),
+        )
+        .collect();
+    });
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ amount: 15, kind: "grant" });
+  });
+
+  it("restores the statutory SIL grant when the covering version no longer qualifies", async () => {
+    const t = convexTest(schema, modules);
+    const result = await t.run(async (ctx) => {
+      const fixture = await seedAccrualFixture(ctx);
+      const companyPolicy = await seedPolicy(ctx, fixture, {
+        sourceKey: "__plinth_general_leave__",
+        category: "company",
+        accountBehavior: "shared_pool",
+        poolKey: "__plinth_general_leave__",
+        entitlementMethod: "annual",
+        annualUnits: 8,
+      });
+      await ctx.db.patch(companyPolicy.policyVersionId, {
+        effectiveEnd: manilaDate(2026, 12, 31),
+      });
+      await ctx.db.insert("leavePolicyVersions", {
+        organizationId: fixture.organizationId,
+        leavePolicyId: companyPolicy.policyId,
+        version: 2,
+        effectiveStart: manilaDate(2027, 1, 1),
+        accountBehavior: "shared_pool",
+        poolKey: "__plinth_general_leave__",
+        payTreatment: "company_paid",
+        durationBasis: "scheduled_work",
+        entitlementMethod: "annual",
+        annualUnits: 0,
+        eligibilityBasis: "hire_date",
+        completedServiceMonths: 0,
+        prorationMethod: "none",
+        roundingIncrement: 0.25,
+        carryoverMode: "none",
+        conversionAllowed: false,
+        createdBy: fixture.actorId,
+        createdAt: 1,
+        changeReason: "End company entitlement",
+      });
+      await seedPolicy(ctx, fixture, {
+        sourceKey: "private_sil",
+        accountBehavior: "shared_pool",
+        poolKey: "company_leave",
+        entitlementMethod: "annual",
+        annualUnits: 5,
+        effectiveStart: manilaDate(2026, 1, 1),
+        complianceRole: "private_sil_minimum",
+        coveredByPolicyId: companyPolicy.policyId,
+      });
+
+      await materializeEmployeeAccruals(ctx, {
+        organizationId: fixture.organizationId,
+        employeeId: fixture.employeeId,
+        asOf: manilaDate(2027, 1, 1),
+      });
+      return ctx.db
+        .query("leaveLedgerEntries")
+        .withIndex("by_employee_effective", (query) =>
+          query.eq("employeeId", fixture.employeeId),
+        )
+        .collect();
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ amount: 5, kind: "grant" });
   });
 
   it("closes capped, protected SIL, and noncumulative periods explicitly", async () => {

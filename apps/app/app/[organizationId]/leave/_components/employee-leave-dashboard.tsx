@@ -127,6 +127,12 @@ export function EmployeeLeaveDashboard(props: {
         confidentiality: policy.confidentiality,
         allowHalfDay: false,
         allowHourly: false,
+        sourceKey: policy.sourceKey ?? "",
+        qualifyingEventRequired: policy.qualifyingEventRequired === true,
+        requiresVerifiedBenefitEvent: policy.sourceKey?.includes(
+          "maternity_unpaid_extension",
+        ) === true,
+        eventEntitlementRules: policy.eventEntitlementRules ?? [],
       })),
     [dashboard?.policies],
   );
