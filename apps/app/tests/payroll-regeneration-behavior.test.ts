@@ -1,5 +1,5 @@
 import { convexTest } from "convex-test";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "../convex/_generated/api";
 import type { Doc } from "../convex/_generated/dataModel";
@@ -25,6 +25,10 @@ const modules = Object.fromEntries(
     loader,
   ]),
 );
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const schedule: Doc<"employees">["schedule"] = {
   defaultSchedule: {
@@ -76,6 +80,7 @@ async function setupOutdatedDraftWithOverrides(options?: {
   incentiveOverride?: PayrollLine[];
   runIncentives?: PayrollLine[];
   variableEarningsOverride?: VariableEarnings | null;
+  omitGovernmentSettings?: boolean;
 }) {
   const t = convexTest(schema, modules);
   const email = "payroll-regeneration-owner@example.com";
@@ -165,15 +170,17 @@ async function setupOutdatedDraftWithOverrides(options?: {
       deductionsEnabled: true,
       draftConfig: encryptDraftConfigForDb({
         employeeIds: [employeeId],
-        governmentDeductionSettings: [
-          {
-            employeeId,
-            sss: { enabled: false, frequency: "full" },
-            pagibig: { enabled: false, frequency: "full" },
-            philhealth: { enabled: false, frequency: "full" },
-            tax: { enabled: true, frequency: "full" },
-          },
-        ],
+        governmentDeductionSettings: options?.omitGovernmentSettings
+          ? undefined
+          : [
+              {
+                employeeId,
+                sss: { enabled: false, frequency: "full" },
+                pagibig: { enabled: false, frequency: "full" },
+                philhealth: { enabled: false, frequency: "full" },
+                tax: { enabled: true, frequency: "full" },
+              },
+            ],
         incentives:
           options?.runIncentives !== undefined
             ? [{ employeeId, incentives: options.runIncentives }]
@@ -200,7 +207,7 @@ async function setupOutdatedDraftWithOverrides(options?: {
       createdAt: 1,
       updatedAt: 2,
     });
-    await ctx.db.insert("payslips", {
+    const payslipId = await ctx.db.insert("payslips", {
       organizationId,
       employeeId,
       payrollRunId,
@@ -228,7 +235,7 @@ async function setupOutdatedDraftWithOverrides(options?: {
       createdAt: 1,
     });
 
-    return { organizationId, employeeId, payrollRunId };
+    return { organizationId, employeeId, payrollRunId, payslipId };
   });
 
   return { t, actor: t.withIdentity({ email }), ...fixture };
@@ -264,6 +271,108 @@ function findLine(lines: PayrollLine[] | undefined, name: string) {
 }
 
 describe("outdated payroll regeneration behavior", () => {
+  it("encrypts the regenerated summary snapshot at rest", async () => {
+    vi.stubEnv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef");
+    const setup = await setupOutdatedDraftWithOverrides();
+
+    await setup.actor.mutation(api.payroll.updatePayrollRun, {
+      payrollRunId: setup.payrollRunId,
+      preserveExistingPayslipEdits: true,
+    });
+
+    const run = await setup.t.run((ctx) => ctx.db.get(setup.payrollRunId));
+    expect(run?.summarySnapshot).toMatch(/^pp:enc:v1:/);
+    expect(run?.summarySnapshot).not.toContain("regina.pay@example.com");
+  });
+
+  it("stores posted payslip correction finances only in an encrypted revision", async () => {
+    vi.stubEnv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef");
+    const setup = await setupOutdatedDraftWithOverrides({
+      variableEarningsOverride: null,
+    });
+    await setup.t.run((ctx) =>
+      ctx.db.patch(setup.payrollRunId, {
+        status: "finalized",
+        finalizedAt: 10,
+      }),
+    );
+
+    await setup.actor.mutation(api.payroll.updatePayslip, {
+      payslipId: setup.payslipId,
+      correctionReason: "Approved taxable bonus correction",
+      incentives: [
+        { name: "Project bonus", amount: 2_000, type: "incentive" },
+      ],
+    });
+
+    const correction = await setup.t.run((ctx) =>
+      ctx.db
+        .query("payslipCorrections")
+        .withIndex("by_payslip", (query) =>
+          query.eq("payslipId", setup.payslipId),
+        )
+        .unique(),
+    );
+    expect(correction).toMatchObject({
+      revision: 1,
+      runStatusAtCorrection: "finalized",
+      accountingStatus: "posted",
+    });
+    expect(correction?.financialSnapshot).toMatch(/^pp:enc:v1:/);
+    expect(correction?.reason).toMatch(/^pp:enc:v1:/);
+    expect(correction?.reason).not.toContain("Approved taxable bonus correction");
+    expect(correction?.oldNetPay).toBeUndefined();
+    expect(correction?.newNetPay).toBeUndefined();
+    expect(correction?.deltaNetPay).toBeUndefined();
+
+    const visible = await setup.actor.query(
+      api.payroll.getUnnotifiedPayslipCorrectionsForRun,
+      { payrollRunId: setup.payrollRunId },
+    );
+    expect(visible.corrections[0]?.reason).toBe(
+      "Approved taxable bonus correction",
+    );
+  });
+
+  it("recalculates withholding after an incentive-only payslip edit", async () => {
+    const setup = await setupOutdatedDraftWithOverrides({
+      variableEarningsOverride: null,
+    });
+
+    await setup.actor.mutation(api.payroll.updatePayslip, {
+      payslipId: setup.payslipId,
+      incentives: [
+        { name: "Project bonus", amount: 2_000, type: "incentive" },
+      ],
+    });
+
+    const state = await readRegeneratedState(setup);
+    expect(state.payslip.grossPay).toBe(51_000);
+    expect(findLine(state.payslip.deductions, "Withholding Tax")?.amount).toBe(
+      8_131.25,
+    );
+    expect(state.payslip.netPay).toBe(42_318.75);
+  });
+
+  it("defaults missing employee tax settings to enabled during payslip edits", async () => {
+    const setup = await setupOutdatedDraftWithOverrides({
+      variableEarningsOverride: null,
+      omitGovernmentSettings: true,
+    });
+
+    await setup.actor.mutation(api.payroll.updatePayslip, {
+      payslipId: setup.payslipId,
+      incentives: [
+        { name: "Project bonus", amount: 2_000, type: "incentive" },
+      ],
+    });
+
+    const state = await readRegeneratedState(setup);
+    expect(findLine(state.payslip.deductions, "Withholding Tax")?.amount).toBe(
+      8_131.25,
+    );
+  });
+
   it("keeps manual edits but always recalculates withholding tax", async () => {
     const setup = await setupOutdatedDraftWithOverrides();
 
@@ -303,6 +412,50 @@ describe("outdated payroll regeneration behavior", () => {
     );
     const reviewed = await readRegeneratedState(setup);
     expect(reviewed.config.overrideReview?.status).toBe("reviewed");
+  });
+
+  it("synchronizes statutory withholding again before finalization", async () => {
+    const setup = await setupOutdatedDraftWithOverrides();
+    await setup.actor.mutation(api.payroll.updatePayrollRun, {
+      payrollRunId: setup.payrollRunId,
+      preserveExistingPayslipEdits: true,
+    });
+    await setup.actor.mutation(
+      api.payroll.markPayrollRunOverrideReviewComplete,
+      { payrollRunId: setup.payrollRunId },
+    );
+    await setup.t.run(async (ctx) => {
+      const rawPayslip = await ctx.db
+        .query("payslips")
+        .withIndex("by_payroll_run", (query) =>
+          query.eq("payrollRunId", setup.payrollRunId),
+        )
+        .unique();
+      if (!rawPayslip) throw new Error("Payslip missing");
+      await ctx.db.patch(rawPayslip._id, {
+        deductions: [
+          { name: "Cash advance", amount: 750, type: "custom" },
+          { name: "Withholding Tax", amount: 9_999, type: "government" },
+        ],
+      });
+    });
+
+    await setup.actor.mutation(api.payroll.updatePayrollRunStatus, {
+      payrollRunId: setup.payrollRunId,
+      status: "finalized",
+    });
+
+    const state = await readRegeneratedState(setup);
+    expect(findLine(state.payslip.deductions, "Withholding Tax")?.amount).toBe(
+      8_256.25,
+    );
+    const run = await setup.t.run((ctx) => ctx.db.get(setup.payrollRunId));
+    expect(run?.statutoryRuleVersion).toBe("ph-2025-01");
+    expect(JSON.parse(run?.statutoryCheck ?? "{}")).toMatchObject({
+      status: "passed",
+      ruleVersion: "ph-2025-01",
+      withholdingTaxRecalculatedCount: 1,
+    });
   });
 
   it("ignores all per-payslip edits and clears their review state", async () => {

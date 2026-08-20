@@ -2,6 +2,10 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { normalizeMigrationSourceKey } from "./leaveEmployeeMigrationPlanner";
 import { assertLegacyLeaveWriteAllowed } from "./leaveMigration";
+import {
+  decryptStringFromStorage,
+  maybeEncryptStringForStorage,
+} from "./fieldEncryption";
 
 const MIGRATION_VERSION = 1;
 
@@ -260,9 +264,12 @@ export async function loadEffectiveEmployeePaymentAccount(
   if (!row) return undefined;
   assertEmployeeChild(employee, row, "Employee payment account");
   return {
-    bankName: row.bankName,
-    accountNumber: row.accountNumber,
-    accountName: row.accountName,
+    bankName: decryptStringFromStorage(row.bankName, "bank-name"),
+    accountNumber: decryptStringFromStorage(
+      row.accountNumber,
+      "bank-account-number",
+    ),
+    accountName: decryptStringFromStorage(row.accountName, "bank-account-name"),
   };
 }
 
@@ -620,7 +627,15 @@ export async function replaceEmployeePaymentAccount(
   const value = {
     organizationId: employee.organizationId,
     employeeId: employee._id,
-    ...account,
+    bankName: maybeEncryptStringForStorage(account.bankName, "bank-name"),
+    accountNumber: maybeEncryptStringForStorage(
+      account.accountNumber,
+      "bank-account-number",
+    ),
+    accountName: maybeEncryptStringForStorage(
+      account.accountName,
+      "bank-account-name",
+    ),
     migrationVersion: MIGRATION_VERSION,
     updatedAt: now,
   };

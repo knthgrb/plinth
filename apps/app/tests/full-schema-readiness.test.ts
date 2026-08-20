@@ -179,9 +179,9 @@ describe("full schema cleanup readiness", () => {
     expect(inventory).toMatchObject({
       programKey: FULL_SCHEMA_CLEANUP_PROGRAM_KEY,
       programVersion: FULL_SCHEMA_CLEANUP_PROGRAM_VERSION,
-      currentTableCount: 97,
+      currentTableCount: 100,
     });
-    expect(inventory.tables).toHaveLength(97);
+    expect(inventory.tables).toHaveLength(100);
     expect(inventory.tables).toContainEqual(
       expect.objectContaining({
         table: "organizations",

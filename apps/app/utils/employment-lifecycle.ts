@@ -44,6 +44,12 @@ export function isEmployeeSeparated(
   return normalizeEmploymentStatus(status) === "separated";
 }
 
+export function isEmployeeFinalPayEligible(
+  status: string | null | undefined,
+): boolean {
+  return isEmployeeSeparated(status);
+}
+
 export function resolveSeparationType(
   status: string | null | undefined,
   separationType?: string | null,

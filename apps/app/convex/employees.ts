@@ -6,6 +6,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
+import { appendOperationalEvent } from "./operationalEvents";
 import { requireActiveMembership } from "./access";
 import {
   loadEffectiveEmployee,
@@ -237,6 +238,7 @@ async function checkAuth(
     role: userRole,
     organizationId,
     employeeId: membership.employeeId,
+    membershipId: membership._id,
     accessStatus: membership.accessStatus,
   };
 }
@@ -1038,6 +1040,27 @@ export const createEmployee = mutation({
           })
         : null;
 
+    await appendOperationalEvent(ctx, {
+      organizationId: args.organizationId,
+      eventType: "employee.created",
+      aggregateType: "employee",
+      aggregateId: String(insertedId),
+      actor: {
+        type: "user",
+        userId: userRecord._id,
+        membershipId: userRecord.membershipId,
+        role: userRecord.role,
+        displayName: userRecord.name,
+      },
+      occurredAt: now,
+      changedFields: ["personalInfo", "employment", "compensation", "schedule"],
+      payload: {
+        employeeNumber: companyEmployeeId,
+        accountAccessKind: accountAccess.kind,
+      },
+      idempotencyKey: `employee:${insertedId}:created`,
+    });
+
     return {
       employeeId: insertedId,
       invitationId: invitation?.invitationId,
@@ -1517,6 +1540,43 @@ export const updateEmployee = mutation({
       }
     }
 
+    const changedFields = [
+      args.personalInfo ? "personalInfo" : null,
+      args.employment ? "employment" : null,
+      args.compensation ? "compensation" : null,
+      args.schedule ? "schedule" : null,
+      args.shiftId !== undefined ? "shiftId" : null,
+      args.customFields !== undefined ? "customFields" : null,
+    ].filter((field): field is string => field !== null);
+    if (changedFields.length > 0) {
+      const separatedNow =
+        !isEmployeeSeparated(employee.employment.status) &&
+        isEmployeeSeparated(employmentUpdate?.status);
+      await appendOperationalEvent(ctx, {
+        organizationId: employee.organizationId,
+        eventType: separatedNow
+          ? "employee.separated"
+          : "employee.details_changed",
+        aggregateType: "employee",
+        aggregateId: String(args.employeeId),
+        actor: {
+          type: "user",
+          userId: userRecord._id,
+          membershipId: userRecord.membershipId,
+          role: userRecord.role,
+          displayName: userRecord.name,
+        },
+        changedFields,
+        payload: {
+          previousEmploymentStatus: employee.employment.status,
+          nextEmploymentStatus:
+            employmentUpdate?.status ?? employee.employment.status,
+          separationType: employmentUpdate?.separationType,
+          separationReason: employmentUpdate?.separationReason,
+        },
+      });
+    }
+
     return { success: true };
   },
 });
@@ -1653,6 +1713,26 @@ export const rehireEmployee = mutation({
       employment: nextEmployment,
       recordedBy: userRecord._id,
       createdAt: now,
+    });
+    await appendOperationalEvent(ctx, {
+      organizationId: employee.organizationId,
+      eventType: "employee.rehired",
+      aggregateType: "employee",
+      aggregateId: String(employee._id),
+      actor: {
+        type: "user",
+        userId: userRecord._id,
+        membershipId: userRecord.membershipId,
+        role: userRecord.role,
+        displayName: userRecord.name,
+      },
+      occurredAt: args.hireDate,
+      changedFields: ["employment", "archivedAt", "membershipAccess"],
+      payload: {
+        restoreAccess: args.restoreAccess,
+        membershipId: membership?._id,
+        nextRole: args.restoreAccess ? nextRole : membership?.role,
+      },
     });
 
     return {
@@ -2169,6 +2249,27 @@ export const deleteEmployee = mutation({
       employee.organizationId,
       args.employeeId,
     );
+
+    await appendOperationalEvent(ctx, {
+      organizationId: employee.organizationId,
+      eventType: "employee.archived",
+      aggregateType: "employee",
+      aggregateId: String(args.employeeId),
+      actor: {
+        type: "user",
+        userId: userRecord._id,
+        membershipId: userRecord.membershipId,
+        role: userRecord.role,
+        displayName: userRecord.name,
+      },
+      occurredAt: now,
+      changedFields: ["archivedAt", "membershipAccess"],
+      payload: {
+        employmentStatus: employment.status,
+        affectedMembershipIds: linkedMemberships.map((row) => row._id),
+      },
+      idempotencyKey: `employee:${args.employeeId}:archived:${now}`,
+    });
 
     return { success: true };
   },

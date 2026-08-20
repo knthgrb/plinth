@@ -21,6 +21,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Banknote,
+  Archive,
+  ArchiveRestore,
+  Ban,
   CheckCircle,
   Eye,
   FileText,
@@ -29,32 +32,80 @@ import {
   MoreHorizontal,
   Pencil,
   Trash2,
-  Undo2,
+  XCircle,
 } from "lucide-react";
 import { getStatusBadgeClass, getStatusBadgeStyle } from "@/utils/colors";
 
+type PayrollRunDraftConfig = {
+  employeeIds: string[];
+  manualDeductions?: Array<{
+    employeeId: string;
+    deductions: Array<{ name: string; amount: number; type: string }>;
+  }>;
+  incentives?: Array<{
+    employeeId: string;
+    incentives: Array<{
+      name: string;
+      amount: number;
+      type: string;
+      taxable?: boolean;
+    }>;
+  }>;
+  governmentDeductionSettings?: Array<{
+    employeeId: string;
+    sss: { enabled: boolean; frequency: "full" | "half" };
+    pagibig: { enabled: boolean; frequency: "full" | "half" };
+    philhealth: { enabled: boolean; frequency: "full" | "half" };
+    tax: { enabled: boolean; frequency: "full" | "half" };
+  }>;
+  overrideReview?: {
+    status: "needs_review" | "reviewed";
+    employees: Array<{ fields: string[] }>;
+  };
+};
+
+export type PayrollRunListItem = {
+  _id: string;
+  cutoffStart: number;
+  cutoffEnd: number;
+  period: string;
+  runType?: "regular" | "13th_month" | "leave_conversion" | "final_pay";
+  year?: number;
+  status: string;
+  processedAt?: number;
+  archivedAt?: number;
+  deductionsEnabled?: boolean;
+  isDraftOutdated?: boolean;
+  draftConfig?: PayrollRunDraftConfig;
+};
+
 interface PayrollRunsTableProps {
-  payrollRuns: any[];
+  payrollRuns: PayrollRunListItem[];
   isLoading?: boolean;
   selectedRunIds?: string[];
   onToggleRunSelection?: (runId: string, checked: boolean) => void;
   onToggleSelectAllVisible?: (runIds: string[], checked: boolean) => void;
   isDeletingRunId?: string | null;
   disableSelection?: boolean;
-  onViewSummary: (run: any) => void;
-  onViewPayslips: (run: any) => void;
-  onEdit: (run: any) => void;
-  onRegeneratePayslips?: (run: any) => void | Promise<void>;
+  onViewSummary: (run: PayrollRunListItem) => void;
+  onViewPayslips: (run: PayrollRunListItem) => void;
+  onEdit: (run: PayrollRunListItem) => void;
+  onRegeneratePayslips?: (run: PayrollRunListItem) => void | Promise<void>;
   /** When set, shows spinner on that run's "Regenerate payslips" action */
   regeneratingPayrollRunId?: string | null;
-  onStatusChange: (run: any, status: string) => void;
-  onDelete: (run: any) => void;
+  onStatusChange: (run: PayrollRunListItem, status: string) => void;
+  onArchive?: (
+    run: PayrollRunListItem,
+    archived: boolean,
+  ) => void | Promise<void>;
+  onVoid?: (run: PayrollRunListItem) => void;
+  onDelete: (run: PayrollRunListItem) => void;
   /** Pending payslip correction rows not yet sent in chat, keyed by payroll run id */
   pendingCorrectionByRunId?: Record<
     string,
     { pendingCorrections: number; uniquePayslips: number }
   >;
-  onNotifyCorrections?: (run: any) => void | Promise<void>;
+  onNotifyCorrections?: (run: PayrollRunListItem) => void | Promise<void>;
   /** When set, show spinner on that run's "Send corrected payslips" action */
   sendingCorrectionRunId?: string | null;
   /** Owner, admin, HR only — employees and accounting cannot delete runs */
@@ -75,6 +126,8 @@ export function PayrollRunsTable({
   onRegeneratePayslips,
   regeneratingPayrollRunId = null,
   onStatusChange,
+  onArchive,
+  onVoid,
   onDelete,
   pendingCorrectionByRunId = {},
   onNotifyCorrections,
@@ -82,9 +135,7 @@ export function PayrollRunsTable({
   canDeletePayrollRuns = true,
 }: PayrollRunsTableProps) {
   const deletableVisibleRunIds = payrollRuns
-    .filter(
-      (r) => r.status === "draft" || r.status === "cancelled",
-    )
+    .filter((run) => run.status === "draft")
     .map((r) => String(r._id));
   const allDeletableSelected =
     deletableVisibleRunIds.length > 0 &&
@@ -112,7 +163,7 @@ export function PayrollRunsTable({
                     checked === true,
                   );
                 }}
-                aria-label="Select all deletable (draft or cancelled) payroll runs"
+                aria-label="Select all deletable draft payroll runs"
               />
             </TableHead>
           )}
@@ -167,8 +218,7 @@ export function PayrollRunsTable({
                   )}`
                 : run.period;
 
-            const canSelectForDelete =
-              run.status === "draft" || run.status === "cancelled";
+            const canSelectForDelete = run.status === "draft";
             return (
               <TableRow key={run._id}>
                 {canDeletePayrollRuns && (
@@ -202,6 +252,9 @@ export function PayrollRunsTable({
                             ? "Archived"
                             : run.status}
                     </Badge>
+                    {run.archivedAt && run.status !== "archived" && (
+                      <Badge variant="outline">Archived</Badge>
+                    )}
                     {run.status === "draft" && run.isDraftOutdated && (
                       <Badge
                         variant="secondary"
@@ -243,7 +296,7 @@ export function PayrollRunsTable({
                           View Payslips
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        {run.status === "draft" && (
+                        {run.status === "draft" && !run.archivedAt && (
                           <>
                             {(run.runType ?? "regular") !== "13th_month" && (
                               <>
@@ -255,7 +308,9 @@ export function PayrollRunsTable({
                                   run.isDraftOutdated && (
                                     <DropdownMenuItem
                                       disabled={!!regeneratingPayrollRunId}
-                                      onClick={() => void onRegeneratePayslips(run)}
+                                      onClick={() =>
+                                        void onRegeneratePayslips(run)
+                                      }
                                     >
                                       {regeneratingPayrollRunId === run._id ? (
                                         <Loader2 className="h-4 w-4 mr-2 animate-spin shrink-0" />
@@ -270,7 +325,9 @@ export function PayrollRunsTable({
                               </>
                             )}
                             <DropdownMenuItem
-                              disabled={run.isDraftOutdated || needsOverrideReview}
+                              disabled={
+                                run.isDraftOutdated || needsOverrideReview
+                              }
                               onClick={() => onStatusChange(run, "finalized")}
                             >
                               <CheckCircle className="h-4 w-4 mr-2" />
@@ -278,11 +335,17 @@ export function PayrollRunsTable({
                                 ? "Finalize (regenerate required)"
                                 : needsOverrideReview
                                   ? "Finalize (review overrides first)"
-                                : "Finalize"}
+                                  : "Finalize"}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => onStatusChange(run, "cancelled")}
+                            >
+                              <XCircle className="h-4 w-4 mr-2" />
+                              Cancel and retain
                             </DropdownMenuItem>
                           </>
                         )}
-                        {run.status === "finalized" && (
+                        {run.status === "finalized" && !run.archivedAt && (
                           <>
                             {onNotifyCorrections &&
                               (pendingCorrectionByRunId[String(run._id)]
@@ -307,9 +370,15 @@ export function PayrollRunsTable({
                               <Banknote className="h-4 w-4 mr-2" />
                               Mark as Paid
                             </DropdownMenuItem>
+                            {onVoid && (
+                              <DropdownMenuItem onClick={() => onVoid(run)}>
+                                <Ban className="h-4 w-4 mr-2" />
+                                Void payroll
+                              </DropdownMenuItem>
+                            )}
                           </>
                         )}
-                        {run.status === "paid" && (
+                        {run.status === "paid" && !run.archivedAt && (
                           <>
                             {onNotifyCorrections &&
                               (pendingCorrectionByRunId[String(run._id)]
@@ -328,18 +397,31 @@ export function PayrollRunsTable({
                                     : `Send corrected payslips (${pendingCorrectionByRunId[String(run._id)]?.uniquePayslips ?? 0})`}
                                 </DropdownMenuItem>
                               )}
-                            {run.runType !== "final_pay" && (
-                              <DropdownMenuItem
-                                onClick={() =>
-                                  onStatusChange(run, "finalized")
-                                }
-                              >
-                                <Undo2 className="h-4 w-4 mr-2" />
-                                Revert to Finalized
+                            {onVoid && (
+                              <DropdownMenuItem onClick={() => onVoid(run)}>
+                                <Ban className="h-4 w-4 mr-2" />
+                                Void payroll
                               </DropdownMenuItem>
                             )}
                           </>
                         )}
+                        {onArchive &&
+                          !["draft", "processing", "archived"].includes(
+                            run.status,
+                          ) && (
+                            <DropdownMenuItem
+                              onClick={() =>
+                                void onArchive(run, !Boolean(run.archivedAt))
+                              }
+                            >
+                              {run.archivedAt ? (
+                                <ArchiveRestore className="h-4 w-4 mr-2" />
+                              ) : (
+                                <Archive className="h-4 w-4 mr-2" />
+                              )}
+                              {run.archivedAt ? "Unarchive" : "Archive"}
+                            </DropdownMenuItem>
+                          )}
                         <DropdownMenuSeparator />
                         {canSelectForDelete && canDeletePayrollRuns && (
                           <DropdownMenuItem

@@ -26,6 +26,13 @@ import {
 import { markAttendanceConflictForDate } from "./leaveOccurrencePayroll";
 import { getEffectiveAttendanceSettings } from "./organizationConfiguration";
 import { findFinalizedPayrollRunForAttendance } from "./attendanceIntegrity";
+import { appendOperationalEvent } from "./operationalEvents";
+import {
+  decryptAttendanceAuditCorrectionReason,
+  decryptAttendanceAuditSnapshotForBoundary,
+  encryptAttendanceAuditCorrectionReason,
+  encryptAttendanceAuditSnapshot,
+} from "./attendanceAuditCrypto";
 
 type OrganizationRole = Doc<"userOrganizations">["role"];
 type AttendanceAction = Doc<"attendanceAuditLogs">["action"];
@@ -291,12 +298,40 @@ async function recordAttendanceAudit(
     actorRole: input.actor.role,
     action: input.action,
     payrollRunId: input.authorization?.payrollRunId,
-    correctionReason: input.authorization?.correctionReason,
+    correctionReason: encryptAttendanceAuditCorrectionReason(
+      input.authorization?.correctionReason,
+    ),
     beforeJson:
-      input.before === undefined ? undefined : JSON.stringify(input.before),
+      input.before === undefined
+        ? undefined
+        : encryptAttendanceAuditSnapshot(input.before),
     afterJson:
-      input.after === undefined ? undefined : JSON.stringify(input.after),
+      input.after === undefined
+        ? undefined
+        : encryptAttendanceAuditSnapshot(input.after),
     createdAt: Date.now(),
+  });
+  await appendOperationalEvent(ctx, {
+    organizationId: input.organizationId,
+    eventType: `attendance.${input.action}`,
+    aggregateType: "attendance",
+    aggregateId: String(input.attendanceId),
+    actor: {
+      type: "user",
+      userId: input.actor._id,
+      role: input.actor.role,
+    },
+    changedFields: ["attendance"],
+    payload: {
+      employeeId: input.employeeId,
+      payrollRunId: input.authorization?.payrollRunId,
+      correctionReason: input.authorization?.correctionReason,
+      before: input.before,
+      after: input.after,
+    },
+    correlationId: input.authorization?.payrollRunId
+      ? String(input.authorization.payrollRunId)
+      : undefined,
   });
 }
 
@@ -742,8 +777,9 @@ export const getAttendanceAuditHistory = query({
     if (!userRecord) return [];
 
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 100), 1), 500);
+    let rows: Doc<"attendanceAuditLogs">[];
     if (args.attendanceId) {
-      return ctx.db
+      rows = await ctx.db
         .query("attendanceAuditLogs")
         .withIndex("by_attendance_created", (query) =>
           query.eq("attendanceId", args.attendanceId!),
@@ -753,27 +789,35 @@ export const getAttendanceAuditHistory = query({
         )
         .order("desc")
         .take(limit);
-    }
-    if (args.employeeId) {
+    } else if (args.employeeId) {
       const employee = await ctx.db.get(args.employeeId);
       if (!employee || employee.organizationId !== args.organizationId) {
         throw new Error("Employee does not belong to this organization");
       }
-      return ctx.db
+      rows = await ctx.db
         .query("attendanceAuditLogs")
         .withIndex("by_employee_created", (query) =>
           query.eq("employeeId", args.employeeId!),
         )
         .order("desc")
         .take(limit);
+    } else {
+      rows = await ctx.db
+        .query("attendanceAuditLogs")
+        .withIndex("by_organization_created", (query) =>
+          query.eq("organizationId", args.organizationId),
+        )
+        .order("desc")
+        .take(limit);
     }
-    return ctx.db
-      .query("attendanceAuditLogs")
-      .withIndex("by_organization_created", (query) =>
-        query.eq("organizationId", args.organizationId),
-      )
-      .order("desc")
-      .take(limit);
+    return rows.map((row) => ({
+      ...row,
+      correctionReason: decryptAttendanceAuditCorrectionReason(
+        row.correctionReason,
+      ),
+      beforeJson: decryptAttendanceAuditSnapshotForBoundary(row.beforeJson),
+      afterJson: decryptAttendanceAuditSnapshotForBoundary(row.afterJson),
+    }));
   },
 });
 

@@ -11,6 +11,7 @@ export type FullSchemaCleanupDomain =
   | "employee_children"
   | "time_holidays"
   | "payroll_offboarding"
+  | "operational_audit"
   | "performance"
   | "leave"
   | "recruitment"
@@ -154,6 +155,9 @@ export const CURRENT_SCHEMA_TABLES = [
   "documentAccessGrants",
   "documentVersions",
   "accountingCostItems",
+  "accountingJournalEntries",
+  "accountingJournalLines",
+  "operationalEvents",
   "assets",
   "assetCustodyEvents",
   "assetMaintenanceEvents",
@@ -523,6 +527,21 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "accounting",
     "normalize_children",
     "canonical_embedded",
+  ),
+  accountingJournalEntries: tablePolicy(
+    "accounting",
+    "retain",
+    "historical_snapshot",
+  ),
+  accountingJournalLines: tablePolicy(
+    "accounting",
+    "retain",
+    "historical_snapshot",
+  ),
+  operationalEvents: tablePolicy(
+    "operational_audit",
+    "retain",
+    "historical_snapshot",
   ),
   assets: tablePolicy("assets", "normalize_children", "canonical_embedded"),
   assetCustodyEvents: tablePolicy("assets", "retain", "normalized_target"),

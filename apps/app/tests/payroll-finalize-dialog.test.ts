@@ -20,4 +20,23 @@ describe("payroll finalization guard", () => {
     expect(dialogSource).toContain("data.finalizeBlockedReason");
     expect(dialogSource).not.toContain('data?.runStatus === "draft"');
   });
+
+  it("discloses statutory regeneration behavior and safe lifecycle actions", () => {
+    const pageSource = readSource(
+      "../app/[organizationId]/payroll/payroll-page-client.tsx",
+    );
+    const tableSource = readSource(
+      "../app/[organizationId]/payroll/_components/payroll-runs-table.tsx",
+    );
+
+    expect(pageSource).toContain("Manual payslip edits will be reapplied");
+    expect(pageSource).toContain(
+      "manually entered\n                          Withholding Tax amounts are not preserved",
+    );
+    expect(pageSource).toContain("setPayrollRunArchived");
+    expect(pageSource).not.toContain("Cost records removed");
+    expect(tableSource).toContain("Void payroll");
+    expect(tableSource).not.toContain("Revert to Finalized");
+    expect(tableSource).toContain('run.status === "draft"');
+  });
 });

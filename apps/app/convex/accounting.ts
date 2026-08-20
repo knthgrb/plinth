@@ -1,18 +1,66 @@
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
-import { decryptPayslipRowFromDb } from "./payslipCrypto";
+import {
+  decryptPayslipRowFromDb,
+  type DecryptedPayslipDoc,
+} from "./payslipCrypto";
 import {
   loadEffectiveAccountingReceipts,
   replaceAccountingReceipts,
 } from "./assetsPayrollCompatibility";
+import {
+  decryptAccountingCostBreakdown,
+  encryptAccountingCostBreakdown,
+  type AccountingCostBreakdown,
+} from "./accountingCostItemCrypto";
+import { formatManilaShortDate } from "@/lib/manila-date";
+
+type AccountingDbCtx = QueryCtx | MutationCtx;
+type PayrollRun = Doc<"payrollRuns">;
+type AccountingCostItem = Doc<"accountingCostItems">;
+type PayrollDeduction = {
+  name?: string;
+  amount?: number;
+};
+type ExpectedPayrollAccountingItem = {
+  type: "payroll" | "sss" | "pagibig" | "philhealth" | "tax";
+  sourceKey: string;
+  name: string;
+  description: string;
+  amount: number;
+  breakdown: AccountingCostBreakdown;
+  notes: string;
+};
+type PayrollAccountingDriftRow = {
+  payrollRunId: Id<"payrollRuns">;
+  sourceKey: string;
+  name: string;
+  issue: "missing" | "out_of_sync";
+  expectedAmount: number;
+  actualAmount: number;
+};
+type AccountingCostItemStatus = "pending" | "partial" | "paid" | "overdue";
+
+function decryptAccountingPayslip(
+  payslip: Doc<"payslips">,
+): DecryptedPayslipDoc {
+  const decrypted = decryptPayslipRowFromDb(payslip);
+  if (!decrypted) throw new Error("Payroll payslip is unavailable.");
+  return decrypted;
+}
 
 // Helper to check authorization - accounting, admin, and owner can access
 async function checkAuth(
   ctx: QueryCtx | MutationCtx,
   organizationId: Id<"organizations">,
-  requiredRole?: "owner" | "admin" | "accounting"
+  requiredRole?: "owner" | "admin" | "accounting",
 ) {
   const { user, membership } = await requireActiveMembership(
     ctx,
@@ -38,7 +86,15 @@ async function checkAuth(
   };
 }
 
-function isPayrollGeneratedCostItem(item: { name: string }) {
+function isPayrollGeneratedCostItem(
+  item: Pick<
+    Doc<"accountingCostItems">,
+    "name" | "payrollRunId" | "sourceType"
+  >,
+) {
+  if (item.sourceType === "payroll_run" || item.payrollRunId !== undefined) {
+    return true;
+  }
   return [
     "Payroll - ",
     "SSS - ",
@@ -61,12 +117,21 @@ function deriveAccountingCostItemStatus(
   return "partial";
 }
 
-function getPayrollAccountingSourceKey(payrollRun: any, type: string) {
+function assertValidAccountingAmount(value: number, label: string): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${label} must be a finite non-negative amount.`);
+  }
+}
+
+function getPayrollAccountingSourceKey(
+  payrollRun: Pick<PayrollRun, "_id">,
+  type: string,
+) {
   return `${payrollRun._id}:${type}`;
 }
 
 function getDeductionAmountByNames(
-  deductions: any[],
+  deductions: PayrollDeduction[],
   names: string[],
 ): number {
   const normalizedNames = names.map((name) => name.toLowerCase());
@@ -78,50 +143,27 @@ function getDeductionAmountByNames(
   }, 0);
 }
 
-function getPayrollPeriodFromCostItemName(name: string): string | null {
-  const prefixes = [
-    "Payroll - ",
-    "SSS - ",
-    "Pag-IBIG - ",
-    "PhilHealth - ",
-    "Tax Employee Deductions - ",
-  ];
-
-  for (const prefix of prefixes) {
-    if (name.startsWith(prefix)) {
-      return name.slice(prefix.length);
-    }
-  }
-
-  return null;
+function formatPayrollAccountingPeriod(payrollRun: PayrollRun) {
+  return `${formatManilaShortDate(payrollRun.cutoffStart)} - ${formatManilaShortDate(payrollRun.cutoffEnd)}`;
 }
 
-function formatPayrollAccountingPeriod(payrollRun: any) {
-  const startDate = new Date(payrollRun.cutoffStart);
-  const endDate = new Date(payrollRun.cutoffEnd);
-  return `${startDate.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  })} - ${endDate.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })}`;
-}
-
-async function getPayrollPayslipsWithNames(ctx: any, payrollRun: any) {
-  const payslipsRaw = await (ctx.db.query("payslips") as any)
-    .withIndex("by_payroll_run", (q: any) =>
-      q.eq("payrollRunId", payrollRun._id),
+async function getPayrollPayslipsWithNames(
+  ctx: AccountingDbCtx,
+  payrollRun: PayrollRun,
+) {
+  const payslipsRaw = await ctx.db
+    .query("payslips")
+    .withIndex("by_payroll_run", (query) =>
+      query.eq("payrollRunId", payrollRun._id),
     )
     .collect();
-  const payslips = payslipsRaw.map((p: any) => decryptPayslipRowFromDb(p)!);
+  const payslips = payslipsRaw.map(decryptAccountingPayslip);
 
   const employees = await Promise.all(
-    payslips.map((payslip: any) => ctx.db.get(payslip.employeeId)),
+    payslips.map((payslip) => ctx.db.get(payslip.employeeId)),
   );
   const employeeNameById = new Map<string, string>();
-  employees.forEach((employee: any) => {
+  employees.forEach((employee) => {
     if (!employee) return;
     employeeNameById.set(
       employee._id,
@@ -132,7 +174,10 @@ async function getPayrollPayslipsWithNames(ctx: any, payrollRun: any) {
   return { payslips, employeeNameById };
 }
 
-async function buildExpectedPayrollAccountingItems(ctx: any, payrollRun: any) {
+async function buildExpectedPayrollAccountingItems(
+  ctx: AccountingDbCtx,
+  payrollRun: PayrollRun,
+): Promise<ExpectedPayrollAccountingItem[]> {
   const { payslips, employeeNameById } = await getPayrollPayslipsWithNames(
     ctx,
     payrollRun,
@@ -142,10 +187,10 @@ async function buildExpectedPayrollAccountingItems(ctx: any, payrollRun: any) {
   const payslipCount = payslips.length;
   const periodStr = formatPayrollAccountingPeriod(payrollRun);
   const baseNotes = `Auto-generated from payroll run ${payrollRun.period}. ${payslipCount} employee(s).`;
-  const items: any[] = [];
+  const items: ExpectedPayrollAccountingItem[] = [];
 
   const totalNetPay = round2(
-    payslips.reduce((sum: number, p: any) => sum + (p.netPay ?? 0), 0),
+    payslips.reduce((sum, payslip) => sum + payslip.netPay, 0),
   );
 
   if (totalNetPay > 0) {
@@ -157,25 +202,25 @@ async function buildExpectedPayrollAccountingItems(ctx: any, payrollRun: any) {
       amount: totalNetPay,
       breakdown: {
         kind: "payroll",
-        rows: payslips.map((payslip: any) => ({
+        rows: payslips.map((payslip) => ({
           employeeId: payslip.employeeId,
           employeeName: employeeNameById.get(payslip.employeeId) || "Unknown",
           grossPay: payslip.grossPay ?? 0,
           nonTaxableAllowance: payslip.nonTaxableAllowance ?? 0,
           totalIncentives: (payslip.incentives ?? []).reduce(
-            (sum: number, incentive: any) => sum + (incentive?.amount ?? 0),
+            (sum, incentive) => sum + incentive.amount,
             0,
           ),
           totalDeductions: (payslip.deductions ?? []).reduce(
-            (sum: number, deduction: any) => sum + (deduction?.amount ?? 0),
+            (sum, deduction) => sum + deduction.amount,
             0,
           ),
-          incentiveItems: (payslip.incentives ?? []).map((incentive: any) => ({
+          incentiveItems: (payslip.incentives ?? []).map((incentive) => ({
             name: incentive.name,
             amount: incentive.amount ?? 0,
             type: incentive.type,
           })),
-          deductionItems: (payslip.deductions ?? []).map((deduction: any) => ({
+          deductionItems: payslip.deductions.map((deduction) => ({
             name: deduction.name,
             amount: deduction.amount ?? 0,
             type: deduction.type,
@@ -218,11 +263,11 @@ async function buildExpectedPayrollAccountingItems(ctx: any, payrollRun: any) {
     employeeNames: string[],
     companyContribution: "sss" | "philhealth" | "pagibig",
   ) =>
-    payslips.map((payslip: any) => ({
+    payslips.map((payslip) => ({
       employeeId: payslip.employeeId,
       employeeName: employeeNameById.get(payslip.employeeId) || "Unknown",
       employeeAmount: getDeductionAmountByNames(
-        payslip.deductions ?? [],
+        payslip.deductions,
         employeeNames,
       ),
       companyAmount: payslip.employerContributions?.[companyContribution] ?? 0,
@@ -282,10 +327,10 @@ async function buildExpectedPayrollAccountingItems(ctx: any, payrollRun: any) {
       amount: round2(totalEmployeeTax),
       breakdown: {
         kind: "contributions",
-        rows: payslips.map((payslip: any) => ({
+        rows: payslips.map((payslip) => ({
           employeeId: payslip.employeeId,
           employeeName: employeeNameById.get(payslip.employeeId) || "Unknown",
-          employeeAmount: getDeductionAmountByNames(payslip.deductions ?? [], [
+          employeeAmount: getDeductionAmountByNames(payslip.deductions, [
             "withholding tax",
           ]),
           companyAmount: 0,
@@ -298,25 +343,36 @@ async function buildExpectedPayrollAccountingItems(ctx: any, payrollRun: any) {
   return items;
 }
 
-async function getPayrollAccountingRuns(ctx: any, organizationId: any) {
-  const runs = await (ctx.db.query("payrollRuns") as any)
-    .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
-    .collect();
-
-  return runs.filter((run: any) =>
-    ["finalized", "paid"].includes(run.status),
+async function getPayrollAccountingRuns(
+  ctx: AccountingDbCtx,
+  organizationId: Id<"organizations">,
+): Promise<PayrollRun[]> {
+  const [finalized, paid] = await Promise.all(
+    (["finalized", "paid"] as const).map((status) =>
+      ctx.db
+        .query("payrollRuns")
+        .withIndex("by_organization_status_run_type_cutoff_end", (query) =>
+          query.eq("organizationId", organizationId).eq("status", status),
+        )
+        .collect(),
+    ),
   );
+  return [...finalized, ...paid];
 }
 
 async function syncExpectedPayrollAccountingItems(
-  ctx: any,
-  payrollRun: any,
+  ctx: MutationCtx,
+  payrollRun: PayrollRun,
 ) {
-  const expectedItems = await buildExpectedPayrollAccountingItems(ctx, payrollRun);
+  const expectedItems = await buildExpectedPayrollAccountingItems(
+    ctx,
+    payrollRun,
+  );
   const now = Date.now();
-  const existingItems = await (ctx.db.query("accountingCostItems") as any)
-    .withIndex("by_organization", (q: any) =>
-      q.eq("organizationId", payrollRun.organizationId),
+  const runItems = await ctx.db
+    .query("accountingCostItems")
+    .withIndex("by_payroll_run", (query) =>
+      query.eq("payrollRunId", payrollRun._id),
     )
     .collect();
 
@@ -324,19 +380,31 @@ async function syncExpectedPayrollAccountingItems(
   let updated = 0;
   let deleted = 0;
   const activeSourceKeys = new Set(expectedItems.map((item) => item.sourceKey));
-  const activeNames = new Set(expectedItems.map((item) => item.name));
 
   for (const expected of expectedItems) {
-    const existing = existingItems.find(
-      (item: any) =>
-        item.sourceKey === expected.sourceKey ||
-        (item.payrollRunId === payrollRun._id && item.name === expected.name) ||
-        item.name === expected.name,
+    const indexedExisting = await ctx.db
+      .query("accountingCostItems")
+      .withIndex("by_source", (query) =>
+        query
+          .eq("organizationId", payrollRun.organizationId)
+          .eq("sourceType", "payroll_run")
+          .eq("sourceKey", expected.sourceKey),
+      )
+      .unique();
+    const existing =
+      indexedExisting ?? runItems.find((item) => item.name === expected.name);
+    const employeePayrollWasPaid =
+      payrollRun.status === "paid" && expected.type === "payroll";
+    const existingProjectionRecordedAfterPayment = Boolean(
+      existing &&
+      payrollRun.paidAt &&
+      (existing.sourceUpdatedAt ?? existing.updatedAt) >= payrollRun.paidAt,
     );
-    const amountPaid =
-      payrollRun.status === "paid"
-        ? expected.amount
-        : Math.min(existing?.amountPaid ?? 0, expected.amount);
+    const amountPaid = employeePayrollWasPaid
+      ? existingProjectionRecordedAfterPayment
+        ? (existing?.amountPaid ?? expected.amount)
+        : expected.amount
+      : (existing?.amountPaid ?? 0);
     const payload = {
       organizationId: payrollRun.organizationId,
       payrollRunId: payrollRun._id,
@@ -349,14 +417,10 @@ async function syncExpectedPayrollAccountingItems(
       amount: expected.amount,
       amountPaid,
       frequency: "one-time" as const,
-      status:
-        payrollRun.status === "paid"
-          ? ("paid" as const)
-          : deriveAccountingCostItemStatus(expected.amount, amountPaid),
+      status: deriveAccountingCostItemStatus(expected.amount, amountPaid),
       dueDate: undefined,
-      breakdown: expected.breakdown,
+      breakdown: encryptAccountingCostBreakdown(expected.breakdown),
       notes: expected.notes,
-      receipts: existing?.receipts,
       updatedAt: now,
     };
 
@@ -373,20 +437,15 @@ async function syncExpectedPayrollAccountingItems(
     created += 1;
   }
 
-  const staleItems = existingItems.filter((item: any) => {
-    const belongsToRun =
-      item.payrollRunId === payrollRun._id ||
-      (item.sourceType === "payroll_run" &&
-        String(item.sourceKey ?? "").startsWith(`${payrollRun._id}:`));
-    return (
-      belongsToRun &&
+  const staleItems = runItems.filter(
+    (item) =>
       isPayrollGeneratedCostItem(item) &&
-      !activeSourceKeys.has(item.sourceKey) &&
-      !activeNames.has(item.name)
-    );
-  });
+      item.sourceKey !== undefined &&
+      !activeSourceKeys.has(item.sourceKey),
+  );
 
   for (const item of staleItems) {
+    if (item.amountPaid > 0) continue;
     await ctx.db.delete(item._id);
     deleted += 1;
   }
@@ -394,24 +453,31 @@ async function syncExpectedPayrollAccountingItems(
   return { created, updated, deleted };
 }
 
-async function getPayrollAccountingDriftRows(ctx: any, organizationId: any) {
+async function getPayrollAccountingDriftRows(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+): Promise<PayrollAccountingDriftRow[]> {
   const payrollRuns = await getPayrollAccountingRuns(ctx, organizationId);
-  const existingItems = await (ctx.db.query("accountingCostItems") as any)
-    .withIndex("by_organization", (q: any) =>
-      q.eq("organizationId", organizationId),
-    )
-    .collect();
-  const rows: any[] = [];
+  const rows: PayrollAccountingDriftRow[] = [];
 
   for (const run of payrollRuns) {
+    const runItems = await ctx.db
+      .query("accountingCostItems")
+      .withIndex("by_payroll_run", (query) => query.eq("payrollRunId", run._id))
+      .collect();
     const expectedItems = await buildExpectedPayrollAccountingItems(ctx, run);
     for (const expected of expectedItems) {
-      const existing = existingItems.find(
-        (item: any) =>
-          item.sourceKey === expected.sourceKey ||
-          (item.payrollRunId === run._id && item.name === expected.name) ||
-          item.name === expected.name,
-      );
+      const indexedExisting = await ctx.db
+        .query("accountingCostItems")
+        .withIndex("by_source", (query) =>
+          query
+            .eq("organizationId", organizationId)
+            .eq("sourceType", "payroll_run")
+            .eq("sourceKey", expected.sourceKey),
+        )
+        .unique();
+      const existing =
+        indexedExisting ?? runItems.find((item) => item.name === expected.name);
       if (!existing) {
         rows.push({
           payrollRunId: run._id,
@@ -444,67 +510,29 @@ async function getPayrollAccountingDriftRows(ctx: any, organizationId: any) {
   return rows;
 }
 
-/** Parse "Feb 10 - Feb 24, 2026" to { startDay, endDay } (days since epoch) for matching payroll run cutoff dates */
-function parsePeriodToDayRange(periodStr: string): { startDay: number; endDay: number } | null {
-  const parts = periodStr.split(" - ").map((s) => s.trim());
-  if (parts.length !== 2) return null;
-  const endMatch = parts[1].match(/^(.+),\s*(\d{4})$/);
-  const year = endMatch ? parseInt(endMatch[2], 10) : new Date().getFullYear();
-  const startStr = `${parts[0]}, ${year}`;
-  const endStr = endMatch ? `${endMatch[1]}, ${endMatch[2]}` : parts[1];
-  const startDate = new Date(startStr);
-  const endDate = new Date(endStr);
-  if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return null;
-  const dayMs = 86400000;
-  return {
-    startDay: Math.floor(startDate.getTime() / dayMs),
-    endDay: Math.floor(endDate.getTime() / dayMs),
-  };
-}
-
 async function resolvePayrollRunForCostItem(
-  ctx: any,
-  organizationId: any,
-  item: any,
-) {
-  if (item?.payrollRunId) {
+  ctx: AccountingDbCtx,
+  organizationId: Id<"organizations">,
+  item: AccountingCostItem,
+): Promise<PayrollRun | null> {
+  if (item.payrollRunId) {
     const direct = await ctx.db.get(item.payrollRunId);
     if (direct && direct.organizationId === organizationId) {
       return direct;
     }
   }
-
-  const period = getPayrollPeriodFromCostItemName(item.name);
-  if (!period) return null;
-
-  const runs = await (ctx.db.query("payrollRuns") as any)
-    .withIndex("by_organization", (q: any) => q.eq("organizationId", organizationId))
-    .collect();
-
-  const exact = runs.find((run: any) => run.period === period);
-  if (exact) return exact;
-
-  const dayRange = parsePeriodToDayRange(period);
-  if (!dayRange) return null;
-
-  const dayMs = 86400000;
-  return (
-    runs.find((run: any) => {
-      const startDay = Math.floor((run.cutoffStart ?? 0) / dayMs);
-      const endDay = Math.floor((run.cutoffEnd ?? 0) / dayMs);
-      return (
-        startDay === dayRange.startDay &&
-        endDay === dayRange.endDay
-      );
-    }) ?? null
-  );
+  if (item.sourceType !== "payroll_run" || !item.sourceKey) return null;
+  const sourceId = item.sourceKey.split(":", 1)[0];
+  if (!sourceId) return null;
+  const sourceRun = await ctx.db.get(sourceId as Id<"payrollRuns">);
+  return sourceRun?.organizationId === organizationId ? sourceRun : null;
 }
 
 async function buildBreakdownForPayrollCostItem(
-  ctx: any,
-  organizationId: any,
-  item: any,
-) {
+  ctx: AccountingDbCtx,
+  organizationId: Id<"organizations">,
+  item: AccountingCostItem,
+): Promise<AccountingCostBreakdown | undefined> {
   const payrollRun = await resolvePayrollRunForCostItem(
     ctx,
     organizationId,
@@ -512,17 +540,20 @@ async function buildBreakdownForPayrollCostItem(
   );
   if (!payrollRun) return undefined;
 
-  const payslipsRaw = await (ctx.db.query("payslips") as any)
-    .withIndex("by_payroll_run", (q: any) => q.eq("payrollRunId", payrollRun._id))
+  const payslipsRaw = await ctx.db
+    .query("payslips")
+    .withIndex("by_payroll_run", (query) =>
+      query.eq("payrollRunId", payrollRun._id),
+    )
     .collect();
-  const payslips = payslipsRaw.map((p: any) => decryptPayslipRowFromDb(p)!);
+  const payslips = payslipsRaw.map(decryptAccountingPayslip);
   if (payslips.length === 0) return undefined;
 
   const employees = await Promise.all(
-    payslips.map((payslip: any) => ctx.db.get(payslip.employeeId)),
+    payslips.map((payslip) => ctx.db.get(payslip.employeeId)),
   );
   const employeeNameById = new Map<string, string>();
-  employees.forEach((employee: any) => {
+  employees.forEach((employee) => {
     if (!employee) return;
     employeeNameById.set(
       employee._id,
@@ -533,25 +564,25 @@ async function buildBreakdownForPayrollCostItem(
   if (item.name.startsWith("Payroll - ")) {
     return {
       kind: "payroll" as const,
-      rows: payslips.map((payslip: any) => ({
+      rows: payslips.map((payslip) => ({
         employeeId: payslip.employeeId,
         employeeName: employeeNameById.get(payslip.employeeId) || "Unknown",
         grossPay: payslip.grossPay ?? 0,
         nonTaxableAllowance: payslip.nonTaxableAllowance ?? 0,
         totalIncentives: (payslip.incentives ?? []).reduce(
-          (sum: number, incentive: any) => sum + (incentive?.amount ?? 0),
+          (sum, incentive) => sum + incentive.amount,
           0,
         ),
         totalDeductions: (payslip.deductions ?? []).reduce(
-          (sum: number, deduction: any) => sum + (deduction?.amount ?? 0),
+          (sum, deduction) => sum + deduction.amount,
           0,
         ),
-        incentiveItems: (payslip.incentives ?? []).map((incentive: any) => ({
+        incentiveItems: (payslip.incentives ?? []).map((incentive) => ({
           name: incentive.name,
           amount: incentive.amount ?? 0,
           type: incentive.type,
         })),
-        deductionItems: (payslip.deductions ?? []).map((deduction: any) => ({
+        deductionItems: payslip.deductions.map((deduction) => ({
           name: deduction.name,
           amount: deduction.amount ?? 0,
           type: deduction.type,
@@ -564,12 +595,10 @@ async function buildBreakdownForPayrollCostItem(
   if (item.name.startsWith("SSS - ")) {
     return {
       kind: "contributions" as const,
-      rows: payslips.map((payslip: any) => ({
+      rows: payslips.map((payslip) => ({
         employeeId: payslip.employeeId,
         employeeName: employeeNameById.get(payslip.employeeId) || "Unknown",
-        employeeAmount: getDeductionAmountByNames(payslip.deductions ?? [], [
-          "sss",
-        ]),
+        employeeAmount: getDeductionAmountByNames(payslip.deductions, ["sss"]),
         companyAmount: payslip.employerContributions?.sss ?? 0,
       })),
     };
@@ -578,10 +607,10 @@ async function buildBreakdownForPayrollCostItem(
   if (item.name.startsWith("Pag-IBIG - ")) {
     return {
       kind: "contributions" as const,
-      rows: payslips.map((payslip: any) => ({
+      rows: payslips.map((payslip) => ({
         employeeId: payslip.employeeId,
         employeeName: employeeNameById.get(payslip.employeeId) || "Unknown",
-        employeeAmount: getDeductionAmountByNames(payslip.deductions ?? [], [
+        employeeAmount: getDeductionAmountByNames(payslip.deductions, [
           "pag-ibig",
           "pagibig",
         ]),
@@ -593,10 +622,10 @@ async function buildBreakdownForPayrollCostItem(
   if (item.name.startsWith("PhilHealth - ")) {
     return {
       kind: "contributions" as const,
-      rows: payslips.map((payslip: any) => ({
+      rows: payslips.map((payslip) => ({
         employeeId: payslip.employeeId,
         employeeName: employeeNameById.get(payslip.employeeId) || "Unknown",
-        employeeAmount: getDeductionAmountByNames(payslip.deductions ?? [], [
+        employeeAmount: getDeductionAmountByNames(payslip.deductions, [
           "philhealth",
         ]),
         companyAmount: payslip.employerContributions?.philhealth ?? 0,
@@ -607,10 +636,10 @@ async function buildBreakdownForPayrollCostItem(
   if (item.name.startsWith("Tax Employee Deductions - ")) {
     return {
       kind: "contributions" as const,
-      rows: payslips.map((payslip: any) => ({
+      rows: payslips.map((payslip) => ({
         employeeId: payslip.employeeId,
         employeeName: employeeNameById.get(payslip.employeeId) || "Unknown",
-        employeeAmount: getDeductionAmountByNames(payslip.deductions ?? [], [
+        employeeAmount: getDeductionAmountByNames(payslip.deductions, [
           "withholding tax",
         ]),
         companyAmount: 0,
@@ -622,10 +651,10 @@ async function buildBreakdownForPayrollCostItem(
 }
 
 async function buildAttachmentIdsForPayrollCostItem(
-  ctx: any,
-  organizationId: any,
-  item: any,
-) {
+  ctx: AccountingDbCtx,
+  organizationId: Id<"organizations">,
+  item: AccountingCostItem,
+): Promise<Id<"_storage">[] | undefined> {
   const payrollRun = await resolvePayrollRunForCostItem(
     ctx,
     organizationId,
@@ -633,16 +662,19 @@ async function buildAttachmentIdsForPayrollCostItem(
   );
   if (!payrollRun) return undefined;
 
-  const payslipsRawAttach = await (ctx.db.query("payslips") as any)
-    .withIndex("by_payroll_run", (q: any) => q.eq("payrollRunId", payrollRun._id))
+  const payslipsRawAttach = await ctx.db
+    .query("payslips")
+    .withIndex("by_payroll_run", (query) =>
+      query.eq("payrollRunId", payrollRun._id),
+    )
     .collect();
-  const payslips = payslipsRawAttach.map((p: any) => decryptPayslipRowFromDb(p)!);
+  const payslips = payslipsRawAttach.map(decryptAccountingPayslip);
 
   const attachmentIds = Array.from(
     new Set(
       payslips
-        .map((payslip: any) => payslip.pdfFile)
-        .filter((pdfFile: any) => Boolean(pdfFile)),
+        .map((payslip) => payslip.pdfFile)
+        .filter((pdfFile): pdfFile is Id<"_storage"> => pdfFile !== undefined),
     ),
   );
 
@@ -664,48 +696,64 @@ export const getCostItems = query({
     }
     const items = await ctx.db
       .query("accountingCostItems")
-      .withIndex("by_organization", (q: any) =>
-        q.eq("organizationId", args.organizationId)
+      .withIndex("by_organization", (query) =>
+        query.eq("organizationId", args.organizationId),
       )
       .collect();
     if (args.categoryName) {
       const filteredItems = items.filter(
-        (item: any) => (item.categoryName ?? "Employee Related Cost") === args.categoryName
+        (item) =>
+          (item.categoryName ?? "Employee Related Cost") === args.categoryName,
       );
       return await Promise.all(
-        filteredItems.map(async (item: any) => ({
+        filteredItems.map(async (item) => {
+          const linkedReceipts = await loadEffectiveAccountingReceipts(
+            ctx,
+            item,
+          );
+          return {
+            ...item,
+            receipts:
+              linkedReceipts.length > 0
+                ? linkedReceipts
+                : await buildAttachmentIdsForPayrollCostItem(
+                    ctx,
+                    args.organizationId,
+                    item,
+                  ),
+            breakdown:
+              decryptAccountingCostBreakdown(item.breakdown) ??
+              (await buildBreakdownForPayrollCostItem(
+                ctx,
+                args.organizationId,
+                item,
+              )),
+          };
+        }),
+      );
+    }
+    return await Promise.all(
+      items.map(async (item) => {
+        const linkedReceipts = await loadEffectiveAccountingReceipts(ctx, item);
+        return {
           ...item,
           receipts:
-            (await loadEffectiveAccountingReceipts(ctx, item)) ??
-            (await buildAttachmentIdsForPayrollCostItem(
-              ctx,
-              args.organizationId,
-              item,
-            )),
+            linkedReceipts.length > 0
+              ? linkedReceipts
+              : await buildAttachmentIdsForPayrollCostItem(
+                  ctx,
+                  args.organizationId,
+                  item,
+                ),
           breakdown:
-            item.breakdown ??
+            decryptAccountingCostBreakdown(item.breakdown) ??
             (await buildBreakdownForPayrollCostItem(
               ctx,
               args.organizationId,
               item,
             )),
-        })),
-      );
-    }
-    return await Promise.all(
-      items.map(async (item: any) => ({
-        ...item,
-        receipts:
-          (await loadEffectiveAccountingReceipts(ctx, item)) ??
-          (await buildAttachmentIdsForPayrollCostItem(
-            ctx,
-            args.organizationId,
-            item,
-          )),
-        breakdown:
-          item.breakdown ??
-          (await buildBreakdownForPayrollCostItem(ctx, args.organizationId, item)),
-      })),
+        };
+      }),
     );
   },
 });
@@ -741,8 +789,8 @@ export const repairPayrollAccounting = mutation({
       ? [await ctx.db.get(args.payrollRunId)]
       : await getPayrollAccountingRuns(ctx, args.organizationId);
     const validRuns = payrollRuns.filter(
-      (run: any) =>
-        run &&
+      (run): run is PayrollRun =>
+        run !== null &&
         run.organizationId === args.organizationId &&
         ["finalized", "paid"].includes(run.status),
     );
@@ -781,15 +829,15 @@ export const createCostItem = mutation({
       v.literal("daily"),
       v.literal("weekly"),
       v.literal("monthly"),
-      v.literal("yearly")
+      v.literal("yearly"),
     ),
     status: v.optional(
       v.union(
         v.literal("pending"),
         v.literal("partial"),
         v.literal("paid"),
-        v.literal("overdue")
-      )
+        v.literal("overdue"),
+      ),
     ),
     dueDate: v.optional(v.number()),
     notes: v.optional(v.string()),
@@ -798,26 +846,24 @@ export const createCostItem = mutation({
   handler: async (ctx, args) => {
     await checkAuth(ctx, args.organizationId, "accounting");
     const now = Date.now();
-    const amountPaid = args.amountPaid || 0;
+    assertValidAccountingAmount(args.amount, "Amount");
+    const amountPaid = args.amountPaid ?? 0;
+    assertValidAccountingAmount(amountPaid, "Amount paid");
     if (amountPaid > args.amount) {
       throw new Error("Amount paid cannot be greater than the total amount.");
     }
 
-    // Determine status if not provided
-    let status = args.status;
-    if (!status) {
-      if (amountPaid === 0) {
-        status = "pending";
-      } else if (amountPaid >= args.amount) {
-        status = "paid";
-      } else {
-        status = "partial";
-      }
-    }
-
-    // Check if overdue
+    let status: AccountingCostItemStatus = deriveAccountingCostItemStatus(
+      args.amount,
+      amountPaid,
+    );
     if (args.dueDate && args.dueDate < now && status !== "paid") {
       status = "overdue";
+    }
+    if (args.status !== undefined && args.status !== status) {
+      throw new Error(
+        `Status must be ${status} for the supplied amount and payment.`,
+      );
     }
 
     const itemId = await ctx.db.insert("accountingCostItems", {
@@ -829,7 +875,7 @@ export const createCostItem = mutation({
       name: args.name,
       description: args.description,
       amount: args.amount,
-      amountPaid: args.amountPaid || 0,
+      amountPaid,
       frequency: args.frequency,
       status,
       dueDate: args.dueDate,
@@ -858,16 +904,16 @@ export const updateCostItem = mutation({
         v.literal("daily"),
         v.literal("weekly"),
         v.literal("monthly"),
-        v.literal("yearly")
-      )
+        v.literal("yearly"),
+      ),
     ),
     status: v.optional(
       v.union(
         v.literal("pending"),
         v.literal("partial"),
         v.literal("paid"),
-        v.literal("overdue")
-      )
+        v.literal("overdue"),
+      ),
     ),
     dueDate: v.optional(v.number()),
     notes: v.optional(v.string()),
@@ -879,17 +925,27 @@ export const updateCostItem = mutation({
     if (!item) throw new Error("Cost item not found");
     await checkAuth(ctx, item.organizationId, "accounting");
 
-    if (
-      isPayrollGeneratedCostItem(item) &&
-      args.amount !== undefined &&
-      args.amount !== item.amount
-    ) {
-      throw new Error("Payroll-generated cost amounts cannot be edited.");
+    if (isPayrollGeneratedCostItem(item)) {
+      const attemptsGeneratedFieldEdit =
+        args.name !== undefined ||
+        args.amount !== undefined ||
+        args.amountPaid !== undefined ||
+        args.frequency !== undefined ||
+        args.status !== undefined ||
+        args.dueDate !== undefined ||
+        args.categoryName !== undefined;
+      if (attemptsGeneratedFieldEdit) {
+        throw new Error(
+          "Payroll-generated financial fields are read-only. Record payment, voiding, or corrections from the payroll run.",
+        );
+      }
     }
 
     const nextAmount = args.amount !== undefined ? args.amount : item.amount;
     const nextAmountPaid =
       args.amountPaid !== undefined ? args.amountPaid : item.amountPaid;
+    assertValidAccountingAmount(nextAmount, "Amount");
+    assertValidAccountingAmount(nextAmountPaid, "Amount paid");
     if (nextAmountPaid > nextAmount) {
       throw new Error("Amount paid cannot be greater than the total amount.");
     }
@@ -903,89 +959,33 @@ export const updateCostItem = mutation({
     if (args.frequency !== undefined) updates.frequency = args.frequency;
     if (args.dueDate !== undefined) updates.dueDate = args.dueDate;
     if (args.notes !== undefined) updates.notes = args.notes;
-    if (args.categoryName !== undefined) updates.categoryName = args.categoryName;
+    if (args.categoryName !== undefined)
+      updates.categoryName = args.categoryName;
 
-    // Auto-update status based on amountPaid if status not explicitly set
-    if (args.status !== undefined) {
-      updates.status = args.status;
-    } else if (args.amountPaid !== undefined || args.amount !== undefined) {
-      const amountPaid =
-        args.amountPaid !== undefined ? args.amountPaid : item.amountPaid;
-      const amount = args.amount !== undefined ? args.amount : item.amount;
-
-      if (amountPaid === 0) {
-        updates.status = "pending";
-      } else if (amountPaid >= amount) {
-        updates.status = "paid";
-      } else {
-        updates.status = "partial";
+    if (
+      args.status !== undefined ||
+      args.amountPaid !== undefined ||
+      args.amount !== undefined ||
+      args.dueDate !== undefined
+    ) {
+      let derivedStatus: AccountingCostItemStatus =
+        deriveAccountingCostItemStatus(nextAmount, nextAmountPaid);
+      const nextDueDate = args.dueDate ?? item.dueDate;
+      if (nextDueDate && nextDueDate < now && derivedStatus !== "paid") {
+        derivedStatus = "overdue";
       }
-
-      // Check if overdue
-      const dueDate = args.dueDate !== undefined ? args.dueDate : item.dueDate;
-      if (dueDate && dueDate < Date.now() && updates.status !== "paid") {
-        updates.status = "overdue";
+      if (args.status !== undefined && args.status !== derivedStatus) {
+        throw new Error(
+          `Status must be ${derivedStatus} for the supplied amount and payment.`,
+        );
       }
-    } else if (args.dueDate !== undefined) {
-      // Check if overdue when dueDate changes
-      const amountPaid = item.amountPaid;
-      const amount = item.amount;
-      const currentStatus = item.status;
-
-      if (args.dueDate < Date.now() && currentStatus !== "paid") {
-        if (amountPaid === 0) {
-          updates.status = "overdue";
-        } else if (amountPaid < amount) {
-          updates.status = "overdue";
-        }
-      }
+      updates.status = derivedStatus;
     }
 
     if (args.receipts !== undefined) {
       await replaceAccountingReceipts(ctx, item, args.receipts, now);
     }
     await ctx.db.patch(args.itemId, updates);
-
-    // When the main payroll expense (net pay) is marked paid, set the linked payroll run to paid
-    const finalStatus = updates.status ?? item.status;
-    if (finalStatus === "paid" && item.name.startsWith("Payroll - ")) {
-      const now = Date.now();
-      let payrollRunIdToUpdate: string | null = null;
-
-      if ((item as any).payrollRunId) {
-        payrollRunIdToUpdate = (item as any).payrollRunId;
-      } else {
-        // Fallback for items created before payrollRunId: match by parsing period and comparing cutoff dates
-        const periodStr = getPayrollPeriodFromCostItemName(item.name);
-        if (periodStr) {
-          const dayRange = parsePeriodToDayRange(periodStr);
-          if (dayRange) {
-            const payrollRuns = await (ctx.db.query("payrollRuns") as any)
-              .withIndex("by_organization", (q: any) =>
-                q.eq("organizationId", item.organizationId),
-              )
-              .collect();
-            const dayMs = 86400000;
-            const matched = payrollRuns.find((pr: any) => {
-              const runStartDay = Math.floor((pr.cutoffStart ?? 0) / dayMs);
-              const runEndDay = Math.floor((pr.cutoffEnd ?? 0) / dayMs);
-              return runStartDay === dayRange.startDay && runEndDay === dayRange.endDay;
-            });
-            if (matched) payrollRunIdToUpdate = matched._id;
-          }
-        }
-      }
-
-      if (payrollRunIdToUpdate) {
-        const run = await ctx.db.get(payrollRunIdToUpdate as any);
-        if (run && (run as any).status !== "paid") {
-          await ctx.db.patch(payrollRunIdToUpdate as any, {
-            status: "paid",
-            updatedAt: now,
-          });
-        }
-      }
-    }
   },
 });
 

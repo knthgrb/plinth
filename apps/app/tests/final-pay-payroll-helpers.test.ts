@@ -5,8 +5,16 @@ import {
   reconcileFinalPayBasicPay,
   resolveFinalPayOverlapCoverage,
 } from "@/utils/final-pay-payroll";
+import { isEmployeeFinalPayEligible } from "@/utils/employment-lifecycle";
 
 describe("final pay payroll helpers", () => {
+  it("accepts canonical and legacy separated employment statuses", () => {
+    expect(isEmployeeFinalPayEligible("separated")).toBe(true);
+    expect(isEmployeeFinalPayEligible("resigned")).toBe(true);
+    expect(isEmployeeFinalPayEligible("terminated")).toBe(true);
+    expect(isEmployeeFinalPayEligible("active")).toBe(false);
+  });
+
   it("subtracts overlapping finalized regular basic pay without going below zero", () => {
     expect(reconcileFinalPayBasicPay(12_000, 5_000)).toBe(7_000);
     expect(reconcileFinalPayBasicPay(12_000, 15_000)).toBe(0);

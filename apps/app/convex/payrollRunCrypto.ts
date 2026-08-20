@@ -2,7 +2,10 @@ import {
   decryptJsonFromStorage,
   maybeEncryptJsonForStorage,
 } from "./fieldEncryption";
-import { isEncryptionEnabled } from "./appEncryption";
+import {
+  assertSensitiveFieldEncryptionReady,
+  isEncryptionEnabled,
+} from "./appEncryption";
 import type { Doc } from "./_generated/dataModel";
 
 type PayrollDraftConfig = Exclude<
@@ -14,6 +17,7 @@ export function encryptDraftConfigForDb(
   cfg: PayrollDraftConfig | undefined,
 ): Doc<"payrollRuns">["draftConfig"] {
   if (!cfg) return cfg;
+  assertSensitiveFieldEncryptionReady();
   if (!isEncryptionEnabled()) return cfg;
   return maybeEncryptJsonForStorage(cfg);
 }
@@ -23,11 +27,7 @@ export function decryptDraftConfigFromDb(
 ): PayrollDraftConfig | undefined {
   if (cfg == null) return undefined;
   if (typeof cfg === "object") return cfg;
-  try {
-    return decryptJsonFromStorage<PayrollDraftConfig>(cfg);
-  } catch {
-    return undefined;
-  }
+  return decryptJsonFromStorage<PayrollDraftConfig>(cfg);
 }
 
 type DecryptedPayrollRun<T> = T extends Doc<"payrollRuns">

@@ -14,6 +14,7 @@ import {
   encryptPayslipRowForDb,
   decryptPayslipRowFromDb,
   encryptPayslipPartialForDb,
+  type DecryptedPayslipDoc,
 } from "./payslipCrypto";
 import {
   encryptDraftConfigForDb,
@@ -42,7 +43,22 @@ import {
   isEmployeeRestDay,
   type PayrollBaseResult,
 } from "@/lib/payroll-calculations";
-import { formatManilaNumericDate, getManilaDateParts } from "@/lib/manila-date";
+import {
+  formatManilaNumericDate,
+  formatManilaShortDate,
+  getManilaCalendarYearRange,
+  getManilaDateParts,
+} from "@/lib/manila-date";
+import {
+  assertValidPayslipEditInput,
+  assertValidPayrollRunInput,
+  assertValidPayrollYear,
+} from "@/lib/payroll-input-validation";
+import { resolvePhStatutoryRuleSet } from "@/lib/ph-statutory-rules";
+import {
+  assertPayrollLifecyclePermission,
+  assertPayrollLifecycleTransition,
+} from "@/lib/payroll-lifecycle";
 import {
   isAttendancePayrollLocked,
   recordAttendanceSystemAudit,
@@ -94,9 +110,11 @@ import {
   isFinalSettlementReadyForPayroll,
   resolveFinalSettlementSeparationType,
 } from "@/utils/final-settlement";
-import { normalizeSeparationType } from "@/utils/employment-lifecycle";
 import {
-  assertPayrollRunStatusTransition,
+  isEmployeeFinalPayEligible,
+  normalizeSeparationType,
+} from "@/utils/employment-lifecycle";
+import {
   reconcileFinalPayBasicPay,
   resolveFinalPayOverlapCoverage,
 } from "@/utils/final-pay-payroll";
@@ -122,6 +140,29 @@ import {
   removeBenefitReconciliationPayrollAllocationsForRun,
   syncBenefitReconciliationPayrollAllocation,
 } from "./leaveBenefitPayroll";
+import { appendOperationalEvent } from "./operationalEvents";
+import {
+  postPayrollAccrualJournal,
+  postPayrollCorrectionJournal,
+  postPayrollPaymentJournal,
+  reversePayrollJournalsForRun,
+} from "./payrollAccounting";
+import {
+  decryptJsonFromStorage,
+  maybeEncryptJsonForStorage,
+} from "./fieldEncryption";
+import {
+  decryptPayslipCorrectionReason,
+  decryptPayrollVoidReason,
+  decryptPayslipCorrectionSnapshot,
+  encryptPayslipCorrectionReason,
+  encryptPayrollVoidReason,
+  encryptPayslipCorrectionSnapshot,
+} from "./payrollSensitiveCrypto";
+import {
+  encryptAccountingCostBreakdown,
+  type AccountingCostBreakdown,
+} from "./accountingCostItemCrypto";
 
 async function syncAttendanceHolidayMetadata(
   ctx: MutationCtx,
@@ -505,12 +546,40 @@ async function assertNoDuplicatePayrollRunForPeriod(
       existingRun.cutoffEnd === args.cutoffEnd &&
       (existingRun.runType ?? "regular") === runType &&
       existingRun.status !== "cancelled" &&
-      existingRun.status !== "archived",
+      existingRun.status !== "voided",
   );
 
   if (duplicate) {
     throw new Error(
-      "A payroll run already exists for this cutoff period. Open the existing run, regenerate it, or cancel/archive it before creating another one.",
+      "A payroll run already exists for this cutoff period. Open the existing run, regenerate it, or cancel/void it before creating another one.",
+    );
+  }
+}
+
+async function assertNoDuplicateAnnualBenefitRun(
+  ctx: QueryCtx | MutationCtx,
+  args: {
+    organizationId: Id<"organizations">;
+    runType: "13th_month" | "leave_conversion";
+    year: number;
+  },
+): Promise<void> {
+  const existingRuns = await ctx.db
+    .query("payrollRuns")
+    .withIndex("by_organization_runType_year", (query) =>
+      query
+        .eq("organizationId", args.organizationId)
+        .eq("runType", args.runType)
+        .eq("year", args.year),
+    )
+    .collect();
+  if (
+    existingRuns.some(
+      (run) => run.status !== "cancelled" && run.status !== "voided",
+    )
+  ) {
+    throw new Error(
+      `A ${args.runType === "13th_month" ? "13th month" : "leave conversion"} payroll run already exists for ${args.year}. Cancel or void the existing run before creating a replacement.`,
     );
   }
 }
@@ -522,11 +591,11 @@ function tryParsePayrollSummarySnapshot(
 ): { dates: number[]; summary: any[] } | null {
   if (!raw || typeof raw !== "string") return null;
   try {
-    const o = JSON.parse(raw) as {
+    const o = decryptJsonFromStorage<{
       v?: number;
       dates?: unknown;
       summary?: unknown;
-    };
+    }>(raw, "payroll-summary");
     if (o.v !== PAYROLL_SUMMARY_SNAPSHOT_V) return null;
     if (!Array.isArray(o.dates) || !Array.isArray(o.summary)) return null;
     return { dates: o.dates, summary: o.summary };
@@ -818,13 +887,10 @@ async function computeConcernSummaryForPayslip(
   };
 }
 
-type PreviousPayslipRecord = {
-  pendingDeductions?: number;
-  periodStart?: number;
-  period?: string;
-  payrollRunId?: Id<"payrollRuns">;
-  [key: string]: any;
-};
+type PreviousPayslipRecord = Pick<
+  DecryptedPayslipDoc,
+  "pendingDeductions" | "periodStart" | "period" | "payrollRunId"
+>;
 
 /**
  * Parse the legacy `period` string ("M/D/YYYY to M/D/YYYY") into a UTC-ms start.
@@ -852,11 +918,11 @@ function parseLegacyPayslipPeriodStart(
  * skipped on the next run until backfilled.
  */
 async function findSameMonthPreviousPayslips(
-  ctx: any,
+  ctx: QueryCtx | MutationCtx,
   args: {
-    employeeId: any;
+    employeeId: Id<"employees">;
     cutoffStart: number;
-    excludePayrollRunId?: any;
+    excludePayrollRunId?: Id<"payrollRuns">;
   },
 ): Promise<PreviousPayslipRecord[]> {
   const start = new Date(args.cutoffStart);
@@ -868,9 +934,10 @@ async function findSameMonthPreviousPayslips(
   const rangeEnd = args.cutoffStart - 1;
   if (rangeEnd < monthStart) return [];
 
-  const rawRows = await (ctx.db.query("payslips") as any)
-    .withIndex("by_employee_periodStart", (q: any) =>
-      q
+  const rawRows = await ctx.db
+    .query("payslips")
+    .withIndex("by_employee_periodStart", (query) =>
+      query
         .eq("employeeId", args.employeeId)
         .gte("periodStart", monthStart)
         .lte("periodStart", rangeEnd),
@@ -878,8 +945,8 @@ async function findSameMonthPreviousPayslips(
     .collect();
 
   const decrypted: PreviousPayslipRecord[] = rawRows
-    .map((raw: any) => decryptPayslipRowFromDb(raw) as PreviousPayslipRecord)
-    .filter((p: PreviousPayslipRecord | null): p is PreviousPayslipRecord => {
+    .map((raw) => decryptPayslipRowFromDb(raw))
+    .filter((p): p is DecryptedPayslipDoc => {
       if (!p) return false;
       if (
         args.excludePayrollRunId &&
@@ -975,6 +1042,7 @@ async function checkAuth(
     role: userRole,
     organizationId,
     employeeId,
+    membershipId: userOrg._id,
     accessStatus: userOrg?.accessStatus ?? "active",
   };
 }
@@ -1796,7 +1864,7 @@ function recalculatePersistedPayslipTotals(args: {
 }
 
 type EmployeeGovSettings = {
-  employeeId: any;
+  employeeId: Id<"employees">;
   sss: { enabled: boolean; frequency: "full" | "half" };
   pagibig: { enabled: boolean; frequency: "full" | "half" };
   philhealth: { enabled: boolean; frequency: "full" | "half" };
@@ -1995,7 +2063,14 @@ function applyDeductionOverrideLines(
   return next.filter((line) => line.amount > 0);
 }
 
-function getEmployerContributionsFromDeductions(deductions: PayrollLine[]) {
+function getEmployerContributionsFromDeductions(
+  deductions: PayrollLine[],
+  existingContributions?: {
+    sss?: number;
+    philhealth?: number;
+    pagibig?: number;
+  },
+) {
   const editedEmployeeSSSAmount = getDeductionAmountByNames(deductions, [
     "sss",
   ]);
@@ -2013,17 +2088,20 @@ function getEmployerContributionsFromDeductions(deductions: PayrollLine[]) {
   } = {};
   if (editedEmployeeSSSAmount > 0) {
     updatedEmployerContributions.sss = round2(
-      getSSSContributionByEmployeeDeduction(editedEmployeeSSSAmount)
-        .employerShare,
+      existingContributions?.sss ??
+        getSSSContributionByEmployeeDeduction(editedEmployeeSSSAmount)
+          .employerShare,
     );
   }
   if (editedEmployeePhilhealthAmount > 0) {
     updatedEmployerContributions.philhealth = round2(
-      editedEmployeePhilhealthAmount,
+      existingContributions?.philhealth ?? editedEmployeePhilhealthAmount,
     );
   }
   if (editedEmployeePagibigAmount > 0) {
-    updatedEmployerContributions.pagibig = round2(editedEmployeePagibigAmount);
+    updatedEmployerContributions.pagibig = round2(
+      existingContributions?.pagibig ?? editedEmployeePagibigAmount,
+    );
   }
   return Object.keys(updatedEmployerContributions).length > 0
     ? updatedEmployerContributions
@@ -2290,7 +2368,10 @@ async function applyPayslipOverrideToGeneratedPayslip(
       nextE.overtimeLegalHolidayExcess > 0
         ? round2(nextE.overtimeLegalHolidayExcess)
         : undefined,
-    employerContributions: getEmployerContributionsFromDeductions(deductions),
+    employerContributions: getEmployerContributionsFromDeductions(
+      deductions,
+      args.canonical.employerContributions,
+    ),
   };
 }
 
@@ -3352,6 +3433,7 @@ async function buildCanonicalPayrollResult(
     excludePayrollRunId?: any;
     nonTaxableAllowanceOverride?: number;
     suppressRecurringEmployeeLoanDeductions?: boolean;
+    statutoryRuleVersion?: string;
   },
 ) {
   const employee = decryptEmployeeFromDb(
@@ -3366,9 +3448,22 @@ async function buildCanonicalPayrollResult(
     employee,
     payrollBase.payrollRates.dailyRateWorkingDaysPerYear,
   );
-  const sssContribution = getSSSContribution(monthlyBasicForTax);
-  const philhealthContribution = getPhilHealthContribution(monthlyBasicForTax);
-  const pagibigContribution = getPagibigContribution(monthlyBasicForTax);
+  const statutoryOptions = {
+    effectiveAt: args.cutoffEnd,
+    ruleVersion: args.statutoryRuleVersion,
+  };
+  const sssContribution = getSSSContribution(
+    monthlyBasicForTax,
+    statutoryOptions,
+  );
+  const philhealthContribution = getPhilHealthContribution(
+    monthlyBasicForTax,
+    statutoryOptions,
+  );
+  const pagibigContribution = getPagibigContribution(
+    monthlyBasicForTax,
+    statutoryOptions,
+  );
 
   const orgId = employee.organizationId;
   const trainCapEnabled = await getTrainNinetyThousandCapOnAdditions(
@@ -3424,6 +3519,8 @@ async function buildCanonicalPayrollResult(
     taxDeductionFrequency: args.taxSettings.taxDeductionFrequency,
     taxDeductOnPay: args.taxSettings.taxDeductOnPay,
     taxableGrossForCutoff: grossPay,
+    statutoryEffectiveAt: args.cutoffEnd,
+    statutoryRuleVersion: args.statutoryRuleVersion,
   });
 
   const baseGovAmounts = {
@@ -4131,6 +4228,20 @@ export const createPayrollRun = mutation({
     const userRecord = await checkAuth(ctx, args.organizationId);
     const runType = args.runType ?? "regular";
 
+    assertValidPayrollRunInput({
+      cutoffStart: args.cutoffStart,
+      cutoffEnd: args.cutoffEnd,
+      employeeIds: args.employeeIds.map(String),
+      manualDeductions: args.manualDeductions?.map((entry) => ({
+        employeeId: String(entry.employeeId),
+        lines: entry.deductions,
+      })),
+      incentives: args.incentives?.map((entry) => ({
+        employeeId: String(entry.employeeId),
+        lines: entry.incentives,
+      })),
+    });
+
     await assertNoDuplicatePayrollRunForPeriod(ctx, {
       organizationId: args.organizationId,
       cutoffStart: args.cutoffStart,
@@ -4187,6 +4298,9 @@ export const createPayrollRun = mutation({
         : new Map<string, any>();
 
     const deductionsEnabled = args.deductionsEnabled ?? true;
+    const statutoryRuleVersion = resolvePhStatutoryRuleSet(
+      args.cutoffEnd,
+    ).version;
     const payrollRunId = await ctx.db.insert("payrollRuns", {
       organizationId: args.organizationId,
       cutoffStart: args.cutoffStart,
@@ -4195,6 +4309,7 @@ export const createPayrollRun = mutation({
       runType,
       status: "draft",
       processedBy: userRecord._id,
+      statutoryRuleVersion,
       deductionsEnabled,
       draftConfig: encryptDraftConfigForDb(
         buildDraftPayrollConfig({
@@ -4346,6 +4461,7 @@ export const createPayrollRun = mutation({
         payrollBase,
         deductionsEnabled,
         taxSettings,
+        statutoryRuleVersion,
         govSettings,
         manualDeductionEntry: effectiveManualDeductionEntry,
         incentiveEntry: effectiveIncentiveEntry,
@@ -4504,6 +4620,30 @@ export const createPayrollRun = mutation({
 
     await persistPayrollRunSummarySnapshot(ctx, payrollRunId);
 
+    await appendOperationalEvent(ctx, {
+      organizationId: args.organizationId,
+      eventType: "payroll_run.created",
+      aggregateType: "payroll_run",
+      aggregateId: String(payrollRunId),
+      actor: {
+        type: "user",
+        userId: userRecord._id,
+        membershipId: userRecord.membershipId,
+        role: userRecord.role,
+        displayName: userRecord.name,
+      },
+      occurredAt: now,
+      changedFields: ["cutoff", "employees", "deductions", "incentives"],
+      payload: {
+        runType,
+        cutoffStart: args.cutoffStart,
+        cutoffEnd: args.cutoffEnd,
+        employeeCount: employeeIdsForRun.length,
+        statutoryRuleVersion,
+      },
+      idempotencyKey: `payroll-run:${payrollRunId}:created`,
+    });
+
     return payrollRunId;
   },
 });
@@ -4595,16 +4735,49 @@ export const updatePayrollRun = mutation({
     }
 
     const userRecord = await checkAuth(ctx, payrollRun.organizationId);
+    if (payrollRun.archivedAt !== undefined) {
+      throw new Error(
+        "Unarchive this payroll run before editing it.",
+      );
+    }
     const allowedRoles = ["owner", "admin", "hr", "accounting"];
     if (!allowedRoles.includes(userRecord.role)) {
       throw new Error("Not authorized to update payroll run");
     }
 
+    const previousDraftConfig = decryptDraftConfigFromDb(
+      payrollRun.draftConfig,
+    ) ?? {
+      employeeIds: [],
+    };
+
     const nextCutoffStart = args.cutoffStart ?? payrollRun.cutoffStart;
     const nextCutoffEnd = args.cutoffEnd ?? payrollRun.cutoffEnd;
+    const selectedEmployeeIds =
+      args.employeeIds ?? previousDraftConfig.employeeIds;
+    assertValidPayrollRunInput({
+      cutoffStart: nextCutoffStart,
+      cutoffEnd: nextCutoffEnd,
+      employeeIds: selectedEmployeeIds.map(String),
+      manualDeductions: args.manualDeductions?.map((entry) => ({
+        employeeId: String(entry.employeeId),
+        lines: entry.deductions,
+      })),
+      incentives: args.incentives?.map((entry) => ({
+        employeeId: String(entry.employeeId),
+        lines: entry.incentives,
+      })),
+    });
     const cutoffChanged =
       nextCutoffStart !== payrollRun.cutoffStart ||
       nextCutoffEnd !== payrollRun.cutoffEnd;
+    const statutoryRuleVersion =
+      !cutoffChanged && payrollRun.statutoryRuleVersion
+        ? resolvePhStatutoryRuleSet(
+            nextCutoffEnd,
+            payrollRun.statutoryRuleVersion,
+          ).version
+        : resolvePhStatutoryRuleSet(nextCutoffEnd).version;
     if (cutoffChanged) {
       await assertNoDuplicatePayrollRunForPeriod(ctx, {
         organizationId: payrollRun.organizationId,
@@ -4626,11 +4799,6 @@ export const updatePayrollRun = mutation({
 
     const runDeductionsEnabled =
       args.deductionsEnabled ?? payrollRun.deductionsEnabled ?? true;
-    const previousDraftConfig = decryptDraftConfigFromDb(
-      payrollRun.draftConfig,
-    ) ?? {
-      employeeIds: [],
-    };
     const resolvedGovernmentDeductionSettings: GovSettingsEntry[] =
       Array.isArray(args.governmentDeductionSettings)
         ? (args.governmentDeductionSettings as GovSettingsEntry[])
@@ -4713,6 +4881,7 @@ export const updatePayrollRun = mutation({
       cutoffEnd: args.cutoffEnd ?? payrollRun.cutoffEnd,
       period,
       deductionsEnabled: runDeductionsEnabled,
+      statutoryRuleVersion,
       draftConfig: encryptDraftConfigForDb(
         buildDraftPayrollConfig({
           employeeIds:
@@ -4970,6 +5139,7 @@ export const updatePayrollRun = mutation({
           payrollBase,
           deductionsEnabled: runDeductionsEnabled,
           taxSettings: taxSettingsUpdate,
+          statutoryRuleVersion,
           govSettings,
           manualDeductionEntry: effectiveManualDeductionEntry,
           incentiveEntry: effectiveIncentiveEntry,
@@ -5128,6 +5298,32 @@ export const updatePayrollRun = mutation({
     }
 
     await persistPayrollRunSummarySnapshot(ctx, args.payrollRunId);
+
+    await appendOperationalEvent(ctx, {
+      organizationId: payrollRun.organizationId,
+      eventType: "payroll_run.regenerated",
+      aggregateType: "payroll_run",
+      aggregateId: String(args.payrollRunId),
+      actor: {
+        type: "user",
+        userId: userRecord._id,
+        membershipId: userRecord.membershipId,
+        role: userRecord.role,
+        displayName: userRecord.name,
+      },
+      changedFields: ["payslips", "draftConfig", "dependencySnapshot"],
+      payload: {
+        mode: preserveExistingPayslipEdits
+          ? "preserve_edits"
+          : "clean_rebuild",
+        employeeCount: regeneratedEmployeeCount,
+        manualOverridesPreserved: preserveExistingPayslipEdits
+          ? countPayslipOverrideFields(mergedPayslipOverrides)
+          : 0,
+        staleReasons: staleReasonsBeforeRegenerate,
+        statutoryRuleVersion,
+      },
+    });
 
     return {
       success: true,
@@ -5396,6 +5592,117 @@ async function syncFinalSettlementStatusForRun(
   }
 }
 
+interface PayrollStatutoryCheckResult {
+  status: "passed";
+  ruleVersion: string;
+  checkedAt: number;
+  checkedBy: Id<"users">;
+  payslipCount: number;
+  withholdingTaxRecalculatedCount: number;
+}
+
+async function synchronizeStatutoryDeductionsForFinalize(
+  ctx: MutationCtx,
+  payrollRun: Doc<"payrollRuns">,
+  actor: {
+    _id: Id<"users">;
+    membershipId: Id<"userOrganizations">;
+    role: Doc<"userOrganizations">["role"];
+    name?: string;
+  },
+): Promise<PayrollStatutoryCheckResult> {
+  const ruleSet = resolvePhStatutoryRuleSet(
+    payrollRun.cutoffEnd,
+    payrollRun.statutoryRuleVersion,
+  );
+  const rawPayslips = await ctx.db
+    .query("payslips")
+    .withIndex("by_payroll_run", (query) =>
+      query.eq("payrollRunId", payrollRun._id),
+    )
+    .collect();
+  if (rawPayslips.length === 0) {
+    throw new Error("Payroll cannot be finalized without any payslips.");
+  }
+  let withholdingTaxRecalculatedCount = 0;
+
+  if ((payrollRun.runType ?? "regular") === "regular") {
+    for (const rawPayslip of rawPayslips) {
+      const payslip = decryptPayslipRowFromDb(rawPayslip);
+      if (!payslip) throw new Error("Payroll payslip is unavailable.");
+      const currentDeductions = (payslip.deductions ?? []) as PayrollLine[];
+      const synchronizedDeductions = await recalcWithholdingTaxAfterTaxableGrossEdit(
+        ctx,
+        {
+          payslip,
+          employeeId: payslip.employeeId,
+          organizationId: payslip.organizationId,
+          newDeductions: currentDeductions,
+          recalculatedGross: payslip.grossPay,
+        },
+      );
+      if (
+        JSON.stringify(currentDeductions) ===
+        JSON.stringify(synchronizedDeductions)
+      ) {
+        continue;
+      }
+      const totals = recomputeNetFromEarningsAndLines(
+        payslip.grossPay,
+        payslip.nonTaxableAllowance ?? 0,
+        payslip.incentives ?? [],
+        synchronizedDeductions,
+      );
+      await ctx.db.patch(
+        payslip._id,
+        encryptPayslipPartialForDb({
+          deductions: synchronizedDeductions,
+          netPay: totals.netPay,
+        }),
+      );
+      withholdingTaxRecalculatedCount += 1;
+    }
+  }
+
+  const checkedAt = Date.now();
+  const result: PayrollStatutoryCheckResult = {
+    status: "passed",
+    ruleVersion: ruleSet.version,
+    checkedAt,
+    checkedBy: actor._id,
+    payslipCount: rawPayslips.length,
+    withholdingTaxRecalculatedCount,
+  };
+  await ctx.db.patch(payrollRun._id, {
+    statutoryRuleVersion: ruleSet.version,
+    statutoryCheck: maybeEncryptJsonForStorage(
+      result,
+      "payroll-statutory-check",
+    ),
+    statutoryCheckedAt: checkedAt,
+    statutoryCheckedBy: actor._id,
+    updatedAt: checkedAt,
+  });
+  await appendOperationalEvent(ctx, {
+    organizationId: payrollRun.organizationId,
+    eventType: "payroll_run.statutory_checked",
+    aggregateType: "payroll_run",
+    aggregateId: String(payrollRun._id),
+    actor: {
+      type: "user",
+      userId: actor._id,
+      membershipId: actor.membershipId,
+      role: actor.role,
+      displayName: actor.name,
+    },
+    occurredAt: checkedAt,
+    changedFields: ["statutoryCheck", "statutoryRuleVersion"],
+    payload: result,
+    idempotencyKey: `payroll-run:${payrollRun._id}:statutory-check:${checkedAt}`,
+  });
+  return result;
+}
+
 // Update payroll run status
 export const updatePayrollRunStatus = mutation({
   args: {
@@ -5404,26 +5711,46 @@ export const updatePayrollRunStatus = mutation({
       v.literal("draft"),
       v.literal("finalized"),
       v.literal("paid"),
+      v.literal("voided"),
       v.literal("archived"),
       v.literal("cancelled"),
     ),
+    reason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const payrollRun = await ctx.db.get(args.payrollRunId);
     if (!payrollRun) throw new Error("Payroll run not found");
 
     const userRecord = await checkAuth(ctx, payrollRun.organizationId);
-    const allowedRoles = ["owner", "admin", "hr", "accounting"];
-    if (!allowedRoles.includes(userRecord.role)) {
-      throw new Error("Not authorized to update payroll run status");
-    }
-
-    assertPayrollRunStatusTransition(payrollRun.status, args.status);
-
-    if (payrollRun.status === "finalized" && args.status === "draft") {
+    if (args.status === "archived") {
       throw new Error(
-        "Finalized payroll runs cannot be reverted to draft. Delete the run and create a new one instead.",
+        "Archiving no longer changes payroll financial status. Use the archive action instead.",
       );
+    }
+    if (payrollRun.archivedAt !== undefined) {
+      throw new Error(
+        "Unarchive this payroll run before changing its financial status.",
+      );
+    }
+    const action =
+      args.status === "finalized"
+        ? "finalize"
+        : args.status === "paid"
+          ? "record_payment"
+          : args.status === "voided"
+            ? "void"
+            : "cancel";
+    assertPayrollLifecyclePermission(userRecord.role, action);
+    const transition = assertPayrollLifecycleTransition(
+      payrollRun.status,
+      args.status,
+    );
+    if (transition === "noop") {
+      return { success: true, changed: false };
+    }
+    const reason = args.reason?.trim();
+    if (args.status === "voided" && !reason) {
+      throw new Error("Void reason is required for a posted payroll run.");
     }
 
     if (args.status === "finalized" && payrollRun.status === "draft") {
@@ -5432,6 +5759,11 @@ export const updatePayrollRunStatus = mutation({
       await assertLeaveConversionPayrollReadyForFinalize(
         ctx,
         args.payrollRunId,
+      );
+      await synchronizeStatutoryDeductionsForFinalize(
+        ctx,
+        payrollRun,
+        userRecord,
       );
       await lockApprovedLeaveOccurrencesForPayrollRun(
         ctx,
@@ -5447,19 +5779,24 @@ export const updatePayrollRunStatus = mutation({
       await assertFinalSettlementReadyForPaid(ctx, payrollRun);
     }
 
-    // Remove cost items if archiving after finalize/paid
-    if (
-      (payrollRun.status === "finalized" || payrollRun.status === "paid") &&
-      args.status === "archived"
-    ) {
-      await deleteExpenseItemsFromPayroll(ctx, payrollRun);
-    }
-
+    const now = Date.now();
     await ctx.db.patch(args.payrollRunId, {
       status: args.status,
-      processedAt:
-        args.status === "finalized" ? Date.now() : payrollRun.processedAt,
-      updatedAt: Date.now(),
+      processedAt: args.status === "finalized" ? now : payrollRun.processedAt,
+      ...(args.status === "finalized"
+        ? { finalizedBy: userRecord._id, finalizedAt: now }
+        : {}),
+      ...(args.status === "paid"
+        ? { paidBy: userRecord._id, paidAt: now }
+        : {}),
+      ...(args.status === "voided"
+        ? {
+            voidedBy: userRecord._id,
+            voidedAt: now,
+            voidReason: encryptPayrollVoidReason(reason ?? "Payroll voided"),
+          }
+        : {}),
+      updatedAt: now,
     });
 
     if (args.status === "cancelled") {
@@ -5476,19 +5813,22 @@ export const updatePayrollRunStatus = mutation({
     }
 
     const updatedRun = await ctx.db.get(args.payrollRunId);
-    if (updatedRun) {
-      await syncFinalPayStatusForRun(ctx, updatedRun, args.status);
-      await syncFinalSettlementStatusForRun(
+    if (!updatedRun) throw new Error("Payroll run disappeared during update.");
+    await syncFinalPayStatusForRun(ctx, updatedRun, args.status);
+    await syncFinalSettlementStatusForRun(
+      ctx,
+      updatedRun,
+      args.status,
+      userRecord._id,
+    );
+    await syncLeaveConversionsForPayrollStatus(ctx, updatedRun, args.status);
+
+    if (args.status === "finalized") {
+      await postPayrollAccrualJournal(
         ctx,
-        updatedRun,
-        args.status,
+        args.payrollRunId,
         userRecord._id,
       );
-      await syncLeaveConversionsForPayrollStatus(ctx, updatedRun, args.status);
-    }
-
-    if (args.status === "finalized" && updatedRun) {
-      // Total to pay = sum of payslip netPay (same logic as generating payslips)
       await createExpenseItemsFromPayroll(ctx, updatedRun);
       await createPayslipReadyNotificationsForRun(
         ctx,
@@ -5498,10 +5838,98 @@ export const updatePayrollRunStatus = mutation({
     }
 
     if (args.status === "paid") {
+      await postPayrollPaymentJournal(
+        ctx,
+        args.payrollRunId,
+        userRecord._id,
+      );
       await markExpenseItemsPaid(ctx, updatedRun);
     }
+    if (args.status === "voided") {
+      await reversePayrollJournalsForRun(
+        ctx,
+        args.payrollRunId,
+        userRecord._id,
+        reason ?? "Payroll voided",
+      );
+    }
 
-    return { success: true };
+    await appendOperationalEvent(ctx, {
+      organizationId: payrollRun.organizationId,
+      eventType:
+        args.status === "paid"
+          ? "payroll_run.payment_recorded"
+          : `payroll_run.${args.status}`,
+      aggregateType: "payroll_run",
+      aggregateId: String(args.payrollRunId),
+      actor: {
+        type: "user",
+        userId: userRecord._id,
+        membershipId: userRecord.membershipId,
+        role: userRecord.role,
+        displayName: userRecord.name,
+      },
+      occurredAt: now,
+      changedFields: ["status"],
+      payload: {
+        previousStatus: payrollRun.status,
+        nextStatus: args.status,
+        reason,
+      },
+      idempotencyKey: `payroll-run:${args.payrollRunId}:status:${args.status}`,
+    });
+
+    return { success: true, changed: true };
+  },
+});
+
+export const setPayrollRunArchived = mutation({
+  args: {
+    payrollRunId: v.id("payrollRuns"),
+    archived: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const payrollRun = await ctx.db.get(args.payrollRunId);
+    if (!payrollRun) throw new Error("Payroll run not found");
+    const userRecord = await checkAuth(ctx, payrollRun.organizationId);
+    assertPayrollLifecyclePermission(userRecord.role, "archive");
+    if (["draft", "processing"].includes(payrollRun.status)) {
+      throw new Error("Draft payroll must be cancelled or discarded, not archived.");
+    }
+    if (payrollRun.status === "archived") {
+      throw new Error(
+        "This legacy archived payroll cannot be restored automatically because its prior financial status was not recorded.",
+      );
+    }
+    const currentlyArchived = payrollRun.archivedAt !== undefined;
+    if (currentlyArchived === args.archived) {
+      return { success: true, changed: false };
+    }
+    const now = Date.now();
+    await ctx.db.patch(args.payrollRunId, {
+      archivedAt: args.archived ? now : undefined,
+      archivedBy: args.archived ? userRecord._id : undefined,
+      updatedAt: now,
+    });
+    await appendOperationalEvent(ctx, {
+      organizationId: payrollRun.organizationId,
+      eventType: args.archived
+        ? "payroll_run.archived"
+        : "payroll_run.unarchived",
+      aggregateType: "payroll_run",
+      aggregateId: String(args.payrollRunId),
+      actor: {
+        type: "user",
+        userId: userRecord._id,
+        membershipId: userRecord.membershipId,
+        role: userRecord.role,
+        displayName: userRecord.name,
+      },
+      occurredAt: now,
+      changedFields: ["archivedAt", "archivedBy"],
+      payload: { financialStatus: payrollRun.status },
+    });
+    return { success: true, changed: true };
   },
 });
 
@@ -5552,6 +5980,22 @@ export const markPayrollRunOverrideReviewComplete = mutation({
       updatedAt: Date.now(),
     });
 
+    await appendOperationalEvent(ctx, {
+      organizationId: payrollRun.organizationId,
+      eventType: "payroll_run.overrides_reviewed",
+      aggregateType: "payroll_run",
+      aggregateId: String(args.payrollRunId),
+      actor: {
+        type: "user",
+        userId: userRecord._id,
+        membershipId: userRecord.membershipId,
+        role: userRecord.role,
+        displayName: userRecord.name,
+      },
+      changedFields: ["draftConfig.overrideReview"],
+      payload: { reviewedEmployees: currentReview.employees.length },
+    });
+
     return { success: true, reviewed: true };
   },
 });
@@ -5564,13 +6008,10 @@ export const deletePayrollRun = mutation({
   handler: async (ctx, args) => {
     const payrollRunRaw = await ctx.db.get(args.payrollRunId);
     if (!payrollRunRaw) throw new Error("Payroll run not found");
-    const payrollRunDecrypted = decryptPayrollRunFromDb(payrollRunRaw as any);
-    if (
-      payrollRunDecrypted.status !== "draft" &&
-      payrollRunDecrypted.status !== "cancelled"
-    ) {
+    const payrollRunDecrypted = decryptPayrollRunFromDb(payrollRunRaw);
+    if (payrollRunDecrypted.status !== "draft") {
       throw new Error(
-        "Only draft or cancelled payroll runs can be deleted. Finalized runs are kept for the record; use payslip corrections if amounts need to change.",
+        "Only draft payroll runs can be discarded. Cancelled and posted runs are retained for audit.",
       );
     }
     const payrollRun = payrollRunRaw;
@@ -5582,12 +6023,9 @@ export const deletePayrollRun = mutation({
     const deleteRunRoles = ["owner", "admin", "hr"];
     if (!deleteRunRoles.includes(userRecord.role)) {
       throw new Error(
-        "Not authorized to delete payroll runs. Only owners, admins, and HR can remove draft or cancelled runs.",
+        "Not authorized to discard payroll runs. Only owners, admins, and HR can discard drafts.",
       );
     }
-
-    // Delete all associated accounting cost items (Payroll, SSS, Pag-IBIG, PhilHealth, Tax) created when this run was finalized
-    await deleteExpenseItemsFromPayroll(ctx, payrollRun);
     await removeBenefitReconciliationPayrollAllocationsForRun(
       ctx,
       args.payrollRunId,
@@ -5615,6 +6053,24 @@ export const deletePayrollRun = mutation({
     // Delete payroll run
     await syncLeaveConversionsForPayrollStatus(ctx, payrollRun, "cancelled");
     await replacePayrollRunNotes(ctx, payrollRun, [], Date.now());
+    await appendOperationalEvent(ctx, {
+      organizationId: payrollRun.organizationId,
+      eventType: "payroll_run.discarded",
+      aggregateType: "payroll_run",
+      aggregateId: String(args.payrollRunId),
+      actor: {
+        type: "user",
+        userId: userRecord._id,
+        membershipId: userRecord.membershipId,
+        role: userRecord.role,
+        displayName: userRecord.name,
+      },
+      payload: {
+        previousStatus: payrollRun.status,
+        deletedPayslipCount: payslips.length,
+      },
+      idempotencyKey: `payroll-run:${args.payrollRunId}:discarded`,
+    });
     await ctx.db.delete(args.payrollRunId);
     return { success: true };
   },
@@ -5638,7 +6094,7 @@ export const deletePayrollRuns = mutation({
     const deleteRunRoles = ["owner", "admin", "hr"];
     if (!deleteRunRoles.includes(userRecord.role)) {
       throw new Error(
-        "Not authorized to delete payroll runs. Only owners, admins, and HR can remove draft or cancelled runs.",
+        "Not authorized to discard payroll runs. Only owners, admins, and HR can discard drafts.",
       );
     }
 
@@ -5649,14 +6105,11 @@ export const deletePayrollRuns = mutation({
       if (payrollRun.organizationId !== firstRun.organizationId) continue;
 
       const prDec = decryptPayrollRunFromDb(payrollRun as any);
-      if (prDec.status !== "draft" && prDec.status !== "cancelled") {
+      if (prDec.status !== "draft") {
         throw new Error(
-          "One or more selected runs are not draft or cancelled and cannot be deleted. Only draft or cancelled runs can be removed.",
+          "One or more selected runs are not drafts. Cancelled and posted runs are retained for audit.",
         );
       }
-
-      // Delete associated accounting cost items
-      await deleteExpenseItemsFromPayroll(ctx, payrollRun);
       await removeBenefitReconciliationPayrollAllocationsForRun(
         ctx,
         payrollRun._id,
@@ -5684,6 +6137,25 @@ export const deletePayrollRuns = mutation({
       // Delete payroll run
       await syncLeaveConversionsForPayrollStatus(ctx, payrollRun, "cancelled");
       await replacePayrollRunNotes(ctx, payrollRun, [], Date.now());
+      await appendOperationalEvent(ctx, {
+        organizationId: payrollRun.organizationId,
+        eventType: "payroll_run.discarded",
+        aggregateType: "payroll_run",
+        aggregateId: String(payrollRun._id),
+        actor: {
+          type: "user",
+          userId: userRecord._id,
+          membershipId: userRecord.membershipId,
+          role: userRecord.role,
+          displayName: userRecord.name,
+        },
+        payload: {
+          previousStatus: payrollRun.status,
+          deletedPayslipCount: payslips.length,
+          bulkOperation: true,
+        },
+        idempotencyKey: `payroll-run:${payrollRun._id}:discarded`,
+      });
       await ctx.db.delete(payrollRun._id);
       deletedCount += 1;
     }
@@ -5695,14 +6167,41 @@ export const deletePayrollRuns = mutation({
 // Temporary fixer: convert legacy "processing" payroll runs to "draft"
 export const normalizeProcessingPayrollRuns = mutation({
   args: {
-    organizationId: v.optional(v.id("organizations")),
+    organizationId: v.id("organizations"),
   },
-  handler: async (ctx) => {
-    const runs = await (ctx.db.query("payrollRuns") as any).collect();
+  handler: async (ctx, args) => {
+    const userRecord = await checkAuth(ctx, args.organizationId);
+    if (userRecord.role !== "owner" && userRecord.role !== "admin") {
+      throw new Error("Only an owner or admin can normalize payroll runs.");
+    }
+    const runs = await ctx.db
+      .query("payrollRuns")
+      .withIndex("by_organization", (query) =>
+        query.eq("organizationId", args.organizationId),
+      )
+      .collect();
     let updated = 0;
     for (const run of runs) {
       if (run.status === "processing") {
-        await ctx.db.patch(run._id, { status: "draft", updatedAt: Date.now() });
+        const now = Date.now();
+        await ctx.db.patch(run._id, { status: "draft", updatedAt: now });
+        await appendOperationalEvent(ctx, {
+          organizationId: args.organizationId,
+          eventType: "payroll_run.processing_normalized",
+          aggregateType: "payroll_run",
+          aggregateId: String(run._id),
+          actor: {
+            type: "user",
+            userId: userRecord._id,
+            membershipId: userRecord.membershipId,
+            role: userRecord.role,
+            displayName: userRecord.name,
+          },
+          occurredAt: now,
+          changedFields: ["status"],
+          payload: { previousStatus: "processing", nextStatus: "draft" },
+          idempotencyKey: `payroll-run:${run._id}:processing-normalized`,
+        });
         updated += 1;
       }
     }
@@ -5710,101 +6209,34 @@ export const normalizeProcessingPayrollRuns = mutation({
   },
 });
 
-// Helper function to delete expense items created from payroll run
-async function deleteExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
-  // Format period for expense name matching
-  const startDate = new Date(payrollRun.cutoffStart);
-  const endDate = new Date(payrollRun.cutoffEnd);
-  const periodStr = `${startDate.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  })} - ${endDate.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })}`;
-
-  const payrollExpenseName = `Payroll - ${periodStr}`;
-  const sssExpenseName = `SSS - ${periodStr}`;
-  const philhealthExpenseName = `PhilHealth - ${periodStr}`;
-  const pagibigExpenseName = `Pag-IBIG - ${periodStr}`;
-  const taxDeductionExpenseName = `Tax Employee Deductions - ${periodStr}`;
-  // Legacy names (before we merged employee + employer into one line)
-  const sssDeductionExpenseName = `SSS Employee Deductions - ${periodStr}`;
-  const pagibigDeductionExpenseName = `Pag-IBIG Employee Deductions - ${periodStr}`;
-  const philhealthDeductionExpenseName = `PhilHealth Employee Deductions - ${periodStr}`;
-
-  // Get all expense items for this organization
-  const existingExpenses = await (ctx.db.query("accountingCostItems") as any)
-    .withIndex("by_organization", (q: any) =>
-      q.eq("organizationId", payrollRun.organizationId),
-    )
-    .collect();
-
-  // Find and delete matching expense items (new names + legacy names)
-  const expensesToDelete = existingExpenses.filter(
-    (exp: any) =>
-      exp.name === payrollExpenseName ||
-      exp.name === sssExpenseName ||
-      exp.name === philhealthExpenseName ||
-      exp.name === pagibigExpenseName ||
-      exp.name === taxDeductionExpenseName ||
-      exp.name === sssDeductionExpenseName ||
-      exp.name === pagibigDeductionExpenseName ||
-      exp.name === philhealthDeductionExpenseName,
-  );
-
-  for (const expense of expensesToDelete) {
-    await ctx.db.delete(expense._id);
-  }
-}
-
 // Helper to mark expense items as paid
-async function markExpenseItemsPaid(ctx: any, payrollRun: any) {
-  const startDate = new Date(payrollRun.cutoffStart);
-  const endDate = new Date(payrollRun.cutoffEnd);
-  const periodStr = `${startDate.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  })} - ${endDate.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })}`;
-
-  const names = [
-    `Payroll - ${periodStr}`,
-    `SSS - ${periodStr}`,
-    `Pag-IBIG - ${periodStr}`,
-    `PhilHealth - ${periodStr}`,
-    `Tax Employee Deductions - ${periodStr}`,
-    // Legacy names
-    `SSS Contribution - ${periodStr}`,
-    `PhilHealth Contribution - ${periodStr}`,
-    `Pag-IBIG Contribution - ${periodStr}`,
-    `SSS Employee Deductions - ${periodStr}`,
-    `Pag-IBIG Employee Deductions - ${periodStr}`,
-    `PhilHealth Employee Deductions - ${periodStr}`,
-  ];
-
-  const expenses = await (ctx.db.query("accountingCostItems") as any)
-    .withIndex("by_organization", (q: any) =>
-      q.eq("organizationId", payrollRun.organizationId),
+async function markExpenseItemsPaid(
+  ctx: MutationCtx,
+  payrollRun: Doc<"payrollRuns">,
+): Promise<void> {
+  const payrollCost = await ctx.db
+    .query("accountingCostItems")
+    .withIndex("by_source", (query) =>
+      query
+        .eq("organizationId", payrollRun.organizationId)
+        .eq("sourceType", "payroll_run")
+        .eq("sourceKey", `${payrollRun._id}:payroll`),
     )
-    .collect();
-
-  const targets = expenses.filter((exp: any) => names.includes(exp.name));
-  for (const exp of targets) {
-    await ctx.db.patch(exp._id, {
+    .unique();
+  if (payrollCost) {
+    await ctx.db.patch(payrollCost._id, {
       status: "paid",
-      amountPaid: exp.amount,
+      amountPaid: payrollCost.amount,
       updatedAt: Date.now(),
     });
   }
 }
 
 // Helper function to create expense items from payroll run
-async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
+async function createExpenseItemsFromPayroll(
+  ctx: MutationCtx,
+  payrollRun: Doc<"payrollRuns">,
+): Promise<void> {
   // Get all payslips for this payroll run
   const payslipsRaw = await (ctx.db.query("payslips") as any)
     .withIndex("by_payroll_run", (q: any) =>
@@ -5836,17 +6268,7 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
     payslips.reduce((sum: number, p: any) => sum + (p.netPay ?? 0), 0),
   );
 
-  // Format period for expense name
-  const startDate = new Date(payrollRun.cutoffStart);
-  const endDate = new Date(payrollRun.cutoffEnd);
-  const periodStr = `${startDate.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  })} - ${endDate.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })}`;
+  const periodStr = `${formatManilaShortDate(payrollRun.cutoffStart)} - ${formatManilaShortDate(payrollRun.cutoffEnd)}`;
 
   const payrollExpenseName = `Payroll - ${periodStr}`;
   const sssExpenseName = `SSS - ${periodStr}`;
@@ -5854,50 +6276,28 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
   const philhealthExpenseName = `PhilHealth - ${periodStr}`;
   const taxDeductionExpenseName = `Tax Employee Deductions - ${periodStr}`;
 
-  const allExistingExpenses = await (ctx.db.query("accountingCostItems") as any)
-    .withIndex("by_organization", (q: any) =>
-      q.eq("organizationId", payrollRun.organizationId),
-    )
-    .collect();
-  const legacyExpenseNames = [
-    `SSS Contribution - ${periodStr}`,
-    `PhilHealth Contribution - ${periodStr}`,
-    `Pag-IBIG Contribution - ${periodStr}`,
-    `SSS Employee Deductions - ${periodStr}`,
-    `Pag-IBIG Employee Deductions - ${periodStr}`,
-    `PhilHealth Employee Deductions - ${periodStr}`,
-  ];
-  const managedExpenseNames = [
-    payrollExpenseName,
-    sssExpenseName,
-    pagibigExpenseName,
-    philhealthExpenseName,
-    taxDeductionExpenseName,
-    ...legacyExpenseNames,
-  ];
-  const existingExpenses = allExistingExpenses.filter((expense: any) =>
-    managedExpenseNames.includes(expense.name),
-  );
-
   const syncExpenseItem = async (expense: {
     name: string;
     description: string;
     amount: number;
-    breakdown?: any;
+    breakdown?: AccountingCostBreakdown;
     notes: string;
     sourceKey: string;
   }) => {
-    const existingExpense = existingExpenses.find(
-      (item: any) => item.name === expense.name,
+    const existingExpense = await ctx.db
+      .query("accountingCostItems")
+      .withIndex("by_source", (query) =>
+        query
+          .eq("organizationId", payrollRun.organizationId)
+          .eq("sourceType", "payroll_run")
+          .eq("sourceKey", expense.sourceKey),
+      )
+      .unique();
+    const preservedAmountPaid = existingExpense?.amountPaid ?? 0;
+    const nextStatus = deriveAccountingCostItemStatus(
+      expense.amount,
+      preservedAmountPaid,
     );
-    const preservedAmountPaid =
-      payrollRun.status === "paid"
-        ? expense.amount
-        : Math.min(existingExpense?.amountPaid ?? 0, expense.amount);
-    const nextStatus =
-      payrollRun.status === "paid"
-        ? "paid"
-        : deriveAccountingCostItemStatus(expense.amount, preservedAmountPaid);
     const payload = {
       organizationId: payrollRun.organizationId,
       payrollRunId: payrollRun._id,
@@ -5912,9 +6312,8 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
       frequency: "one-time" as const,
       status: nextStatus,
       dueDate: undefined,
-      breakdown: expense.breakdown,
+      breakdown: encryptAccountingCostBreakdown(expense.breakdown),
       notes: expense.notes,
-      receipts: existingExpense?.receipts,
       updatedAt: now,
     };
 
@@ -6092,19 +6491,33 @@ async function createExpenseItemsFromPayroll(ctx: any, payrollRun: any) {
     });
   }
 
-  const activeExpenseNames = new Set<string>();
-  if (totalNetPay > 0) activeExpenseNames.add(payrollExpenseName);
+  const activeSourceKeys = new Set<string>();
+  if (totalNetPay > 0) activeSourceKeys.add(`${payrollRun._id}:payroll`);
   if (totalEmployeeSSS > 0 || totalSSSEmployer > 0)
-    activeExpenseNames.add(sssExpenseName);
+    activeSourceKeys.add(`${payrollRun._id}:sss`);
   if (totalEmployeePagIbig > 0 || totalPagIbigEmployer > 0)
-    activeExpenseNames.add(pagibigExpenseName);
+    activeSourceKeys.add(`${payrollRun._id}:pagibig`);
   if (totalEmployeePhilHealth > 0 || totalPhilHealthEmployer > 0)
-    activeExpenseNames.add(philhealthExpenseName);
-  if (totalEmployeeTax > 0) activeExpenseNames.add(taxDeductionExpenseName);
+    activeSourceKeys.add(`${payrollRun._id}:philhealth`);
+  if (totalEmployeeTax > 0) activeSourceKeys.add(`${payrollRun._id}:tax`);
 
-  for (const expense of existingExpenses) {
-    if (!activeExpenseNames.has(expense.name)) {
-      await ctx.db.delete(expense._id);
+  const managedSourceKeys = ["payroll", "sss", "pagibig", "philhealth", "tax"].map(
+    (suffix) => `${payrollRun._id}:${suffix}`,
+  );
+  for (const sourceKey of managedSourceKeys) {
+    if (!activeSourceKeys.has(sourceKey)) {
+      const expense = await ctx.db
+        .query("accountingCostItems")
+        .withIndex("by_source", (query) =>
+          query
+            .eq("organizationId", payrollRun.organizationId)
+            .eq("sourceType", "payroll_run")
+            .eq("sourceKey", sourceKey),
+        )
+        .unique();
+      if (expense && expense.amountPaid === 0) {
+        await ctx.db.delete(expense._id);
+      }
     }
   }
 }
@@ -6181,7 +6594,18 @@ export const getPayrollRuns = query({
         dec.isDraftOutdated = false;
         dec.draftOutdatedReasons = [];
       }
-      out.push(dec);
+      out.push({
+        ...dec,
+        voidReason: dec.voidReason
+          ? decryptPayrollVoidReason(dec.voidReason)
+          : undefined,
+        statutoryCheck: dec.statutoryCheck
+          ? decryptJsonFromStorage<PayrollStatutoryCheckResult>(
+              dec.statutoryCheck,
+              "payroll-statutory-check",
+            )
+          : undefined,
+      });
     }
     return out;
   },
@@ -6212,14 +6636,16 @@ function getBasicPayFromPayslip(p: any): number {
   );
 }
 
-function isActivePayrollEmployee(employee: any): boolean {
+function isActivePayrollEmployee(
+  employee: Pick<Doc<"employees">, "employment">,
+): boolean {
   return employee?.employment?.status === "active";
 }
 
-function isFinalPayEligibleEmployee(employee: any): boolean {
-  return ["resigned", "terminated"].includes(
-    employee?.employment?.status ?? "",
-  );
+function isFinalPayEligibleEmployee(
+  employee: Pick<Doc<"employees">, "employment">,
+): boolean {
+  return isEmployeeFinalPayEligible(employee.employment.status);
 }
 
 /** Compute 13th month amounts for employees. 13th month = total basic pay for year / 12. */
@@ -6255,10 +6681,9 @@ async function compute13thMonthAmountsInternal(
     thirteenthMonthAmount: number;
   }>
 > {
-  const org = await getEffectiveOrganization(ctx, args.organizationId);
-  const payFrequency = getOrganizationPayFrequency(org);
-  const yearStart = new Date(args.year, 0, 1).getTime();
-  const yearEnd = new Date(args.year, 11, 31, 23, 59, 59, 999).getTime();
+  assertValidPayrollYear(args.year);
+  const { start: yearStart, end: yearEnd } =
+    getManilaCalendarYearRange(args.year);
 
   const employees = await (ctx.db.query("employees") as any)
     .withIndex("by_organization", (q: any) =>
@@ -6267,6 +6692,12 @@ async function compute13thMonthAmountsInternal(
     .collect();
   const activeEmployeeIds = new Set(
     employees.filter(isActivePayrollEmployee).map((e: any) => e._id),
+  );
+  const employeeById = new Map<string, Doc<"employees">>(
+    employees.map((employee: Doc<"employees">) => [
+      String(employee._id),
+      employee,
+    ]),
   );
 
   const employeeIds =
@@ -6284,7 +6715,9 @@ async function compute13thMonthAmountsInternal(
     .collect();
 
   const regularRuns = payrollRuns.filter(
-    (r: any) => (r.runType ?? "regular") === "regular",
+    (run: Doc<"payrollRuns">) =>
+      (run.runType ?? "regular") === "regular" &&
+      ["finalized", "paid", "archived"].includes(run.status),
   );
   const runIds = new Set(regularRuns.map((r: any) => r._id));
 
@@ -6294,21 +6727,6 @@ async function compute13thMonthAmountsInternal(
     totalBasicPay: number;
     thirteenthMonthAmount: number;
   }> = [];
-
-  const { base } = await getPayrollRates(ctx, args.organizationId);
-  const holidays = await (ctx.db.query("holidays") as any)
-    .withIndex("by_organization", (q: any) =>
-      q.eq("organizationId", args.organizationId),
-    )
-    .collect();
-  const leaveTypes = await (ctx.db.query("leaveTypes") as any)
-    .withIndex("by_organization", (q: any) =>
-      q.eq("organizationId", args.organizationId),
-    )
-    .collect();
-
-  const thirteenthMonthScheduleLunchContext =
-    await loadScheduleLunchContextForOrg(ctx, args.organizationId);
 
   const runsInYear = regularRuns.filter(
     (r: any) => r.cutoffStart >= yearStart && r.cutoffEnd <= yearEnd,
@@ -6325,60 +6743,23 @@ async function compute13thMonthAmountsInternal(
     )
   ).flat() as any[];
 
-  for (const employeeId of scopedEmployeeIds) {
-    const employee = employees.find((e: any) => e._id === employeeId);
-    if (!employee) continue;
-
-    let totalBasicPay = 0;
-
-    const empPayslips = payslipsInYear.filter(
-      (p: any) => p.employeeId === employeeId && runIds.has(p.payrollRunId),
+  const totalBasicPayByEmployeeId = new Map<string, number>();
+  for (const rawPayslip of payslipsInYear) {
+    if (!runIds.has(rawPayslip.payrollRunId)) continue;
+    const payslip = decryptPayslipRowFromDb(rawPayslip);
+    if (!payslip) continue;
+    const employeeKey = String(payslip.employeeId);
+    totalBasicPayByEmployeeId.set(
+      employeeKey,
+      (totalBasicPayByEmployeeId.get(employeeKey) ?? 0) +
+        Math.max(0, getBasicPayFromPayslip(payslip)),
     );
+  }
 
-    if (empPayslips.length > 0) {
-      for (const p of empPayslips) {
-        const pd = decryptPayslipRowFromDb(p)!;
-        totalBasicPay += Math.max(0, getBasicPayFromPayslip(pd));
-      }
-    } else {
-      const cutoffs: { start: number; end: number }[] = [];
-      if (payFrequency === "monthly") {
-        for (let m = 0; m < 12; m++) {
-          cutoffs.push({
-            start: new Date(args.year, m, 1).getTime(),
-            end: new Date(args.year, m + 1, 0, 23, 59, 59, 999).getTime(),
-          });
-        }
-      } else {
-        for (let m = 0; m < 12; m++) {
-          cutoffs.push({
-            start: new Date(args.year, m, 1).getTime(),
-            end: new Date(args.year, m, 15, 23, 59, 59, 999).getTime(),
-          });
-          cutoffs.push({
-            start: new Date(args.year, m, 16).getTime(),
-            end: new Date(args.year, m + 1, 0, 23, 59, 59, 999).getTime(),
-          });
-        }
-      }
-      for (const { start, end } of cutoffs) {
-        if (end > yearEnd) continue;
-        const payrollBase = await buildEmployeePayrollBase(ctx, {
-          employee,
-          cutoffStart: start,
-          cutoffEnd: end,
-          payFrequency,
-          payrollRates: getEmployeePayrollRates(
-            decryptEmployeeFromDb(employee),
-            base,
-          ),
-          holidays,
-          leaveTypes,
-          scheduleLunchContext: thirteenthMonthScheduleLunchContext,
-        });
-        totalBasicPay += payrollBase.basicPay;
-      }
-    }
+  for (const employeeId of scopedEmployeeIds) {
+    const employee = employeeById.get(String(employeeId));
+    if (!employee) continue;
+    const totalBasicPay = totalBasicPayByEmployeeId.get(String(employeeId)) ?? 0;
 
     const thirteenthMonthAmount = round2(totalBasicPay / 12);
     results.push({
@@ -6401,23 +6782,41 @@ export const create13thMonthRun = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
+    assertValidPayrollYear(args.year);
+    const annualRange = getManilaCalendarYearRange(args.year);
+    assertValidPayrollRunInput({
+      cutoffStart: annualRange.start,
+      cutoffEnd: annualRange.end,
+      employeeIds: args.employeeIds.map(String),
+    });
+    await assertNoDuplicateAnnualBenefitRun(ctx, {
+      organizationId: args.organizationId,
+      runType: "13th_month",
+      year: args.year,
+    });
 
     const amounts = await compute13thMonthAmountsInternal(ctx, {
       organizationId: args.organizationId,
       year: args.year,
       employeeIds: args.employeeIds,
     });
-    const employeeIds = amounts.map((amount: any) => amount.employeeId);
+    const payableAmounts = amounts.filter(
+      (amount) => amount.thirteenthMonthAmount > 0,
+    );
+    const employeeIds = payableAmounts.map((amount) => amount.employeeId);
     if (employeeIds.length === 0) {
-      throw new Error("Select at least one active employee.");
+      throw new Error("No posted basic pay is available for this 13th month run.");
     }
 
     const amountMap = new Map(
-      amounts.map((a: any) => [a.employeeId, a.thirteenthMonthAmount]),
+      payableAmounts.map((amount) => [
+        amount.employeeId,
+        amount.thirteenthMonthAmount,
+      ]),
     );
 
-    const yearStart = new Date(args.year, 0, 1).getTime();
-    const yearEnd = new Date(args.year, 11, 31, 23, 59, 59, 999).getTime();
+    const { start: yearStart, end: yearEnd } =
+      getManilaCalendarYearRange(args.year);
 
     const now = Date.now();
     const period = `13th Month Pay ${args.year}`;
@@ -6431,6 +6830,7 @@ export const create13thMonthRun = mutation({
       year: args.year,
       status: "draft",
       processedBy: userRecord._id,
+      statutoryRuleVersion: resolvePhStatutoryRuleSet(yearEnd).version,
       deductionsEnabled: false,
       draftConfig: encryptDraftConfigForDb({ employeeIds }),
       createdAt: now,
@@ -6496,6 +6896,28 @@ export const create13thMonthRun = mutation({
 
     await persistPayrollRunSummarySnapshot(ctx, payrollRunId);
 
+    await appendOperationalEvent(ctx, {
+      organizationId: args.organizationId,
+      eventType: "payroll_run.created",
+      aggregateType: "payroll_run",
+      aggregateId: String(payrollRunId),
+      actor: {
+        type: "user",
+        userId: userRecord._id,
+        membershipId: userRecord.membershipId,
+        role: userRecord.role,
+        displayName: userRecord.name,
+      },
+      occurredAt: now,
+      changedFields: ["employees", "statutoryRuleVersion"],
+      payload: {
+        runType: "13th_month",
+        year: args.year,
+        employeeCount: employeeIds.length,
+      },
+      idempotencyKey: `payroll-run:${payrollRunId}:created`,
+    });
+
     return payrollRunId;
   },
 });
@@ -6529,6 +6951,12 @@ async function computeLeaveConversionAmountsInternal(
     .collect();
   const activeEmployeeIds = new Set(
     employees.filter(isActivePayrollEmployee).map((e: any) => e._id),
+  );
+  const employeeById = new Map<string, Doc<"employees">>(
+    employees.map((employee: Doc<"employees">) => [
+      String(employee._id),
+      employee,
+    ]),
   );
 
   const employeeIds = args.employeeIds ?? Array.from(activeEmployeeIds);
@@ -6571,6 +6999,9 @@ async function computeLeaveConversionAmountsInternal(
     year: args.year,
     employeeIds: scopedEmployeeIds,
   });
+  const amountByEmployeeId = new Map(
+    amounts.map((amount) => [String(amount.employeeId), amount]),
+  );
 
   const workingDaysPerYear =
     payrollSettings?.dailyRateWorkingDaysPerYear ??
@@ -6584,11 +7015,11 @@ async function computeLeaveConversionAmountsInternal(
   }> = [];
 
   for (const empId of scopedEmployeeIds) {
-    const employeeRow = employees.find((e: any) => e._id === empId);
+    const employeeRow = employeeById.get(String(empId));
     if (!employeeRow) continue;
     const employee = await loadEffectiveEmployee(ctx, employeeRow);
 
-    const amt13 = amounts.find((a: any) => a.employeeId === empId);
+    const amt13 = amountByEmployeeId.get(String(empId));
     const totalBasicPay = amt13?.totalBasicPay ?? 0;
     const dailyRate =
       totalBasicPay > 0 ? totalBasicPay / workingDaysPerYear : 0;
@@ -6684,23 +7115,37 @@ export const createLeaveConversionRun = mutation({
   },
   handler: async (ctx, args) => {
     const userRecord = await checkAuth(ctx, args.organizationId);
+    assertValidPayrollYear(args.year);
+    const annualRange = getManilaCalendarYearRange(args.year);
+    assertValidPayrollRunInput({
+      cutoffStart: annualRange.start,
+      cutoffEnd: annualRange.end,
+      employeeIds: args.employeeIds.map(String),
+    });
+    await assertNoDuplicateAnnualBenefitRun(ctx, {
+      organizationId: args.organizationId,
+      runType: "leave_conversion",
+      year: args.year,
+    });
 
     const amounts = await computeLeaveConversionAmountsInternal(ctx, {
       organizationId: args.organizationId,
       year: args.year,
       employeeIds: args.employeeIds,
     });
-    const employeeIds = amounts.map((amount: any) => amount.employeeId);
+    const payableAmounts = amounts.filter(
+      (amount) => amount.leaveConversionAmount > 0,
+    );
+    const employeeIds = payableAmounts.map((amount) => amount.employeeId);
     if (employeeIds.length === 0) {
-      throw new Error("Select at least one active employee.");
+      throw new Error("No approved payable leave conversion is available.");
     }
 
     const amountMap = new Map(
-      amounts.map((amount: any) => [amount.employeeId, amount]),
+      payableAmounts.map((amount) => [amount.employeeId, amount]),
     );
 
-    const yearStart = new Date(args.year, 0, 1).getTime();
-    const yearEnd = new Date(args.year, 11, 31, 23, 59, 59, 999).getTime();
+    const { start: yearStart, end: yearEnd } = annualRange;
 
     const now = Date.now();
     const period = `Leave Conversion ${args.year}`;
@@ -6714,6 +7159,7 @@ export const createLeaveConversionRun = mutation({
       year: args.year,
       status: "draft",
       processedBy: userRecord._id,
+      statutoryRuleVersion: resolvePhStatutoryRuleSet(yearEnd).version,
       deductionsEnabled: false,
       draftConfig: encryptDraftConfigForDb({ employeeIds }),
       createdAt: now,
@@ -6722,7 +7168,8 @@ export const createLeaveConversionRun = mutation({
 
     for (const employeeId of employeeIds) {
       const conversion = amountMap.get(employeeId);
-      const amt = conversion?.leaveConversionAmount ?? 0;
+      if (!conversion) continue;
+      const amt = conversion.leaveConversionAmount;
       if (amt <= 0) continue;
       const employeeRow = await ctx.db.get(employeeId);
       const employee = employeeRow
@@ -6792,6 +7239,28 @@ export const createLeaveConversionRun = mutation({
       });
     }
 
+    await appendOperationalEvent(ctx, {
+      organizationId: args.organizationId,
+      eventType: "payroll_run.created",
+      aggregateType: "payroll_run",
+      aggregateId: String(payrollRunId),
+      actor: {
+        type: "user",
+        userId: userRecord._id,
+        membershipId: userRecord.membershipId,
+        role: userRecord.role,
+        displayName: userRecord.name,
+      },
+      occurredAt: now,
+      changedFields: ["employees", "statutoryRuleVersion"],
+      payload: {
+        runType: "leave_conversion",
+        year: args.year,
+        employeeCount: employeeIds.length,
+      },
+      idempotencyKey: `payroll-run:${payrollRunId}:created`,
+    });
+
     return payrollRunId;
   },
 });
@@ -6815,6 +7284,7 @@ async function computePayrollRunSummaryData(
   const payslips = payslipsRaw.map((p: any) => decryptPayslipRowFromDb(p)!);
 
   const employeeIds = payslips.map((p: any) => p.employeeId);
+  const employeeIdSet = new Set(employeeIds.map(String));
 
   const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -6901,7 +7371,7 @@ async function computePayrollRunSummaryData(
       lr.status === "approved" &&
       lr.startDate <= payrollRun.cutoffEnd &&
       lr.endDate >= payrollRun.cutoffStart &&
-      employeeIds.includes(lr.employeeId),
+      employeeIdSet.has(String(lr.employeeId)),
   );
 
   // Get leave types to check if leave is paid
@@ -6915,13 +7385,29 @@ async function computePayrollRunSummaryData(
   const payslipByEmployeeId = new Map(
     payslips.map((payslip: any) => [payslip.employeeId, payslip]),
   );
+  const attendanceByEmployeeId = new Map<string, typeof periodAttendance>();
+  for (const attendance of periodAttendance) {
+    const key = String(attendance.employeeId);
+    const bucket = attendanceByEmployeeId.get(key);
+    if (bucket) bucket.push(attendance);
+    else attendanceByEmployeeId.set(key, [attendance]);
+  }
+  const approvedLeavesByEmployeeId = new Map<
+    string,
+    typeof approvedLeaves
+  >();
+  for (const leaveRequest of approvedLeaves) {
+    const key = String(leaveRequest.employeeId);
+    const bucket = approvedLeavesByEmployeeId.get(key);
+    if (bucket) bucket.push(leaveRequest);
+    else approvedLeavesByEmployeeId.set(key, [leaveRequest]);
+  }
   const summary = await Promise.all(
     employees
       .filter((e: any) => e)
       .map(async (employee: any) => {
-        const empAttendance = periodAttendance.filter(
-          (a: any) => a.employeeId === employee._id,
-        );
+        const empAttendance =
+          attendanceByEmployeeId.get(String(employee._id)) ?? [];
         const payslip = payslipByEmployeeId.get(employee._id) as any;
         const employeeContributionBreakdown = {
           sss: getDeductionAmountByNames(payslip?.deductions ?? [], ["sss"]),
@@ -6954,9 +7440,8 @@ async function computePayrollRunSummaryData(
         );
 
         // Get approved leaves for this employee
-        const empApprovedLeaves = approvedLeaves.filter(
-          (lr: any) => lr.employeeId === employee._id,
-        );
+        const empApprovedLeaves =
+          approvedLeavesByEmployeeId.get(String(employee._id)) ?? [];
 
         // Helper to check if a date falls within a paid leave
         const isPaidLeave = (date: number): boolean => {
@@ -7177,21 +7662,20 @@ async function computePayrollRunSummaryData(
 }
 
 async function persistPayrollRunSummarySnapshot(ctx: any, payrollRunId: any) {
-  try {
-    const data = await computePayrollRunSummaryData(ctx, { payrollRunId });
-    const payload = JSON.stringify({
+  const data = await computePayrollRunSummaryData(ctx, { payrollRunId });
+  const payload = maybeEncryptJsonForStorage(
+    {
       v: PAYROLL_SUMMARY_SNAPSHOT_V,
       dates: data.dates,
       summary: data.summary,
       capturedAt: Date.now(),
-    });
-    await ctx.db.patch(payrollRunId, {
-      summarySnapshot: payload,
-      updatedAt: Date.now(),
-    });
-  } catch {
-    /* best-effort; UI falls back to live recompute */
-  }
+    },
+    "payroll-summary",
+  );
+  await ctx.db.patch(payrollRunId, {
+    summarySnapshot: payload,
+    updatedAt: Date.now(),
+  });
 }
 
 // Get payroll run summary (attendance data for all employees; uses snapshot when current)
@@ -7631,17 +8115,57 @@ export const getPayslip = query({
   },
 });
 
+export const getPayslipPdfContext = query({
+  args: {
+    payslipId: v.id("payslips"),
+  },
+  handler: async (ctx, args) => {
+    const rawPayslip = await ctx.db.get(args.payslipId);
+    if (!rawPayslip) throw new Error("Payslip not found");
+    const payslip = decryptPayslipRowFromDb(rawPayslip);
+    if (!payslip) throw new Error("Payslip is unavailable");
+    const userRecord = await checkPayslipViewerAuthForQuery(
+      ctx,
+      payslip.organizationId,
+    );
+    if (!userRecord) return null;
+    await assertPayslipVisibleToViewer(ctx, userRecord, payslip);
+    const payrollRun = await ctx.db.get(payslip.payrollRunId);
+    if (!payrollRun || payrollRun.organizationId !== payslip.organizationId) {
+      throw new Error("Payroll run not found");
+    }
+    const organization = await getEffectiveOrganization(
+      ctx,
+      payslip.organizationId,
+    );
+    return {
+      organizationName: organization?.name ?? "Organization",
+      cutoffStart: payrollRun.cutoffStart,
+      cutoffEnd: payrollRun.cutoffEnd,
+      paySchedule: {
+        firstPayDate: organization?.firstPayDate ?? 15,
+        secondPayDate: organization?.secondPayDate ?? 30,
+        salaryPaymentFrequency:
+          organization?.salaryPaymentFrequency ?? "bimonthly",
+      },
+    };
+  },
+});
+
 /** Sync Withholding Tax with engine rules after taxable gross changes. */
 async function recalcWithholdingTaxAfterTaxableGrossEdit(
-  ctx: any,
+  ctx: MutationCtx,
   args: {
-    payslip: any;
-    employeeId: any;
-    organizationId: any;
-    newDeductions: { name: string; amount: number; type: string }[];
+    payslip: Pick<
+      Doc<"payslips">,
+      "payrollRunId" | "periodStart" | "periodEnd"
+    >;
+    employeeId: Id<"employees">;
+    organizationId: Id<"organizations">;
+    newDeductions: PayrollLine[];
     recalculatedGross: number;
   },
-): Promise<{ name: string; amount: number; type: string }[]> {
+): Promise<PayrollLine[]> {
   if (!args.payslip.payrollRunId) {
     return args.newDeductions;
   }
@@ -7653,14 +8177,11 @@ async function recalcWithholdingTaxAfterTaxableGrossEdit(
   if (run.runType && run.runType !== "regular") {
     return args.newDeductions;
   }
-  const cfg = decryptDraftConfigFromDb(run.draftConfig) as
-    | { governmentDeductionSettings?: any[] }
-    | null
-    | undefined;
+  const cfg = decryptDraftConfigFromDb(run.draftConfig);
   const gov = cfg?.governmentDeductionSettings?.find(
-    (g: any) => String(g.employeeId) === String(args.employeeId),
+    (setting) => String(setting.employeeId) === String(args.employeeId),
   );
-  if (!gov?.tax?.enabled) {
+  if (gov?.tax.enabled === false) {
     return args.newDeductions;
   }
   const employeeRow = await ctx.db.get(args.employeeId);
@@ -7689,6 +8210,8 @@ async function recalcWithholdingTaxAfterTaxableGrossEdit(
     taxDeductionFrequency: taxSettings.taxDeductionFrequency,
     taxDeductOnPay: taxSettings.taxDeductOnPay,
     taxableGrossForCutoff: args.recalculatedGross,
+    statutoryEffectiveAt: cutoffEnd,
+    statutoryRuleVersion: run.statutoryRuleVersion,
   });
   const employeeRates = getEmployeePayrollRates(employee, rates.base);
   const payrollBase = await buildEmployeePayrollBase(ctx, {
@@ -7954,19 +8477,31 @@ export const updatePayslip = mutation({
     if (!rawPayslip) throw new Error("Payslip not found");
     const payslip = decryptPayslipRowFromDb(rawPayslip)!;
 
-    const payrollRunRaw = payslip.payrollRunId
-      ? await ctx.db.get(payslip.payrollRunId)
-      : null;
-    const payrollRun = payrollRunRaw
-      ? decryptPayrollRunFromDb(payrollRunRaw as any)
-      : null;
+    const userRecord = await checkAuth(ctx, payslip.organizationId);
+    const payrollRunRaw = await ctx.db.get(payslip.payrollRunId);
+    if (!payrollRunRaw) throw new Error("Payroll run not found");
+    const payrollRun = decryptPayrollRunFromDb(payrollRunRaw);
+    if (payrollRun?.archivedAt !== undefined) {
+      throw new Error("Unarchive this payroll run before editing payslips.");
+    }
+    if (!["draft", "finalized", "paid"].includes(payrollRun.status)) {
+      throw new Error(
+        "Payslips can only be edited while payroll is a draft or through a posted-run correction.",
+      );
+    }
 
     // Check auth - owner, admin, hr, or accounting can edit
-    const userRecord = await checkAuth(ctx, payslip.organizationId);
     const allowedRoles = ["owner", "admin", "hr", "accounting"];
     if (!allowedRoles.includes(userRecord.role)) {
       throw new Error("Not authorized to edit payslips");
     }
+    assertValidPayslipEditInput({
+      deductions: args.deductions,
+      incentives: args.incentives,
+      nonTaxableAllowance: args.nonTaxableAllowance,
+      variableEarnings: args.variableEarnings,
+      correctionReason: args.correctionReason,
+    });
 
     // Calculate new totals. Use `!== undefined` so an explicit `[]` clears all lines
     // (otherwise `incentives: undefined` from older clients would keep prior rows).
@@ -8069,19 +8604,37 @@ export const updatePayslip = mutation({
       } as Record<string, unknown>);
     } else {
       finalDeductions = newDeductions;
-      const recalculatedTotals = recalculatePersistedPayslipTotals({
+      let recalculatedTotals = recalculatePersistedPayslipTotals({
         grossPay: payslip.grossPay ?? 0,
         previousIncentives: originalIncentives,
         nextIncentives: newIncentives,
         nextDeductions: newDeductions,
         nextNonTaxableAllowance: newNonTaxableAllowance,
       });
+      if (t0 !== t1) {
+        finalDeductions = await recalcWithholdingTaxAfterTaxableGrossEdit(ctx, {
+          payslip,
+          employeeId: payslip.employeeId,
+          organizationId: payslip.organizationId,
+          newDeductions,
+          recalculatedGross: recalculatedTotals.grossPay,
+        });
+        recalculatedTotals = recalculatePersistedPayslipTotals({
+          grossPay: payslip.grossPay ?? 0,
+          previousIncentives: originalIncentives,
+          nextIncentives: newIncentives,
+          nextDeductions: finalDeductions,
+          nextNonTaxableAllowance: newNonTaxableAllowance,
+        });
+      }
       recalculatedGross = recalculatedTotals.grossPay;
       recalculatedNet = recalculatedTotals.netPay;
     }
 
-    const updatedEmployerContributions =
-      getEmployerContributionsFromDeductions(finalDeductions);
+    const updatedEmployerContributions = getEmployerContributionsFromDeductions(
+      finalDeductions,
+      payslip.employerContributions,
+    );
 
     // Track changes for edit history (lightweight summaries — line-by-line diffs were O(n²) and slow)
     const changes: EditChange[] = [];
@@ -8148,8 +8701,11 @@ export const updatePayslip = mutation({
       }
     }
 
-    const isFinalizedOrPaid =
-      payrollRun?.status === "finalized" || payrollRun?.status === "paid";
+    const postedRunStatus =
+      payrollRun.status === "finalized" || payrollRun.status === "paid"
+        ? payrollRun.status
+        : null;
+    const isFinalizedOrPaid = postedRunStatus !== null;
     if (changes.length > 0 && isFinalizedOrPaid) {
       const reason = (args.correctionReason ?? "").trim();
       if (!reason) {
@@ -8170,6 +8726,7 @@ export const updatePayslip = mutation({
             changeDetails: changes.flatMap((change) => change.details ?? []),
           })
         : null;
+    let correctionId: Id<"payslipCorrections"> | null = null;
 
     await ctx.db.patch(
       args.payslipId,
@@ -8209,7 +8766,7 @@ export const updatePayslip = mutation({
       }) as any,
     );
 
-    if (changes.length > 0 && payrollRun?.status === "draft") {
+    if (changes.length > 0 && payrollRun.status === "draft") {
       await syncDraftPayslipOverrides(ctx, {
         payrollRun,
         payslip,
@@ -8227,17 +8784,70 @@ export const updatePayslip = mutation({
     if (changes.length > 0 && isFinalizedOrPaid) {
       const reason = (args.correctionReason ?? "").trim();
       if (reason) {
-        await ctx.db.insert("payslipCorrections", {
+        const latestCorrection = await ctx.db
+          .query("payslipCorrections")
+          .withIndex("by_payslip", (query) =>
+            query.eq("payslipId", args.payslipId),
+          )
+          .order("desc")
+          .first();
+        correctionId = await ctx.db.insert("payslipCorrections", {
           organizationId: payslip.organizationId,
           payrollRunId: payslip.payrollRunId,
           payslipId: args.payslipId,
-          reason,
-          ...(correctionAuditSummary ?? {}),
+          reason: encryptPayslipCorrectionReason(reason),
+          revision: (latestCorrection?.revision ?? 0) + 1,
+          runStatusAtCorrection: postedRunStatus ?? undefined,
+          financialSnapshot: encryptPayslipCorrectionSnapshot({
+            previous: {
+              grossPay: payslip.grossPay,
+              netPay: payslip.netPay,
+              deductions: payslip.deductions,
+              incentives: payslip.incentives,
+              nonTaxableAllowance: payslip.nonTaxableAllowance,
+              employerContributions: payslip.employerContributions,
+            },
+            next: {
+              grossPay: recalculatedGross,
+              netPay: recalculatedNet,
+              deductions: finalDeductions,
+              incentives: newIncentives,
+              nonTaxableAllowance: newNonTaxableAllowance,
+              employerContributions: updatedEmployerContributions,
+            },
+            audit: correctionAuditSummary,
+          }),
+          accountingStatus: "pending",
           createdBy: userRecord._id,
           createdAt: Date.now(),
           notified: false,
         });
       }
+    }
+
+    if (changes.length > 0) {
+      await appendOperationalEvent(ctx, {
+        organizationId: payslip.organizationId,
+        eventType: isFinalizedOrPaid
+          ? "payslip.corrected"
+          : "payslip.edited",
+        aggregateType: "payslip",
+        aggregateId: String(args.payslipId),
+        actor: {
+          type: "user",
+          userId: userRecord._id,
+          membershipId: userRecord.membershipId,
+          role: userRecord.role,
+          displayName: userRecord.name,
+        },
+        changedFields: changes.map((change) => change.field),
+        payload: {
+          payrollRunId: payslip.payrollRunId,
+          correctionReason: args.correctionReason?.trim() || undefined,
+          correctionSummary: correctionAuditSummary,
+        },
+        correlationId: String(payslip.payrollRunId),
+      });
     }
 
     // Re-sync accounting cost items when deductions/incentives/allowance change
@@ -8246,6 +8856,32 @@ export const updatePayslip = mutation({
       payrollRun &&
       (payrollRun.status === "finalized" || payrollRun.status === "paid")
     ) {
+      if (correctionId) {
+        const journalEntryId = await postPayrollCorrectionJournal(ctx, {
+          payrollRunId: payrollRun._id,
+          correctionId,
+          actorId: userRecord._id,
+          previousPayslip: {
+            employeeId: String(payslip.employeeId),
+            netPay: Number(payslip.netPay) || 0,
+            deductions: Array.isArray(payslip.deductions)
+              ? payslip.deductions
+              : [],
+            employerContributions: payslip.employerContributions,
+          },
+          nextPayslip: {
+            employeeId: String(payslip.employeeId),
+            netPay: recalculatedNet,
+            deductions: finalDeductions,
+            employerContributions: updatedEmployerContributions,
+          },
+          reason: args.correctionReason?.trim() || "Payslip correction",
+        });
+        await ctx.db.patch(correctionId, {
+          accountingStatus: journalEntryId ? "posted" : "not_required",
+          journalEntryId: journalEntryId ?? undefined,
+        });
+      }
       await createExpenseItemsFromPayroll(ctx, payrollRun);
     }
 
@@ -8324,7 +8960,15 @@ export const getUnnotifiedPayslipCorrectionsForRun = query({
         q.eq("payrollRunId", args.payrollRunId).eq("notified", false),
       )
       .collect();
-    return { corrections: rows };
+    return {
+      corrections: rows.map((row: Doc<"payslipCorrections">) => ({
+        ...row,
+        reason: decryptPayslipCorrectionReason(row.reason),
+        financialDetails: row.financialSnapshot
+          ? decryptPayslipCorrectionSnapshot(row.financialSnapshot)
+          : undefined,
+      })),
+    };
   },
 });
 

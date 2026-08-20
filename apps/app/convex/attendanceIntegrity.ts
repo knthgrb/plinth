@@ -2,6 +2,8 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { getEffectiveAttendanceSettings } from "./organizationConfiguration";
 import { decryptDraftConfigFromDb } from "./payrollRunCrypto";
+import { appendOperationalEvent } from "./operationalEvents";
+import { encryptAttendanceAuditSnapshot } from "./attendanceAuditCrypto";
 
 type AttendanceDbCtx = Pick<QueryCtx | MutationCtx, "db">;
 type AttendanceAuditActor = {
@@ -79,7 +81,12 @@ async function payrollRunIncludesEmployee(
   if (cached) return cached;
 
   const pending = (async () => {
-    const draftConfig = decryptDraftConfigFromDb(run.draftConfig);
+    let draftConfig: ReturnType<typeof decryptDraftConfigFromDb>;
+    try {
+      draftConfig = decryptDraftConfigFromDb(run.draftConfig);
+    } catch {
+      draftConfig = undefined;
+    }
     if (draftConfig?.employeeIds) {
       return draftConfig.employeeIds.includes(employeeId);
     }
@@ -167,8 +174,27 @@ export async function recordAttendanceSystemAudit(
     actorUserId: input.actor._id,
     actorRole: input.actor.role,
     action: input.action,
-    beforeJson: JSON.stringify(input.before),
-    afterJson: input.after ? JSON.stringify(input.after) : undefined,
+    beforeJson: encryptAttendanceAuditSnapshot(input.before),
+    afterJson: input.after
+      ? encryptAttendanceAuditSnapshot(input.after)
+      : undefined,
     createdAt: Date.now(),
+  });
+  await appendOperationalEvent(ctx, {
+    organizationId: input.before.organizationId,
+    eventType: `attendance.${input.action}`,
+    aggregateType: "attendance",
+    aggregateId: String(input.before._id),
+    actor: {
+      type: "user",
+      userId: input.actor._id,
+      role: input.actor.role,
+    },
+    changedFields: ["holidayMetadata"],
+    payload: {
+      employeeId: input.before.employeeId,
+      before: input.before,
+      after: input.after,
+    },
   });
 }

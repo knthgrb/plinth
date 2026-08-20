@@ -13,6 +13,7 @@ import dynamic from "next/dynamic";
 import { api } from "@/convex/_generated/api";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
   TableBody,
@@ -48,7 +49,10 @@ import {
   Trash2,
 } from "lucide-react";
 import { format } from "date-fns";
-import { PayrollRunsTable } from "./_components/payroll-runs-table";
+import {
+  PayrollRunsTable,
+  type PayrollRunListItem,
+} from "./_components/payroll-runs-table";
 import { ThirteenthMonthTab } from "./_components/13th-month-tab";
 import { LeaveConversionTab } from "./_components/leave-conversion-tab";
 import { FinalSettlementsTab } from "./_components/final-settlements-tab";
@@ -180,6 +184,7 @@ import {
   getPayslipListByPayrollRun,
   updatePayslip,
   updatePayrollRunStatus,
+  setPayrollRunArchived,
   updatePayrollRun,
   markPayrollRunOverrideReviewComplete,
   deletePayrollRun,
@@ -237,6 +242,12 @@ type EmployeeIncentive = {
   incentives: PayrollIncentiveLine[];
 };
 
+type PreviewDeductionRow = {
+  employee?: { _id?: string };
+  employeeId?: string;
+  deductions?: Deduction[];
+};
+
 type PreviewPayslipEdits = {
   deductions: Deduction[];
   incentives: PayrollIncentiveLine[];
@@ -244,6 +255,16 @@ type PreviewPayslipEdits = {
 };
 
 type RegenerateMode = "preserve_edits" | "clean_rebuild";
+type PayrollStatusChange =
+  | "draft"
+  | "finalized"
+  | "paid"
+  | "voided"
+  | "cancelled";
+
+function isPayrollStatusChange(value: string): value is PayrollStatusChange {
+  return ["draft", "finalized", "paid", "voided", "cancelled"].includes(value);
+}
 
 type PayrollRegenerationSummary = {
   mode?: RegenerateMode;
@@ -253,7 +274,7 @@ type PayrollRegenerationSummary = {
 };
 
 type PayrollRegenerationReviewResult = {
-  payrollRun: any;
+  payrollRun: PayrollRunListItem;
   mode: RegenerateMode;
   summary?: PayrollRegenerationSummary;
 };
@@ -417,7 +438,7 @@ function filterCustomManualDeductionsForSync(rows: Deduction[]): Deduction[] {
 function buildAuthoritativeManualDeductionsPayload(
   employeeIds: string[],
   employeeDeductions: EmployeeDeduction[],
-  referencePreviewRows: any[] | null | undefined,
+  referencePreviewRows: PreviewDeductionRow[] | null | undefined,
 ): EmployeeDeduction[] {
   return employeeIds.map((employeeId) => {
     const currentRows =
@@ -427,13 +448,11 @@ function buildAuthoritativeManualDeductionsPayload(
       currentRows.map((row) => (row.name || "").trim().toLowerCase()),
     );
     const referenceRows = Array.isArray(referencePreviewRows)
-      ? (
-          referencePreviewRows.find(
-            (row: any) =>
-              String(row?.employee?._id ?? row?.employeeId ?? "") ===
-              String(employeeId),
-          )?.deductions ?? []
-        )
+      ? (referencePreviewRows.find(
+          (row) =>
+            String(row?.employee?._id ?? row?.employeeId ?? "") ===
+            String(employeeId),
+        )?.deductions ?? [])
       : [];
     const removedSystemRows = referenceRows
       .filter((row: Deduction) => {
@@ -495,12 +514,10 @@ export default function PayrollPageClient() {
   /** Admin, HR, owner can edit deductions in pay preview (Step 5) */
   const canEditPreviewDeductions =
     user?.role === "admin" || user?.role === "hr" || user?.role === "owner";
-  /** Draft/cancelled run deletion: owner, admin, HR only (not employee or accounting) */
+  /** Draft run deletion: owner, admin, HR only (not employee or accounting) */
   const canDeletePayrollRuns =
-    user?.role === "owner" ||
-    user?.role === "admin" ||
-    user?.role === "hr";
-  const [payrollRuns, setPayrollRuns] = useState<any[]>([]);
+    user?.role === "owner" || user?.role === "admin" || user?.role === "hr";
+  const [payrollRuns, setPayrollRuns] = useState<PayrollRunListItem[]>([]);
   const [payrollRunsInitialReady, setPayrollRunsInitialReady] = useState(false);
   const [filterMonth, setFilterMonth] = useState("");
   const [payrollRunsPage, setPayrollRunsPage] = useState(1);
@@ -508,7 +525,8 @@ export default function PayrollPageClient() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isViewPayslipsOpen, setIsViewPayslipsOpen] = useState(false);
-  const [selectedPayrollRun, setSelectedPayrollRun] = useState<any>(null);
+  const [selectedPayrollRun, setSelectedPayrollRun] =
+    useState<PayrollRunListItem | null>(null);
   const [payslips, setPayslips] = useState<any[]>([]);
   const [currentStep, setCurrentStep] = useState(1); // 1: dates, 2: employees, 3: gov deductions, 4: other deductions, 5: preview
   const [cutoffStart, setCutoffStart] = useState("");
@@ -568,7 +586,8 @@ export default function PayrollPageClient() {
   const [regenerateDialogOpen, setRegenerateDialogOpen] = useState(false);
   const [regenerateMode, setRegenerateMode] =
     useState<RegenerateMode>("preserve_edits");
-  const [regenerateTargetRun, setRegenerateTargetRun] = useState<any>(null);
+  const [regenerateTargetRun, setRegenerateTargetRun] =
+    useState<PayrollRunListItem | null>(null);
   const [regenerationReviewDialogOpen, setRegenerationReviewDialogOpen] =
     useState(false);
   const [regenerationReviewResult, setRegenerationReviewResult] =
@@ -596,7 +615,8 @@ export default function PayrollPageClient() {
   const finalizeSuccessRef = useRef<(() => Promise<void>) | null>(null);
   const finalizeCancelRef = useRef<(() => Promise<void>) | null>(null);
   const [isEditPayrollRunOpen, setIsEditPayrollRunOpen] = useState(false);
-  const [editingPayrollRun, setEditingPayrollRun] = useState<any>(null);
+  const [editingPayrollRun, setEditingPayrollRun] =
+    useState<PayrollRunListItem | null>(null);
   const [editPayrollStep, setEditPayrollStep] = useState(1);
   const [editCutoffStart, setEditCutoffStart] = useState("");
   const [editCutoffEnd, setEditCutoffEnd] = useState("");
@@ -625,8 +645,14 @@ export default function PayrollPageClient() {
     "idle" | "draft" | "finalized"
   >("idle");
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [payrollRunsToDelete, setPayrollRunsToDelete] = useState<any[]>([]);
+  const [payrollRunsToDelete, setPayrollRunsToDelete] = useState<
+    PayrollRunListItem[]
+  >([]);
   const [isDeletingPayrollRun, setIsDeletingPayrollRun] = useState(false);
+  const [voidPayrollRun, setVoidPayrollRun] =
+    useState<PayrollRunListItem | null>(null);
+  const [voidReason, setVoidReason] = useState("");
+  const [isVoidingPayrollRun, setIsVoidingPayrollRun] = useState(false);
   const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<
     "regular" | "13th_month" | "leave_conversion" | "final_settlements"
@@ -663,7 +689,9 @@ export default function PayrollPageClient() {
         setPayrollRunsInitialReady(false);
       }
       try {
-        const runs = await getPayrollRuns(effectiveOrganizationId);
+        const runs = (await getPayrollRuns(
+          effectiveOrganizationId,
+        )) as PayrollRunListItem[];
         setPayrollRuns(runs);
         return runs;
       } catch (error) {
@@ -705,15 +733,15 @@ export default function PayrollPageClient() {
     let runs = payrollRuns;
     if (activeTab === "regular") {
       runs = runs.filter(
-        (r: any) =>
-          (r.runType ?? "regular") !== "13th_month" &&
-          (r.runType ?? "regular") !== "leave_conversion",
+        (run) =>
+          (run.runType ?? "regular") !== "13th_month" &&
+          (run.runType ?? "regular") !== "leave_conversion",
       );
     } else if (activeTab === "13th_month") {
-      runs = runs.filter((r: any) => (r.runType ?? "regular") === "13th_month");
+      runs = runs.filter((run) => (run.runType ?? "regular") === "13th_month");
     } else if (activeTab === "leave_conversion") {
       runs = runs.filter(
-        (r: any) => (r.runType ?? "regular") === "leave_conversion",
+        (run) => (run.runType ?? "regular") === "leave_conversion",
       );
     }
     if (
@@ -758,7 +786,7 @@ export default function PayrollPageClient() {
     );
   }, [payrollRuns]);
 
-  const handleViewSummary = async (payrollRun: any) => {
+  const handleViewSummary = async (payrollRun: PayrollRunListItem) => {
     setSelectedPayrollRun(payrollRun);
     setIsSummaryOpen(true);
     setIsLoadingSummary(true);
@@ -854,7 +882,7 @@ export default function PayrollPageClient() {
   };
 
   const handleViewPayslips = async (
-    payrollRun: any,
+    payrollRun: PayrollRunListItem,
     highlightPayslipId?: string,
   ) => {
     setSelectedPayrollRun(payrollRun);
@@ -968,9 +996,12 @@ export default function PayrollPageClient() {
     }
   };
 
-  const handleArchivePayrollRun = async (payrollRun: any) => {
+  const handleArchivePayrollRun = async (
+    payrollRun: PayrollRunListItem,
+    archived: boolean,
+  ) => {
     try {
-      const result = await updatePayrollRunStatus(payrollRun._id, "archived");
+      const result = await setPayrollRunArchived(payrollRun._id, archived);
       if (!result.ok) {
         toast({
           title: "Error",
@@ -981,19 +1012,24 @@ export default function PayrollPageClient() {
       }
       await loadPayrollRuns();
       toast({
-        title: "Archived",
-        description: "Payroll run archived. Cost records removed.",
+        title: archived ? "Archived" : "Unarchived",
+        description: archived
+          ? "Payroll run archived. Financial status, journals, payslips, and audit history were retained."
+          : "Payroll run restored to the active list.",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to archive payroll run",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to update payroll archive state",
         variant: "destructive",
       });
     }
   };
 
-  const handleDeletePayrollRun = (payrollRun: any) => {
+  const handleDeletePayrollRun = (payrollRun: PayrollRunListItem) => {
     if (!canDeletePayrollRuns) {
       toast({
         title: "Not allowed",
@@ -1007,7 +1043,9 @@ export default function PayrollPageClient() {
     setIsDeleteDialogOpen(true);
   };
 
-  const handleNotifyPayslipCorrections = async (payrollRun: any) => {
+  const handleNotifyPayslipCorrections = async (
+    payrollRun: PayrollRunListItem,
+  ) => {
     if (!payrollRun?._id || sendingCorrectionRunId) return;
     setSendingCorrectionRunId(String(payrollRun._id));
     try {
@@ -1056,14 +1094,13 @@ export default function PayrollPageClient() {
     }
     const selectedRuns = payrollRuns.filter(
       (run) =>
-        selectedRunIds.includes(String(run._id)) &&
-        (run.status === "draft" || run.status === "cancelled"),
+        selectedRunIds.includes(String(run._id)) && run.status === "draft",
     );
     if (selectedRuns.length === 0) {
       toast({
         title: "Nothing to delete",
         description:
-          "Only draft or cancelled runs can be deleted. Deselect finalized or paid runs.",
+          "Only draft runs can be deleted. Cancelled and posted runs are retained for audit.",
       });
       return;
     }
@@ -1109,7 +1146,10 @@ export default function PayrollPageClient() {
     }
   };
 
-  const handleStatusChange = async (payrollRun: any, status: string) => {
+  const handleStatusChange = async (
+    payrollRun: PayrollRunListItem,
+    status: string,
+  ) => {
     if (status === "finalized") {
       openPayrollFinalizeFlow(
         payrollRun._id,
@@ -1120,8 +1160,16 @@ export default function PayrollPageClient() {
       );
       return;
     }
+    if (!isPayrollStatusChange(status)) {
+      toast({
+        title: "Invalid status",
+        description: "This payroll status change is not supported.",
+        variant: "destructive",
+      });
+      return;
+    }
     try {
-      const result = await updatePayrollRunStatus(payrollRun._id, status as any);
+      const result = await updatePayrollRunStatus(payrollRun._id, status);
       if (!result.ok) {
         toast({
           title: "Error",
@@ -1144,14 +1192,59 @@ export default function PayrollPageClient() {
     }
   };
 
+  const confirmVoidPayrollRun = async () => {
+    if (!voidPayrollRun || isVoidingPayrollRun) return;
+    const reason = voidReason.trim();
+    if (!reason) {
+      toast({
+        title: "Reason required",
+        description: "Explain why this posted payroll must be voided.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setIsVoidingPayrollRun(true);
+    try {
+      const result = await updatePayrollRunStatus(
+        String(voidPayrollRun._id),
+        "voided",
+        reason,
+      );
+      if (!result.ok) {
+        toast({
+          title: "Could not void payroll",
+          description: result.error,
+          variant: "destructive",
+        });
+        return;
+      }
+      await loadPayrollRuns();
+      setVoidPayrollRun(null);
+      setVoidReason("");
+      toast({
+        title: "Payroll voided",
+        description:
+          "The run was retained and its posted accounting journals were reversed.",
+      });
+    } catch (error: unknown) {
+      toast({
+        title: "Could not void payroll",
+        description:
+          error instanceof Error ? error.message : "Failed to void payroll run",
+        variant: "destructive",
+      });
+    } finally {
+      setIsVoidingPayrollRun(false);
+    }
+  };
+
   const handleRegeneratePayslips = async (
-    payrollRun: any,
+    payrollRun: PayrollRunListItem,
     mode: RegenerateMode = "preserve_edits",
   ) => {
     setRegeneratingPayrollRunId(payrollRun._id);
     try {
-      const draftConfig = payrollRun.draftConfig ?? {};
-      const employeeIds = draftConfig.employeeIds ?? [];
+      const employeeIds = payrollRun.draftConfig?.employeeIds ?? [];
       const result = await updatePayrollRun({
         payrollRunId: payrollRun._id,
         cutoffStart: payrollRun.cutoffStart,
@@ -1170,8 +1263,7 @@ export default function PayrollPageClient() {
       }
       const refreshedRuns = await loadPayrollRuns();
       const refreshedRun =
-        refreshedRuns.find((run: any) => run._id === payrollRun._id) ??
-        payrollRun;
+        refreshedRuns.find((run) => run._id === payrollRun._id) ?? payrollRun;
       if (selectedPayrollRun?._id === payrollRun._id) {
         await handleViewPayslips(refreshedRun);
       }
@@ -1205,7 +1297,9 @@ export default function PayrollPageClient() {
     }
   };
 
-  const handleMarkOverrideReviewComplete = async (payrollRun: any) => {
+  const handleMarkOverrideReviewComplete = async (
+    payrollRun: PayrollRunListItem,
+  ) => {
     if (!payrollRun?._id) return;
     setMarkingOverrideReviewRunId(payrollRun._id);
     try {
@@ -1220,8 +1314,7 @@ export default function PayrollPageClient() {
       }
       const refreshedRuns = await loadPayrollRuns();
       const refreshedRun =
-        refreshedRuns.find((run: any) => run._id === payrollRun._id) ??
-        payrollRun;
+        refreshedRuns.find((run) => run._id === payrollRun._id) ?? payrollRun;
       if (selectedPayrollRun?._id === payrollRun._id) {
         await handleViewPayslips(refreshedRun);
       }
@@ -1241,7 +1334,7 @@ export default function PayrollPageClient() {
     }
   };
 
-  const openRegenerateDialog = (payrollRun: any) => {
+  const openRegenerateDialog = (payrollRun: PayrollRunListItem) => {
     setRegenerateTargetRun(payrollRun);
     setRegenerateMode("preserve_edits");
     setRegenerateDialogOpen(true);
@@ -2612,7 +2705,7 @@ export default function PayrollPageClient() {
     setPreviewDeductionOverrides({});
   };
 
-  const handleEditPayrollRun = async (payrollRun: any) => {
+  const handleEditPayrollRun = async (payrollRun: PayrollRunListItem) => {
     if (payrollRun.status !== "draft") {
       toast({
         title: "Error",
@@ -2718,7 +2811,7 @@ export default function PayrollPageClient() {
       const normalizedIncentives: EmployeeIncentive[] = selectedEmployeeIds.map(
         (employeeId: string) => {
           const saved = draftConfig.incentives?.find(
-            (ei: EmployeeIncentive) => ei.employeeId === employeeId,
+            (incentive) => incentive.employeeId === employeeId,
           );
           return {
             employeeId,
@@ -3325,6 +3418,11 @@ export default function PayrollPageClient() {
                   onRegeneratePayslips={openRegenerateDialog}
                   regeneratingPayrollRunId={regeneratingPayrollRunId}
                   onStatusChange={handleStatusChange}
+                  onArchive={handleArchivePayrollRun}
+                  onVoid={(run) => {
+                    setVoidPayrollRun(run);
+                    setVoidReason("");
+                  }}
                   onDelete={handleDeletePayrollRun}
                   canDeletePayrollRuns={canDeletePayrollRuns}
                   pendingCorrectionByRunId={
@@ -3369,6 +3467,14 @@ export default function PayrollPageClient() {
                           settings, then automatically reapply explicit manual
                           overrides. Review the preserved manual override lines
                           before finalizing.
+                        </div>
+                        <div className="mt-2 text-sm text-amber-700">
+                          Manual payslip edits will be reapplied. Withholding
+                          Tax is statutory and will be recalculated from the
+                          regenerated taxable gross; manually entered
+                          Withholding Tax amounts are not preserved. Saved
+                          run-level additions, deductions, and government
+                          settings remain in effect.
                         </div>
                       </button>
                       <button
@@ -3488,8 +3594,7 @@ export default function PayrollPageClient() {
                           </div>
                           {regenerationReviewFieldLabels.length > 0 && (
                             <div className="mt-2 text-gray-700">
-                              Fields:{" "}
-                              {regenerationReviewFieldLabels.join(", ")}
+                              Fields: {regenerationReviewFieldLabels.join(", ")}
                             </div>
                           )}
                         </div>
@@ -3575,6 +3680,11 @@ export default function PayrollPageClient() {
                 onViewPayslips={handleViewPayslips}
                 onEdit={handleEditPayrollRun}
                 onStatusChange={handleStatusChange}
+                onArchive={handleArchivePayrollRun}
+                onVoid={(run) => {
+                  setVoidPayrollRun(run);
+                  setVoidReason("");
+                }}
                 onDelete={handleDeletePayrollRun}
                 canDeletePayrollRuns={canDeletePayrollRuns}
               />
@@ -3590,6 +3700,11 @@ export default function PayrollPageClient() {
                 onViewPayslips={handleViewPayslips}
                 onEdit={handleEditPayrollRun}
                 onStatusChange={handleStatusChange}
+                onArchive={handleArchivePayrollRun}
+                onVoid={(run) => {
+                  setVoidPayrollRun(run);
+                  setVoidReason("");
+                }}
                 onDelete={handleDeletePayrollRun}
                 canDeletePayrollRuns={canDeletePayrollRuns}
               />
@@ -3650,9 +3765,8 @@ export default function PayrollPageClient() {
               onUpdateEarning={updateEditEarning}
               onSave={handleSavePayslip}
               showCorrectionReason={
-                Boolean(selectedPayrollRun) &&
-                (selectedPayrollRun.status === "finalized" ||
-                  selectedPayrollRun.status === "paid") &&
+                (selectedPayrollRun?.status === "finalized" ||
+                  selectedPayrollRun?.status === "paid") &&
                 !editingPayslip?.__mode
               }
               correctionReason={payslipCorrectionReason}
@@ -3791,6 +3905,65 @@ export default function PayrollPageClient() {
           </Suspense>
         )}
 
+        <Dialog
+          open={Boolean(voidPayrollRun)}
+          onOpenChange={(open) => {
+            if (isVoidingPayrollRun) return;
+            if (!open) {
+              setVoidPayrollRun(null);
+              setVoidReason("");
+            }
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Void posted payroll</DialogTitle>
+              <DialogDescription>
+                Voiding retains the payroll run and payslips for audit and
+                creates reversing accounting entries. It does not delete the
+                original records.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 py-2">
+              <label
+                htmlFor="payroll-void-reason"
+                className="text-sm font-medium"
+              >
+                Reason
+              </label>
+              <Textarea
+                id="payroll-void-reason"
+                value={voidReason}
+                onChange={(event) => setVoidReason(event.target.value)}
+                placeholder="Explain the error or business reason for voiding this payroll"
+                disabled={isVoidingPayrollRun}
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                disabled={isVoidingPayrollRun}
+                onClick={() => {
+                  setVoidPayrollRun(null);
+                  setVoidReason("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={isVoidingPayrollRun || !voidReason.trim()}
+                onClick={() => void confirmVoidPayrollRun()}
+              >
+                {isVoidingPayrollRun && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                Void payroll
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* Delete Confirmation Dialog */}
         <Dialog
           open={isDeleteDialogOpen}
@@ -3817,9 +3990,9 @@ export default function PayrollPageClient() {
                 {payrollRunsToDelete.length > 1
                   ? "these payroll runs"
                   : "this payroll run"}
-                ? This action will permanently remove the payroll run,
-                associated payslips, and cost records. This action cannot be
-                undone.
+                ? Only draft runs can be discarded. This permanently removes the
+                draft and its unposted payslips. Posted, cancelled, and archived
+                runs are retained for audit.
               </DialogDescription>
             </DialogHeader>
             {payrollRunsToDelete.length > 0 && (

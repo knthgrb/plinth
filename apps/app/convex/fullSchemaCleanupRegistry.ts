@@ -72,7 +72,12 @@ export const FULL_SCHEMA_CLEANUP_DOMAINS = [
     migrationVersion: 1,
     implementation: "migration",
     compatibility: "switched",
-    policyDomains: ["payroll_offboarding", "accounting", "assets"],
+    policyDomains: [
+      "payroll_offboarding",
+      "operational_audit",
+      "accounting",
+      "assets",
+    ],
   },
 ] as const satisfies readonly FullSchemaCleanupDomainRegistration[];
 

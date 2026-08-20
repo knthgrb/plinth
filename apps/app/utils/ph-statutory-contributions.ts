@@ -14,12 +14,10 @@ export type PagibigContribution = StatutoryContribution & {
   rate: number;
 };
 
-const PHILHEALTH_RATE_2025 = 0.05;
-const PHILHEALTH_MONTHLY_FLOOR_2025 = 10_000;
-const PHILHEALTH_MONTHLY_CEILING_2025 = 100_000;
-
-const PAGIBIG_RATE = 0.02;
-const PAGIBIG_MONTHLY_FUND_SALARY_CEILING = 10_000;
+export type StatutoryRuleOptions = {
+  effectiveAt?: number;
+  ruleVersion?: string;
+};
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
@@ -31,19 +29,26 @@ function clamp(n: number, min: number, max: number): number {
 
 export function getPhilHealthContribution(
   monthlyBasicPay: number,
+  options: StatutoryRuleOptions = {},
 ): PhilHealthContribution {
+  const rules = resolvePhStatutoryRuleSet(
+    options.effectiveAt ?? Date.now(),
+    options.ruleVersion,
+  );
   const monthlyPremiumBase = clamp(
     Number(monthlyBasicPay) || 0,
-    PHILHEALTH_MONTHLY_FLOOR_2025,
-    PHILHEALTH_MONTHLY_CEILING_2025,
+    rules.philHealth.monthlyFloor,
+    rules.philHealth.monthlyCeiling,
   );
-  const total = round2(monthlyPremiumBase * PHILHEALTH_RATE_2025);
-  const employeeShare = round2(total / 2);
+  const total = round2(monthlyPremiumBase * rules.philHealth.rate);
+  const employeeShare = round2(
+    total * rules.philHealth.employeeShareRatio,
+  );
   const employerShare = round2(total - employeeShare);
 
   return {
     monthlyPremiumBase,
-    rate: PHILHEALTH_RATE_2025,
+    rate: rules.philHealth.rate,
     employeeShare,
     employerShare,
     total,
@@ -52,19 +57,31 @@ export function getPhilHealthContribution(
 
 export function getPagibigContribution(
   monthlyBasicPay: number,
+  options: StatutoryRuleOptions = {},
 ): PagibigContribution {
+  const rules = resolvePhStatutoryRuleSet(
+    options.effectiveAt ?? Date.now(),
+    options.ruleVersion,
+  );
   const monthlyFundSalary = Math.min(
     Math.max(Number(monthlyBasicPay) || 0, 0),
-    PAGIBIG_MONTHLY_FUND_SALARY_CEILING,
+    rules.pagibig.monthlyFundSalaryCeiling,
   );
-  const employeeShare = round2(monthlyFundSalary * PAGIBIG_RATE);
-  const employerShare = round2(monthlyFundSalary * PAGIBIG_RATE);
+  const employeeRate =
+    monthlyFundSalary <= rules.pagibig.employeeRateThreshold
+      ? rules.pagibig.employeeRateAtOrBelowThreshold
+      : rules.pagibig.employeeRateAboveThreshold;
+  const employeeShare = round2(monthlyFundSalary * employeeRate);
+  const employerShare = round2(
+    monthlyFundSalary * rules.pagibig.employerRate,
+  );
 
   return {
     monthlyFundSalary,
-    rate: PAGIBIG_RATE,
+    rate: employeeRate,
     employeeShare,
     employerShare,
     total: round2(employeeShare + employerShare),
   };
 }
+import { resolvePhStatutoryRuleSet } from "@/lib/ph-statutory-rules";

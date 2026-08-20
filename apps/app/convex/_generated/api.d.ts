@@ -62,6 +62,7 @@ import type * as notificationHelpers from "../notificationHelpers.js";
 import type * as notifications from "../notifications.js";
 import type * as organizationConfiguration from "../organizationConfiguration.js";
 import type * as organizations from "../organizations.js";
+import type * as operationalEvents from "../operationalEvents.js";
 import type * as payroll from "../payroll.js";
 import type * as payrollRunCrypto from "../payrollRunCrypto.js";
 import type * as payrollVariableEarningsMath from "../payrollVariableEarningsMath.js";
@@ -142,6 +143,7 @@ declare const fullApi: ApiFromModules<{
   notifications: typeof notifications;
   organizationConfiguration: typeof organizationConfiguration;
   organizations: typeof organizations;
+  operationalEvents: typeof operationalEvents;
   payroll: typeof payroll;
   payrollRunCrypto: typeof payrollRunCrypto;
   payrollVariableEarningsMath: typeof payrollVariableEarningsMath;

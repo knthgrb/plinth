@@ -2,36 +2,13 @@ function roundCurrency(value: number): number {
   return Math.round((Number.isFinite(value) ? value : 0) * 100) / 100;
 }
 
-export type PayrollRunStatus =
-  | "draft"
-  | "processing"
-  | "finalized"
-  | "paid"
-  | "archived"
-  | "cancelled";
-
-const ALLOWED_PAYROLL_RUN_TRANSITIONS: Record<
-  PayrollRunStatus,
-  ReadonlySet<PayrollRunStatus>
-> = {
-  draft: new Set(["finalized", "cancelled"]),
-  processing: new Set(["draft", "cancelled"]),
-  finalized: new Set(["paid", "archived"]),
-  paid: new Set(["finalized", "archived"]),
-  archived: new Set(),
-  cancelled: new Set(),
-};
+export type PayrollRunStatus = PayrollFinancialStatus;
 
 export function assertPayrollRunStatusTransition(
   currentStatus: PayrollRunStatus,
   nextStatus: PayrollRunStatus,
 ): void {
-  if (currentStatus === nextStatus) return;
-  if (!ALLOWED_PAYROLL_RUN_TRANSITIONS[currentStatus].has(nextStatus)) {
-    throw new Error(
-      `Payroll run cannot transition from ${currentStatus} to ${nextStatus}.`,
-    );
-  }
+  assertPayrollLifecycleTransition(currentStatus, nextStatus);
 }
 
 export function reconcileFinalPayBasicPay(
@@ -71,3 +48,7 @@ export function resolveFinalPayOverlapCoverage(
 
   return "partial";
 }
+import {
+  assertPayrollLifecycleTransition,
+  type PayrollFinancialStatus,
+} from "@/lib/payroll-lifecycle";

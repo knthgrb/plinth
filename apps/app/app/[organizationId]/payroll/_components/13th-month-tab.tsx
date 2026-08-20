@@ -34,17 +34,25 @@ import { format } from "date-fns";
 import { useToast } from "@/components/ui/use-toast";
 import { create13thMonthRun } from "@/actions/payroll";
 import { getActivePayrollEmployeeIds } from "@/utils/payroll-employee-filters";
-import { PayrollRunsTable } from "./payroll-runs-table";
+import {
+  PayrollRunsTable,
+  type PayrollRunListItem,
+} from "./payroll-runs-table";
 
 interface ThirteenthMonthTabProps {
   organizationId: string;
-  payrollRuns: any[];
+  payrollRuns: PayrollRunListItem[];
   onLoadPayrollRuns: () => void;
-  onViewSummary: (run: any) => void;
-  onViewPayslips: (run: any) => void;
-  onEdit: (run: any) => void;
-  onStatusChange: (run: any, status: string) => void;
-  onDelete: (run: any) => void;
+  onViewSummary: (run: PayrollRunListItem) => void;
+  onViewPayslips: (run: PayrollRunListItem) => void;
+  onEdit: (run: PayrollRunListItem) => void;
+  onStatusChange: (run: PayrollRunListItem, status: string) => void;
+  onArchive?: (
+    run: PayrollRunListItem,
+    archived: boolean,
+  ) => void | Promise<void>;
+  onVoid?: (run: PayrollRunListItem) => void;
+  onDelete: (run: PayrollRunListItem) => void;
   canDeletePayrollRuns?: boolean;
 }
 
@@ -56,6 +64,8 @@ export function ThirteenthMonthTab({
   onViewPayslips,
   onEdit,
   onStatusChange,
+  onArchive,
+  onVoid,
   onDelete,
   canDeletePayrollRuns = true,
 }: ThirteenthMonthTabProps) {
@@ -84,11 +94,11 @@ export function ThirteenthMonthTab({
   );
 
   const thirteenthMonthRuns = payrollRuns.filter(
-    (r: any) => (r.runType ?? "regular") === "13th_month",
+    (run) => (run.runType ?? "regular") === "13th_month",
   );
 
   const filteredRuns = thirteenthMonthRuns.filter(
-    (r: any) => r.year === selectedYear || !r.year,
+    (run) => run.year === selectedYear || !run.year,
   );
 
   const toggleEmployee = (employeeId: string) => {
@@ -349,6 +359,8 @@ export function ThirteenthMonthTab({
               onViewPayslips={onViewPayslips}
               onEdit={onEdit}
               onStatusChange={onStatusChange}
+              onArchive={onArchive}
+              onVoid={onVoid}
               onDelete={onDelete}
               canDeletePayrollRuns={canDeletePayrollRuns}
             />

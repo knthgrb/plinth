@@ -435,9 +435,14 @@ export default function AccountingPage() {
 
       // Add existing receipt IDs that weren't removed
       if (editingItem && editingItem.receipts) {
+        const existingReceiptIds = editingItem.receipts;
         const remainingReceiptIds = receiptUrls
           .map((r) => r.id)
-          .filter((id) => editingItem.receipts.includes(id));
+          .filter((id) =>
+            existingReceiptIds.some(
+              (receiptId) => String(receiptId) === id,
+            ),
+          );
         receiptIds.push(...remainingReceiptIds);
       }
 

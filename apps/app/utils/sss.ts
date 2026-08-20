@@ -104,7 +104,14 @@ const SSS_TABLE_2025: SSSBracket[] = [
  * Used for: payslip employee deduction (use employeeShare; for semi-monthly use employeeShare/2),
  * and for accounting when finalizing payroll (use total = employeeShare + employerShare).
  */
-export function getSSSContribution(monthlyBasicPay: number): SSSContribution {
+export function getSSSContribution(
+  monthlyBasicPay: number,
+  options: { effectiveAt?: number; ruleVersion?: string } = {},
+): SSSContribution {
+  resolvePhStatutoryRuleSet(
+    options.effectiveAt ?? Date.now(),
+    options.ruleVersion,
+  );
   const pay = Math.max(0, monthlyBasicPay);
   for (const bracket of SSS_TABLE_2025) {
     if (bracket.max === null) {
@@ -159,3 +166,4 @@ export function getSSSContributionByEmployeeDeduction(
         monthlySalaryCredit: 0,
       };
 }
+import { resolvePhStatutoryRuleSet } from "@/lib/ph-statutory-rules";

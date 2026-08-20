@@ -75,6 +75,7 @@ export const statusColorMap: Record<string, keyof typeof statusColors> = {
   absent: "coral",
   error: "coral",
   cancelled: "coral",
+  voided: "coral",
   not_submitted: "coral",
   "not submitted": "coral",
 

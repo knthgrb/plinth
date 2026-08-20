@@ -36,6 +36,15 @@ export type ManilaDateParts = {
   day: number;
 };
 
+export function getManilaCalendarYearRange(year: number): {
+  start: number;
+  end: number;
+} {
+  const start = Date.UTC(year, 0, 1) - MANILA_OFFSET_MS;
+  const nextYearStart = Date.UTC(year + 1, 0, 1) - MANILA_OFFSET_MS;
+  return { start, end: nextYearStart - 1 };
+}
+
 export function getManilaDateParts(timestampMs: number): ManilaDateParts {
   const shifted = new Date(timestampMs + MANILA_OFFSET_MS);
   return {

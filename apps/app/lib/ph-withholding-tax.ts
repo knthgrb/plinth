@@ -132,15 +132,30 @@ export function getWithholdingTaxCutoffForEmployee(
     taxDeductionFrequency: "once_per_month" | "twice_per_month";
     taxDeductOnPay: "first" | "second";
     taxableGrossForCutoff?: number;
+    statutoryEffectiveAt?: number;
+    statutoryRuleVersion?: string;
   },
 ): number {
   const monthlyBasicForTax = getMonthlyBasicForTax(
     employee,
     options.workingDaysPerYear,
   );
-  const sssContribution = getSSSContribution(monthlyBasicForTax);
-  const philhealthContribution = getPhilHealthContribution(monthlyBasicForTax);
-  const pagibigContribution = getPagibigContribution(monthlyBasicForTax);
+  const statutoryOptions = {
+    effectiveAt: options.statutoryEffectiveAt ?? options.cutoffStart,
+    ruleVersion: options.statutoryRuleVersion,
+  };
+  const sssContribution = getSSSContribution(
+    monthlyBasicForTax,
+    statutoryOptions,
+  );
+  const philhealthContribution = getPhilHealthContribution(
+    monthlyBasicForTax,
+    statutoryOptions,
+  );
+  const pagibigContribution = getPagibigContribution(
+    monthlyBasicForTax,
+    statutoryOptions,
+  );
   const annualizedTaxableGross =
     options.taxableGrossForCutoff !== undefined
       ? round2(options.taxableGrossForCutoff) *

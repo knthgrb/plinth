@@ -1460,6 +1460,47 @@ export default defineSchema({
     .index("by_employee_created", ["employeeId", "createdAt"])
     .index("by_attendance_created", ["attendanceId", "createdAt"]),
 
+  operationalEvents: defineTable({
+    organizationId: v.id("organizations"),
+    sequence: v.number(),
+    eventType: v.string(),
+    eventVersion: v.number(),
+    aggregateType: v.string(),
+    aggregateId: v.string(),
+    actorType: v.union(v.literal("user"), v.literal("system")),
+    actorUserId: v.optional(v.id("users")),
+    actorMembershipId: v.optional(v.id("userOrganizations")),
+    actorRole: v.optional(v.string()),
+    actorDisplayName: v.optional(v.string()),
+    occurredAt: v.number(),
+    recordedAt: v.number(),
+    summary: v.optional(v.string()),
+    changedFields: v.optional(v.array(v.string())),
+    payload: v.optional(v.string()),
+    correlationId: v.optional(v.string()),
+    causationId: v.optional(v.string()),
+    idempotencyKey: v.optional(v.string()),
+    previousHash: v.optional(v.string()),
+    hash: v.string(),
+  })
+    .index("by_organization_sequence", ["organizationId", "sequence"])
+    .index("by_organization_recorded", ["organizationId", "recordedAt"])
+    .index("by_organization_event_type", [
+      "organizationId",
+      "eventType",
+      "sequence",
+    ])
+    .index("by_aggregate_sequence", [
+      "organizationId",
+      "aggregateType",
+      "aggregateId",
+      "sequence",
+    ])
+    .index("by_organization_idempotency", [
+      "organizationId",
+      "idempotencyKey",
+    ]),
+
   // Shifts table (per-org; each shift has schedule + lunch window for late/undertime)
   shifts: defineTable({
     organizationId: v.id("organizations"),
@@ -1518,11 +1559,26 @@ export default defineSchema({
       v.literal("processing"),
       v.literal("finalized"),
       v.literal("paid"),
+      v.literal("voided"),
       v.literal("archived"),
       v.literal("cancelled"),
     ),
     processedBy: v.id("users"),
     processedAt: v.optional(v.number()),
+    /** Effective-dated statutory calculation rules locked to this run. */
+    statutoryRuleVersion: v.optional(v.string()),
+    statutoryCheck: v.optional(v.string()),
+    statutoryCheckedAt: v.optional(v.number()),
+    statutoryCheckedBy: v.optional(v.id("users")),
+    finalizedBy: v.optional(v.id("users")),
+    finalizedAt: v.optional(v.number()),
+    paidBy: v.optional(v.id("users")),
+    paidAt: v.optional(v.number()),
+    voidedBy: v.optional(v.id("users")),
+    voidedAt: v.optional(v.number()),
+    voidReason: v.optional(v.string()),
+    archivedBy: v.optional(v.id("users")),
+    archivedAt: v.optional(v.number()),
     /** Set when run is saved as draft; indicates gov/attendance deductions were applied in payslips */
     deductionsEnabled: v.optional(v.boolean()),
     draftConfig: v.optional(
@@ -2004,6 +2060,19 @@ export default defineSchema({
     payrollRunId: v.id("payrollRuns"),
     payslipId: v.id("payslips"),
     reason: v.string(),
+    revision: v.optional(v.number()),
+    runStatusAtCorrection: v.optional(
+      v.union(v.literal("finalized"), v.literal("paid")),
+    ),
+    financialSnapshot: v.optional(v.string()),
+    accountingStatus: v.optional(
+      v.union(
+        v.literal("pending"),
+        v.literal("posted"),
+        v.literal("not_required"),
+      ),
+    ),
+    journalEntryId: v.optional(v.id("accountingJournalEntries")),
     oldGrossPay: v.optional(v.number()),
     newGrossPay: v.optional(v.number()),
     oldNetPay: v.optional(v.number()),
@@ -3270,7 +3339,7 @@ export default defineSchema({
     ),
     dueDate: v.optional(v.number()), // Timestamp
     breakdown: v.optional(
-      v.object({
+      v.union(v.string(), v.object({
         kind: v.union(v.literal("payroll"), v.literal("contributions")),
         rows: v.array(
           v.object({
@@ -3303,17 +3372,59 @@ export default defineSchema({
             netPay: v.optional(v.number()),
           }),
         ),
-      }),
+      })),
     ),
     notes: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_organization", ["organizationId"])
+    .index("by_payroll_run", ["payrollRunId"])
     .index("by_source", ["organizationId", "sourceType", "sourceKey"])
     .index("by_categoryName", ["categoryName"])
     .index("by_status", ["status"])
     .index("by_due_date", ["dueDate"]),
+
+  accountingJournalEntries: defineTable({
+    organizationId: v.id("organizations"),
+    sourceType: v.union(v.literal("payroll_run"), v.literal("manual")),
+    sourceId: v.string(),
+    sourceKey: v.string(),
+    sourceVersion: v.number(),
+    entryType: v.union(
+      v.literal("payroll_accrual"),
+      v.literal("payroll_payment"),
+      v.literal("payroll_adjustment"),
+      v.literal("payroll_reversal"),
+      v.literal("manual"),
+    ),
+    status: v.union(v.literal("posted"), v.literal("reversed")),
+    description: v.string(),
+    effectiveAt: v.number(),
+    postedBy: v.id("users"),
+    reversalOf: v.optional(v.id("accountingJournalEntries")),
+    reversedBy: v.optional(v.id("users")),
+    reversedAt: v.optional(v.number()),
+    reason: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_source_key", ["organizationId", "sourceType", "sourceKey"])
+    .index("by_source", ["organizationId", "sourceType", "sourceId"])
+    .index("by_organization_effective", ["organizationId", "effectiveAt"]),
+
+  accountingJournalLines: defineTable({
+    organizationId: v.id("organizations"),
+    journalEntryId: v.id("accountingJournalEntries"),
+    accountCode: v.string(),
+    accountName: v.string(),
+    debit: v.number(),
+    credit: v.number(),
+    employeeId: v.optional(v.id("employees")),
+    metadata: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_entry", ["journalEntryId"])
+    .index("by_organization_account", ["organizationId", "accountCode"]),
 
   // Assets
   assets: defineTable({

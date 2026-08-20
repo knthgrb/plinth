@@ -14,6 +14,11 @@ describe("alumni access workflow", () => {
     expect(payrollSource).toContain(
       "status !== \"finalized\" && status !== \"paid\"",
     );
+    const serviceSource = readSource("../services/payroll-service.ts");
+    expect(serviceSource).toContain("getPayslipPdfContext");
+    expect(serviceSource).not.toMatch(
+      /getPayslipPdfForDownload[\s\S]*getPayrollFinalizePayslipRecipients[\s\S]*getEmployeePayslips/,
+    );
   });
 
   it("separates active and past organizations in visible switchers", () => {

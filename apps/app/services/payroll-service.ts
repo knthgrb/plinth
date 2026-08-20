@@ -207,22 +207,21 @@ export class PayrollService {
       throw new Error("Could not load employee data for this payslip.");
     }
     const convex = await getAuthedConvexClient();
-    const finalizeCtx = await (convex.query as any)(
-      (api as any).payroll.getPayrollFinalizePayslipRecipients,
-      { payrollRunId: payslip.payrollRunId as Id<"payrollRuns"> },
-    );
-    if (!finalizeCtx) {
+    const pdfContext = await convex.query(api.payroll.getPayslipPdfContext, {
+      payslipId: payslipId as Id<"payslips">,
+    });
+    if (!pdfContext) {
       throw new Error("Could not load payroll details for this payslip.");
     }
     const pdf = await renderPayslipPdfBuffer({
       payslip,
       employee: payslip.employee,
-      organizationName: finalizeCtx.organizationName,
-      cutoffStart: finalizeCtx.cutoffStart,
-      cutoffEnd: finalizeCtx.cutoffEnd,
-      paySchedule: finalizeCtx.paySchedule,
+      organizationName: pdfContext.organizationName,
+      cutoffStart: pdfContext.cutoffStart,
+      cutoffEnd: pdfContext.cutoffEnd,
+      paySchedule: pdfContext.paySchedule,
     });
-    const safePeriod = `${formatManilaShortDate(finalizeCtx.cutoffStart)}-${formatManilaShortDate(finalizeCtx.cutoffEnd)}`
+    const safePeriod = `${formatManilaShortDate(pdfContext.cutoffStart)}-${formatManilaShortDate(pdfContext.cutoffEnd)}`
       .replace(/[^a-zA-Z0-9-_]+/g, "_")
       .slice(0, 48);
     const empIdRaw =
@@ -469,16 +468,26 @@ export class PayrollService {
 
   static async updatePayrollRunStatus(
     payrollRunId: string,
-    status: "draft" | "finalized" | "paid" | "archived" | "cancelled"
+    status: "draft" | "finalized" | "paid" | "voided" | "cancelled",
+    reason?: string,
   ) {
     const convex = await getAuthedConvexClient();
-    return await (convex.mutation as any)(
-      (api as any).payroll.updatePayrollRunStatus,
-      {
-        payrollRunId: payrollRunId as Id<"payrollRuns">,
-        status,
-      }
-    );
+    return await convex.mutation(api.payroll.updatePayrollRunStatus, {
+      payrollRunId: payrollRunId as Id<"payrollRuns">,
+      status,
+      reason,
+    });
+  }
+
+  static async setPayrollRunArchived(
+    payrollRunId: string,
+    archived: boolean,
+  ) {
+    const convex = await getAuthedConvexClient();
+    return await convex.mutation(api.payroll.setPayrollRunArchived, {
+      payrollRunId: payrollRunId as Id<"payrollRuns">,
+      archived,
+    });
   }
 
   static async markPayrollRunOverrideReviewComplete(payrollRunId: string) {

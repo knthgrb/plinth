@@ -1,12 +1,26 @@
 {
-  "tableCount": 97,
+  "tableCount": 100,
   "tables": [
     {
       "name": "accountingCostItems",
-      "fieldCount": 32,
-      "fieldsSha256": "659b1ba1f012ef0f3e87612c024cbdd512bdd9bdec4c91939bade39ec5c588d3",
-      "indexCount": 5,
-      "indexesSha256": "1307227f9448c1f9e63a3aa55594f01148271d47b3d983ee015e044d4bc4e1da"
+      "fieldCount": 33,
+      "fieldsSha256": "2bbd4884876a7788717275f39a380c7c9769a4f842f93d1063bfa6b84e6c3f0d",
+      "indexCount": 6,
+      "indexesSha256": "2433ebf663fac0fc27ecf492fa0dc2ce4690a7ca79581ba4708e0bd769f4f098"
+    },
+    {
+      "name": "accountingJournalEntries",
+      "fieldCount": 15,
+      "fieldsSha256": "34d4c47280aff2caaf4d3aa92c8f171587e7ba8f3e98baa1bcc5697fad4bbb0f",
+      "indexCount": 3,
+      "indexesSha256": "5b627c4f55216598a73f9838298ee766074e47ed55203f4b35b517fa7734eceb"
+    },
+    {
+      "name": "accountingJournalLines",
+      "fieldCount": 9,
+      "fieldsSha256": "2674cc97ca409b7355facb7fdc0100269bc6f681f400110d41ccbf13136832ab",
+      "indexCount": 2,
+      "indexesSha256": "8d3fa065c48037df490e0c512ab1b163e5e4274beadb09204fb78bf8186c0012"
     },
     {
       "name": "announcementComments",
@@ -499,6 +513,13 @@
       "indexesSha256": "f3d2b0ae98ddcb96be9ad5797e89ff3857b06499ad76aca23b5fdfadb36eac9d"
     },
     {
+      "name": "operationalEvents",
+      "fieldCount": 21,
+      "fieldsSha256": "141683c7e0af5bf4d522bc29891fc08b75edefc555617ee9458e1dd4a15b3d8a",
+      "indexCount": 5,
+      "indexesSha256": "f83773d90b0579a31735764b483c0fd3c31352e6d2c600e80602ace3f9f60fe8"
+    },
+    {
       "name": "organizationAttendanceSettings",
       "fieldCount": 20,
       "fieldsSha256": "48e940e428637f966a110a796050adefb9816fcf5b7d69b6b196fba83ff90090",
@@ -570,15 +591,15 @@
     },
     {
       "name": "payrollRuns",
-      "fieldCount": 75,
-      "fieldsSha256": "1f1e5ee519862c366cccf2b11fae1d321d5046ea5c6ef317bb4a80ebf9b99c03",
+      "fieldCount": 88,
+      "fieldsSha256": "a943ee91c474fa6f1032b49d5223f8c41821a82e3fcd87f7bbeb8523acfdeaf5",
       "indexCount": 5,
       "indexesSha256": "74bec7e53ab90b506f6723bdaa50893f9a32196dcacef04420e6581bc79a0613"
     },
     {
       "name": "payslipCorrections",
-      "fieldCount": 19,
-      "fieldsSha256": "85d203ea0ccbe2026e69ee37e4aeb52c3830091f797919101d6362508dc4fb64",
+      "fieldCount": 24,
+      "fieldsSha256": "db36d2bd53c930224004c6d356c558b09bb6018c98d1f794923ad8c84c47b7c3",
       "indexCount": 3,
       "indexesSha256": "6ed8d3fc865ae0f506effe8150372b949d0445a35823a4a07457d2172b9ec3c3"
     },

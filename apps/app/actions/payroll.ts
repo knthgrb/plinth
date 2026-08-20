@@ -179,17 +179,38 @@ export async function sendPendingPayslipCorrectionsInChat(
 }
 
 export type UpdatePayrollRunStatusResult =
-  | { ok: true; data: { success: true } }
+  | { ok: true; data: { success: boolean; changed: boolean } }
   | { ok: false; error: string };
 
 export async function updatePayrollRunStatus(
   payrollRunId: string,
-  status: "draft" | "finalized" | "paid" | "archived" | "cancelled",
+  status: "draft" | "finalized" | "paid" | "voided" | "cancelled",
+  reason?: string,
 ): Promise<UpdatePayrollRunStatusResult> {
   try {
     const data = await PayrollService.updatePayrollRunStatus(
       payrollRunId,
       status,
+      reason,
+    );
+    return { ok: true, data };
+  } catch (e: unknown) {
+    return { ok: false, error: getConvexUserFacingMessage(e) };
+  }
+}
+
+export type SetPayrollRunArchivedResult =
+  | { ok: true; data: { success: boolean; changed: boolean } }
+  | { ok: false; error: string };
+
+export async function setPayrollRunArchived(
+  payrollRunId: string,
+  archived: boolean,
+): Promise<SetPayrollRunArchivedResult> {
+  try {
+    const data = await PayrollService.setPayrollRunArchived(
+      payrollRunId,
+      archived,
     );
     return { ok: true, data };
   } catch (e: unknown) {

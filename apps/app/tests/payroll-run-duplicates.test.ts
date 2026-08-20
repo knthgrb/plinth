@@ -15,7 +15,8 @@ describe("payroll run duplicate period guard", () => {
     expect(source).toContain("(existingRun.runType ?? \"regular\") === runType");
     expect(source).toContain("existingRun._id !== args.excludePayrollRunId");
     expect(source).toContain("existingRun.status !== \"cancelled\"");
-    expect(source).toContain("existingRun.status !== \"archived\"");
+    expect(source).toContain("existingRun.status !== \"voided\"");
+    expect(source).not.toContain("existingRun.status !== \"archived\"");
     expect(source).toContain("excludePayrollRunId: args.payrollRunId");
     expect(source).toContain(
       "A payroll run already exists for this cutoff period.",

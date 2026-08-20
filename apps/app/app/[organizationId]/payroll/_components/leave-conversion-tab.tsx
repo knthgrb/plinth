@@ -33,17 +33,25 @@ import { Plus, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { createLeaveConversionRun } from "@/actions/payroll";
 import { getActivePayrollEmployeeIds } from "@/utils/payroll-employee-filters";
-import { PayrollRunsTable } from "./payroll-runs-table";
+import {
+  PayrollRunsTable,
+  type PayrollRunListItem,
+} from "./payroll-runs-table";
 
 interface LeaveConversionTabProps {
   organizationId: string;
-  payrollRuns: any[];
+  payrollRuns: PayrollRunListItem[];
   onLoadPayrollRuns: () => void;
-  onViewSummary: (run: any) => void;
-  onViewPayslips: (run: any) => void;
-  onEdit: (run: any) => void;
-  onStatusChange: (run: any, status: string) => void;
-  onDelete: (run: any) => void;
+  onViewSummary: (run: PayrollRunListItem) => void;
+  onViewPayslips: (run: PayrollRunListItem) => void;
+  onEdit: (run: PayrollRunListItem) => void;
+  onStatusChange: (run: PayrollRunListItem, status: string) => void;
+  onArchive?: (
+    run: PayrollRunListItem,
+    archived: boolean,
+  ) => void | Promise<void>;
+  onVoid?: (run: PayrollRunListItem) => void;
+  onDelete: (run: PayrollRunListItem) => void;
   canDeletePayrollRuns?: boolean;
 }
 
@@ -55,6 +63,8 @@ export function LeaveConversionTab({
   onViewPayslips,
   onEdit,
   onStatusChange,
+  onArchive,
+  onVoid,
   onDelete,
   canDeletePayrollRuns = true,
 }: LeaveConversionTabProps) {
@@ -90,11 +100,11 @@ export function LeaveConversionTab({
   );
 
   const leaveConversionRuns = payrollRuns.filter(
-    (r: any) => (r.runType ?? "regular") === "leave_conversion",
+    (run) => (run.runType ?? "regular") === "leave_conversion",
   );
 
   const filteredRuns = leaveConversionRuns.filter(
-    (r: any) => r.year === selectedYear || !r.year,
+    (run) => run.year === selectedYear || !run.year,
   );
 
   const toggleEmployee = (employeeId: string) => {
@@ -243,9 +253,7 @@ export function LeaveConversionTab({
                           <TableHead className="text-right">
                             Daily Rate
                           </TableHead>
-                          <TableHead className="text-right">
-                            Amount
-                          </TableHead>
+                          <TableHead className="text-right">Amount</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -275,8 +283,7 @@ export function LeaveConversionTab({
                               row.employee?.personalInfo?.lastName
                                 ? `${row.employee.personalInfo.firstName} ${row.employee.personalInfo.lastName}`
                                 : "Employee";
-                            const isDisabled =
-                              row.leaveConversionAmount <= 0;
+                            const isDisabled = row.leaveConversionAmount <= 0;
                             return (
                               <TableRow key={row.employeeId}>
                                 <TableCell>
@@ -357,7 +364,9 @@ export function LeaveConversionTab({
         <CardContent>
           {filteredRuns.length === 0 ? (
             <div className="text-center py-12 text-gray-500">
-              <p className="mb-2">No leave conversion runs for {selectedYear}</p>
+              <p className="mb-2">
+                No leave conversion runs for {selectedYear}
+              </p>
               <p className="text-sm">
                 Click &quot;Generate Leave Conversion&quot; to create a run.
               </p>
@@ -369,6 +378,8 @@ export function LeaveConversionTab({
               onViewPayslips={onViewPayslips}
               onEdit={onEdit}
               onStatusChange={onStatusChange}
+              onArchive={onArchive}
+              onVoid={onVoid}
               onDelete={onDelete}
               canDeletePayrollRuns={canDeletePayrollRuns}
             />
