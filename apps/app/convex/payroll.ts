@@ -61,6 +61,7 @@ import {
   getMonthlyBasicForTax,
   getWithholdingTaxCutoffForEmployee,
   mergeWithholdingTaxDeductionLine,
+  removeWithholdingTaxOverrideLines,
 } from "@/lib/ph-withholding-tax";
 import {
   computeSupplementalWithholdingTaxForSpecialBenefit,
@@ -88,9 +89,12 @@ import {
   assertFinalSettlementTransition,
   buildSeparationKey,
   buildFinalSettlementPayrollDeductions,
+  getLegacyFinalSettlementSeparationType,
   isFinalSettlementClearanceAndLoansResolved,
   isFinalSettlementReadyForPayroll,
+  resolveFinalSettlementSeparationType,
 } from "@/utils/final-settlement";
+import { normalizeSeparationType } from "@/utils/employment-lifecycle";
 import {
   assertPayrollRunStatusTransition,
   reconcileFinalPayBasicPay,
@@ -1865,10 +1869,12 @@ function normalizeDraftPayslipOverrideForConfig(
     employeeId: override.employeeId,
     deductions:
       override.deductions && override.deductions.length > 0
-        ? override.deductions.map(toDraftDeductionOverrideLine)
+        ? removeWithholdingTaxOverrideLines(
+            override.deductions.map(toDraftDeductionOverrideLine),
+          )
         : undefined,
     incentives:
-      override.incentives && override.incentives.length > 0
+      override.incentives !== undefined
         ? override.incentives.map(toDraftIncentiveOverrideLine)
         : undefined,
     nonTaxableAllowance:
@@ -1935,7 +1941,7 @@ function hasDraftPayslipOverrideContent(
 ): boolean {
   return (
     (override.deductions?.length ?? 0) > 0 ||
-    (override.incentives?.length ?? 0) > 0 ||
+    override.incentives !== undefined ||
     override.nonTaxableAllowance !== undefined ||
     override.variableEarnings !== undefined
   );
@@ -2072,7 +2078,7 @@ function countPayslipOverrideFields(
   return (overrides ?? []).reduce((count, override) => {
     let next = count;
     if ((override.deductions?.length ?? 0) > 0) next += 1;
-    if ((override.incentives?.length ?? 0) > 0) next += 1;
+    if (override.incentives !== undefined) next += 1;
     if (override.nonTaxableAllowance !== undefined) next += 1;
     if (override.variableEarnings !== undefined) next += 1;
     return next;
@@ -2088,7 +2094,7 @@ function buildOverrideReviewFromPayslipOverrides(
       const deductionOverrideCount = override.deductions?.length ?? 0;
       const incentiveOverrideCount = override.incentives?.length ?? 0;
       if (deductionOverrideCount > 0) fields.push("deductions");
-      if (incentiveOverrideCount > 0) fields.push("additions");
+      if (override.incentives !== undefined) fields.push("additions");
       if (override.nonTaxableAllowance !== undefined) {
         fields.push("non_taxable_allowance");
       }
@@ -2207,7 +2213,7 @@ async function applyPayslipOverrideToGeneratedPayslip(
     JSON.stringify(computedEarnings) !== JSON.stringify(nextE) ||
     incentives !== args.canonical.incentives
   ) {
-    deductions = await recalcWithholdingTaxAfterVariableEarningsEdit(ctx, {
+    deductions = await recalcWithholdingTaxAfterTaxableGrossEdit(ctx, {
       payslip: {
         payrollRunId: args.payrollRunId,
         periodStart: args.cutoffStart,
@@ -2217,8 +2223,6 @@ async function applyPayslipOverrideToGeneratedPayslip(
       organizationId: args.organizationId,
       newDeductions: deductions,
       recalculatedGross: grossAndBasic.grossPay,
-      atOpen: computedEarnings,
-      nextE,
     });
   }
   deductions = applyDeductionOverrideLines(
@@ -2433,7 +2437,9 @@ async function getYtdNonTaxableIncentiveTotalForTrainCap(
     for (const inc of raw) {
       if (
         inc.taxable === false &&
-        !String(inc.name ?? "").toLowerCase().includes("de minimis") &&
+        !String(inc.name ?? "")
+          .toLowerCase()
+          .includes("de minimis") &&
         !String(inc.name ?? "")
           .toLowerCase()
           .includes("withholding tax refund")
@@ -2613,8 +2619,7 @@ async function buildSpecialBenefitPayslipParts(
 
   return {
     taxableAmount: split.taxable,
-    nonTaxableAmount:
-      split.exempt + (leaveSplit?.deMinimisExempt ?? 0),
+    nonTaxableAmount: split.exempt + (leaveSplit?.deMinimisExempt ?? 0),
     deductions,
     incentives: incentives.length > 0 ? incentives : undefined,
     netPay: round2(amount - withholdingTax),
@@ -2748,9 +2753,7 @@ async function getOverlappingPaidRegularBasicPay(
     ) {
       continue;
     }
-    const run = await ctx.db.get(
-      payslip.payrollRunId as Id<"payrollRuns">,
-    );
+    const run = await ctx.db.get(payslip.payrollRunId as Id<"payrollRuns">);
     if (!run || (run.status !== "finalized" && run.status !== "paid")) continue;
     const decryptedRun = decryptPayrollRunFromDb(run);
     if ((decryptedRun.runType ?? "regular") !== "regular") continue;
@@ -2761,7 +2764,9 @@ async function getOverlappingPaidRegularBasicPay(
   return { basicPay: round2(total), periods };
 }
 
-function clearPaidPayrollBase(payrollBase: PayrollBaseResult): PayrollBaseResult {
+function clearPaidPayrollBase(
+  payrollBase: PayrollBaseResult,
+): PayrollBaseResult {
   return {
     ...payrollBase,
     basicPay: 0,
@@ -2959,13 +2964,16 @@ async function loadFinalSettlementForPayroll(
   employee: {
     employment?: {
       status?: string;
+      separationType?: string;
       lastWorkingDay?: number;
       separationDate?: number;
     };
   },
 ) {
-  const separationType =
-    employee?.employment?.status === "terminated" ? "terminated" : "resigned";
+  const separationType = resolveFinalSettlementSeparationType(
+    employee.employment?.status,
+    employee.employment?.separationType,
+  );
   const separationDate =
     employee?.employment?.lastWorkingDay ??
     employee?.employment?.separationDate;
@@ -2981,6 +2989,25 @@ async function loadFinalSettlementForPayroll(
       query.eq("employeeId", employeeId).eq("separationKey", separationKey),
     )
     .first();
+  const legacySeparationType =
+    getLegacyFinalSettlementSeparationType(separationType);
+  if (!settlement && legacySeparationType) {
+    settlement = await ctx.db
+      .query("finalSettlements")
+      .withIndex("by_employee_separation_key", (query) =>
+        query
+          .eq("employeeId", employeeId)
+          .eq(
+            "separationKey",
+            buildSeparationKey(
+              String(employeeId),
+              legacySeparationType,
+              separationDate,
+            ),
+          ),
+      )
+      .first();
+  }
   if (!settlement) {
     const legacyRows = await ctx.db
       .query("finalSettlements")
@@ -2988,7 +3015,10 @@ async function loadFinalSettlementForPayroll(
       .collect();
     settlement =
       legacyRows.find((row) => {
-        if (row.separationKey || row.separationType !== separationType) {
+        if (
+          !row.separationType ||
+          normalizeSeparationType(row.separationType) !== separationType
+        ) {
           return false;
         }
         const rowDate = row.lastWorkingDay ?? row.separationDate;
@@ -3985,7 +4015,7 @@ export const computePayrollPreviewBatch = query({
           scheduleLunchContext,
         });
 
-        let canonical = await buildCanonicalPayrollResult(ctx, {
+        const canonical = await buildCanonicalPayrollResult(ctx, {
           employeeId,
           employee,
           cutoffStart: args.cutoffStart,
@@ -4431,8 +4461,8 @@ export const createPayrollRun = mutation({
           createdAt: now,
         }) as any,
       );
-      for (const benefit of
-        payrollBase.statutoryBenefitSupportedLeaveBreakdown ?? []) {
+      for (const benefit of payrollBase.statutoryBenefitSupportedLeaveBreakdown ??
+        []) {
         await syncBenefitReconciliationPayrollAllocation(ctx, {
           organizationId: args.organizationId,
           employeeId,
@@ -4947,26 +4977,7 @@ export const updatePayrollRun = mutation({
           nonTaxableAllowanceOverride: allowanceOverrideEntry?.amount,
           suppressRecurringEmployeeLoanDeductions: !!finalSettlement,
         });
-        let finalTaxComputation: FinalTaxAdjustment | undefined;
-        if (finalSettlement) {
-          const finalTaxResult = await applyFinalTaxToCanonicalPayroll(ctx, {
-            employeeId,
-            cutoffEnd,
-            canonical,
-            preserveAppliedAdjustment:
-              (effectiveManualDeductionEntry?.deductions ?? []).some(
-                (line) => line.name.toLowerCase() === "withholding tax",
-              ) ||
-              (effectiveIncentiveEntry?.incentives ?? []).some(
-                (line) => line.name.toLowerCase() === "withholding tax refund",
-              ),
-            excludePayrollRunId: args.payrollRunId,
-          });
-          canonical = finalTaxResult.canonical;
-          finalTaxComputation = finalTaxResult.finalTaxComputation;
-        }
-
-        const generatedPayslip = await applyPayslipOverrideToGeneratedPayslip(
+        let generatedPayslip = await applyPayslipOverrideToGeneratedPayslip(
           ctx,
           {
             payrollRunId: args.payrollRunId,
@@ -4979,6 +4990,41 @@ export const updatePayrollRun = mutation({
             override: payslipOverridesByEmployee.get(String(employeeId)),
           },
         );
+        let finalTaxComputation: FinalTaxAdjustment | undefined;
+        if (finalSettlement) {
+          const overriddenTotals = recomputeNetFromEarningsAndLines(
+            generatedPayslip.grossPay,
+            generatedPayslip.nonTaxableAllowance ?? 0,
+            generatedPayslip.incentives,
+            generatedPayslip.deductions,
+          );
+          const finalTaxResult = await applyFinalTaxToCanonicalPayroll(ctx, {
+            employeeId,
+            cutoffEnd,
+            canonical: {
+              ...canonical,
+              ...generatedPayslip,
+              taxableGrossEarnings: generatedPayslip.grossPay,
+              totalEarnings: overriddenTotals.totalEarnings,
+              totalDeductions: overriddenTotals.totalDeductions,
+            },
+            preserveAppliedAdjustment:
+              (effectiveManualDeductionEntry?.deductions ?? []).some(
+                (line) => line.name.toLowerCase() === "withholding tax",
+              ) ||
+              (effectiveIncentiveEntry?.incentives ?? []).some(
+                (line) => line.name.toLowerCase() === "withholding tax refund",
+              ),
+            excludePayrollRunId: args.payrollRunId,
+          });
+          finalTaxComputation = finalTaxResult.finalTaxComputation;
+          generatedPayslip = {
+            ...generatedPayslip,
+            deductions: finalTaxResult.canonical.deductions,
+            incentives: finalTaxResult.canonical.incentives,
+            netPay: finalTaxResult.canonical.netPay,
+          };
+        }
 
         const payslipId = await ctx.db
           .insert(
@@ -5043,8 +5089,8 @@ export const updatePayrollRun = mutation({
           .catch((error: unknown) => {
             throwPayrollRunUpdateError(error);
           });
-        for (const benefit of
-          payrollBase.statutoryBenefitSupportedLeaveBreakdown ?? []) {
+        for (const benefit of payrollBase.statutoryBenefitSupportedLeaveBreakdown ??
+          []) {
           await syncBenefitReconciliationPayrollAllocation(ctx, {
             organizationId: payrollRun.organizationId,
             employeeId,
@@ -7585,8 +7631,8 @@ export const getPayslip = query({
   },
 });
 
-/** When variable earnings change, sync Withholding Tax with engine rules if tax is on for this run. */
-async function recalcWithholdingTaxAfterVariableEarningsEdit(
+/** Sync Withholding Tax with engine rules after taxable gross changes. */
+async function recalcWithholdingTaxAfterTaxableGrossEdit(
   ctx: any,
   args: {
     payslip: any;
@@ -7594,13 +7640,8 @@ async function recalcWithholdingTaxAfterVariableEarningsEdit(
     organizationId: any;
     newDeductions: { name: string; amount: number; type: string }[];
     recalculatedGross: number;
-    atOpen: VariableEarnings;
-    nextE: VariableEarnings;
   },
 ): Promise<{ name: string; amount: number; type: string }[]> {
-  if (JSON.stringify(args.atOpen) === JSON.stringify(args.nextE)) {
-    return args.newDeductions;
-  }
   if (!args.payslip.payrollRunId) {
     return args.newDeductions;
   }
@@ -7985,7 +8026,7 @@ export const updatePayslip = mutation({
         t1,
       );
       if (variableEarningsChangedForOverride) {
-        finalDeductions = (await recalcWithholdingTaxAfterVariableEarningsEdit(
+        finalDeductions = (await recalcWithholdingTaxAfterTaxableGrossEdit(
           ctx,
           {
             payslip,
@@ -7993,8 +8034,6 @@ export const updatePayslip = mutation({
             organizationId: payslip.organizationId,
             newDeductions,
             recalculatedGross: gbb.grossPay,
-            atOpen,
-            nextE,
           },
         )) as PayslipLine[];
       }

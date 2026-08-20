@@ -326,8 +326,7 @@ export function EvaluationsContent() {
                 <SelectContent>
                   <SelectItem value="active">Active employees</SelectItem>
                   <SelectItem value="all">All employees</SelectItem>
-                  <SelectItem value="resigned">Resigned</SelectItem>
-                  <SelectItem value="terminated">Terminated</SelectItem>
+                  <SelectItem value="separated">Separated</SelectItem>
                 </SelectContent>
               </Select>
               <Select
@@ -341,9 +340,7 @@ export function EvaluationsContent() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">
-                    All evaluation statuses
-                  </SelectItem>
+                  <SelectItem value="all">All evaluation statuses</SelectItem>
                   <SelectItem value="overdue">Overdue</SelectItem>
                   <SelectItem value="due_soon">Due soon</SelectItem>
                   <SelectItem value="scheduled">Scheduled later</SelectItem>

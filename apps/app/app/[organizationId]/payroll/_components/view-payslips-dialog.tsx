@@ -17,22 +17,75 @@ import {
   formatManilaShortDate,
   formatManilaShortMonthDay,
 } from "@/lib/manila-date";
+import { getPendingOverrideReviewEmployees } from "./payroll-preview-earnings-helpers";
+
+type EmployeeSummary = {
+  personalInfo?: {
+    firstName?: string;
+    lastName?: string;
+  };
+  employment?: {
+    employeeId?: string;
+    position?: string;
+  };
+};
+
+type ConcernSummary = {
+  messageCount: number;
+  lastMessageAt?: number;
+};
+
+type PayslipListItem = {
+  _id: string;
+  employeeId: string;
+  employee?: EmployeeSummary;
+  netPay?: number;
+  concernSummary?: ConcernSummary;
+};
+
+type PayslipDetailItem = PayslipListItem & Record<string, unknown>;
+
+type PayslipConcern = {
+  sender?: {
+    employeeInfo?: { name?: string };
+    name?: string;
+    email?: string;
+  };
+  createdAt: number;
+  content: string;
+};
+
+type PayrollRunSummary = {
+  _id: string;
+  cutoffStart?: number;
+  cutoffEnd?: number;
+  period?: string;
+  status?: string;
+  draftConfig?: {
+    overrideReview?: {
+      status?: "needs_review" | "reviewed";
+      employees?: OverrideReviewEmployee[];
+    };
+  };
+};
 
 interface ViewPayslipsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  selectedPayrollRun: any;
-  payslips: any[];
+  selectedPayrollRun: PayrollRunSummary | null;
+  payslips: PayslipListItem[];
   isLoadingPayslips: boolean;
-  payslipDetailsById: Record<string, any>;
+  payslipDetailsById: Record<string, PayslipDetailItem>;
   loadingPayslipDetailsById: Record<string, boolean>;
   expandedPayslipId: string | null;
-  payslipConcerns: Record<string, any[]>;
-  currentOrganization: any;
+  payslipConcerns: Record<string, PayslipConcern[]>;
+  currentOrganization: unknown;
   isAdminOrAccounting: boolean;
-  onTogglePayslip: (payslip: any) => void;
-  onEditPayslip: (payslip: any) => void;
-  onMarkOverrideReviewComplete?: (payrollRun: any) => void | Promise<void>;
+  onTogglePayslip: (payslip: PayslipListItem) => void;
+  onEditPayslip: (payslip: PayslipDetailItem) => void;
+  onMarkOverrideReviewComplete?: (
+    payrollRun: PayrollRunSummary,
+  ) => void | Promise<void>;
   markingOverrideReviewRunId?: string | null;
 }
 
@@ -73,11 +126,10 @@ export function ViewPayslipsDialog({
       ? `${formatManilaShortMonthDay(selectedPayrollRun.cutoffStart)} to ${formatManilaShortDate(selectedPayrollRun.cutoffEnd)}`
       : selectedPayrollRun?.period;
   const overrideReview = selectedPayrollRun?.draftConfig?.overrideReview;
-  const overrideReviewEmployees = Array.isArray(overrideReview?.employees)
-    ? overrideReview.employees
-    : [];
+  const overrideReviewEmployees =
+    getPendingOverrideReviewEmployees<OverrideReviewEmployee>(overrideReview);
   const overrideReviewByEmployeeId = new Map<string, OverrideReviewEmployee>(
-    overrideReviewEmployees.map((row: any) => [
+    overrideReviewEmployees.map((row) => [
       String(row.employeeId),
       {
         employeeId: String(row.employeeId),
@@ -90,7 +142,7 @@ export function ViewPayslipsDialog({
     markingOverrideReviewRunId === selectedPayrollRun?._id;
 
   const getReviewEmployeeName = (employeeId: string): string => {
-    const row = payslips.find((p: any) => String(p.employeeId) === employeeId);
+    const row = payslips.find((p) => String(p.employeeId) === employeeId);
     const employee = row?.employee;
     const name =
       [employee?.personalInfo?.firstName, employee?.personalInfo?.lastName]
@@ -126,7 +178,7 @@ export function ViewPayslipsDialog({
                       review complete before finalizing.
                     </div>
                     <ul className="max-h-32 space-y-1 overflow-y-auto">
-                      {overrideReviewEmployees.map((row: any) => (
+                      {overrideReviewEmployees.map((row) => (
                         <li key={String(row.employeeId)}>
                           <span className="font-medium">
                             {getReviewEmployeeName(String(row.employeeId))}
@@ -139,7 +191,7 @@ export function ViewPayslipsDialog({
                       ))}
                     </ul>
                   </div>
-                  {onMarkOverrideReviewComplete && (
+                  {onMarkOverrideReviewComplete && selectedPayrollRun && (
                     <Button
                       type="button"
                       size="sm"
@@ -165,7 +217,7 @@ export function ViewPayslipsDialog({
                 No payslips found for this payroll run
               </div>
             ) : (
-              payslips.map((payslip: any) => {
+              payslips.map((payslip) => {
                 const detail = payslipDetailsById[payslip._id];
                 const isExpanded = expandedPayslipId === payslip._id;
                 const isLoadingDetail = loadingPayslipDetailsById[payslip._id];
@@ -277,7 +329,7 @@ export function ViewPayslipsDialog({
                                 <CardContent>
                                   <div className="space-y-3">
                                     {concerns.map(
-                                      (message: any, msgIdx: number) => (
+                                      (message, msgIdx) => (
                                         <div
                                           key={msgIdx}
                                           className="text-sm space-y-1 border-l-2 border-yellow-400 pl-3"

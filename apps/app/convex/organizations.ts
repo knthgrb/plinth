@@ -13,6 +13,7 @@ import { runOrgQuery } from "./queryAuthGrace";
 import {
   canRemoveOrganizationMember,
   canUpdateOrganizationMemberRole,
+  normalizeOrganizationRole,
 } from "@/utils/organization-roles";
 import {
   canUseAlumniPayslipAccess,
@@ -34,12 +35,39 @@ import {
   replaceEmployeeRequirements,
 } from "./leaveEmployeeCompatibility";
 import { isRequirementApplicable } from "@/lib/requirements/workflow";
-import { findUserByEmail, normalizeUserEmail } from "./userEmail";
+import {
+  assertUserEmailAvailable,
+  findUserByEmail,
+  normalizeUserEmail,
+} from "./userEmail";
 import {
   cancelPendingEmployeeInvitations,
   ensureEmployeeLifecycleBaseline,
   recordEmployeeLifecycleEvent,
 } from "./employeeLifecycle";
+import { isEmployeeSeparated } from "@/utils/employment-lifecycle";
+
+const separationTypeValidator = v.union(
+  v.literal("resignation"),
+  v.literal("termination"),
+  v.literal("job_abandonment"),
+  v.literal("end_of_contract"),
+  v.literal("retirement"),
+  v.literal("redundancy"),
+  v.literal("mutual_separation"),
+  v.literal("death"),
+  v.literal("transfer"),
+  v.literal("other"),
+);
+
+const organizationRoleValidator = v.union(
+  v.literal("admin"),
+  v.literal("owner"),
+  v.literal("hr"),
+  v.literal("manager"),
+  v.literal("employee"),
+  v.literal("accounting"),
+);
 
 const defaultRequirementValidator = v.object({
   type: v.string(),
@@ -178,6 +206,7 @@ export const ensureUserRecord = mutation({
 
     if (!userRecord) {
       const now = Date.now();
+      await assertUserEmailAvailable(ctx, user.email);
       const userId = await ctx.db.insert("users", {
         email: user.email,
         normalizedEmail: normalizeUserEmail(user.email),
@@ -190,6 +219,7 @@ export const ensureUserRecord = mutation({
       userRecord.email !== user.email ||
       userRecord.normalizedEmail !== normalizeUserEmail(user.email)
     ) {
+      await assertUserEmailAvailable(ctx, user.email, userRecord._id);
       await ctx.db.patch(userRecord._id, {
         email: user.email,
         normalizedEmail: normalizeUserEmail(user.email),
@@ -210,6 +240,7 @@ async function getOrCreateUserRecord(ctx: MutationCtx): Promise<Doc<"users">> {
 
   if (!userRecord) {
     const now = Date.now();
+    await assertUserEmailAvailable(ctx, user.email);
     const userId = await ctx.db.insert("users", {
       email: user.email,
       normalizedEmail: normalizeUserEmail(user.email),
@@ -222,6 +253,7 @@ async function getOrCreateUserRecord(ctx: MutationCtx): Promise<Doc<"users">> {
     userRecord.email !== user.email ||
     userRecord.normalizedEmail !== normalizeUserEmail(user.email)
   ) {
+    await assertUserEmailAvailable(ctx, user.email, userRecord._id);
     await ctx.db.patch(userRecord._id, {
       email: user.email,
       normalizedEmail: normalizeUserEmail(user.email),
@@ -418,7 +450,8 @@ export const getArchivedUserOrganizations = query({
           accessStatus,
           role: membership.role,
           joinedAt: membership.joinedAt,
-          lastAccessChangeAt: membership.accessUpdatedAt ?? membership.updatedAt,
+          lastAccessChangeAt:
+            membership.accessUpdatedAt ?? membership.updatedAt,
         };
       }),
     );
@@ -731,6 +764,7 @@ export const getOrganization = query({
 export const getOrganizationMembers = query({
   args: {
     organizationId: v.id("organizations"),
+    includeInactive: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     await requireActiveMembership(ctx, args.organizationId);
@@ -746,7 +780,10 @@ export const getOrganizationMembers = query({
     // Fetch user details
     const members = await Promise.all(
       userOrgs.map(async (userOrg) => {
-        if (!canUseFullOrganizationAccess(userOrg.accessStatus)) {
+        if (
+          !args.includeInactive &&
+          !canUseFullOrganizationAccess(userOrg.accessStatus)
+        ) {
           return null;
         }
         const user = await ctx.db.get(userOrg.userId);
@@ -767,16 +804,137 @@ export const getOrganizationMembers = query({
   },
 });
 
-// Remove user from organization
+export const suspendOrganizationMember = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    userId: v.id("users"),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { user, membership } = await requireActiveMembership(
+      ctx,
+      args.organizationId,
+    );
+    const actorRole = normalizeOrganizationRole(membership.role);
+    if (actorRole !== "owner" && actorRole !== "admin") {
+      throw new Error("Only owners and admins can suspend member access");
+    }
+    const reason = args.reason.trim();
+    if (!reason) throw new Error("Suspension reason is required");
+    const targetMembership = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_user_organization", (query) =>
+        query
+          .eq("userId", args.userId)
+          .eq("organizationId", args.organizationId),
+      )
+      .unique();
+    if (!targetMembership)
+      throw new Error("User is not a member of this organization");
+    const ownerCount = await countOrganizationOwners(ctx, args.organizationId);
+    const decision = canRemoveOrganizationMember({
+      actorRole: membership.role,
+      targetRole: targetMembership.role,
+      isSelf: user._id === args.userId,
+      ownerCount,
+    });
+    if (!decision.allowed) throw new Error(decision.reason);
+    const targetStatus = normalizeOrgMembershipAccessStatus(
+      targetMembership.accessStatus,
+    );
+    if (targetStatus === "removed") {
+      throw new Error("Removed members must rejoin through an invitation");
+    }
+    if (targetStatus !== "active") {
+      throw new Error("Only active memberships can be suspended");
+    }
+    const now = Date.now();
+    await ctx.db.patch(targetMembership._id, {
+      accessStatus: "suspended",
+      accessChangeReason: reason,
+      accessUpdatedAt: now,
+      accessUpdatedBy: user._id,
+      updatedAt: now,
+    });
+    return { success: true };
+  },
+});
+
+export const restoreOrganizationMemberAccess = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    userId: v.id("users"),
+    role: v.optional(organizationRoleValidator),
+  },
+  handler: async (ctx, args) => {
+    const { user, membership } = await requireActiveMembership(
+      ctx,
+      args.organizationId,
+    );
+    const actorRole = normalizeOrganizationRole(membership.role);
+    if (actorRole !== "owner" && actorRole !== "admin") {
+      throw new Error("Only owners and admins can restore member access");
+    }
+    const targetMembership = await ctx.db
+      .query("userOrganizations")
+      .withIndex("by_user_organization", (query) =>
+        query
+          .eq("userId", args.userId)
+          .eq("organizationId", args.organizationId),
+      )
+      .unique();
+    if (!targetMembership)
+      throw new Error("User is not a member of this organization");
+    if (
+      normalizeOrgMembershipAccessStatus(targetMembership.accessStatus) !==
+      "suspended"
+    ) {
+      throw new Error("Only suspended memberships can have access restored");
+    }
+    const nextRole = args.role ?? targetMembership.role;
+    const roleDecision = canUpdateOrganizationMemberRole({
+      actorRole: membership.role,
+      targetRole: targetMembership.role,
+      nextRole,
+      isSelf: user._id === args.userId,
+      ownerCount: await countOrganizationOwners(ctx, args.organizationId),
+    });
+    if (!roleDecision.allowed) throw new Error(roleDecision.reason);
+
+    let accessStatus: "active" | "alumni" = "active";
+    if (targetMembership.employeeId) {
+      const employee = await ctx.db.get(targetMembership.employeeId);
+      if (!employee || employee.organizationId !== args.organizationId) {
+        throw new Error("Linked employee record not found");
+      }
+      accessStatus = isEmployeeSeparated(employee.employment.status)
+        ? "alumni"
+        : "active";
+    }
+    const now = Date.now();
+    await ctx.db.patch(targetMembership._id, {
+      role: nextRole,
+      accessStatus,
+      accessChangeReason: undefined,
+      accessUpdatedAt: now,
+      accessUpdatedBy: user._id,
+      updatedAt: now,
+    });
+    return { success: true, accessStatus };
+  },
+});
+
+// End membership or employment while preserving account and audit history.
 export const removeUserFromOrganization = mutation({
   args: {
     organizationId: v.id("organizations"),
     userId: v.id("users"),
     separation: v.optional(
       v.object({
-        type: v.union(v.literal("resigned"), v.literal("terminated")),
+        type: separationTypeValidator,
         effectiveAt: v.number(),
         reason: v.optional(v.string()),
+        notes: v.optional(v.string()),
       }),
     ),
   },
@@ -826,13 +984,18 @@ export const removeUserFromOrganization = mutation({
 
     const now = Date.now();
     if (!targetUserOrg.employeeId) {
-      await ctx.db.delete(targetUserOrg._id);
-      return { success: true, outcome: "deleted" as const };
+      await ctx.db.patch(targetUserOrg._id, {
+        accessStatus: "removed",
+        accessUpdatedAt: now,
+        accessUpdatedBy: user._id,
+        updatedAt: now,
+      });
+      return { success: true, outcome: "removed" as const };
     }
 
     if (!args.separation) {
       throw new Error(
-        "Choose resigned or terminated before removing a linked employee",
+        "Choose a separation category before removing a linked employee",
       );
     }
 
@@ -840,7 +1003,7 @@ export const removeUserFromOrganization = mutation({
     if (!employee || employee.organizationId !== args.organizationId) {
       throw new Error("Linked employee record not found");
     }
-    if (employee.employment.status !== "active") {
+    if (isEmployeeSeparated(employee.employment.status)) {
       throw new Error("Employee has already been separated");
     }
     if (args.separation.effectiveAt < employee.employment.hireDate) {
@@ -852,10 +1015,12 @@ export const removeUserFromOrganization = mutation({
     await ctx.db.patch(employee._id, {
       employment: {
         ...employee.employment,
-        status: args.separation.type,
+        status: "separated",
+        separationType: args.separation.type,
         separationDate: args.separation.effectiveAt,
         lastWorkingDay: args.separation.effectiveAt,
         separationReason: args.separation.reason,
+        separationNotes: args.separation.notes,
       },
       updatedAt: now,
     });
@@ -863,7 +1028,8 @@ export const removeUserFromOrganization = mutation({
     await recordEmployeeLifecycleEvent(ctx, {
       organizationId: employee.organizationId,
       employeeId: employee._id,
-      type: args.separation.type,
+      type: "separated",
+      separationType: args.separation.type,
       effectiveAt: args.separation.effectiveAt,
       employment: {
         ...employee.employment,

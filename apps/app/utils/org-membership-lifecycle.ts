@@ -1,5 +1,6 @@
 export type EmploymentLifecycleStatus =
   | "active"
+  | "separated"
   | "resigned"
   | "terminated";
 
@@ -7,14 +8,12 @@ export type OrgMembershipAccessStatus =
   | "active"
   | "suspended"
   | "alumni"
-  | "disabled"
   | "removed";
 
 const ACCESS_STATUSES: OrgMembershipAccessStatus[] = [
   "active",
   "suspended",
   "alumni",
-  "disabled",
   "removed",
 ];
 
@@ -23,6 +22,7 @@ export function normalizeOrgMembershipAccessStatus(
 ): OrgMembershipAccessStatus {
   if (!status) return "active";
   const normalized = status.toLowerCase();
+  if (normalized === "disabled") return "suspended";
   return ACCESS_STATUSES.includes(normalized as OrgMembershipAccessStatus)
     ? (normalized as OrgMembershipAccessStatus)
     : "suspended";
@@ -58,8 +58,12 @@ export function selectPreferredOrganizationForEntry<
 >(organizations: T[] | null | undefined): T | null {
   if (!organizations || organizations.length === 0) return null;
   return (
-    organizations.find((org) => hasActiveOrganizationAccess(org.accessStatus)) ??
-    organizations.find((org) => hasAlumniOrganizationAccess(org.accessStatus)) ??
+    organizations.find((org) =>
+      hasActiveOrganizationAccess(org.accessStatus),
+    ) ??
+    organizations.find((org) =>
+      hasAlumniOrganizationAccess(org.accessStatus),
+    ) ??
     organizations[0]
   );
 }
@@ -74,7 +78,7 @@ export function deriveAccessStatusForEmploymentStatus(
 export function deriveAccessStatusForEmployeeArchive(
   status: EmploymentLifecycleStatus,
 ): OrgMembershipAccessStatus {
-  return status === "active" ? "disabled" : "alumni";
+  return status === "active" ? "suspended" : "alumni";
 }
 
 export function resolveMembershipAccessStatusForEmployeeSync(
@@ -82,7 +86,9 @@ export function resolveMembershipAccessStatusForEmployeeSync(
   derivedStatus: OrgMembershipAccessStatus,
 ): OrgMembershipAccessStatus {
   const currentAccessStatus = normalizeOrgMembershipAccessStatus(currentStatus);
-  return currentAccessStatus === "removed" || currentAccessStatus === "disabled"
-    ? currentAccessStatus
-    : derivedStatus;
+  if (currentAccessStatus === "removed") return "removed";
+  if (currentAccessStatus === "suspended" && derivedStatus === "active") {
+    return "suspended";
+  }
+  return derivedStatus;
 }

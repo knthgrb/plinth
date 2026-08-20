@@ -117,6 +117,8 @@ export async function rehireEmployee(data: {
   position: string;
   department: string;
   employmentType: "regular" | "probationary" | "contractual" | "part-time";
+  restoreAccess: boolean;
+  role?: OrganizationRole;
 }) {
   return EmployeesService.rehireEmployee(data);
 }

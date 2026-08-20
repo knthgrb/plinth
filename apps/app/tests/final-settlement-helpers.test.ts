@@ -8,6 +8,7 @@ import {
   createDefaultFinalSettlementChecklist,
   createLoanPayoffsFromEmployeeDeductions,
   isFinalSettlementReadyForPayroll,
+  resolveFinalSettlementSeparationType,
   validateFinalTaxReview,
 } from "../utils/final-settlement";
 
@@ -110,11 +111,25 @@ describe("final settlement helpers", () => {
     );
   });
 
+  it("normalizes employee separation categories for final settlement identity", () => {
+    expect(
+      resolveFinalSettlementSeparationType("separated", "termination"),
+    ).toBe("termination");
+    expect(
+      resolveFinalSettlementSeparationType("separated", "job_abandonment"),
+    ).toBe("job_abandonment");
+    expect(resolveFinalSettlementSeparationType("resigned")).toBe(
+      "resignation",
+    );
+  });
+
   it("locks generated settlements and rejects invalid lifecycle transitions", () => {
     expect(() => assertFinalSettlementEditable("payroll_generated")).toThrow(
       "cannot be edited",
     );
-    expect(() => assertFinalSettlementEditable("ready_for_payroll")).not.toThrow();
+    expect(() =>
+      assertFinalSettlementEditable("ready_for_payroll"),
+    ).not.toThrow();
     expect(() =>
       assertFinalSettlementTransition("released", "ready_for_payroll"),
     ).toThrow("cannot transition");

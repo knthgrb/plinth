@@ -12,7 +12,7 @@ export type InviteRecipientPreview = {
   existingConvexUser: { name: string | null; email: string } | null;
   alreadyInOrg: boolean;
   needsConfirmForExistingUser: boolean;
-  employeeWillBeRenamedToMatchAccount: boolean;
+  employeeNameDiffersFromAccount: boolean;
   employeeCurrentDisplayName?: string;
 };
 

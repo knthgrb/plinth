@@ -57,7 +57,7 @@ export type EmployeeTableRow = {
   employment: {
     position: string;
     department: string;
-    status: "active" | "resigned" | "terminated";
+    status: "active" | "separated" | "resigned" | "terminated";
   };
   createdAt?: number;
 };
@@ -95,9 +95,7 @@ export function EmployeesTable({
               <TableHeader>
                 <TableRow className="h-9">
                   {visibleColumns.includes("name") && (
-                    <TableHead className="min-w-[150px] py-1.5">
-                      Name
-                    </TableHead>
+                    <TableHead className="min-w-[150px] py-1.5">Name</TableHead>
                   )}
                   {visibleColumns.includes("email") && (
                     <TableHead className="min-w-[180px] hidden sm:table-cell py-1.5">

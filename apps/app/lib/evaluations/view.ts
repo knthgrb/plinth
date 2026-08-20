@@ -4,6 +4,7 @@ import {
   type EvaluationStatus,
   type EvaluationTiming,
 } from "./workflow";
+import { normalizeEmploymentStatus } from "@/utils/employment-lifecycle";
 
 export type EvaluationEmployeeListItem = {
   id: string;
@@ -19,13 +20,11 @@ export type EvaluationEmployeeListItem = {
   hasCompleted?: boolean;
 };
 
-export type EvaluationTimingFilter =
-  | "all"
-  | EvaluationTiming
-  | "not_scheduled";
+export type EvaluationTimingFilter = "all" | EvaluationTiming | "not_scheduled";
 
 export type EvaluationEmploymentStatus =
   | "active"
+  | "separated"
   | "resigned"
   | "terminated";
 
@@ -59,7 +58,9 @@ export function filterEvaluationEmployees<T extends EvaluationEmployeeListItem>(
       filters.department === "all" || row.department === filters.department;
     const matchesEmploymentStatus =
       filters.employmentStatus === "all" ||
-      row.employmentStatus === filters.employmentStatus;
+      (filters.employmentStatus === "separated"
+        ? normalizeEmploymentStatus(row.employmentStatus) === "separated"
+        : row.employmentStatus === filters.employmentStatus);
     let matchesTiming = filters.timing === "all";
 
     if (filters.timing === "not_scheduled") {

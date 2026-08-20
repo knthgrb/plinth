@@ -12,6 +12,7 @@ import { canAccessRoute } from "@/utils/role-access";
 describe("organization membership lifecycle", () => {
   it("maps employment status to org-scoped access status", () => {
     expect(deriveAccessStatusForEmploymentStatus("active")).toBe("active");
+    expect(deriveAccessStatusForEmploymentStatus("separated")).toBe("alumni");
     expect(deriveAccessStatusForEmploymentStatus("resigned")).toBe("alumni");
     expect(deriveAccessStatusForEmploymentStatus("terminated")).toBe("alumni");
   });
@@ -19,13 +20,24 @@ describe("organization membership lifecycle", () => {
   it("preserves alumni history when separated employee records are archived", () => {
     expect(deriveAccessStatusForEmployeeArchive("resigned")).toBe("alumni");
     expect(deriveAccessStatusForEmployeeArchive("terminated")).toBe("alumni");
-    expect(deriveAccessStatusForEmployeeArchive("active")).toBe("disabled");
+    expect(deriveAccessStatusForEmployeeArchive("separated")).toBe("alumni");
+    expect(deriveAccessStatusForEmployeeArchive("active")).toBe("suspended");
   });
 
-  it("preserves security-disabled membership during employee synchronization", () => {
+  it("normalizes legacy disabled memberships to suspended", () => {
+    expect(normalizeOrgMembershipAccessStatus("disabled")).toBe("suspended");
     expect(
       resolveMembershipAccessStatusForEmployeeSync("disabled", "active"),
-    ).toBe("disabled");
+    ).toBe("suspended");
+  });
+
+  it("keeps suspension while employment is active but becomes alumni on separation", () => {
+    expect(
+      resolveMembershipAccessStatusForEmployeeSync("suspended", "active"),
+    ).toBe("suspended");
+    expect(
+      resolveMembershipAccessStatusForEmployeeSync("suspended", "alumni"),
+    ).toBe("alumni");
   });
 
   it("treats missing access status as active for migrated memberships", () => {

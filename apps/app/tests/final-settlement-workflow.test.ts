@@ -96,6 +96,39 @@ async function setupSeparatedEmployee() {
 }
 
 describe("final settlement workflow", () => {
+  it("prepares final settlement for a canonical separation event", async () => {
+    const { t, actor, organizationId, employeeId, separationEventId } =
+      await setupSeparatedEmployee();
+
+    await t.run(async (ctx) => {
+      const employee = await ctx.db.get(employeeId);
+      if (!employee) throw new Error("Employee fixture missing");
+      await ctx.db.patch(employeeId, {
+        employment: {
+          ...employee.employment,
+          status: "separated",
+          separationType: "job_abandonment",
+        },
+      });
+      await ctx.db.patch(separationEventId, {
+        type: "separated",
+        separationType: "job_abandonment",
+      });
+    });
+
+    const settlementId = await actor.mutation(
+      api.finalSettlements.prepareFinalSettlement,
+      { organizationId, employeeId },
+    );
+
+    await expect(
+      t.run((ctx) => ctx.db.get(settlementId)),
+    ).resolves.toMatchObject({
+      separationEventId,
+      separationType: "job_abandonment",
+    });
+  });
+
   it("creates a new settlement for a later separation after rehire", async () => {
     const { t, actor, organizationId, ownerId, employeeId, separationEventId } =
       await setupSeparatedEmployee();
@@ -107,7 +140,7 @@ describe("final settlement workflow", () => {
     const firstSettlement = await t.run((ctx) => ctx.db.get(firstSettlementId));
     expect(firstSettlement).toMatchObject({
       separationEventId,
-      separationKey: `${employeeId}:resigned:${Date.UTC(2026, 7, 10)}`,
+      separationKey: `${employeeId}:resignation:${Date.UTC(2026, 7, 10)}`,
     });
 
     const secondSeparationDate = Date.UTC(2027, 2, 5);
@@ -141,12 +174,14 @@ describe("final settlement workflow", () => {
       api.finalSettlements.prepareFinalSettlement,
       { organizationId, employeeId },
     );
-    const secondSettlement = await t.run((ctx) => ctx.db.get(secondSettlementId));
+    const secondSettlement = await t.run((ctx) =>
+      ctx.db.get(secondSettlementId),
+    );
 
     expect(secondSettlementId).not.toBe(firstSettlementId);
     expect(secondSettlement).toMatchObject({
       separationEventId: secondSeparationEventId,
-      separationKey: `${employeeId}:terminated:${secondSeparationDate}`,
+      separationKey: `${employeeId}:termination:${secondSeparationDate}`,
     });
   });
 
@@ -427,12 +462,12 @@ describe("final settlement workflow", () => {
         : null;
       return { settlement, payslip };
     });
-    expect(result.settlement?.finalTaxRelease.annualTaxableIncome).toBeGreaterThan(
-      470_000,
-    );
-    expect(result.settlement?.finalTaxRelease.calculatedAdjustment).toBeGreaterThan(
-      6_500,
-    );
+    expect(
+      result.settlement?.finalTaxRelease.annualTaxableIncome,
+    ).toBeGreaterThan(470_000);
+    expect(
+      result.settlement?.finalTaxRelease.calculatedAdjustment,
+    ).toBeGreaterThan(6_500);
     expect(result.payslip?.deductions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -547,6 +582,58 @@ describe("final settlement workflow", () => {
     ).rejects.toThrow(
       "Final pay drafts can only contain resigned or terminated employees",
     );
+  });
+
+  it("recalculates final tax after preserving a taxable payslip addition", async () => {
+    const { t, actor, organizationId, employeeId } =
+      await setupSeparatedEmployee();
+    const settlementId = await actor.mutation(
+      api.finalSettlements.prepareFinalSettlement,
+      { organizationId, employeeId },
+    );
+    await t.run(async (ctx) => {
+      const settlement = await ctx.db.get(settlementId);
+      if (!settlement) throw new Error("Settlement fixture missing");
+      await ctx.db.patch(settlementId, {
+        status: "ready_for_payroll",
+        clearanceItems: settlement.clearanceItems.map((item) => ({
+          ...item,
+          status: "completed" as const,
+        })),
+      });
+    });
+    const payrollRunId = await actor.mutation(api.payroll.createPayrollRun, {
+      organizationId,
+      cutoffStart: Date.UTC(2026, 7, 1),
+      cutoffEnd: Date.UTC(2026, 7, 15),
+      employeeIds: [employeeId],
+      runType: "final_pay",
+      deductionsEnabled: true,
+    });
+    const before = await t.run((ctx) => ctx.db.get(settlementId));
+    if (!before?.payslipId) throw new Error("Final payslip fixture missing");
+
+    await actor.mutation(api.payroll.updatePayslip, {
+      payslipId: before.payslipId,
+      incentives: [
+        {
+          name: "Taxable separation bonus",
+          amount: 300_000,
+          type: "incentive",
+          taxable: true,
+        },
+      ],
+    });
+    await actor.mutation(api.payroll.updatePayrollRun, {
+      payrollRunId,
+      preserveExistingPayslipEdits: true,
+    });
+
+    const after = await t.run((ctx) => ctx.db.get(settlementId));
+    expect(after?.finalTaxRelease.annualTaxableIncome).toBe(
+      (before.finalTaxRelease.annualTaxableIncome ?? 0) + 300_000,
+    );
+    expect(after?.finalTaxRelease.calculatedAdjustment).toBeGreaterThan(0);
   });
 
   it("does not repay basic salary already covered by an overlapping regular run", async () => {

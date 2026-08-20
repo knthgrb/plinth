@@ -1,5 +1,10 @@
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import { runOrgQuery } from "./queryAuthGrace";
@@ -13,6 +18,7 @@ import {
   getNextEvaluationDate,
   type EvaluationCadence,
 } from "@/lib/evaluations/workflow";
+import { normalizeEmploymentStatus } from "@/utils/employment-lifecycle";
 
 const templateSectionValidator = v.object({
   label: v.string(),
@@ -59,11 +65,7 @@ async function checkOrgHrAdmin(
     organizationId,
   );
   const role = membership.role;
-  if (
-    role !== "owner" &&
-    role !== "admin" &&
-    role !== "hr"
-  ) {
+  if (role !== "owner" && role !== "admin" && role !== "hr") {
     throw new Error("Not authorized");
   }
 
@@ -163,7 +165,9 @@ function normalizedEvaluation(evaluation: EffectiveEvaluation) {
     scheduledFor: evaluation.scheduledFor ?? evaluation.evaluationDate,
     completedAt:
       evaluation.completedAt ??
-      (evaluation.status === "scheduled" ? undefined : evaluation.evaluationDate),
+      (evaluation.status === "scheduled"
+        ? undefined
+        : evaluation.evaluationDate),
   };
 }
 
@@ -328,7 +332,9 @@ export const getEvaluationWorkspace = query({
 
     const effectiveEvaluations = (
       await Promise.all(
-        evaluations.map((evaluation) => loadEffectiveEvaluation(ctx, evaluation)),
+        evaluations.map((evaluation) =>
+          loadEffectiveEvaluation(ctx, evaluation),
+        ),
       )
     ).map(normalizedEvaluation);
     const now = Date.now();
@@ -375,7 +381,9 @@ export const getEvaluationWorkspace = query({
             employeeCode: employee.employment.employeeId,
             position: employee.employment.position,
             department: employee.employment.department,
-            employmentStatus: employee.employment.status,
+            employmentStatus: normalizeEmploymentStatus(
+              employee.employment.status,
+            ),
           },
           schedules: employeeSchedules,
           lastCompleted,
@@ -522,8 +530,7 @@ export const scheduleEvaluation = mutation({
       scheduledFor: args.scheduledFor,
       evaluationDate: args.scheduledFor,
       label: title,
-      reviewCycle:
-        args.cadence.kind === "none" ? "Ad hoc" : args.cadence.kind,
+      reviewCycle: args.cadence.kind === "none" ? "Ad hoc" : args.cadence.kind,
       createdBy: userRecord._id,
       createdAt: now,
       updatedAt: now,
@@ -573,10 +580,7 @@ export const completeEvaluation = mutation({
     if (existing.status === "cancelled") {
       throw new Error("Cancelled evaluations cannot be completed");
     }
-    if (
-      args.rating !== undefined &&
-      (args.rating < 1 || args.rating > 5)
-    ) {
+    if (args.rating !== undefined && (args.rating < 1 || args.rating > 5)) {
       throw new Error("Evaluation rating must be between 1 and 5");
     }
 
@@ -631,9 +635,7 @@ export const completeEvaluation = mutation({
 
     const scheduleEvaluations = await ctx.db
       .query("evaluations")
-      .withIndex("by_schedule", (query) =>
-        query.eq("scheduleId", schedule._id),
-      )
+      .withIndex("by_schedule", (query) => query.eq("scheduleId", schedule._id))
       .collect();
     const existingNext = scheduleEvaluations.find(
       (evaluation) =>
@@ -731,9 +733,7 @@ export const updateScheduledEvaluation = mutation({
             evaluationDate: args.scheduledFor,
           }
         : {}),
-      ...(args.templateId !== undefined
-        ? { templateId: args.templateId }
-        : {}),
+      ...(args.templateId !== undefined ? { templateId: args.templateId } : {}),
       updatedAt: now,
     });
     await replaceEvaluationProjection(
@@ -957,8 +957,7 @@ export const updateEvaluation = mutation({
     await replaceEvaluationProjection(
       ctx,
       existing,
-      args.assignedReviewerIds ??
-        effective.assignedReviewerIds ?? [],
+      args.assignedReviewerIds ?? effective.assignedReviewerIds ?? [],
       history,
       now,
     );

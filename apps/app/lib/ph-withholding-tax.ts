@@ -38,6 +38,14 @@ export function computeAnnualTaxFromBasic(annualTaxableIncome: number): number {
 
 type PayFrequency = "monthly" | "bimonthly";
 
+type WithholdingTaxEmployee = {
+  compensation?: {
+    salaryType?: string | null;
+    basicSalary?: number | null;
+    allowance?: number | null;
+  } | null;
+};
+
 /**
  * Per-cutoff withholding amount from annualized basic (aligns with server `getTaxDeductionAmount`).
  */
@@ -67,7 +75,7 @@ function getCutoffsPerYear(payFrequency: PayFrequency): number {
 
 /** Match `convex/payroll` getDailyRateForEmployee (monthly path) for tax basis. */
 function getDailyRateForEmployee(
-  employee: any,
+  employee: WithholdingTaxEmployee,
   _cutoffStart: number,
   _cutoffEnd: number,
   options?: { includeAllowance: boolean; workingDaysPerYear: number },
@@ -92,7 +100,7 @@ function getDailyRateForEmployee(
 
 /** Monthly basic for SSS / tax, aligned with `getMonthlyBasicForTax` in `convex/payroll`. */
 export function getMonthlyBasicForTax(
-  employee: any,
+  employee: WithholdingTaxEmployee,
   workingDaysPerYear: number,
 ): number {
   const salaryType = employee?.compensation?.salaryType || "monthly";
@@ -116,7 +124,7 @@ export function getMonthlyBasicForTax(
  * Withholding amount for this cutoff (before the dailyized first-cutoff / gross 20,833 rule).
  */
 export function getWithholdingTaxCutoffForEmployee(
-  employee: any,
+  employee: WithholdingTaxEmployee,
   options: {
     workingDaysPerYear: number;
     cutoffStart: number;
@@ -167,6 +175,15 @@ export function shouldShowWithholdingTaxByGrossRule(
 }
 
 export type DeductionLine = { name: string; amount: number; type: string };
+
+export function removeWithholdingTaxOverrideLines<
+  TLine extends { name: string },
+>(lines: readonly TLine[] | undefined): TLine[] | undefined {
+  const remaining = lines?.filter(
+    (line) => line.name.trim().toLowerCase() !== "withholding tax",
+  );
+  return remaining && remaining.length > 0 ? remaining : undefined;
+}
 
 /**
  * Strips all "Withholding Tax" lines and optionally inserts one with the canonical

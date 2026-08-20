@@ -26,7 +26,9 @@ describe("employee status editing", () => {
 
     expect(drawerSource).toContain('name="status"');
     expect(drawerSource).toContain('htmlFor="edit-status"');
-    expect(drawerSource).toContain("status: data.status as");
+    expect(drawerSource).toContain("status: data.status,");
+    expect(drawerSource).toContain('<SelectItem value="separated">');
+    expect(drawerSource).toContain('name="separationType"');
   });
 
   it("keeps offboarding fields outside the employee details form contract", () => {

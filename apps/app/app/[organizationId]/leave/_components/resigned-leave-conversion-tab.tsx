@@ -20,6 +20,7 @@ import {
   getConvertibleLeaveDays,
   type LeaveAccrualFrequency,
 } from "@/utils/leave-policy-calculations";
+import { resolveSeparationType } from "@/utils/employment-lifecycle";
 
 type ResignedEmployee = {
   _id: string;
@@ -32,6 +33,7 @@ type ResignedEmployee = {
     hireDate?: number;
     regularizationDate?: number | null;
     status?: string;
+    separationType?: string;
   };
   leaveCredits?: {
     vacation?: { used?: number };
@@ -109,7 +111,13 @@ export function ResignedLeaveConversionTab({
   );
   const rows = useMemo(() => {
     return employees
-      .filter((employee) => employee.employment?.status === "resigned")
+      .filter(
+        (employee) =>
+          resolveSeparationType(
+            employee.employment?.status,
+            employee.employment?.separationType,
+          ) === "resignation",
+      )
       .map((employee) => {
         const hireDate = employee.employment?.hireDate;
         const regularizationDate =

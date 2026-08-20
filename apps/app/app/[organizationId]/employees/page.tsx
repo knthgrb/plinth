@@ -117,7 +117,7 @@ export default function EmployeesPage() {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [panelMode, setPanelMode] = useState<"view" | "edit">("view");
   const [statusFilter, setStatusFilter] = useState<
-    "all" | "active" | "resigned" | "terminated"
+    "all" | "active" | "separated"
   >("all");
   const [departmentFilter, setDepartmentFilter] = useState<string>("all");
   const [nameFilter, setNameFilter] = useState("");
@@ -160,8 +160,7 @@ export default function EmployeesPage() {
     if (
       statusParam === "all" ||
       statusParam === "active" ||
-      statusParam === "resigned" ||
-      statusParam === "terminated"
+      statusParam === "separated"
     ) {
       setStatusFilter(statusParam);
     }
@@ -368,8 +367,9 @@ export default function EmployeesPage() {
 
     const statusRank: Record<string, number> = {
       active: 0,
+      separated: 1,
       resigned: 1,
-      terminated: 2,
+      terminated: 1,
     };
     return [...list].sort((a, b) => {
       const statusDiff =

@@ -1,4 +1,4 @@
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 
 type UserLookupContext = Pick<QueryCtx | MutationCtx, "db">;
@@ -47,4 +47,15 @@ export async function findUserByEmail(
     throw new Error("User email migration is incomplete");
   }
   return candidates.values().next().value ?? null;
+}
+
+export async function assertUserEmailAvailable(
+  ctx: UserLookupContext,
+  email: string,
+  exceptUserId?: Id<"users">,
+): Promise<void> {
+  const existingUser = await findUserByEmail(ctx, email);
+  if (existingUser && existingUser._id !== exceptUserId) {
+    throw new Error("A user account already owns this email address");
+  }
 }

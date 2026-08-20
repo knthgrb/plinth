@@ -17,6 +17,20 @@ export type PreviewEditableEarningKey = (typeof PREVIEW_EDITABLE_EARNINGS_KEYS)[
 
 export type PreviewEditableEarnings = Record<PreviewEditableEarningKey, number>;
 
+export function getPendingOverrideReviewEmployees<TEmployee>(
+  review:
+    | {
+        status?: "needs_review" | "reviewed";
+        employees?: TEmployee[];
+      }
+    | null
+    | undefined,
+): TEmployee[] {
+  return review?.status === "needs_review" && Array.isArray(review.employees)
+    ? review.employees
+    : [];
+}
+
 export const PREVIEW_EARNING_LABELS: Record<PreviewEditableEarningKey, string> = {
   holidayPay: "Holiday pay",
   nightDiffPay: "Night differential",

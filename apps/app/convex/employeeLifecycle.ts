@@ -1,7 +1,17 @@
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
+import {
+  isEmployeeSeparated,
+  resolveSeparationType,
+  type SeparationType,
+} from "@/utils/employment-lifecycle";
 
-type LifecycleEventType = "hired" | "resigned" | "terminated" | "rehired";
+type LifecycleEventType =
+  | "hired"
+  | "separated"
+  | "resigned"
+  | "terminated"
+  | "rehired";
 
 type EmploymentSnapshot = Pick<
   Doc<"employees">["employment"],
@@ -68,6 +78,7 @@ export async function recordEmployeeLifecycleEvent(
     organizationId: Id<"organizations">;
     employeeId: Id<"employees">;
     type: LifecycleEventType;
+    separationType?: SeparationType;
     effectiveAt: number;
     employment: EmploymentSnapshot;
     reason?: string;
@@ -79,6 +90,7 @@ export async function recordEmployeeLifecycleEvent(
     organizationId: args.organizationId,
     employeeId: args.employeeId,
     type: args.type,
+    separationType: args.separationType,
     effectiveAt: args.effectiveAt,
     position: args.employment.position,
     department: args.employment.department,
@@ -112,14 +124,16 @@ export async function ensureEmployeeLifecycleBaseline(
     createdAt: employee.createdAt,
   });
 
-  if (
-    employee.employment.status === "resigned" ||
-    employee.employment.status === "terminated"
-  ) {
+  if (isEmployeeSeparated(employee.employment.status)) {
+    const separationType = resolveSeparationType(
+      employee.employment.status,
+      employee.employment.separationType,
+    );
     await recordEmployeeLifecycleEvent(ctx, {
       organizationId: employee.organizationId,
       employeeId: employee._id,
-      type: employee.employment.status,
+      type: "separated",
+      separationType: separationType ?? "other",
       effectiveAt:
         employee.employment.separationDate ??
         employee.employment.lastWorkingDay ??

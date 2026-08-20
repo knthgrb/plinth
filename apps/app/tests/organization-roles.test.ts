@@ -35,6 +35,25 @@ describe("organization roles", () => {
     ]);
   });
 
+  it("limits HR to assigning manager and employee roles", () => {
+    expect(
+      getAssignableOrganizationRoleOptions("hr").map((option) => option.value),
+    ).toEqual(["manager", "employee"]);
+
+    expect(
+      canUpdateOrganizationMemberRole({
+        actorRole: "hr",
+        targetRole: "employee",
+        nextRole: "accounting",
+        isSelf: false,
+        ownerCount: 1,
+      }),
+    ).toEqual({
+      allowed: false,
+      reason: "Not authorized to update this role.",
+    });
+  });
+
   it("blocks an only owner from changing their own owner role", () => {
     expect(
       canUpdateOrganizationMemberRole({

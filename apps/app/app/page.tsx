@@ -56,9 +56,7 @@ export default function AppHomePage() {
     if (organizations === undefined) return;
 
     if (organizations && organizations.length > 0) {
-      const lastActiveOrg = selectPreferredOrganizationForEntry(
-        organizations,
-      );
+      const lastActiveOrg = selectPreferredOrganizationForEntry(organizations);
       if (!lastActiveOrg) return;
       const path = getDefaultRouteForRole(
         lastActiveOrg.role,
@@ -132,9 +130,7 @@ export default function AppHomePage() {
                           ? "Organization archived"
                           : organization.accessStatus === "removed"
                             ? "Access removed"
-                            : organization.accessStatus === "disabled"
-                              ? "Access disabled"
-                              : "Access suspended"}
+                            : "Access suspended"}
                       </p>
                     </div>
                   </div>

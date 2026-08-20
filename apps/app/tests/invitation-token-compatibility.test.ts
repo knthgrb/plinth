@@ -88,16 +88,44 @@ const setupActor = async (accessStatus: "active" | "alumni") => {
 };
 
 describe("invitation token compatibility writes", () => {
-  it("atomically hashes tokens created through the general invitation path", async () => {
-    const { t, actor, organizationId } = await setupActor("active");
-    const created = await actor.mutation(
-      api.invitations.createInvitation,
+  it("never rewrites employee names when inviting an existing account", async () => {
+    const { t, actor, organizationId, employeeId } = await setupActor("active");
+    await t.run((ctx) =>
+      ctx.db.insert("users", {
+        email: "employee-invite@example.com",
+        normalizedEmail: "employee-invite@example.com",
+        name: "Different Account Name",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+
+    await actor.mutation(api.invitations.createInvitation, {
+      organizationId,
+      employeeId,
+      email: "employee-invite@example.com",
+      role: "employee",
+      confirmInviteToExistingPlinthUser: true,
+    });
+
+    await expect(t.run((ctx) => ctx.db.get(employeeId))).resolves.toMatchObject(
       {
-        organizationId,
-        email: "general-invite@example.com",
-        role: "employee",
+        personalInfo: {
+          firstName: "Invite",
+          lastName: "Recipient",
+          email: "employee-invite@example.com",
+        },
       },
     );
+  });
+
+  it("atomically hashes tokens created through the general invitation path", async () => {
+    const { t, actor, organizationId } = await setupActor("active");
+    const created = await actor.mutation(api.invitations.createInvitation, {
+      organizationId,
+      email: "general-invite@example.com",
+      role: "employee",
+    });
 
     const invitation = await t.run((ctx) =>
       ctx.db.get(created.invitationId as Id<"invitations">),
@@ -153,11 +181,14 @@ describe("invitation token compatibility writes", () => {
 
   it("creates only the membership projection when an employee invitation is accepted", async () => {
     const { t, actor, organizationId, employeeId } = await setupActor("active");
-    const created = await actor.mutation(api.invitations.createUserForEmployee, {
-      organizationId,
-      employeeId,
-      role: "employee",
-    });
+    const created = await actor.mutation(
+      api.invitations.createUserForEmployee,
+      {
+        organizationId,
+        employeeId,
+        role: "employee",
+      },
+    );
     const inviteeEmail = "employee-invite@example.com";
 
     const result = await t
@@ -214,9 +245,7 @@ describe("invitation token compatibility writes", () => {
     const state = await t.run(async (ctx) => ({
       canonicalUser: await ctx.db
         .query("users")
-        .withIndex("by_email", (query) =>
-          query.eq("email", authenticatedEmail),
-        )
+        .withIndex("by_email", (query) => query.eq("email", authenticatedEmail))
         .unique(),
     }));
     expect(state.canonicalUser?.email).toBe(authenticatedEmail);
@@ -274,6 +303,69 @@ describe("invitation token compatibility writes", () => {
       _id: membershipId,
       accessStatus: "active",
       role: "employee",
+    });
+  });
+
+  it("does not reactivate access when a different employee reuses an email", async () => {
+    const {
+      t,
+      actor,
+      organizationId,
+      employeeId: formerEmployeeId,
+    } = await setupActor("active");
+    const inviteeEmail = "employee-invite@example.com";
+    const fixture = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", {
+        email: inviteeEmail,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const membershipId = await ctx.db.insert("userOrganizations", {
+        userId,
+        organizationId,
+        employeeId: formerEmployeeId,
+        role: "employee",
+        accessStatus: "removed",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      const replacementEmployeeId = await insertEmployee(ctx, organizationId);
+      return { membershipId, replacementEmployeeId, userId };
+    });
+
+    await expect(
+      t.run((ctx) => ctx.db.get(fixture.membershipId)),
+    ).resolves.toMatchObject({
+      accessStatus: "removed",
+      employeeId: formerEmployeeId,
+    });
+
+    const created = await actor.mutation(api.invitations.createInvitation, {
+      organizationId,
+      employeeId: fixture.replacementEmployeeId,
+      email: inviteeEmail,
+      role: "employee",
+      confirmInviteToExistingPlinthUser: true,
+    });
+    await t
+      .withIdentity({ email: inviteeEmail })
+      .mutation(api.invitations.acceptInvitation, { token: created.token });
+
+    const memberships = await t.run((ctx) =>
+      ctx.db
+        .query("userOrganizations")
+        .withIndex("by_user_organization", (query) =>
+          query
+            .eq("userId", fixture.userId)
+            .eq("organizationId", organizationId),
+        )
+        .collect(),
+    );
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0]).toMatchObject({
+      _id: fixture.membershipId,
+      employeeId: fixture.replacementEmployeeId,
+      accessStatus: "active",
     });
   });
 

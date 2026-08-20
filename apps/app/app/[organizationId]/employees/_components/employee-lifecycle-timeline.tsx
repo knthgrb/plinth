@@ -5,9 +5,11 @@ import { format } from "date-fns";
 import type { Id } from "@/convex/_generated/dataModel";
 import { api } from "@/convex/_generated/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getSeparationTypeLabel } from "@/utils/employment-lifecycle";
 
 const EVENT_LABELS = {
   hired: "Hired",
+  separated: "Separated",
   resigned: "Resigned",
   terminated: "Terminated",
   rehired: "Rehired",
@@ -25,7 +27,9 @@ export function EmployeeLifecycleTimeline({
   return (
     <Card className="border-gray-100">
       <CardHeader className="py-2.5 px-3 sm:px-4">
-        <CardTitle className="text-sm font-medium">Employment timeline</CardTitle>
+        <CardTitle className="text-sm font-medium">
+          Employment timeline
+        </CardTitle>
       </CardHeader>
       <CardContent className="pt-0 px-3 sm:px-4 pb-4">
         {!events ? (
@@ -37,7 +41,9 @@ export function EmployeeLifecycleTimeline({
                 <span className="absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full border bg-background" />
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <p className="text-sm font-medium">
-                    {EVENT_LABELS[event.type]}
+                    {event.type === "separated" && event.separationType
+                      ? getSeparationTypeLabel(event.separationType)
+                      : EVENT_LABELS[event.type]}
                   </p>
                   <time className="text-xs text-muted-foreground">
                     {format(new Date(event.effectiveAt), "MMM d, yyyy")}
@@ -52,7 +58,10 @@ export function EmployeeLifecycleTimeline({
                   </p>
                 )}
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  Recorded by {event.recordedBy?.name || event.recordedBy?.email || "system"}
+                  Recorded by{" "}
+                  {event.recordedBy?.name ||
+                    event.recordedBy?.email ||
+                    "system"}
                 </p>
               </li>
             ))}

@@ -19,9 +19,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 10382,
-      "fileCount": 293,
-      "fingerprint": "19b53592c5650087614d3edc6f246f6f2f31fb4609d242c7df48ef7eb800ae96",
+      "totalMatches": 10462,
+      "fileCount": 294,
+      "fingerprint": "d720dc4eb999f141919bd32601a477cfc976f5457c95a84270c5b2d3350ff61d",
       "symbols": [
         {
           "symbol": "accrualRate",
@@ -65,7 +65,7 @@
         },
         {
           "symbol": "assignedReviewerIds",
-          "matches": 13,
+          "matches": 12,
           "files": 3
         },
         {
@@ -110,7 +110,7 @@
         },
         {
           "symbol": "deductions",
-          "matches": 311,
+          "matches": 313,
           "files": 26
         },
         {
@@ -135,7 +135,7 @@
         },
         {
           "symbol": "employeeId",
-          "matches": 1545,
+          "matches": 1556,
           "files": 128
         },
         {
@@ -175,12 +175,12 @@
         },
         {
           "symbol": "history",
-          "matches": 83,
-          "files": 30
+          "matches": 85,
+          "files": 31
         },
         {
           "symbol": "incentives",
-          "matches": 228,
+          "matches": 231,
           "files": 18
         },
         {
@@ -280,13 +280,13 @@
         },
         {
           "symbol": "name",
-          "matches": 1168,
+          "matches": 1167,
           "files": 165
         },
         {
           "symbol": "notes",
-          "matches": 188,
-          "files": 39
+          "matches": 195,
+          "files": 43
         },
         {
           "symbol": "numberOfDays",
@@ -300,7 +300,7 @@
         },
         {
           "symbol": "organizationId",
-          "matches": 2214,
+          "matches": 2231,
           "files": 181
         },
         {
@@ -395,8 +395,8 @@
         },
         {
           "symbol": "role",
-          "matches": 480,
-          "files": 92
+          "matches": 503,
+          "files": 94
         },
         {
           "symbol": "salaryPaymentFrequency",
@@ -435,8 +435,8 @@
         },
         {
           "symbol": "status",
-          "matches": 1147,
-          "files": 119
+          "matches": 1164,
+          "files": 121
         },
         {
           "symbol": "supportingDocuments",

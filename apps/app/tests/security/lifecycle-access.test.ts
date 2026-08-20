@@ -107,32 +107,36 @@ describe("employee lifecycle access", () => {
       { type: "hired", effectiveAt: 1 },
     ]);
     await expect(
-      t.withIdentity({ email: hrEmail }).mutation(api.employees.updateEmployee, {
-        employeeId,
-        employment: {
-          employeeId: "TEMP",
-          position: "Analyst",
-          department: "Operations",
-          employmentType: "regular",
-          hireDate: 1,
-          separationDate: 0,
-          status: "resigned",
-        },
-      }),
+      t
+        .withIdentity({ email: hrEmail })
+        .mutation(api.employees.updateEmployee, {
+          employeeId,
+          employment: {
+            employeeId: "TEMP",
+            position: "Analyst",
+            department: "Operations",
+            employmentType: "regular",
+            hireDate: 1,
+            separationDate: 0,
+            status: "resigned",
+          },
+        }),
     ).rejects.toThrow("on or after the current hire date");
     await expect(
-      t.withIdentity({ email: hrEmail }).mutation(api.employees.updateEmployee, {
-        employeeId,
-        employment: {
-          employeeId: "TEMP",
-          position: "Analyst",
-          department: "Operations",
-          employmentType: "regular",
-          hireDate: 0,
-          separationDate: 1,
-          status: "resigned",
-        },
-      }),
+      t
+        .withIdentity({ email: hrEmail })
+        .mutation(api.employees.updateEmployee, {
+          employeeId,
+          employment: {
+            employeeId: "TEMP",
+            position: "Analyst",
+            department: "Operations",
+            employmentType: "regular",
+            hireDate: 0,
+            separationDate: 1,
+            status: "resigned",
+          },
+        }),
     ).rejects.toThrow("Hire date cannot be changed during separation");
   });
 
@@ -432,7 +436,7 @@ describe("employee lifecycle access", () => {
           organizationId: fixture.organizationId,
           userId: fixture.employeeUserId,
         }),
-    ).rejects.toThrow("Choose resigned or terminated");
+    ).rejects.toThrow("Choose a separation category");
 
     await expect(
       t
@@ -440,7 +444,7 @@ describe("employee lifecycle access", () => {
         .mutation(api.organizations.removeUserFromOrganization, {
           organizationId: fixture.organizationId,
           userId: fixture.employeeUserId,
-          separation: { type: "resigned", effectiveAt: 0 },
+          separation: { type: "job_abandonment", effectiveAt: 0 },
         }),
     ).rejects.toThrow("on or after the current hire date");
 
@@ -450,9 +454,10 @@ describe("employee lifecycle access", () => {
         organizationId: fixture.organizationId,
         userId: fixture.employeeUserId,
         separation: {
-          type: "resigned",
+          type: "job_abandonment",
           effectiveAt: 2,
-          reason: "Career change",
+          reason: "Employment separation finalized after review",
+          notes: "Access was suspended during the investigation.",
         },
       });
 
@@ -464,9 +469,11 @@ describe("employee lifecycle access", () => {
     }));
     expect(state.employee?._id).toBe(fixture.employeeId);
     expect(state.employee?.employment).toMatchObject({
-      status: "resigned",
+      status: "separated",
+      separationType: "job_abandonment",
       separationDate: 2,
-      separationReason: "Career change",
+      separationReason: "Employment separation finalized after review",
+      separationNotes: "Access was suspended during the investigation.",
     });
     expect(state.user?._id).toBe(fixture.employeeUserId);
     expect(state.membership).toMatchObject({
@@ -485,7 +492,7 @@ describe("employee lifecycle access", () => {
     );
   });
 
-  it("deletes a standalone membership while retaining the user account", async () => {
+  it("retains a removed standalone membership and user account for audit", async () => {
     const t = convexTest(schema, modules);
     const ownerEmail = "standalone-remove-owner@example.com";
     const fixture = await t.run(async (ctx) => {
@@ -530,20 +537,140 @@ describe("employee lifecycle access", () => {
         userId: fixture.memberUserId,
       });
 
-    expect(result).toEqual({ success: true, outcome: "deleted" });
+    expect(result).toEqual({ success: true, outcome: "removed" });
 
     const state = await t.run(async (ctx) => ({
       membership: await ctx.db.get(fixture.membershipId),
       user: await ctx.db.get(fixture.memberUserId),
     }));
-    expect(state.membership).toBeNull();
+    expect(state.membership).toMatchObject({ accessStatus: "removed" });
     expect(state.user?._id).toBe(fixture.memberUserId);
 
     await expect(
       t
         .withIdentity({ email: "standalone-member@example.com" })
         .query(api.organizations.getArchivedUserOrganizations, {}),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual([
+      expect.objectContaining({
+        _id: fixture.organizationId,
+        accessStatus: "removed",
+      }),
+    ]);
+  });
+
+  it("suspends and restores access without changing active employment", async () => {
+    const t = convexTest(schema, modules);
+    const ownerEmail = "suspend-owner@example.com";
+    const fixture = await t.run(async (ctx) => {
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Suspension Org",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const ownerUserId = await ctx.db.insert("users", {
+        email: ownerEmail,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("userOrganizations", {
+        userId: ownerUserId,
+        organizationId,
+        role: "owner",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      const employeeId = await ctx.db.insert("employees", {
+        organizationId,
+        personalInfo: {
+          firstName: "Active",
+          lastName: "Employee",
+          email: "suspended-employee@example.com",
+        },
+        employment: {
+          employeeId: "EMP-SUSPEND",
+          position: "Analyst",
+          department: "Operations",
+          employmentType: "regular",
+          hireDate: 1,
+          status: "active",
+        },
+        compensation: { basicSalary: 30_000, salaryType: "monthly" },
+        schedule: { defaultSchedule },
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const employeeUserId = await ctx.db.insert("users", {
+        email: "suspended-employee@example.com",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const membershipId = await ctx.db.insert("userOrganizations", {
+        userId: employeeUserId,
+        organizationId,
+        employeeId,
+        role: "employee",
+        accessStatus: "active",
+        joinedAt: 1,
+        updatedAt: 1,
+      });
+      return { organizationId, employeeId, employeeUserId, membershipId };
+    });
+
+    await expect(
+      t
+        .withIdentity({ email: ownerEmail })
+        .mutation(api.organizations.suspendOrganizationMember, {
+          organizationId: fixture.organizationId,
+          userId: fixture.employeeUserId,
+          reason: "   ",
+        }),
+    ).rejects.toThrow("Suspension reason is required");
+
+    await t
+      .withIdentity({ email: ownerEmail })
+      .mutation(api.organizations.suspendOrganizationMember, {
+        organizationId: fixture.organizationId,
+        userId: fixture.employeeUserId,
+        reason: "Temporary security review",
+      });
+    await expect(
+      t.run(async (ctx) => ({
+        employee: await ctx.db.get(fixture.employeeId),
+        membership: await ctx.db.get(fixture.membershipId),
+      })),
+    ).resolves.toMatchObject({
+      employee: { employment: { status: "active" } },
+      membership: { accessStatus: "suspended" },
+    });
+    await expect(
+      t
+        .withIdentity({ email: ownerEmail })
+        .query(api.organizations.getOrganizationMembers, {
+          organizationId: fixture.organizationId,
+          includeInactive: true,
+        }),
+    ).resolves.toEqual([
+      expect.objectContaining({ email: ownerEmail, accessStatus: "active" }),
+      expect.objectContaining({
+        email: "suspended-employee@example.com",
+        accessStatus: "suspended",
+      }),
+    ]);
+
+    await t
+      .withIdentity({ email: ownerEmail })
+      .mutation(api.organizations.restoreOrganizationMemberAccess, {
+        organizationId: fixture.organizationId,
+        userId: fixture.employeeUserId,
+        role: "employee",
+      });
+    await expect(
+      t.run((ctx) => ctx.db.get(fixture.membershipId)),
+    ).resolves.toMatchObject({
+      accessStatus: "active",
+      role: "employee",
+    });
   });
 
   it("rejects rehiring an alumni employee through generic editing", async () => {
@@ -607,32 +734,36 @@ describe("employee lifecycle access", () => {
     });
 
     await expect(
-      t.withIdentity({ email: hrEmail }).mutation(api.employees.updateEmployee, {
-        employeeId,
-        employment: {
-          employeeId: "EMP-FORMER",
-          position: "Analyst",
-          department: "Operations",
-          employmentType: "regular",
-          hireDate: 3,
-          status: "active",
-        },
-      }),
+      t
+        .withIdentity({ email: hrEmail })
+        .mutation(api.employees.updateEmployee, {
+          employeeId,
+          employment: {
+            employeeId: "EMP-FORMER",
+            position: "Analyst",
+            department: "Operations",
+            employmentType: "regular",
+            hireDate: 3,
+            status: "active",
+          },
+        }),
     ).rejects.toThrow("Use Rehire Employee");
 
     await expect(
-      t.withIdentity({ email: hrEmail }).mutation(api.employees.updateEmployee, {
-        employeeId,
-        employment: {
-          employeeId: "EMP-FORMER",
-          position: "Analyst",
-          department: "Operations",
-          employmentType: "regular",
-          hireDate: 1,
-          separationDate: 2,
-          status: "terminated",
-        },
-      }),
+      t
+        .withIdentity({ email: hrEmail })
+        .mutation(api.employees.updateEmployee, {
+          employeeId,
+          employment: {
+            employeeId: "EMP-FORMER",
+            position: "Analyst",
+            department: "Operations",
+            employmentType: "regular",
+            hireDate: 1,
+            separationDate: 2,
+            status: "terminated",
+          },
+        }),
     ).rejects.toThrow("cannot be changed through generic editing");
   });
 
@@ -706,6 +837,8 @@ describe("employee lifecycle access", () => {
           position: "Senior Analyst",
           department: "Operations",
           employmentType: "regular",
+          restoreAccess: true,
+          role: "employee",
         }),
     ).rejects.toThrow("after the latest separation date");
 
@@ -717,6 +850,8 @@ describe("employee lifecycle access", () => {
         position: "Senior Analyst",
         department: "Operations",
         employmentType: "regular",
+        restoreAccess: true,
+        role: "employee",
       });
 
     const state = await t.run(async (ctx) => ({
@@ -739,7 +874,7 @@ describe("employee lifecycle access", () => {
     expect(state.membership?.joinedAt).toBe(1);
     expect(state.lifecycleEvents).toMatchObject([
       { type: "hired", effectiveAt: 1 },
-      { type: "resigned", effectiveAt: 2 },
+      { type: "separated", separationType: "resignation", effectiveAt: 2 },
       { type: "rehired", effectiveAt: 3 },
     ]);
 
@@ -750,7 +885,7 @@ describe("employee lifecycle access", () => {
       });
     expect(timeline.map((event) => event.type)).toEqual([
       "hired",
-      "resigned",
+      "separated",
       "rehired",
     ]);
     expect(timeline[2]).toMatchObject({
@@ -859,6 +994,7 @@ describe("employee lifecycle access", () => {
         position: "Senior Analyst",
         department: "Operations",
         employmentType: "regular",
+        restoreAccess: false,
       });
 
     const state = await t.run(async (ctx) => ({
@@ -901,7 +1037,9 @@ describe("employee lifecycle access", () => {
       }),
     ).rejects.toThrow("Organization access is limited or inactive");
     await expect(
-      t.withIdentity({ email }).query(api.organizations.getUserOrganizations, {}),
+      t
+        .withIdentity({ email })
+        .query(api.organizations.getUserOrganizations, {}),
     ).resolves.toEqual([]);
     await expect(
       t.withIdentity({ email }).mutation(api.organizations.updateOrganization, {
@@ -987,7 +1125,9 @@ describe("employee lifecycle access", () => {
     });
 
     await expect(
-      t.withIdentity({ email }).query(api.organizations.getUserOrganizations, {}),
+      t
+        .withIdentity({ email })
+        .query(api.organizations.getUserOrganizations, {}),
     ).resolves.toEqual([]);
     await expect(
       t
@@ -1038,9 +1178,11 @@ describe("employee lifecycle access", () => {
 
     const createdOrganizationIds = await Promise.all(
       Object.entries(identities).map(([label, email]) =>
-        t.withIdentity({ email }).mutation(api.organizations.createOrganization, {
-          name: `${label} Created Org`,
-        }),
+        t
+          .withIdentity({ email })
+          .mutation(api.organizations.createOrganization, {
+            name: `${label} Created Org`,
+          }),
       ),
     );
 
@@ -1340,18 +1482,20 @@ describe("employee lifecycle access", () => {
       return { employeeId, membershipId };
     });
 
-    await t.withIdentity({ email: hrEmail }).mutation(api.employees.updateEmployee, {
-      employeeId: fixture.employeeId,
-      employment: {
-        employeeId: "EMP-UNLINKED",
-        position: "Analyst",
-        department: "Operations",
-        employmentType: "regular",
-        hireDate: 1,
-        separationDate: 2,
-        status: "resigned",
-      },
-    });
+    await t
+      .withIdentity({ email: hrEmail })
+      .mutation(api.employees.updateEmployee, {
+        employeeId: fixture.employeeId,
+        employment: {
+          employeeId: "EMP-UNLINKED",
+          position: "Analyst",
+          department: "Operations",
+          employmentType: "regular",
+          hireDate: 1,
+          separationDate: 2,
+          status: "resigned",
+        },
+      });
 
     const membership = await t.run((ctx) => ctx.db.get(fixture.membershipId));
     expect(membership?.employeeId).toBeUndefined();
@@ -1419,9 +1563,11 @@ describe("employee lifecycle access", () => {
       return { employeeId, membershipId };
     });
 
-    await t.withIdentity({ email: hrEmail }).mutation(api.employees.deleteEmployee, {
-      employeeId: fixture.employeeId,
-    });
+    await t
+      .withIdentity({ email: hrEmail })
+      .mutation(api.employees.deleteEmployee, {
+        employeeId: fixture.employeeId,
+      });
 
     const state = await t.run(async (ctx) => ({
       employee: await ctx.db.get(fixture.employeeId),
@@ -1488,18 +1634,20 @@ describe("employee lifecycle access", () => {
       return { employeeId, invitationId };
     });
 
-    await t.withIdentity({ email: hrEmail }).mutation(api.employees.updateEmployee, {
-      employeeId: fixture.employeeId,
-      employment: {
-        employeeId: "EMP-PENDING",
-        position: "Analyst",
-        department: "Operations",
-        employmentType: "regular",
-        hireDate: 1,
-        separationDate: 2,
-        status: "terminated",
-      },
-    });
+    await t
+      .withIdentity({ email: hrEmail })
+      .mutation(api.employees.updateEmployee, {
+        employeeId: fixture.employeeId,
+        employment: {
+          employeeId: "EMP-PENDING",
+          position: "Analyst",
+          department: "Operations",
+          employmentType: "regular",
+          hireDate: 1,
+          separationDate: 2,
+          status: "terminated",
+        },
+      });
 
     await expect(
       t.run((ctx) => ctx.db.get(fixture.invitationId)),

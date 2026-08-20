@@ -60,6 +60,7 @@ describe("identity migration planner", () => {
 
   it.each([
     ["inactive", "alumni"],
+    ["separated", "alumni"],
     ["resigned", "alumni"],
     ["terminated", "alumni"],
   ] as const)(
@@ -94,7 +95,12 @@ describe("identity migration planner", () => {
       planLegacyUserMembership({
         user: { organizationId, role: "employee", employeeId },
         memberships: [
-          { organizationId, role: "employee", employeeId, accessStatus: "active" },
+          {
+            organizationId,
+            role: "employee",
+            employeeId,
+            accessStatus: "active",
+          },
         ],
         organizationExists: true,
         employee: {
@@ -149,9 +155,7 @@ describe("identity migration planner", () => {
 
     expect(duplicate).toEqual({
       outcome: "conflict",
-      issues: [
-        { code: "DUPLICATE_USER_MEMBERSHIP", field: "organizationId" },
-      ],
+      issues: [{ code: "DUPLICATE_USER_MEMBERSHIP", field: "organizationId" }],
     });
     expect(mismatch).toEqual({
       outcome: "conflict",
@@ -203,9 +207,7 @@ describe("identity migration planner", () => {
       }),
     ).toEqual({
       outcome: "conflict",
-      issues: [
-        { code: "AMBIGUOUS_GLOBAL_INACTIVE_USER", field: "isActive" },
-      ],
+      issues: [{ code: "AMBIGUOUS_GLOBAL_INACTIVE_USER", field: "isActive" }],
     });
   });
 
@@ -320,9 +322,7 @@ describe("identity migration planner", () => {
       }),
     ).toEqual({
       outcome: "conflict",
-      issues: [
-        { code: "DUPLICATE_PAYSLIP_CREDENTIAL", field: "employeeId" },
-      ],
+      issues: [{ code: "DUPLICATE_PAYSLIP_CREDENTIAL", field: "employeeId" }],
     });
     expect(
       planPayslipCredential({
@@ -358,9 +358,7 @@ describe("identity migration planner", () => {
       }),
     ).toEqual({
       outcome: "conflict",
-      issues: [
-        { code: "UNEXPECTED_PAYSLIP_CREDENTIAL", field: "employeeId" },
-      ],
+      issues: [{ code: "UNEXPECTED_PAYSLIP_CREDENTIAL", field: "employeeId" }],
     });
   });
 
@@ -408,9 +406,7 @@ describe("identity migration planner", () => {
       }),
     ).toEqual({
       outcome: "conflict",
-      issues: [
-        { code: "DUPLICATE_INVITATION_TOKEN_HASH", field: "tokenHash" },
-      ],
+      issues: [{ code: "DUPLICATE_INVITATION_TOKEN_HASH", field: "tokenHash" }],
     });
   });
 

@@ -1,5 +1,10 @@
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireActiveMembership } from "./access";
 import {
@@ -10,12 +15,19 @@ import {
   computeFinalSettlementSummary,
   createDefaultFinalSettlementChecklist,
   createLoanPayoffsFromEmployeeDeductions,
+  getLegacyFinalSettlementSeparationType,
   isFinalSettlementReadyForPayroll,
+  resolveFinalSettlementSeparationType,
   validateFinalTaxReview,
   type FinalSettlementCustomDeduction,
   type FinalSettlementLoanPayoff,
   type FinalSettlementStatus,
 } from "@/utils/final-settlement";
+import {
+  isEmployeeSeparated,
+  normalizeSeparationType,
+  type SeparationType,
+} from "@/utils/employment-lifecycle";
 import { loadEffectiveEmployee } from "./leaveEmployeeCompatibility";
 import { prepareEmployeeLeaveForFinalSettlement } from "./leaveConversions";
 import { decryptPayslipRowFromDb } from "./payslipCrypto";
@@ -69,7 +81,10 @@ async function checkAuth(
   };
 }
 
-async function getSettlementForWrite(ctx: any, settlementId: any) {
+async function getSettlementForWrite(
+  ctx: MutationCtx,
+  settlementId: Id<"finalSettlements">,
+) {
   const settlement = await ctx.db.get(settlementId);
   if (!settlement) throw new Error("Final settlement not found");
   const userRecord = await checkAuth(ctx, settlement.organizationId);
@@ -79,8 +94,14 @@ async function getSettlementForWrite(ctx: any, settlementId: any) {
 async function findSettlementBySeparation(
   ctx: QueryCtx | MutationCtx,
   employeeId: Id<"employees">,
-  separationKey: string,
+  separationType: SeparationType,
+  separationDate: number,
 ) {
+  const separationKey = buildSeparationKey(
+    String(employeeId),
+    separationType,
+    separationDate,
+  );
   const indexed = await ctx.db
     .query("finalSettlements")
     .withIndex("by_employee_separation_key", (query) =>
@@ -89,21 +110,38 @@ async function findSettlementBySeparation(
     .first();
   if (indexed) return indexed;
 
+  const legacySeparationType =
+    getLegacyFinalSettlementSeparationType(separationType);
+  if (legacySeparationType) {
+    const legacyIndexed = await ctx.db
+      .query("finalSettlements")
+      .withIndex("by_employee_separation_key", (query) =>
+        query
+          .eq("employeeId", employeeId)
+          .eq(
+            "separationKey",
+            buildSeparationKey(
+              String(employeeId),
+              legacySeparationType,
+              separationDate,
+            ),
+          ),
+      )
+      .first();
+    if (legacyIndexed) return legacyIndexed;
+  }
+
   const legacyRows = await ctx.db
     .query("finalSettlements")
     .withIndex("by_employee", (query) => query.eq("employeeId", employeeId))
     .collect();
   return (
     legacyRows.find((settlement) => {
-      if (settlement.separationKey || !settlement.separationType) return false;
+      if (!settlement.separationType) return false;
       const date = settlement.lastWorkingDay ?? settlement.separationDate;
       return (
-        typeof date === "number" &&
-        buildSeparationKey(
-          String(employeeId),
-          settlement.separationType,
-          date,
-        ) === separationKey
+        date === separationDate &&
+        normalizeSeparationType(settlement.separationType) === separationType
       );
     }) ?? null
   );
@@ -112,7 +150,7 @@ async function findSettlementBySeparation(
 async function findSeparationEvent(
   ctx: QueryCtx | MutationCtx,
   employeeId: Id<"employees">,
-  separationType: "resigned" | "terminated",
+  separationType: SeparationType,
   separationDate: number,
 ) {
   const events = await ctx.db
@@ -121,7 +159,15 @@ async function findSeparationEvent(
       query.eq("employeeId", employeeId).eq("effectiveAt", separationDate),
     )
     .collect();
-  return events.find((event) => event.type === separationType) ?? null;
+  return (
+    events.find((event) => {
+      const eventSeparationType =
+        event.type === "separated"
+          ? normalizeSeparationType(event.separationType)
+          : normalizeSeparationType(event.type);
+      return eventSeparationType === separationType;
+    }) ?? null
+  );
 }
 
 function statusAfterSettlementEdit(
@@ -145,19 +191,26 @@ function assertSettlementHasGeneratedPayroll(
   return settlement.calculationVersion ?? 0;
 }
 
-function employeeDisplayName(employee: any): string {
+function employeeDisplayName(employee: {
+  personalInfo?: { firstName?: string; lastName?: string };
+} | null): string {
   return [employee?.personalInfo?.firstName, employee?.personalInfo?.lastName]
     .filter(Boolean)
     .join(" ")
     .trim();
 }
 
-function isSeparatedEmployee(employee: any): boolean {
-  const status = employee?.employment?.status;
-  return status === "resigned" || status === "terminated";
+function isSeparatedEmployee(employee: {
+  employment?: { status?: string };
+}): boolean {
+  return isEmployeeSeparated(employee.employment?.status);
 }
 
-function nextLineId(prefix: string, now: number, existingLength: number): string {
+function nextLineId(
+  prefix: string,
+  now: number,
+  existingLength: number,
+): string {
   return `${prefix}-${now}-${existingLength + 1}`;
 }
 
@@ -210,7 +263,10 @@ function normalizeCustomDeduction(
   };
 }
 
-async function enrichSettlement(ctx: any, settlement: any) {
+async function enrichSettlement(
+  ctx: QueryCtx,
+  settlement: Doc<"finalSettlements">,
+) {
   const employeeRow = await ctx.db.get(settlement.employeeId);
   const employee = employeeRow
     ? await loadEffectiveEmployee(ctx, employeeRow)
@@ -241,17 +297,19 @@ export const getFinalSettlements = query({
   handler: async (ctx, args) => {
     await checkAuth(ctx, args.organizationId);
 
-    const settlements = await (ctx.db.query("finalSettlements") as any)
-      .withIndex("by_organization", (q: any) =>
+    const settlements = await ctx.db
+      .query("finalSettlements")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
     const enrichedSettlements = await Promise.all(
-      settlements.map((settlement: any) => enrichSettlement(ctx, settlement)),
+      settlements.map((settlement) => enrichSettlement(ctx, settlement)),
     );
 
-    const employeeRows = await (ctx.db.query("employees") as any)
-      .withIndex("by_organization", (q: any) =>
+    const employeeRows = await ctx.db
+      .query("employees")
+      .withIndex("by_organization", (q) =>
         q.eq("organizationId", args.organizationId),
       )
       .collect();
@@ -276,35 +334,37 @@ export const getFinalSettlements = query({
       }),
     );
     const separatedEmployees = employees
-      .filter(
-        (employee: any) =>
-          isSeparatedEmployee(employee) &&
-          typeof (
-            employee.employment.lastWorkingDay ??
-            employee.employment.separationDate
-          ) === "number" &&
-          !settlementKeys.has(
-            buildSeparationKey(
-              String(employee._id),
+      .filter((employee) => {
+        const separationDate =
+          employee.employment.lastWorkingDay ??
+          employee.employment.separationDate;
+        if (!isSeparatedEmployee(employee) || separationDate === undefined) {
+          return false;
+        }
+        return !settlementKeys.has(
+          buildSeparationKey(
+            String(employee._id),
+            resolveFinalSettlementSeparationType(
               employee.employment.status,
-              employee.employment.lastWorkingDay ??
-                employee.employment.separationDate,
+              employee.employment.separationType,
             ),
+            separationDate,
           ),
-      )
-      .map((employee: any) => ({
+        );
+      })
+      .map((employee) => ({
         _id: employee._id,
         personalInfo: employee.personalInfo,
         employment: employee.employment,
         loanDeductions: (employee.deductions ?? []).filter(
-          (deduction: any) => deduction.type === "loan" && deduction.isActive,
+          (deduction) => deduction.type === "loan" && deduction.isActive,
         ),
       }));
 
     enrichedSettlements.sort(
-      (a: any, b: any) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
+      (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
     );
-    separatedEmployees.sort((a: any, b: any) =>
+    separatedEmployees.sort((a, b) =>
       employeeDisplayName(a).localeCompare(employeeDisplayName(b)),
     );
 
@@ -328,11 +388,15 @@ export const prepareFinalSettlement = mutation({
     }
     const employee = await loadEffectiveEmployee(ctx, employeeRow);
     if (!isSeparatedEmployee(employee)) {
-      throw new Error("Final settlement can only be prepared for resigned or terminated employees");
+      throw new Error(
+        "Final settlement can only be prepared for separated employees",
+      );
     }
 
-    const separationType =
-      employee.employment.status === "terminated" ? "terminated" : "resigned";
+    const separationType = resolveFinalSettlementSeparationType(
+      employee.employment.status,
+      employee.employment.separationType,
+    );
     const separationDate =
       employee.employment.lastWorkingDay ?? employee.employment.separationDate;
     if (typeof separationDate !== "number") {
@@ -354,14 +418,14 @@ export const prepareFinalSettlement = mutation({
     const existing = await findSettlementBySeparation(
       ctx,
       args.employeeId,
-      separationKey,
+      separationType,
+      separationDate,
     );
     if (existing) {
       await prepareEmployeeLeaveForFinalSettlement(ctx, {
         organizationId: args.organizationId,
         employeeId: args.employeeId,
-        separationDate:
-          separationDate,
+        separationDate: separationDate,
         actorId: userRecord._id,
       });
       return existing._id;
@@ -415,8 +479,7 @@ export const prepareFinalSettlement = mutation({
     await prepareEmployeeLeaveForFinalSettlement(ctx, {
       organizationId: args.organizationId,
       employeeId: args.employeeId,
-      separationDate:
-        separationDate,
+      separationDate: separationDate,
       actorId: userRecord._id,
     });
 
@@ -438,7 +501,7 @@ export const updateClearanceItem = mutation({
     );
     assertFinalSettlementEditable(settlement.status);
     const now = Date.now();
-    const clearanceItems = settlement.clearanceItems.map((item: any) => {
+    const clearanceItems = settlement.clearanceItems.map((item) => {
       if (item.id !== args.itemId) return item;
       return {
         ...item,
@@ -451,16 +514,17 @@ export const updateClearanceItem = mutation({
       };
     });
     if (
-      JSON.stringify(clearanceItems) === JSON.stringify(settlement.clearanceItems)
+      JSON.stringify(clearanceItems) ===
+      JSON.stringify(settlement.clearanceItems)
     ) {
       throw new Error("Clearance item not found");
     }
 
-    const required = clearanceItems.filter((item: any) => item.required);
+    const required = clearanceItems.filter((item) => item.required);
     const allResolved = required.every(
-      (item: any) => item.status === "completed" || item.status === "waived",
+      (item) => item.status === "completed" || item.status === "waived",
     );
-    const hasWaived = required.some((item: any) => item.status === "waived");
+    const hasWaived = required.some((item) => item.status === "waived");
 
     await ctx.db.patch(args.settlementId, {
       clearanceItems,
@@ -468,7 +532,7 @@ export const updateClearanceItem = mutation({
       updatedAt: now,
     });
 
-    const employee = (await ctx.db.get(settlement.employeeId)) as any;
+    const employee = await ctx.db.get(settlement.employeeId);
     if (employee) {
       await ctx.db.patch(settlement.employeeId, {
         employment: {
@@ -513,15 +577,17 @@ export const upsertLoanPayoff = mutation({
       nextLine.rule !== "waive" &&
       nextLine.payoffAmount <= 0
     ) {
-      throw new Error("Enter a verified positive loan payoff amount before approval.");
+      throw new Error(
+        "Enter a verified positive loan payoff amount before approval.",
+      );
     }
 
     const existingIndex = settlement.loanPayoffs.findIndex(
-      (line: any) => line.id === nextLine.id,
+      (line) => line.id === nextLine.id,
     );
     const loanPayoffs =
       existingIndex >= 0
-        ? settlement.loanPayoffs.map((line: any, index: number) =>
+        ? settlement.loanPayoffs.map((line, index) =>
             index === existingIndex ? nextLine : line,
           )
         : [...settlement.loanPayoffs, nextLine];
@@ -546,7 +612,7 @@ export const removeLoanPayoff = mutation({
     assertFinalSettlementEditable(settlement.status);
     await ctx.db.patch(args.settlementId, {
       loanPayoffs: settlement.loanPayoffs.filter(
-        (line: any) => line.id !== args.loanPayoffId,
+        (line) => line.id !== args.loanPayoffId,
       ),
       status: statusAfterSettlementEdit(settlement.status),
       updatedAt: Date.now(),
@@ -580,11 +646,11 @@ export const upsertCustomDeduction = mutation({
     if (!nextLine.name) throw new Error("Custom deduction name is required");
 
     const existingIndex = settlement.customDeductions.findIndex(
-      (line: any) => line.id === nextLine.id,
+      (line) => line.id === nextLine.id,
     );
     const customDeductions =
       existingIndex >= 0
-        ? settlement.customDeductions.map((line: any, index: number) =>
+        ? settlement.customDeductions.map((line, index) =>
             index === existingIndex ? nextLine : line,
           )
         : [...settlement.customDeductions, nextLine];
@@ -609,7 +675,7 @@ export const removeCustomDeduction = mutation({
     assertFinalSettlementEditable(settlement.status);
     await ctx.db.patch(args.settlementId, {
       customDeductions: settlement.customDeductions.filter(
-        (line: any) => line.id !== args.deductionId,
+        (line) => line.id !== args.deductionId,
       ),
       status: statusAfterSettlementEdit(settlement.status),
       updatedAt: Date.now(),
@@ -637,7 +703,7 @@ export const markFinalSettlementReadyForPayroll = mutation({
       updatedAt: Date.now(),
     });
 
-    const employee = (await ctx.db.get(settlement.employeeId)) as any;
+    const employee = await ctx.db.get(settlement.employeeId);
     if (employee) {
       await ctx.db.patch(settlement.employeeId, {
         employment: {
@@ -688,7 +754,9 @@ export const markBir2316Released = mutation({
       settlement.status !== "payroll_generated" &&
       settlement.status !== "released"
     ) {
-      throw new Error("BIR 2316 can only be released after payroll generation.");
+      throw new Error(
+        "BIR 2316 can only be released after payroll generation.",
+      );
     }
     if (
       settlement.bir2316.status !== "data_ready" &&
@@ -730,17 +798,21 @@ export const markFinalTaxReviewed = mutation({
     );
     const calculationVersion = assertSettlementHasGeneratedPayroll(settlement);
     if (!settlement.payslipId) {
-      throw new Error("Generate the final-pay payroll draft before reviewing tax.");
+      throw new Error(
+        "Generate the final-pay payroll draft before reviewing tax.",
+      );
     }
     const rawPayslip = await ctx.db.get(settlement.payslipId);
     const payslip = decryptPayslipRowFromDb(rawPayslip);
-    if (!payslip) throw new Error("The linked final-pay payslip was not found.");
+    if (!payslip)
+      throw new Error("The linked final-pay payslip was not found.");
     const withholdingTax = (payslip.deductions ?? [])
       .filter((line: { name?: string }) =>
         (line.name ?? "").toLowerCase().includes("withholding tax"),
       )
       .reduce(
-        (sum: number, line: { amount?: number }) => sum + Number(line.amount ?? 0),
+        (sum: number, line: { amount?: number }) =>
+          sum + Number(line.amount ?? 0),
         0,
       );
     const withholdingTaxRefund = (payslip.incentives ?? [])
@@ -748,7 +820,8 @@ export const markFinalTaxReviewed = mutation({
         (line.name ?? "").toLowerCase().includes("withholding tax refund"),
       )
       .reduce(
-        (sum: number, line: { amount?: number }) => sum + Number(line.amount ?? 0),
+        (sum: number, line: { amount?: number }) =>
+          sum + Number(line.amount ?? 0),
         0,
       );
     const review = validateFinalTaxReview({

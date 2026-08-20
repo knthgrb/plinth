@@ -192,8 +192,8 @@
     },
     {
       "name": "employeeLifecycleEvents",
-      "fieldCount": 10,
-      "fieldsSha256": "fe42c151e2ae7caa809baa5422652143a287f1d3babc3aa720a67f55e4ad6076",
+      "fieldCount": 11,
+      "fieldsSha256": "dc119bc2b58af2b2cedfa435eefe0bdb7a21e8e266dc36428dcfe17f5669db4a",
       "indexCount": 2,
       "indexesSha256": "8d94e2f844244acfd21589ea0c497de1a5d434bd511f953af086fe8ff8e63405"
     },
@@ -220,8 +220,8 @@
     },
     {
       "name": "employees",
-      "fieldCount": 66,
-      "fieldsSha256": "0e6cb0e4829b67fc1a008dd7f1c90ef0fd43a821756184dbd2a4e11d1d6e6538",
+      "fieldCount": 68,
+      "fieldsSha256": "8984cdb5b5e848ab9677d696468067e10e9f40af750236499dcb4d6d98dc0ec8",
       "indexCount": 5,
       "indexesSha256": "1aff2c9166851dc1567d1968f552f28966de71e6a211f49bf8eac45560296085"
     },
@@ -661,8 +661,8 @@
     },
     {
       "name": "userOrganizations",
-      "fieldCount": 9,
-      "fieldsSha256": "229ce8e59d510d0b686b91bbbae90c3e793d730d8fc74cfd4b7e9ec6289a16bf",
+      "fieldCount": 10,
+      "fieldsSha256": "153f37c5f99761425f8098147573b0e80f22cd6237130e9a9f82726ef5ea62da",
       "indexCount": 4,
       "indexesSha256": "a47803db3a2d91d2dfe40ca16714ed7c35a736b5d32488ae7c17d59f1ba2aecf"
     },

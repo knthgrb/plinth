@@ -1,3 +1,9 @@
+import {
+  resolveSeparationType,
+  type LegacyEmploymentStatus,
+  type SeparationType,
+} from "@/utils/employment-lifecycle";
+
 export type FinalSettlementStatus =
   | "draft"
   | "in_review"
@@ -6,10 +12,7 @@ export type FinalSettlementStatus =
   | "released"
   | "void";
 
-export type FinalSettlementClearanceStatus =
-  | "pending"
-  | "completed"
-  | "waived";
+export type FinalSettlementClearanceStatus = "pending" | "completed" | "waived";
 
 export type FinalSettlementLoanPayoffRule =
   | "deduct_full_balance"
@@ -157,9 +160,17 @@ const DEFAULT_CLEARANCE_ITEMS: Array<{
   { id: "hr-clearance", label: "HR Clearance", ownerRole: "hr" },
   { id: "manager-handover", label: "Manager Handover", ownerRole: "hr" },
   { id: "it-assets", label: "IT Assets", ownerRole: "hr" },
-  { id: "finance-clearance", label: "Finance Clearance", ownerRole: "accounting" },
+  {
+    id: "finance-clearance",
+    label: "Finance Clearance",
+    ownerRole: "accounting",
+  },
   { id: "company-property", label: "Company Property", ownerRole: "hr" },
-  { id: "bir-2316-final-tax", label: "BIR 2316 / Final Tax", ownerRole: "accounting" },
+  {
+    id: "bir-2316-final-tax",
+    label: "BIR 2316 / Final Tax",
+    ownerRole: "accounting",
+  },
 ];
 
 function roundCurrency(amount: number): number {
@@ -196,17 +207,29 @@ export function createLoanPayoffsFromEmployeeDeductions(
 
 export function buildSeparationKey(
   employeeId: string,
-  separationType: "resigned" | "terminated",
+  separationType: SeparationType | LegacyEmploymentStatus,
   separationDate: number,
 ): string {
   return `${employeeId}:${separationType}:${Math.trunc(separationDate)}`;
 }
 
-const EDITABLE_SETTLEMENT_STATUSES: ReadonlySet<FinalSettlementStatus> = new Set([
-  "draft",
-  "in_review",
-  "ready_for_payroll",
-]);
+export function resolveFinalSettlementSeparationType(
+  employmentStatus: string | null | undefined,
+  separationType?: string | null,
+): SeparationType {
+  return resolveSeparationType(employmentStatus, separationType) ?? "other";
+}
+
+export function getLegacyFinalSettlementSeparationType(
+  separationType: SeparationType,
+): LegacyEmploymentStatus | null {
+  if (separationType === "resignation") return "resigned";
+  if (separationType === "termination") return "terminated";
+  return null;
+}
+
+const EDITABLE_SETTLEMENT_STATUSES: ReadonlySet<FinalSettlementStatus> =
+  new Set(["draft", "in_review", "ready_for_payroll"]);
 
 export function assertFinalSettlementEditable(
   status: FinalSettlementStatus,
@@ -308,7 +331,9 @@ export function computeFinalSettlementSummary(settlement: FinalSettlementLike) {
   const completedRequired = required.filter(
     (item) => item.status === "completed",
   ).length;
-  const waivedRequired = required.filter((item) => item.status === "waived").length;
+  const waivedRequired = required.filter(
+    (item) => item.status === "waived",
+  ).length;
   const pendingRequired = required.length - completedRequired - waivedRequired;
   const payrollLines = buildFinalSettlementPayrollDeductions(settlement);
   const totalLoanPayoff = payrollLines

@@ -14,7 +14,10 @@ const rows: EvaluationEmployeeListItem[] = [
     position: "Analyst",
     department: "Operations",
     employmentStatus: "active",
-    nextEvaluation: { status: "scheduled", scheduledFor: Date.UTC(2026, 7, 10) },
+    nextEvaluation: {
+      status: "scheduled",
+      scheduledFor: Date.UTC(2026, 7, 10),
+    },
   },
   {
     id: "employee-2",
@@ -23,7 +26,10 @@ const rows: EvaluationEmployeeListItem[] = [
     position: "Designer",
     department: "Product",
     employmentStatus: "resigned",
-    nextEvaluation: { status: "scheduled", scheduledFor: Date.UTC(2026, 7, 20) },
+    nextEvaluation: {
+      status: "scheduled",
+      scheduledFor: Date.UTC(2026, 7, 20),
+    },
   },
   {
     id: "employee-3",
@@ -77,6 +83,12 @@ describe("evaluation workspace employee list", () => {
     expect(
       filterEvaluationEmployees(rows, {
         ...baseFilters,
+        employmentStatus: "separated",
+      }).map((row) => row.id),
+    ).toEqual(["employee-2", "employee-3"]);
+    expect(
+      filterEvaluationEmployees(rows, {
+        ...baseFilters,
         employmentStatus: "resigned",
       }).map((row) => row.id),
     ).toEqual(["employee-2"]);
@@ -107,7 +119,9 @@ describe("evaluation workspace employee list", () => {
       startIndex: 40,
       endIndex: 45,
     });
-    expect(paginateEvaluationEmployees(manyRows.slice(0, 4), 3, 20)).toMatchObject({
+    expect(
+      paginateEvaluationEmployees(manyRows.slice(0, 4), 3, 20),
+    ).toMatchObject({
       page: 1,
       totalPages: 1,
       startIndex: 0,

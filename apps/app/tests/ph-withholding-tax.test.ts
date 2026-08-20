@@ -4,13 +4,41 @@ import {
   computeAnnualTaxFromBasic,
   getTaxDeductionAmount,
   getWithholdingTaxCutoffForEmployee,
+  removeWithholdingTaxOverrideLines,
 } from "@/lib/ph-withholding-tax";
+
+type DeductionLine = {
+  name: string;
+  amount: number;
+  type: string;
+};
 
 function manilaMidnightUtc(year: number, monthIndex: number, day: number) {
   return Date.UTC(year, monthIndex, day - 1, 16, 0, 0, 0);
 }
 
 describe("withholding tax cutoff routing", () => {
+  it("removes withholding tax from preserved payslip overrides", () => {
+    const result = removeWithholdingTaxOverrideLines<DeductionLine>([
+      { name: "Cash advance", amount: 750, type: "custom" },
+      { name: " withholding TAX ", amount: 9_999, type: "government" },
+      { name: "SSS", amount: 900, type: "government" },
+    ]);
+
+    expect(result).toEqual([
+      { name: "Cash advance", amount: 750, type: "custom" },
+      { name: "SSS", amount: 900, type: "government" },
+    ]);
+  });
+
+  it("omits an override collection that only contained withholding tax", () => {
+    expect(
+      removeWithholdingTaxOverrideLines<DeductionLine>([
+        { name: "Withholding Tax", amount: 1_234.56, type: "government" },
+      ]),
+    ).toBeUndefined();
+  });
+
   it.each([
     [250_000, 0],
     [400_000, 22_500],

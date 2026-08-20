@@ -37,12 +37,7 @@ const ADMIN_ASSIGNABLE_ROLES: OrganizationRole[] = [
   "employee",
 ];
 
-const HR_ASSIGNABLE_ROLES: OrganizationRole[] = [
-  "hr",
-  "manager",
-  "accounting",
-  "employee",
-];
+const HR_ASSIGNABLE_ROLES: OrganizationRole[] = ["manager", "employee"];
 
 export function normalizeOrganizationRole(
   role: string | null | undefined,
@@ -153,7 +148,10 @@ export function canRemoveOrganizationMember({
   }
 
   if (isSelf) {
-    return { allowed: false, reason: "Cannot remove yourself from organization." };
+    return {
+      allowed: false,
+      reason: "Cannot remove yourself from organization.",
+    };
   }
 
   if (target === "owner" && ownerCount <= 1) {

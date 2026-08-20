@@ -1,7 +1,12 @@
-export type EmployeeStatus =
-  | "active"
-  | "resigned"
-  | "terminated";
+import {
+  isEmployeeSeparated,
+  normalizeEmploymentStatus,
+  resolveSeparationType,
+  type EmploymentStatus,
+  type SeparationType,
+} from "@/utils/employment-lifecycle";
+
+export type EmployeeStatus = EmploymentStatus;
 
 export type EmployeeLifecycleImpact = {
   status: EmployeeStatus;
@@ -33,9 +38,9 @@ const LIFECYCLE_IMPACTS: Record<EmployeeStatus, EmployeeLifecycleImpact> = {
     documents: "Can access employee-visible documents.",
     finalPay: "No final pay action required.",
   },
-  resigned: {
-    status: "resigned",
-    label: "Resigned",
+  separated: {
+    status: "separated",
+    label: "Separated",
     accessLabel: "Alumni read-only",
     login: "Can only access alumni-allowed history for this organization.",
     chat: "Chat access is disabled for this organization.",
@@ -48,42 +53,33 @@ const LIFECYCLE_IMPACTS: Record<EmployeeStatus, EmployeeLifecycleImpact> = {
       "Only documents marked alumni-visible should remain available to the employee.",
     finalPay: "Should be reviewed for final pay and clearance.",
   },
-  terminated: {
-    status: "terminated",
-    label: "Terminated",
-    accessLabel: "Alumni read-only",
-    login: "Can only access alumni-allowed history for this organization.",
-    chat: "Chat access is disabled for this organization.",
-    leave: "Cannot file or approve leave.",
-    attendance: "Attendance capture stops after termination.",
-    payroll: "Excluded from regular payroll; use final pay when needed.",
-    payslips: "Can keep read-only access to historical payslips.",
-    assets: "Assigned assets should be returned or cleared.",
-    documents:
-      "Only documents marked alumni-visible should remain available to the employee.",
-    finalPay:
-      "Should be reviewed for final pay, clearance, and offboarding records.",
-  },
 };
 
 export function normalizeEmployeeStatus(
   status: string | null | undefined,
 ): EmployeeStatus {
-  if (
-    status === "active" ||
-    status === "resigned" ||
-    status === "terminated"
-  ) {
-    return status;
-  }
-
-  return "active";
+  return normalizeEmploymentStatus(status);
 }
 
 export function getEmployeeLifecycleImpact(
   status: string | null | undefined,
+  separationType?: SeparationType | null,
 ): EmployeeLifecycleImpact {
-  return LIFECYCLE_IMPACTS[normalizeEmployeeStatus(status)];
+  const impact = LIFECYCLE_IMPACTS[normalizeEmployeeStatus(status)];
+  const resolvedType = resolveSeparationType(status, separationType);
+  if (resolvedType === "resignation") {
+    return { ...impact, label: "Resigned" };
+  }
+  if (resolvedType === "termination") {
+    return {
+      ...impact,
+      label: "Terminated",
+      attendance: "Attendance capture stops after termination.",
+      finalPay:
+        "Should be reviewed for final pay, clearance, and offboarding records.",
+    };
+  }
+  return impact;
 }
 
 export function canUseEmployeeSelfService(
@@ -92,9 +88,6 @@ export function canUseEmployeeSelfService(
   return normalizeEmployeeStatus(status) === "active";
 }
 
-export function canRehireEmployee(
-  status: string | null | undefined,
-): boolean {
-  const normalized = normalizeEmployeeStatus(status);
-  return normalized === "resigned" || normalized === "terminated";
+export function canRehireEmployee(status: string | null | undefined): boolean {
+  return isEmployeeSeparated(status);
 }

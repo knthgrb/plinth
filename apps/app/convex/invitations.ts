@@ -1,5 +1,10 @@
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import { authComponent } from "./auth";
 import { getAssignableOrganizationRoleOptions } from "@/utils/organization-roles";
 import { requireActiveMembership, requireIdentity } from "./access";
@@ -7,7 +12,11 @@ import { hashInvitationToken } from "./invitationTokenHash";
 import { createInvitationToken } from "./invitationCreation";
 import type { Doc, Id } from "./_generated/dataModel";
 import { normalizeOrgMembershipAccessStatus } from "@/utils/org-membership-lifecycle";
-import { findUserByEmail, normalizeUserEmail } from "./userEmail";
+import {
+  assertUserEmailAvailable,
+  findUserByEmail,
+  normalizeUserEmail,
+} from "./userEmail";
 
 function normalizeInviteEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -22,42 +31,14 @@ function assertCanInviteRole(actorRole: string | null, nextRole: string) {
   }
 }
 
-/**
- * When linking an employee to an existing Plinth account, align employee record names
- * with the account display name (split into first / middle / last).
- */
-function employeePersonalFromAccountDisplayName(
-  displayName: string,
-  fallbackEmail: string,
-): { firstName: string; lastName: string; middleName?: string } {
-  const trimmed = displayName.trim();
-  const localPart = (fallbackEmail.split("@")[0] || "user").trim() || "user";
-  if (!trimmed) {
-    return { firstName: localPart, lastName: localPart };
-  }
-  const parts = trimmed.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) {
-    return { firstName: parts[0], lastName: parts[0] };
-  }
-  if (parts.length === 2) {
-    return { firstName: parts[0], lastName: parts[1] };
-  }
-  return {
-    firstName: parts[0],
-    middleName: parts.slice(1, -1).join(" "),
-    lastName: parts[parts.length - 1],
-  };
-}
-
 function normalizeDisplayNameForCompare(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 /**
  * When inviting an existing Plinth user linked to an employee record, we only
- * rewrite the employee's first/middle/last if the account profile name and the
- * employee record name are not the same (ignoring case and extra spaces).
- * Empty account display name never triggers a rename.
+ * report whether account and employee display names differ. Names are never
+ * used as identity and neither record is rewritten automatically.
  */
 function accountDisplayNameDiffersFromEmployeeRecord(
   accountDisplayName: string,
@@ -233,7 +214,7 @@ async function tryCreateOrgInvitationSoft(
       .withIndex("by_user_organization", (q) =>
         q.eq("userId", existingUser._id).eq("organizationId", organizationId),
       )
-      .first();
+      .unique();
 
     if (existingUserOrg) {
       if (
@@ -257,39 +238,8 @@ async function tryCreateOrgInvitationSoft(
       if (!employeeDoc) {
         return { kind: "skipped", email, reason: "Employee not found" };
       }
-      const pi = employeeDoc.personalInfo;
-
       const accountNameRaw = String(existingUser.name ?? "");
-      if (
-        accountDisplayNameDiffersFromEmployeeRecord(accountNameRaw, {
-          firstName: pi.firstName,
-          lastName: pi.lastName,
-          middleName: pi.middleName,
-        })
-      ) {
-        const parts = employeePersonalFromAccountDisplayName(
-          accountNameRaw,
-          existingUser.email,
-        );
-        const piRest = { ...pi };
-        delete (piRest as { middleName?: string }).middleName;
-        const updatedPersonal = {
-          ...piRest,
-          firstName: parts.firstName,
-          lastName: parts.lastName,
-          ...(parts.middleName ? { middleName: parts.middleName } : {}),
-        };
-        await ctx.db.patch(resolvedEmployeeId, {
-          personalInfo: updatedPersonal,
-          updatedAt: now,
-        });
-      }
-
-      const employeeAfter = await ctx.db.get(resolvedEmployeeId);
-      if (!employeeAfter) {
-        return { kind: "skipped", email, reason: "Employee not found" };
-      }
-      const p = employeeAfter.personalInfo;
+      const p = employeeDoc.personalInfo;
       const inviteeNameFromEmployee = [p.firstName, p.middleName, p.lastName]
         .filter(Boolean)
         .join(" ")
@@ -701,13 +651,15 @@ export const getInviteRecipientPreview = query({
             .eq("userId", existingConvexUser._id)
             .eq("organizationId", args.organizationId),
         )
-        .first();
-      alreadyInOrg = !!link;
+        .unique();
+      alreadyInOrg =
+        !!link &&
+        normalizeOrgMembershipAccessStatus(link.accessStatus) !== "removed";
     }
 
     const needsConfirmForExistingUser = !!(existingConvexUser && !alreadyInOrg);
 
-    let employeeWillBeRenamedToMatchAccount = false;
+    let employeeNameDiffersFromAccount = false;
     if (args.employeeId && existingConvexUser && !alreadyInOrg) {
       const emp = await ctx.db.get(args.employeeId);
       if (emp) {
@@ -716,7 +668,7 @@ export const getInviteRecipientPreview = query({
           lastName: string;
           middleName?: string;
         };
-        employeeWillBeRenamedToMatchAccount =
+        employeeNameDiffersFromAccount =
           accountDisplayNameDiffersFromEmployeeRecord(
             String(existingConvexUser.name ?? ""),
             ep,
@@ -734,7 +686,7 @@ export const getInviteRecipientPreview = query({
         : null,
       alreadyInOrg,
       needsConfirmForExistingUser,
-      employeeWillBeRenamedToMatchAccount,
+      employeeNameDiffersFromAccount,
       employeeCurrentDisplayName,
     };
   },
@@ -792,6 +744,7 @@ export const acceptInvitation = mutation({
     let userId: Id<"users">;
 
     if (!existingConvexUser) {
+      await assertUserEmailAvailable(ctx, authenticatedEmail);
       userId = await ctx.db.insert("users", {
         email: authenticatedEmail,
         normalizedEmail: normalizeUserEmail(authenticatedEmail),
@@ -802,6 +755,11 @@ export const acceptInvitation = mutation({
     } else {
       userId = existingConvexUser._id;
       if (existingConvexUser.email !== authenticatedEmail) {
+        await assertUserEmailAvailable(
+          ctx,
+          authenticatedEmail,
+          existingConvexUser._id,
+        );
         await ctx.db.patch(userId, {
           email: authenticatedEmail,
           normalizedEmail: normalizeUserEmail(authenticatedEmail),
@@ -825,7 +783,7 @@ export const acceptInvitation = mutation({
       .withIndex("by_user_organization", (q) =>
         q.eq("userId", userId).eq("organizationId", invitation.organizationId),
       )
-      .first();
+      .unique();
 
     if (
       existingUserOrg &&
@@ -1008,8 +966,7 @@ export const createUserForEmployee = mutation({
     const inviterEmail = userRecord.email;
     if (
       inviterEmail &&
-      employee.personalInfo.email.toLowerCase() ===
-        inviterEmail.toLowerCase()
+      employee.personalInfo.email.toLowerCase() === inviterEmail.toLowerCase()
     ) {
       throw new Error(
         "You cannot send an invitation to your own email address.",
@@ -1019,14 +976,29 @@ export const createUserForEmployee = mutation({
     // Check if employee already has a user account
     const existingUserOrg = await ctx.db
       .query("userOrganizations")
-      .withIndex("by_organization", (q) =>
-        q.eq("organizationId", args.organizationId),
+      .withIndex("by_organization_employee", (q) =>
+        q
+          .eq("organizationId", args.organizationId)
+          .eq("employeeId", args.employeeId),
       )
-      .filter((q) => q.eq(q.field("employeeId"), args.employeeId))
-      .first();
+      .unique();
 
-    if (existingUserOrg) {
+    if (
+      existingUserOrg &&
+      normalizeOrgMembershipAccessStatus(existingUserOrg.accessStatus) !==
+        "removed"
+    ) {
       throw new Error("Employee already has a user account");
+    }
+    if (existingUserOrg) {
+      const linkedUser = await ctx.db.get(existingUserOrg.userId);
+      if (
+        !linkedUser?.email ||
+        normalizeInviteEmail(linkedUser.email) !==
+          normalizeInviteEmail(employee.personalInfo.email)
+      ) {
+        throw new Error("Employee is linked to a different account history");
+      }
     }
 
     // Check if user with this email already exists
@@ -1044,9 +1016,14 @@ export const createUserForEmployee = mutation({
             .eq("userId", existingUser._id)
             .eq("organizationId", args.organizationId),
         )
-        .first();
+        .unique();
 
-      if (existingUserOrgCheck) {
+      if (
+        existingUserOrgCheck &&
+        normalizeOrgMembershipAccessStatus(
+          existingUserOrgCheck.accessStatus,
+        ) !== "removed"
+      ) {
         throw new Error(
           "A user with this email is already in the organization",
         );
@@ -1054,49 +1031,6 @@ export const createUserForEmployee = mutation({
 
       if (!args.confirmInviteToExistingPlinthUser) {
         throw new Error(CONFIRM_EXISTING_PLINTH_USER);
-      }
-
-      const pi = employee.personalInfo as {
-        firstName: string;
-        lastName: string;
-        middleName?: string;
-        email: string;
-        phone?: string;
-        address?: string;
-        province?: string;
-        dateOfBirth?: number;
-        civilStatus?: string;
-        emergencyContact?: {
-          name: string;
-          relationship: string;
-          phone: string;
-        };
-      };
-
-      const accountNameRaw = String(existingUser.name ?? "");
-      if (
-        accountDisplayNameDiffersFromEmployeeRecord(accountNameRaw, {
-          firstName: pi.firstName,
-          lastName: pi.lastName,
-          middleName: pi.middleName,
-        })
-      ) {
-        const parts = employeePersonalFromAccountDisplayName(
-          accountNameRaw,
-          existingUser.email,
-        );
-        const piRest = { ...pi };
-        delete (piRest as { middleName?: string }).middleName;
-        const updatedPersonal = {
-          ...piRest,
-          firstName: parts.firstName,
-          lastName: parts.lastName,
-          ...(parts.middleName ? { middleName: parts.middleName } : {}),
-        };
-        await ctx.db.patch(args.employeeId, {
-          personalInfo: updatedPersonal,
-          updatedAt: now,
-        });
       }
     }
 

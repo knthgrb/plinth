@@ -22,7 +22,7 @@ interface Employee {
     employeeId: string;
     position?: string;
     department?: string;
-    status?: "active" | "resigned" | "terminated";
+    status?: "active" | "separated" | "resigned" | "terminated";
   };
 }
 
@@ -54,7 +54,9 @@ export function EmployeeSelect({
     if (!employees) return [];
     const selectableEmployees = includeInactive
       ? employees
-      : employees.filter((emp) => (emp.employment.status ?? "active") === "active");
+      : employees.filter(
+          (emp) => (emp.employment.status ?? "active") === "active",
+        );
     if (!searchQuery.trim()) return selectableEmployees;
     const query = searchQuery.toLowerCase();
     return selectableEmployees.filter((emp) => {

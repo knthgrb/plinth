@@ -27,10 +27,8 @@ type CreatedDateFilter = {
 interface EmployeesFiltersProps {
   departmentFilter: string;
   setDepartmentFilter: Dispatch<SetStateAction<string>>;
-  statusFilter: "all" | "active" | "resigned" | "terminated";
-  setStatusFilter: Dispatch<
-    SetStateAction<"all" | "active" | "resigned" | "terminated">
-  >;
+  statusFilter: "all" | "active" | "separated";
+  setStatusFilter: Dispatch<SetStateAction<"all" | "active" | "separated">>;
   settingsForDepartments?: {
     departments?: Array<string | { name: string; color?: string }>;
   } | null;
@@ -52,15 +50,13 @@ interface EmployeesFiltersProps {
 const STATUS_COLORS: Record<string, string> = {
   all: "#6B7280", // neutral gray
   active: "#22C55E", // green
-  resigned: "#F97316", // orange
-  terminated: "#EF4444", // red/coral
+  separated: "#F97316", // orange
 };
 
 const STATUS_LABELS: Record<string, string> = {
   all: "All statuses",
   active: "Active",
-  resigned: "Resigned",
-  terminated: "Terminated",
+  separated: "Separated",
 };
 
 export function EmployeesFilters({
@@ -343,13 +339,7 @@ export function EmployeesFilters({
                 key={value}
                 type="button"
                 onClick={() => {
-                  setStatusFilter(
-                    value as
-                      | "all"
-                      | "active"
-                      | "resigned"
-                      | "terminated",
-                  );
+                  setStatusFilter(value as "all" | "active" | "separated");
                   setStatusPopoverOpen(false);
                 }}
                 className={cn(
@@ -617,7 +607,9 @@ export function EmployeesFilters({
           >
             <X className="h-2 w-2" />
           </span>
-          <span className="text-[rgb(133,133,133)] font-semibold">Position</span>
+          <span className="text-[rgb(133,133,133)] font-semibold">
+            Position
+          </span>
           <span className="font-semibold max-w-[140px] truncate">
             {positionFilter}
           </span>

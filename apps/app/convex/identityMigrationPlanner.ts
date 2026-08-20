@@ -17,6 +17,7 @@ export const IDENTITY_CREDENTIALS_MIGRATION_VERSION = 1;
 type EmployeeLifecycleStatus =
   | "active"
   | "inactive"
+  | "separated"
   | "resigned"
   | "terminated";
 
@@ -24,6 +25,7 @@ function accessStatusForEmployee(
   status: EmployeeLifecycleStatus | undefined,
 ): PlannedUserMembership["accessStatus"] {
   if (status === "inactive") return "alumni";
+  if (status === "separated") return "alumni";
   if (status === "resigned") return "alumni";
   if (status === "terminated") return "alumni";
   return "active";
@@ -172,7 +174,9 @@ export function planInvitationTokenHash(args: {
   }
 
   const plannedTokenHash = hashInvitationToken(args.token);
-  if (args.hashedTokenMatchCount > (args.tokenHash === plannedTokenHash ? 1 : 0)) {
+  if (
+    args.hashedTokenMatchCount > (args.tokenHash === plannedTokenHash ? 1 : 0)
+  ) {
     return conflict("DUPLICATE_INVITATION_TOKEN_HASH", "tokenHash");
   }
   if (args.tokenHash && args.tokenHash !== plannedTokenHash) {

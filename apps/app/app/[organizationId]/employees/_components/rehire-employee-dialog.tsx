@@ -19,6 +19,7 @@ import {
   type EmploymentType,
 } from "@/components/ui/employment-type-select";
 import { useToast } from "@/components/ui/use-toast";
+import { Checkbox } from "@/components/ui/checkbox";
 
 type RehireEmployeeDialogProps = {
   open: boolean;
@@ -57,6 +58,7 @@ export function RehireEmployeeDialog({
     employee.employment.employmentType,
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [restoreAccess, setRestoreAccess] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -64,6 +66,7 @@ export function RehireEmployeeDialog({
     setPosition(employee.employment.position);
     setDepartment(employee.employment.department);
     setEmploymentType(employee.employment.employmentType);
+    setRestoreAccess(false);
   }, [employee, open]);
 
   const handleSubmit = async () => {
@@ -90,11 +93,15 @@ export function RehireEmployeeDialog({
         position: position.trim(),
         department: department.trim(),
         employmentType,
+        restoreAccess: hasMembership && restoreAccess,
+        role: hasMembership && restoreAccess ? "employee" : undefined,
       });
       toast({
         title: "Employee rehired",
         description: hasMembership
-          ? "The existing alumni membership is active again."
+          ? restoreAccess
+            ? "The employee is active and account access was restored with the Employee role."
+            : "The employee is active, but their organization account remains suspended."
           : "The employee record is active again without an organization account.",
       });
       onOpenChange(false);
@@ -119,7 +126,7 @@ export function RehireEmployeeDialog({
             Restore {employee.personalInfo.firstName}{" "}
             {employee.personalInfo.lastName}
             {hasMembership
-              ? " and reactivate their existing organization membership."
+              ? ". Choose whether their existing organization access should also be restored."
               : " as an active employee record."}
           </DialogDescription>
         </DialogHeader>
@@ -162,6 +169,26 @@ export function RehireEmployeeDialog({
               onValueChange={setEmploymentType}
             />
           </div>
+          {hasMembership && (
+            <div className="flex items-start gap-3 rounded-md border p-3">
+              <Checkbox
+                id="rehire-restore-access"
+                checked={restoreAccess}
+                onCheckedChange={(checked) =>
+                  setRestoreAccess(checked === true)
+                }
+              />
+              <div className="space-y-1">
+                <Label htmlFor="rehire-restore-access">
+                  Restore organization access
+                </Label>
+                <p className="text-sm text-muted-foreground">
+                  Restores access with the Employee role. Privileged roles must
+                  be assigned separately.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button

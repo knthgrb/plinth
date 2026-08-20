@@ -121,6 +121,8 @@ export class EmployeesService {
     position: string;
     department: string;
     employmentType: "regular" | "probationary" | "contractual" | "part-time";
+    restoreAccess: boolean;
+    role?: "owner" | "admin" | "hr" | "manager" | "accounting" | "employee";
   }) {
     const convex = await getAuthedConvexClient();
     return convex.mutation(api.employees.rehireEmployee, {

@@ -1,8 +1,35 @@
 import { describe, expect, it } from "vitest";
 
-import { getPreviewEarningsFromSource } from "@/app/[organizationId]/payroll/_components/payroll-preview-earnings-helpers";
+import {
+  getPendingOverrideReviewEmployees,
+  getPreviewEarningsFromSource,
+} from "@/app/[organizationId]/payroll/_components/payroll-preview-earnings-helpers";
+
+type OverrideReviewEmployee = {
+  employeeId: string;
+  fields: string[];
+};
 
 describe("payroll preview earnings helpers", () => {
+  it("shows auto-reapplied notes only while overrides need review", () => {
+    const employees = [
+      { employeeId: "employee-1", fields: ["deductions"] },
+    ];
+
+    expect(
+      getPendingOverrideReviewEmployees<OverrideReviewEmployee>({
+        status: "needs_review",
+        employees,
+      }),
+    ).toEqual(employees);
+    expect(
+      getPendingOverrideReviewEmployees<OverrideReviewEmployee>({
+        status: "reviewed",
+        employees,
+      }),
+    ).toEqual([]);
+  });
+
   it("maps legacy payroll restDayPremiumPay into restDayPay for preview rows", () => {
     const result = getPreviewEarningsFromSource({
       restDayPremiumPay: 413.78,

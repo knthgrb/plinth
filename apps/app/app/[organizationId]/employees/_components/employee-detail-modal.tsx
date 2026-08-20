@@ -78,6 +78,13 @@ import { cn } from "@/utils/utils";
 import { recalculateEmployeeAttendance } from "@/actions/attendance";
 import { useToast } from "@/components/ui/use-toast";
 import { canRehireEmployee } from "@/utils/employee-lifecycle";
+import {
+  getSeparationTypeLabel,
+  normalizeEmploymentStatus,
+  resolveSeparationType,
+  SEPARATION_TYPES,
+  type SeparationType,
+} from "@/utils/employment-lifecycle";
 import { EmployeeLifecycleTimeline } from "./employee-lifecycle-timeline";
 import { RehireEmployeeDialog } from "./rehire-employee-dialog";
 
@@ -129,6 +136,7 @@ export function EmployeeDetailModal({
     department: "",
     employmentType: "probationary",
     status: "active",
+    separationType: undefined,
     hireDate: "",
     regularizationDate: "",
     basicSalary: "",
@@ -151,7 +159,9 @@ export function EmployeeDetailModal({
     formState: { errors },
     control,
     reset,
+    watch,
   } = editForm;
+  const selectedEmploymentStatus = watch("status");
   const [scheduleType, setScheduleType] = useState<"one-time" | "regular">(
     "one-time",
   );
@@ -412,7 +422,12 @@ export function EmployeeDetailModal({
       position: employee.employment.position,
       department: employee.employment.department,
       employmentType: employee.employment.employmentType,
-      status: employee.employment.status,
+      status: normalizeEmploymentStatus(employee.employment.status),
+      separationType:
+        resolveSeparationType(
+          employee.employment.status,
+          employee.employment.separationType,
+        ) ?? undefined,
       hireDate: hireDateStr,
       regularizationDate: regularizationDateStr,
       basicSalary: employee.compensation.basicSalary.toString(),
@@ -601,6 +616,17 @@ export function EmployeeDetailModal({
               },
             };
 
+      const isNewSeparation =
+        data.status === "separated" &&
+        normalizeEmploymentStatus(employee.employment.status) === "active";
+      if (data.status === "separated" && !data.separationType) {
+        toast({
+          title: "Separation type required",
+          description: "Choose how the employment relationship ended.",
+          variant: "destructive",
+        });
+        return;
+      }
       const nextEmployment: EmployeeDetail["employment"] = {
         ...employee.employment,
         position: data.position,
@@ -610,7 +636,17 @@ export function EmployeeDetailModal({
           | "probationary"
           | "contractual"
           | "part-time",
-        status: data.status as "active" | "resigned" | "terminated",
+        status: data.status,
+        separationType:
+          data.status === "separated"
+            ? (data.separationType as SeparationType)
+            : undefined,
+        separationDate: isNewSeparation
+          ? Date.now()
+          : employee.employment.separationDate,
+        lastWorkingDay: isNewSeparation
+          ? Date.now()
+          : employee.employment.lastWorkingDay,
         hireDate: data.hireDate
           ? new Date(data.hireDate).getTime()
           : employee.employment.hireDate,
@@ -1262,9 +1298,8 @@ export function EmployeeDetailModal({
                               >
                                 Active
                               </SelectItem>
-                              <SelectItem value="resigned">Resigned</SelectItem>
-                              <SelectItem value="terminated">
-                                Terminated
+                              <SelectItem value="separated">
+                                Separated
                               </SelectItem>
                             </SelectContent>
                           </Select>
@@ -1277,6 +1312,34 @@ export function EmployeeDetailModal({
                       )}
                     </div>
                   </div>
+                  {selectedEmploymentStatus === "separated" && (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="edit-separation-type" className="text-sm">
+                        Separation type
+                      </Label>
+                      <Controller
+                        name="separationType"
+                        control={control}
+                        render={({ field }) => (
+                          <Select
+                            value={field.value}
+                            onValueChange={field.onChange}
+                          >
+                            <SelectTrigger id="edit-separation-type">
+                              <SelectValue placeholder="Select separation type" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {SEPARATION_TYPES.map((type) => (
+                                <SelectItem key={type} value={type}>
+                                  {getSeparationTypeLabel(type)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                      />
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <Label htmlFor="edit-hireDate" className="text-sm">

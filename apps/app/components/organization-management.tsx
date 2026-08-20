@@ -45,6 +45,8 @@ import { format } from "date-fns";
 import {
   updateOrganization,
   removeUserFromOrganization,
+  restoreOrganizationMemberAccess,
+  suspendOrganizationMember,
   updateUserRoleInOrganization,
   deleteOrganization,
 } from "@/actions/organizations";
@@ -63,6 +65,11 @@ import {
   normalizeOrganizationRole,
   type OrganizationRole,
 } from "@/utils/organization-roles";
+import {
+  getSeparationTypeLabel,
+  SEPARATION_TYPES,
+  type SeparationType,
+} from "@/utils/employment-lifecycle";
 
 type InviteableEmployeeRow = {
   _id: string;
@@ -76,7 +83,7 @@ type PendingMemberRemoval = {
   userId: string;
   name: string;
   email: string;
-  employeeId: string;
+  employeeId?: string;
 };
 
 function getErrorMessage(error: unknown): string {
@@ -100,11 +107,8 @@ function isValidEmailFormat(email: string): boolean {
 
 export function OrganizationManagement(): React.ReactElement {
   const router = useRouter();
-  const {
-    currentOrganizationId,
-    organizations,
-    currentOrganization,
-  } = useOrganization();
+  const { currentOrganizationId, organizations, currentOrganization } =
+    useOrganization();
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -134,11 +138,14 @@ export function OrganizationManagement(): React.ReactElement {
   const [resendingId, setResendingId] = useState<string | null>(null);
   const [pendingMemberRemoval, setPendingMemberRemoval] =
     useState<PendingMemberRemoval | null>(null);
-  const [separationType, setSeparationType] = useState<
-    "resigned" | "terminated"
-  >("resigned");
+  const [separationType, setSeparationType] =
+    useState<SeparationType>("resignation");
   const [separationDate, setSeparationDate] = useState(getTodayDateInput);
   const [separationReason, setSeparationReason] = useState("");
+  const [separationNotes, setSeparationNotes] = useState("");
+  const [memberAccessAction, setMemberAccessAction] = useState<
+    "suspend" | "end"
+  >("suspend");
   const [isRemovingMember, setIsRemovingMember] = useState(false);
 
   const inviteableEmployees = useQuery(
@@ -148,7 +155,9 @@ export function OrganizationManagement(): React.ReactElement {
 
   const members = useQuery(
     api.organizations.getOrganizationMembers,
-    currentOrganizationId ? { organizationId: currentOrganizationId } : "skip",
+    currentOrganizationId
+      ? { organizationId: currentOrganizationId, includeInactive: true }
+      : "skip",
   );
 
   const invitations = useQuery(
@@ -179,8 +188,7 @@ export function OrganizationManagement(): React.ReactElement {
   const isOwner = role === "owner";
   const isOwnerOrAdmin = role === "admin" || role === "owner";
   /** Only owner, admin, and HR can edit org info/settings */
-  const canEditOrgInfo =
-    role === "owner" || role === "admin" || role === "hr";
+  const canEditOrgInfo = role === "owner" || role === "admin" || role === "hr";
   /** Only owner, admin, and HR can edit other members' roles (never own role) */
   const canEditMemberRoles =
     role === "owner" || role === "admin" || role === "hr";
@@ -191,8 +199,7 @@ export function OrganizationManagement(): React.ReactElement {
     role === "owner" ||
     role === "hr" ||
     role === "manager";
-  const canInviteUsers =
-    role === "owner" || role === "admin" || role === "hr";
+  const canInviteUsers = role === "owner" || role === "admin" || role === "hr";
   const assignableRoleOptions = useMemo(
     () => getAssignableOrganizationRoleOptions(role),
     [role],
@@ -416,35 +423,80 @@ export function OrganizationManagement(): React.ReactElement {
       });
       return;
     }
-    if (targetMember.employeeId) {
-      setPendingMemberRemoval({
-        userId,
-        employeeId: targetMember.employeeId,
-        name: targetMember.name || targetMember.email || "Employee",
-        email: targetMember.email || "",
-      });
-      setSeparationType("resigned");
-      setSeparationDate(getTodayDateInput());
-      setSeparationReason("");
-      return;
-    }
-    if (!confirm("Are you sure you want to remove this user?")) return;
-
-    try {
-      await removeUserFromOrganization(currentOrganizationId, userId);
-    } catch (error: unknown) {
-      toast({
-        title: "Could not remove user",
-        description: getErrorMessage(error) || "Failed to remove user",
-        variant: "destructive",
-      });
-    }
+    setPendingMemberRemoval({
+      userId,
+      employeeId: targetMember.employeeId,
+      name: targetMember.name || targetMember.email || "Member",
+      email: targetMember.email || "",
+    });
+    setMemberAccessAction("suspend");
+    setSeparationType("resignation");
+    setSeparationDate(getTodayDateInput());
+    setSeparationReason("");
+    setSeparationNotes("");
   };
 
-  const handleSeparateLinkedMember = async () => {
+  const handleManageMemberAccess = async () => {
     if (!currentOrganizationId || !pendingMemberRemoval || isRemovingMember) {
       return;
     }
+    if (memberAccessAction === "suspend") {
+      if (!separationReason.trim()) {
+        toast({
+          title: "Suspension reason required",
+          description: "Explain why organization access is being suspended.",
+          variant: "destructive",
+        });
+        return;
+      }
+      setIsRemovingMember(true);
+      try {
+        await suspendOrganizationMember({
+          organizationId: currentOrganizationId,
+          userId: pendingMemberRemoval.userId,
+          reason: separationReason.trim(),
+        });
+        setPendingMemberRemoval(null);
+        toast({
+          title: "Access suspended",
+          description: "Employment and membership history were left unchanged.",
+        });
+      } catch (error: unknown) {
+        toast({
+          title: "Could not suspend access",
+          description: getErrorMessage(error),
+          variant: "destructive",
+        });
+      } finally {
+        setIsRemovingMember(false);
+      }
+      return;
+    }
+
+    if (!pendingMemberRemoval.employeeId) {
+      setIsRemovingMember(true);
+      try {
+        await removeUserFromOrganization(
+          currentOrganizationId,
+          pendingMemberRemoval.userId,
+        );
+        setPendingMemberRemoval(null);
+        toast({
+          title: "Membership removed",
+          description: "The membership was retained for audit history.",
+        });
+      } catch (error: unknown) {
+        toast({
+          title: "Could not remove membership",
+          description: getErrorMessage(error),
+          variant: "destructive",
+        });
+      } finally {
+        setIsRemovingMember(false);
+      }
+      return;
+    }
+
     const effectiveAt = new Date(`${separationDate}T00:00:00`).getTime();
     if (!separationDate || Number.isNaN(effectiveAt)) {
       toast({
@@ -464,6 +516,7 @@ export function OrganizationManagement(): React.ReactElement {
           type: separationType,
           effectiveAt,
           reason: separationReason.trim() || undefined,
+          notes: separationNotes.trim() || undefined,
         },
       );
       setPendingMemberRemoval(null);
@@ -480,6 +533,33 @@ export function OrganizationManagement(): React.ReactElement {
       });
     } finally {
       setIsRemovingMember(false);
+    }
+  };
+
+  const handleRestoreAccess = async (
+    userId: string,
+    memberRole: OrganizationRole,
+  ) => {
+    if (!currentOrganizationId || !isOwnerOrAdmin) return;
+    try {
+      const result = await restoreOrganizationMemberAccess({
+        organizationId: currentOrganizationId,
+        userId,
+        role: memberRole,
+      });
+      toast({
+        title: "Access restored",
+        description:
+          result.accessStatus === "active"
+            ? "The membership's role-based access is active again."
+            : "Historical alumni access was restored; full access remains unavailable because employment has ended.",
+      });
+    } catch (error: unknown) {
+      toast({
+        title: "Could not restore access",
+        description: getErrorMessage(error),
+        variant: "destructive",
+      });
     }
   };
 
@@ -614,9 +694,7 @@ export function OrganizationManagement(): React.ReactElement {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <div className="text-sm font-medium text-gray-500">Phone</div>
-                <div className="text-lg">
-                  {currentOrgDetails?.phone || "-"}
-                </div>
+                <div className="text-lg">{currentOrgDetails?.phone || "-"}</div>
               </div>
               <div>
                 <div className="text-sm font-medium text-gray-500">Address</div>
@@ -650,6 +728,7 @@ export function OrganizationManagement(): React.ReactElement {
                     <TableHead>Name</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Role</TableHead>
+                    <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -665,6 +744,7 @@ export function OrganizationManagement(): React.ReactElement {
                       ownerCount,
                     });
                     const canEditThisRole =
+                      member.accessStatus === "active" &&
                       canEditMemberRoles &&
                       (isOwner || !isCurrentUser) &&
                       roleDecision.allowed;
@@ -705,16 +785,39 @@ export function OrganizationManagement(): React.ReactElement {
                             </Select>
                           )}
                         </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="capitalize">
+                            {member.accessStatus}
+                          </Badge>
+                        </TableCell>
                         <TableCell className="text-right">
-                          {isOwnerOrAdmin && !isCurrentUser && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleRemoveUser(member._id)}
-                            >
-                              <Trash2 className="h-4 w-4 text-red-600" />
-                            </Button>
-                          )}
+                          {isOwnerOrAdmin &&
+                            !isCurrentUser &&
+                            member.accessStatus === "active" && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleRemoveUser(member._id)}
+                              >
+                                <Trash2 className="h-4 w-4 text-red-600" />
+                              </Button>
+                            )}
+                          {isOwnerOrAdmin &&
+                            !isCurrentUser &&
+                            member.accessStatus === "suspended" && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  void handleRestoreAccess(
+                                    member._id,
+                                    member.role as OrganizationRole,
+                                  )
+                                }
+                              >
+                                Restore access
+                              </Button>
+                            )}
                         </TableCell>
                       </TableRow>
                     );
@@ -733,79 +836,82 @@ export function OrganizationManagement(): React.ReactElement {
             <CardContent>
               <div className="space-y-2">
                 {pendingInvitationsToShow.map((invitation) => (
-                    <div
-                      key={invitation._id}
-                      className="flex items-center justify-between p-3 border rounded-lg"
-                    >
-                      <div className="flex items-center gap-3">
-                        <Mail className="h-4 w-4 text-gray-400" />
-                        <div>
-                          <div className="font-medium">{invitation.email}</div>
-                          <div className="text-sm text-gray-500">
-                            Invited as {invitation.role} •{" "}
-                            {format(
-                              new Date(invitation.createdAt),
-                              "MMM dd, yyyy",
-                            )}
-                          </div>
+                  <div
+                    key={invitation._id}
+                    className="flex items-center justify-between p-3 border rounded-lg"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Mail className="h-4 w-4 text-gray-400" />
+                      <div>
+                        <div className="font-medium">{invitation.email}</div>
+                        <div className="text-sm text-gray-500">
+                          Invited as {invitation.role} •{" "}
+                          {format(
+                            new Date(invitation.createdAt),
+                            "MMM dd, yyyy",
+                          )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="secondary">Pending</Badge>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={resendingId === invitation._id}
-                          onClick={async () => {
-                            setResendingId(invitation._id);
-                            const result = await resendInvitation(invitation._id);
-                            if (!result.ok) {
-                              toast({
-                                title: "Failed to resend",
-                                description: result.error,
-                                variant: "destructive",
-                              });
-                            } else {
-                              toast({
-                                title: "Invitation resent",
-                                description: `Email sent again to ${invitation.email}.`,
-                              });
-                            }
-                            setResendingId(null);
-                          }}
-                          title="Resend invitation email"
-                        >
-                          {resendingId === invitation._id ? (
-                            <Spinner size="sm" className="border-gray-600 border-t-transparent" />
-                          ) : (
-                            <Send className="h-4 w-4" />
-                          )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={async () => {
-                            try {
-                              await cancelInvitationMutation({
-                                invitationId: invitation._id,
-                              });
-                            } catch (error: unknown) {
-                              toast({
-                                title: "Could not cancel invitation",
-                                description:
-                                  getErrorMessage(error) ||
-                                  "Failed to cancel invitation",
-                                variant: "destructive",
-                              });
-                            }
-                          }}
-                          title="Cancel invitation"
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
                     </div>
-                  ))}
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary">Pending</Badge>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={resendingId === invitation._id}
+                        onClick={async () => {
+                          setResendingId(invitation._id);
+                          const result = await resendInvitation(invitation._id);
+                          if (!result.ok) {
+                            toast({
+                              title: "Failed to resend",
+                              description: result.error,
+                              variant: "destructive",
+                            });
+                          } else {
+                            toast({
+                              title: "Invitation resent",
+                              description: `Email sent again to ${invitation.email}.`,
+                            });
+                          }
+                          setResendingId(null);
+                        }}
+                        title="Resend invitation email"
+                      >
+                        {resendingId === invitation._id ? (
+                          <Spinner
+                            size="sm"
+                            className="border-gray-600 border-t-transparent"
+                          />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            await cancelInvitationMutation({
+                              invitationId: invitation._id,
+                            });
+                          } catch (error: unknown) {
+                            toast({
+                              title: "Could not cancel invitation",
+                              description:
+                                getErrorMessage(error) ||
+                                "Failed to cancel invitation",
+                              variant: "destructive",
+                            });
+                          }
+                        }}
+                        title="Cancel invitation"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </CardContent>
           </Card>
@@ -820,49 +926,106 @@ export function OrganizationManagement(): React.ReactElement {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Separate linked employee</DialogTitle>
+            <DialogTitle>Manage member access</DialogTitle>
             <DialogDescription>
-              {pendingMemberRemoval?.name} has a linked employee record. Choose
-              the separation type to preserve alumni payslip and document
-              access.
+              Choose whether to suspend access or end the underlying
+              {pendingMemberRemoval?.employeeId
+                ? " employment relationship"
+                : " organization membership"}
+              {` for ${pendingMemberRemoval?.name ?? "this member"}.`}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="member-separation-type">Separation type</Label>
+              <Label htmlFor="member-access-action">Action</Label>
               <Select
-                value={separationType}
+                value={memberAccessAction}
                 onValueChange={(value) =>
-                  setSeparationType(value as "resigned" | "terminated")
+                  setMemberAccessAction(value as "suspend" | "end")
                 }
               >
-                <SelectTrigger id="member-separation-type">
+                <SelectTrigger id="member-access-action">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="resigned">Resigned</SelectItem>
-                  <SelectItem value="terminated">Terminated</SelectItem>
+                  <SelectItem value="suspend">
+                    Suspend account access
+                  </SelectItem>
+                  <SelectItem value="end">
+                    {pendingMemberRemoval?.employeeId
+                      ? "Employee is leaving"
+                      : "Remove membership"}
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            {memberAccessAction === "end" &&
+              pendingMemberRemoval?.employeeId && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="member-separation-type">
+                      Separation type
+                    </Label>
+                    <Select
+                      value={separationType}
+                      onValueChange={(value) =>
+                        setSeparationType(value as SeparationType)
+                      }
+                    >
+                      <SelectTrigger id="member-separation-type">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SEPARATION_TYPES.map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {getSeparationTypeLabel(type)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="member-separation-date">
+                      Effective date
+                    </Label>
+                    <Input
+                      id="member-separation-date"
+                      type="date"
+                      value={separationDate}
+                      onChange={(event) =>
+                        setSeparationDate(event.target.value)
+                      }
+                    />
+                  </div>
+                </>
+              )}
             <div className="space-y-2">
-              <Label htmlFor="member-separation-date">Effective date</Label>
-              <Input
-                id="member-separation-date"
-                type="date"
-                value={separationDate}
-                onChange={(event) => setSeparationDate(event.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="member-separation-reason">Reason</Label>
+              <Label htmlFor="member-separation-reason">
+                {memberAccessAction === "suspend"
+                  ? "Suspension reason"
+                  : "Reason"}
+              </Label>
               <Input
                 id="member-separation-reason"
                 value={separationReason}
                 onChange={(event) => setSeparationReason(event.target.value)}
-                placeholder="Optional"
+                placeholder={
+                  memberAccessAction === "suspend" ? "Required" : "Optional"
+                }
               />
             </div>
+            {memberAccessAction === "end" &&
+              pendingMemberRemoval?.employeeId && (
+                <div className="space-y-2">
+                  <Label htmlFor="member-separation-notes">Notes</Label>
+                  <Input
+                    id="member-separation-notes"
+                    value={separationNotes}
+                    onChange={(event) => setSeparationNotes(event.target.value)}
+                    placeholder="Optional supporting context"
+                  />
+                </div>
+              )}
           </div>
           <DialogFooter>
             <Button
@@ -877,9 +1040,9 @@ export function OrganizationManagement(): React.ReactElement {
               type="button"
               variant="destructive"
               disabled={isRemovingMember}
-              onClick={() => void handleSeparateLinkedMember()}
+              onClick={() => void handleManageMemberAccess()}
             >
-              {isRemovingMember ? "Separating…" : "Confirm separation"}
+              {isRemovingMember ? "Saving…" : "Confirm action"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -896,7 +1059,9 @@ export function OrganizationManagement(): React.ReactElement {
           <form onSubmit={handleEditOrganization}>
             <div className="grid gap-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-name">Organization Name <span className="text-red-500">*</span></Label>
+                <Label htmlFor="edit-name">
+                  Organization Name <span className="text-red-500">*</span>
+                </Label>
                 <Input
                   id="edit-name"
                   value={editFormData.name}
@@ -995,7 +1160,8 @@ export function OrganizationManagement(): React.ReactElement {
                     className="w-[var(--radix-popover-trigger-width)] p-0 max-h-72 overflow-y-auto"
                     align="start"
                   >
-                    {!inviteableEmployees || inviteableEmployees.length === 0 ? (
+                    {!inviteableEmployees ||
+                    inviteableEmployees.length === 0 ? (
                       <p className="text-sm text-muted-foreground p-3">
                         No employees are available to invite (everyone with a
                         record may already be a member or invited).
@@ -1003,7 +1169,11 @@ export function OrganizationManagement(): React.ReactElement {
                     ) : (
                       <ul className="py-1">
                         {inviteableEmployees.map((emp) => {
-                          const label = [emp.firstName, emp.middleName, emp.lastName]
+                          const label = [
+                            emp.firstName,
+                            emp.middleName,
+                            emp.lastName,
+                          ]
                             .filter(Boolean)
                             .join(" ");
                           const checked = selectedInviteEmployeeIds.includes(
@@ -1045,9 +1215,7 @@ export function OrganizationManagement(): React.ReactElement {
                     type="email"
                     placeholder="name@company.com"
                     value={manualInviteEmailDraft}
-                    onChange={(e) =>
-                      setManualInviteEmailDraft(e.target.value)
-                    }
+                    onChange={(e) => setManualInviteEmailDraft(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
@@ -1144,7 +1312,10 @@ export function OrganizationManagement(): React.ReactElement {
             <DialogDescription asChild>
               <div className="space-y-3 text-sm text-muted-foreground">
                 <p>
-                  The following {batchConfirmEmails.length === 1 ? "address is" : "addresses are"}{" "}
+                  The following{" "}
+                  {batchConfirmEmails.length === 1
+                    ? "address is"
+                    : "addresses are"}{" "}
                   already registered on Plinth. They will be asked to log in to
                   accept; no new account will be created.
                 </p>
@@ -1185,10 +1356,9 @@ export function OrganizationManagement(): React.ReactElement {
             <DialogTitle>Delete Organization</DialogTitle>
             <DialogDescription>
               Are you sure you want to delete &quot;
-              {currentOrganization?.name}&quot;?
-              This action cannot be undone. All members will be removed from
-              this organization, but employee and payroll records will be
-              preserved.
+              {currentOrganization?.name}&quot;? This action cannot be undone.
+              All members will be removed from this organization, but employee
+              and payroll records will be preserved.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

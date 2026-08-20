@@ -47,6 +47,13 @@ import {
   toManilaDayStartUtcMs,
 } from "./employeeLifecycle";
 import { requireRegisteredStorageObject } from "./files";
+import {
+  isEmployeeSeparated,
+  normalizeEmploymentStatus,
+  resolveSeparationType,
+  type SeparationType,
+} from "@/utils/employment-lifecycle";
+import { getAssignableOrganizationRoleOptions } from "@/utils/organization-roles";
 
 type DefaultRequirement = RequirementConfigurationInput;
 type RequirementEventType = Doc<"employeeRequirementEvents">["type"];
@@ -274,7 +281,8 @@ export const getEmployees = query({
     // Filter by status ("all" means no status filter).
     if (args.status && args.status !== "all") {
       employees = employees.filter(
-        (employee) => employee.employment.status === args.status,
+        (employee) =>
+          normalizeEmploymentStatus(employee.employment.status) === args.status,
       );
     }
 
@@ -299,8 +307,9 @@ export const getEmployees = query({
 
     const statusRank: Record<string, number> = {
       active: 0,
+      separated: 1,
       resigned: 1,
-      terminated: 2,
+      terminated: 1,
     };
     employees.sort((a, b) => {
       const statusDiff =
@@ -391,7 +400,8 @@ export const getEmployeeLifecycleTimeline = query({
     if (events.length === 0) {
       const baseline: Array<{
         _id: string;
-        type: "hired" | "resigned" | "terminated" | "rehired";
+        type: "hired" | "separated" | "resigned" | "terminated" | "rehired";
+        separationType?: SeparationType;
         effectiveAt: number;
         position: string;
         department: string;
@@ -416,13 +426,15 @@ export const getEmployeeLifecycleTimeline = query({
           createdAt: employee.createdAt,
         },
       ];
-      if (
-        employee.employment.status === "resigned" ||
-        employee.employment.status === "terminated"
-      ) {
+      if (isEmployeeSeparated(employee.employment.status)) {
         baseline.push({
           _id: `legacy-separated-${employee._id}`,
-          type: employee.employment.status,
+          type: "separated",
+          separationType:
+            resolveSeparationType(
+              employee.employment.status,
+              employee.employment.separationType,
+            ) ?? "other",
           effectiveAt:
             employee.employment.separationDate ??
             employee.employment.lastWorkingDay ??
@@ -1075,6 +1087,21 @@ export const updateEmployee = mutation({
         separationDate: v.optional(v.number()),
         lastWorkingDay: v.optional(v.number()),
         separationReason: v.optional(v.string()),
+        separationNotes: v.optional(v.string()),
+        separationType: v.optional(
+          v.union(
+            v.literal("resignation"),
+            v.literal("termination"),
+            v.literal("job_abandonment"),
+            v.literal("end_of_contract"),
+            v.literal("retirement"),
+            v.literal("redundancy"),
+            v.literal("mutual_separation"),
+            v.literal("death"),
+            v.literal("transfer"),
+            v.literal("other"),
+          ),
+        ),
         finalPayStatus: v.optional(
           v.union(
             v.literal("not_started"),
@@ -1094,6 +1121,7 @@ export const updateEmployee = mutation({
         ),
         status: v.union(
           v.literal("active"),
+          v.literal("separated"),
           v.literal("resigned"),
           v.literal("terminated"),
         ),
@@ -1191,32 +1219,53 @@ export const updateEmployee = mutation({
     if (args.employment?.hireDate !== undefined) {
       assertHireDateIsNotFuture(args.employment.hireDate);
     }
+    const incomingSeparationType = args.employment
+      ? resolveSeparationType(
+          args.employment.status,
+          args.employment.separationType,
+        )
+      : null;
     if (
-      employee.employment.status !== "active" &&
-      args.employment?.status === "active"
+      args.employment?.status === "separated" &&
+      !args.employment.separationType
+    ) {
+      throw new Error("Separation type is required");
+    }
+    const employmentUpdate = args.employment
+      ? {
+          ...args.employment,
+          status: isEmployeeSeparated(args.employment.status)
+            ? ("separated" as const)
+            : ("active" as const),
+          separationType: incomingSeparationType ?? undefined,
+        }
+      : undefined;
+    if (
+      isEmployeeSeparated(employee.employment.status) &&
+      employmentUpdate?.status === "active"
     ) {
       throw new Error("Use Rehire Employee to restore an alumni employee");
     }
     if (
-      employee.employment.status !== "active" &&
-      args.employment?.status !== undefined &&
-      args.employment.status !== employee.employment.status
+      isEmployeeSeparated(employee.employment.status) &&
+      employmentUpdate &&
+      isEmployeeSeparated(employmentUpdate.status) &&
+      resolveSeparationType(
+        employee.employment.status,
+        employee.employment.separationType,
+      ) !== employmentUpdate.separationType
     ) {
       throw new Error(
-        "A separated employee status cannot be changed through generic editing",
+        "A separated employee category cannot be changed through generic editing",
       );
     }
-    if (
-      args.employment &&
-      (args.employment.status === "resigned" ||
-        args.employment.status === "terminated")
-    ) {
-      if (args.employment.hireDate !== employee.employment.hireDate) {
+    if (employmentUpdate && isEmployeeSeparated(employmentUpdate.status)) {
+      if (employmentUpdate.hireDate !== employee.employment.hireDate) {
         throw new Error("Hire date cannot be changed during separation");
       }
       const effectiveAt =
-        args.employment.separationDate ??
-        args.employment.lastWorkingDay ??
+        employmentUpdate.separationDate ??
+        employmentUpdate.lastWorkingDay ??
         Date.now();
       if (effectiveAt < employee.employment.hireDate) {
         throw new Error(
@@ -1262,7 +1311,7 @@ export const updateEmployee = mutation({
       }
       updates.personalInfo = personalInfoUpdate;
     }
-    if (args.employment) updates.employment = args.employment;
+    if (employmentUpdate) updates.employment = employmentUpdate;
     if (args.compensation) {
       const currentComp = decryptEmployeeFromDb(employee).compensation;
       const nextCompensation = {
@@ -1306,7 +1355,7 @@ export const updateEmployee = mutation({
 
     await ctx.db.patch(args.employeeId, updates);
     const compatibilityNow = Date.now();
-    if (args.employment) {
+    if (employmentUpdate) {
       const [definitions, currentRequirements] = await Promise.all([
         getEffectiveRequirementDefinitions(ctx, employee.organizationId),
         loadEffectiveEmployeeRequirements(ctx, employee),
@@ -1318,7 +1367,7 @@ export const updateEmployee = mutation({
       );
       const newlyApplicable = filterApplicableRequirementPolicies(
         definitions.requirements,
-        args.employment,
+        employmentUpdate,
       )
         .filter(
           (definition) =>
@@ -1407,11 +1456,11 @@ export const updateEmployee = mutation({
 
     // Employment status is org-scoped. It changes access to this organization,
     // not the user's global Plinth account.
-    if (args.employment?.status) {
-      const newStatus = args.employment.status;
+    if (employmentUpdate?.status) {
+      const newStatus = employmentUpdate.status;
       const isNewSeparation =
-        employee.employment.status === "active" &&
-        (newStatus === "resigned" || newStatus === "terminated");
+        !isEmployeeSeparated(employee.employment.status) &&
+        isEmployeeSeparated(newStatus);
       const linkedMemberships = await getLinkedEmployeeMemberships(
         ctx,
         employee.organizationId,
@@ -1442,19 +1491,20 @@ export const updateEmployee = mutation({
         });
       }
 
-      if (newStatus === "resigned" || newStatus === "terminated") {
+      if (isEmployeeSeparated(newStatus)) {
         if (isNewSeparation) {
           await ensureEmployeeLifecycleBaseline(ctx, employee, userRecord._id);
           await recordEmployeeLifecycleEvent(ctx, {
             organizationId: employee.organizationId,
             employeeId: args.employeeId,
-            type: newStatus,
+            type: "separated",
+            separationType: employmentUpdate.separationType ?? "other",
             effectiveAt:
-              args.employment.separationDate ??
-              args.employment.lastWorkingDay ??
+              employmentUpdate.separationDate ??
+              employmentUpdate.lastWorkingDay ??
               now,
-            employment: args.employment,
-            reason: args.employment.separationReason,
+            employment: employmentUpdate,
+            reason: employmentUpdate.separationReason,
             recordedBy: userRecord._id,
             createdAt: now,
           });
@@ -1483,15 +1533,35 @@ export const rehireEmployee = mutation({
       v.literal("contractual"),
       v.literal("part-time"),
     ),
+    restoreAccess: v.boolean(),
+    role: v.optional(
+      v.union(
+        v.literal("admin"),
+        v.literal("owner"),
+        v.literal("hr"),
+        v.literal("manager"),
+        v.literal("employee"),
+        v.literal("accounting"),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     const employee = await ctx.db.get(args.employeeId);
     if (!employee) throw new Error("Employee not found");
-    if (employee.employment.status === "active") {
+    if (!isEmployeeSeparated(employee.employment.status)) {
       throw new Error("Employee is already active");
     }
 
     const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
+    const nextRole = args.role ?? "employee";
+    if (
+      args.restoreAccess &&
+      !getAssignableOrganizationRoleOptions(userRecord.role).some(
+        (option) => option.value === nextRole,
+      )
+    ) {
+      throw new Error("Not authorized to restore access with this role");
+    }
     assertHireDateIsNotFuture(args.hireDate);
     const lifecycleEvents = await ctx.db
       .query("employeeLifecycleEvents")
@@ -1505,7 +1575,10 @@ export const rehireEmployee = mutation({
         employee.updatedAt,
       ...lifecycleEvents
         .filter(
-          (event) => event.type === "resigned" || event.type === "terminated",
+          (event) =>
+            event.type === "separated" ||
+            event.type === "resigned" ||
+            event.type === "terminated",
         )
         .map((event) => event.effectiveAt),
     );
@@ -1523,7 +1596,9 @@ export const rehireEmployee = mutation({
     const membership = linkedMemberships[0];
     if (
       membership &&
-      normalizeOrgMembershipAccessStatus(membership.accessStatus) !== "alumni"
+      !["alumni", "suspended"].includes(
+        normalizeOrgMembershipAccessStatus(membership.accessStatus),
+      )
     ) {
       throw new Error("Rehire requires an existing alumni membership");
     }
@@ -1533,11 +1608,15 @@ export const rehireEmployee = mutation({
       separationDate: ignoredSeparationDate,
       lastWorkingDay: ignoredLastWorkingDay,
       separationReason: ignoredSeparationReason,
+      separationNotes: ignoredSeparationNotes,
+      separationType: ignoredSeparationType,
       ...retainedEmployment
     } = employee.employment;
     void ignoredSeparationDate;
     void ignoredLastWorkingDay;
     void ignoredSeparationReason;
+    void ignoredSeparationNotes;
+    void ignoredSeparationType;
 
     const nextEmployment: Doc<"employees">["employment"] = {
       ...retainedEmployment,
@@ -1559,7 +1638,8 @@ export const rehireEmployee = mutation({
     });
     if (membership) {
       await ctx.db.patch(membership._id, {
-        accessStatus: "active",
+        role: args.restoreAccess ? nextRole : membership.role,
+        accessStatus: args.restoreAccess ? "active" : "suspended",
         accessUpdatedAt: now,
         accessUpdatedBy: userRecord._id,
         updatedAt: now,
@@ -1575,7 +1655,10 @@ export const rehireEmployee = mutation({
       createdAt: now,
     });
 
-    return { success: true, membershipReactivated: membership !== undefined };
+    return {
+      success: true,
+      membershipReactivated: membership !== undefined && args.restoreAccess,
+    };
   },
 });
 
@@ -2030,7 +2113,6 @@ export const addIncentive = mutation({
   },
 });
 
-// Archive employee and disable linked org access without deleting account/history.
 export const deleteEmployee = mutation({
   args: {
     employeeId: v.id("employees"),
@@ -2042,7 +2124,7 @@ export const deleteEmployee = mutation({
     const userRecord = await checkAuth(ctx, employee.organizationId, "hr");
     const now = Date.now();
 
-    if (employee.employment.status === "active") {
+    if (!isEmployeeSeparated(employee.employment.status)) {
       throw new Error("Separate the employee before archiving their record");
     }
 

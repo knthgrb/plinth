@@ -1,6 +1,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, it, vi } from "vitest";
 import { api, internal } from "../convex/_generated/api";
+import { assertUserEmailAvailable } from "../convex/userEmail";
 import schema from "../convex/schema";
 
 vi.mock("../convex/auth", () => ({
@@ -27,6 +28,29 @@ type BackfillResult = {
 };
 
 describe("normalized user email migration", () => {
+  it("enforces normalized email uniqueness while allowing the current user", async () => {
+    const t = convexTest(schema, modules);
+    const userId = await t.run((ctx) =>
+      ctx.db.insert("users", {
+        email: "Unique.Account@Example.com",
+        normalizedEmail: "unique.account@example.com",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+
+    await expect(
+      t.run((ctx) =>
+        assertUserEmailAvailable(ctx, " unique.account@example.com "),
+      ),
+    ).rejects.toThrow("A user account already owns this email address");
+    await expect(
+      t.run((ctx) =>
+        assertUserEmailAvailable(ctx, "UNIQUE.ACCOUNT@example.com", userId),
+      ),
+    ).resolves.toBeNull();
+  });
+
   it("backfills unique emails and reports case-insensitive duplicates", async () => {
     const t = convexTest(schema, modules);
     const fixture = await t.run(async (ctx) => {
