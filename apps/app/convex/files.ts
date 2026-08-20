@@ -15,6 +15,7 @@ const storagePurpose = v.union(
   v.literal("document_attachment"),
   v.literal("employee_requirement"),
   v.literal("evaluation_attachment"),
+  v.literal("government_remittance_evidence"),
   v.literal("leave_attachment"),
   v.literal("memo_attachment"),
   v.literal("payslip_pdf"),
@@ -28,6 +29,7 @@ export type StoragePurpose =
   | "document_attachment"
   | "employee_requirement"
   | "evaluation_attachment"
+  | "government_remittance_evidence"
   | "leave_attachment"
   | "memo_attachment"
   | "payslip_pdf";
@@ -39,6 +41,7 @@ const restrictedUploadRoles: Partial<
   announcement_attachment: new Set(["owner", "admin", "hr"]),
   applicant_resume: new Set(["owner", "admin", "hr"]),
   evaluation_attachment: new Set(["owner", "admin", "hr"]),
+  government_remittance_evidence: new Set(["owner", "admin", "accounting"]),
   memo_attachment: new Set(["owner", "admin", "hr"]),
   payslip_pdf: new Set(["owner", "admin", "hr", "accounting"]),
 };
@@ -180,7 +183,7 @@ async function requireStorageObject(
   organizationId: Parameters<typeof requireActiveMembership>[1],
   storageId: Id<"_storage">,
 ) {
-  await requireActiveMembership(ctx, organizationId);
+  const { membership } = await requireActiveMembership(ctx, organizationId);
   const leaveLink = await ctx.db
     .query("storageObjectLinks")
     .withIndex("by_storage_parent", (q) =>
@@ -204,6 +207,12 @@ async function requireStorageObject(
     if (referencePurpose === "evaluation_attachment") {
       throw new Error("Evaluation attachments require evaluation access");
     }
+    if (
+      referencePurpose === "government_remittance_evidence" &&
+      !["owner", "admin", "accounting"].includes(membership.role)
+    ) {
+      throw new Error("Not authorized");
+    }
     if (referencePurpose) {
       return null;
     }
@@ -221,6 +230,12 @@ async function requireStorageObject(
   }
   if (storageObject.purpose === "evaluation_attachment") {
     throw new Error("Evaluation attachments require evaluation access");
+  }
+  if (
+    storageObject.purpose === "government_remittance_evidence" &&
+    !["owner", "admin", "accounting"].includes(membership.role)
+  ) {
+    throw new Error("Not authorized");
   }
 
   return storageObject;
@@ -310,9 +325,7 @@ export const getLeaveAttachmentUrl = query({
 
     const storageObject = await ctx.db
       .query("storageObjects")
-      .withIndex("by_storage", (query) =>
-        query.eq("storageId", args.storageId),
-      )
+      .withIndex("by_storage", (query) => query.eq("storageId", args.storageId))
       .unique();
     if (
       storageObject &&

@@ -155,6 +155,9 @@ export const CURRENT_SCHEMA_TABLES = [
   "documentAccessGrants",
   "documentVersions",
   "accountingCostItems",
+  "governmentRemittances",
+  "governmentRemittanceAllocations",
+  "governmentRemittanceAdvanceApplications",
   "accountingJournalEntries",
   "accountingJournalLines",
   "operationalEvents",
@@ -527,6 +530,21 @@ export const FULL_SCHEMA_TABLE_POLICIES = {
     "accounting",
     "normalize_children",
     "canonical_embedded",
+  ),
+  governmentRemittances: tablePolicy(
+    "accounting",
+    "retain",
+    "canonical_row",
+  ),
+  governmentRemittanceAllocations: tablePolicy(
+    "accounting",
+    "retain",
+    "canonical_row",
+  ),
+  governmentRemittanceAdvanceApplications: tablePolicy(
+    "accounting",
+    "retain",
+    "canonical_row",
   ),
   accountingJournalEntries: tablePolicy(
     "accounting",

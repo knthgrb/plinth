@@ -19,9 +19,9 @@
       ]
     },
     "discovery": {
-      "totalMatches": 10640,
-      "fileCount": 300,
-      "fingerprint": "48831a71769271d4a1e23acca12f813cdb204e678cb7ed97b0bfbd9b48aff5c2",
+      "totalMatches": 10832,
+      "fileCount": 306,
+      "fingerprint": "03852eb13b5d87e74e86ea14a7846ea99e819d7579a73c2f38798fea77653814",
       "symbols": [
         {
           "symbol": "accrualRate",
@@ -175,8 +175,8 @@
         },
         {
           "symbol": "history",
-          "matches": 86,
-          "files": 32
+          "matches": 87,
+          "files": 33
         },
         {
           "symbol": "incentives",
@@ -280,13 +280,13 @@
         },
         {
           "symbol": "name",
-          "matches": 1191,
-          "files": 170
+          "matches": 1207,
+          "files": 173
         },
         {
           "symbol": "notes",
-          "matches": 196,
-          "files": 43
+          "matches": 219,
+          "files": 46
         },
         {
           "symbol": "numberOfDays",
@@ -300,8 +300,8 @@
         },
         {
           "symbol": "organizationId",
-          "matches": 2270,
-          "files": 183
+          "matches": 2335,
+          "files": 186
         },
         {
           "symbol": "paidLeaveRequiresRegularization",
@@ -380,8 +380,8 @@
         },
         {
           "symbol": "reviewedBy",
-          "matches": 10,
-          "files": 4
+          "matches": 12,
+          "files": 5
         },
         {
           "symbol": "reviewedDate",
@@ -395,8 +395,8 @@
         },
         {
           "symbol": "role",
-          "matches": 529,
-          "files": 96
+          "matches": 544,
+          "files": 99
         },
         {
           "symbol": "salaryPaymentFrequency",
@@ -420,8 +420,8 @@
         },
         {
           "symbol": "sourceKey",
-          "matches": 97,
-          "files": 13
+          "matches": 105,
+          "files": 14
         },
         {
           "symbol": "specificEmployees",
@@ -435,8 +435,8 @@
         },
         {
           "symbol": "status",
-          "matches": 1193,
-          "files": 122
+          "matches": 1255,
+          "files": 126
         },
         {
           "symbol": "supportingDocuments",

@@ -1,5 +1,5 @@
 {
-  "tableCount": 100,
+  "tableCount": 103,
   "tables": [
     {
       "name": "accountingCostItems",
@@ -294,6 +294,27 @@
       "fieldsSha256": "cc8dbe4625bf032090b39ca23921db73907b31fd607f821da0ac00615c5f5bb1",
       "indexCount": 5,
       "indexesSha256": "2be523e6fa6cfaf42918cc1aa59bbbc69da0201468f39ae478617e51a6984a12"
+    },
+    {
+      "name": "governmentRemittanceAdvanceApplications",
+      "fieldCount": 7,
+      "fieldsSha256": "139b60d0d6f469c47b5093d9782076fd9135aa41b3f431eed0cba86c83724675",
+      "indexCount": 3,
+      "indexesSha256": "470637d662c42d3db2a5c963f9d3e5c7e36a706ad40555cb02fb95648f1335d4"
+    },
+    {
+      "name": "governmentRemittanceAllocations",
+      "fieldCount": 8,
+      "fieldsSha256": "4858c1d7c99b4a4f3170b91e0fbfaa9c84648a3be073005e02a236785cbd9790",
+      "indexCount": 3,
+      "indexesSha256": "cc4660b622b5d59192ab738f98e760953ad1522719777afe3b0ffbd25121ecc1"
+    },
+    {
+      "name": "governmentRemittances",
+      "fieldCount": 40,
+      "fieldsSha256": "11a68b99732b15462eb78a8310a9be3a496d6e93771895dd360190284dd61d0b",
+      "indexCount": 4,
+      "indexesSha256": "0d31ecd6cd0f513659e9d2f70d03b263ee646964f97448d2d2c17b029708c028"
     },
     {
       "name": "holidays",

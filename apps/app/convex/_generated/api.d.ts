@@ -36,6 +36,7 @@ import type * as files from "../files.js";
 import type * as finalSettlements from "../finalSettlements.js";
 import type * as fullSchemaCleanupRegistry from "../fullSchemaCleanupRegistry.js";
 import type * as fullSchemaInventory from "../fullSchemaInventory.js";
+import type * as governmentRemittances from "../governmentRemittances.js";
 import type * as holidays from "../holidays.js";
 import type * as http from "../http.js";
 import type * as identityMigrationPlanner from "../identityMigrationPlanner.js";
@@ -117,6 +118,7 @@ declare const fullApi: ApiFromModules<{
   finalSettlements: typeof finalSettlements;
   fullSchemaCleanupRegistry: typeof fullSchemaCleanupRegistry;
   fullSchemaInventory: typeof fullSchemaInventory;
+  governmentRemittances: typeof governmentRemittances;
   holidays: typeof holidays;
   http: typeof http;
   identityMigrationPlanner: typeof identityMigrationPlanner;

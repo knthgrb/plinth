@@ -395,6 +395,7 @@ export default defineSchema({
       v.literal("document_attachment"),
       v.literal("employee_requirement"),
       v.literal("evaluation_attachment"),
+      v.literal("government_remittance_evidence"),
       v.literal("leave_attachment"),
       v.literal("memo_attachment"),
       v.literal("payslip_pdf"),
@@ -432,6 +433,7 @@ export default defineSchema({
       v.literal("document_attachment"),
       v.literal("employee_requirement"),
       v.literal("evaluation_attachment"),
+      v.literal("government_remittance_evidence"),
       v.literal("leave_attachment"),
       v.literal("memo_attachment"),
       v.literal("payslip_pdf"),
@@ -459,6 +461,7 @@ export default defineSchema({
       v.literal("message"),
       v.literal("document"),
       v.literal("evaluation"),
+      v.literal("government_remittance"),
       v.literal("leave_request"),
       v.literal("accounting_cost_item"),
     ),
@@ -467,6 +470,7 @@ export default defineSchema({
       v.id("messages"),
       v.id("documents"),
       v.id("evaluations"),
+      v.id("governmentRemittances"),
       v.id("leaveRequests"),
       v.id("accountingCostItems"),
     ),
@@ -476,6 +480,7 @@ export default defineSchema({
       v.literal("chat_attachment"),
       v.literal("document_attachment"),
       v.literal("evaluation_attachment"),
+      v.literal("government_remittance_evidence"),
       v.literal("leave_attachment"),
       v.literal("accounting_receipt"),
     ),
@@ -3385,9 +3390,118 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_due_date", ["dueDate"]),
 
+  governmentRemittances: defineTable({
+    organizationId: v.id("organizations"),
+    remittanceNumber: v.string(),
+    agency: v.union(
+      v.literal("bir"),
+      v.literal("sss"),
+      v.literal("philhealth"),
+      v.literal("pagibig"),
+    ),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("reviewed"),
+      v.literal("approved"),
+      v.literal("filed"),
+      v.literal("paid"),
+      v.literal("failed"),
+      v.literal("cancelled"),
+      v.literal("reversed"),
+    ),
+    failureStage: v.optional(
+      v.union(v.literal("filing"), v.literal("payment")),
+    ),
+    periodStart: v.number(),
+    periodEnd: v.number(),
+    dueDate: v.number(),
+    liabilityAmount: v.number(),
+    penaltyAmount: v.number(),
+    interestAmount: v.number(),
+    advancePaymentAmount: v.number(),
+    advanceAppliedAmount: v.number(),
+    cashAmount: v.number(),
+    notes: v.optional(v.string()),
+    filingDetails: v.optional(v.string()),
+    paymentDetails: v.optional(v.string()),
+    failureDetails: v.optional(v.string()),
+    cancellationReason: v.optional(v.string()),
+    reversalReason: v.optional(v.string()),
+    replacementFor: v.optional(v.id("governmentRemittances")),
+    createdBy: v.id("users"),
+    reviewedBy: v.optional(v.id("users")),
+    reviewedAt: v.optional(v.number()),
+    approvedBy: v.optional(v.id("users")),
+    approvedAt: v.optional(v.number()),
+    filedBy: v.optional(v.id("users")),
+    filedAt: v.optional(v.number()),
+    paidBy: v.optional(v.id("users")),
+    paidAt: v.optional(v.number()),
+    failedBy: v.optional(v.id("users")),
+    failedAt: v.optional(v.number()),
+    cancelledBy: v.optional(v.id("users")),
+    cancelledAt: v.optional(v.number()),
+    reversedBy: v.optional(v.id("users")),
+    reversedAt: v.optional(v.number()),
+    paymentJournalEntryId: v.optional(v.id("accountingJournalEntries")),
+    reversalJournalEntryId: v.optional(v.id("accountingJournalEntries")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId", "createdAt"])
+    .index("by_organization_number", ["organizationId", "remittanceNumber"])
+    .index("by_organization_agency_status", [
+      "organizationId",
+      "agency",
+      "status",
+      "dueDate",
+    ])
+    .index("by_replacement", ["replacementFor"]),
+
+  governmentRemittanceAllocations: defineTable({
+    organizationId: v.id("organizations"),
+    remittanceId: v.id("governmentRemittances"),
+    payrollRunId: v.id("payrollRuns"),
+    agency: v.union(
+      v.literal("bir"),
+      v.literal("sss"),
+      v.literal("philhealth"),
+      v.literal("pagibig"),
+    ),
+    liabilityAccountCode: v.string(),
+    amount: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_remittance", ["remittanceId"])
+    .index("by_payroll_run_agency", ["payrollRunId", "agency"])
+    .index("by_organization_agency", ["organizationId", "agency"]),
+
+  governmentRemittanceAdvanceApplications: defineTable({
+    organizationId: v.id("organizations"),
+    remittanceId: v.id("governmentRemittances"),
+    sourceRemittanceId: v.id("governmentRemittances"),
+    agency: v.union(
+      v.literal("bir"),
+      v.literal("sss"),
+      v.literal("philhealth"),
+      v.literal("pagibig"),
+    ),
+    amount: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_remittance", ["remittanceId"])
+    .index("by_source_remittance", ["sourceRemittanceId"])
+    .index("by_organization_agency", ["organizationId", "agency"]),
+
   accountingJournalEntries: defineTable({
     organizationId: v.id("organizations"),
-    sourceType: v.union(v.literal("payroll_run"), v.literal("manual")),
+    sourceType: v.union(
+      v.literal("payroll_run"),
+      v.literal("government_remittance"),
+      v.literal("manual"),
+    ),
     sourceId: v.string(),
     sourceKey: v.string(),
     sourceVersion: v.number(),
@@ -3396,6 +3510,8 @@ export default defineSchema({
       v.literal("payroll_payment"),
       v.literal("payroll_adjustment"),
       v.literal("payroll_reversal"),
+      v.literal("government_remittance_payment"),
+      v.literal("government_remittance_reversal"),
       v.literal("manual"),
     ),
     status: v.union(v.literal("posted"), v.literal("reversed")),

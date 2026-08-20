@@ -10,6 +10,7 @@ export type StoragePurpose =
   | "document_attachment"
   | "employee_requirement"
   | "evaluation_attachment"
+  | "government_remittance_evidence"
   | "leave_attachment"
   | "memo_attachment"
   | "payslip_pdf";

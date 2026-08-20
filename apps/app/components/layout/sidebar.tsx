@@ -19,6 +19,7 @@ import {
   ChevronDown,
   Calendar as CalendarIcon,
   Plus,
+  Landmark,
 } from "lucide-react";
 import { cn } from "@/utils/utils";
 import { useQuery } from "convex/react";
@@ -142,6 +143,12 @@ const navigationCategories: NavigationCategory[] = [
         name: "Accounting",
         href: "/accounting",
         icon: Calculator,
+        roles: rolesForPath("/accounting"),
+      },
+      {
+        name: "Government Remittances",
+        href: "/accounting/remittances",
+        icon: Landmark,
         roles: rolesForPath("/accounting"),
       },
     ],
@@ -352,7 +359,9 @@ export function Sidebar({ onNavigate }: SidebarProps) {
     // Check if active (compare with pathname that may or may not have organizationId)
     const cleanPathname = removeOrganizationId(pathname || "");
     const isActive =
-      cleanPathname === item.href || cleanPathname?.startsWith(item.href + "/");
+      cleanPathname === item.href ||
+      (item.href !== "/accounting" &&
+        cleanPathname?.startsWith(item.href + "/"));
     const hasSubItems = item.subItems && item.subItems.length > 0;
     const isExpanded = expandedItems.has(item.name);
     const filteredSubItems = hasSubItems ? filterItems(item.subItems!) : [];
